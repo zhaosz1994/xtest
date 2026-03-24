@@ -1,0 +1,1650 @@
+/**
+ * 论坛模块样式
+ * 文件路径: public/css/forum.css
+ */
+
+/* ==================== 基础重置 ==================== */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background-color: #f6f6f6;
+    color: #333;
+    line-height: 1.6;
+}
+
+a {
+    text-decoration: none;
+    color: inherit;
+}
+
+/* ==================== 顶部导航 ==================== */
+.forum-header {
+    background: #fff;
+    border-bottom: 1px solid #e2e2e2;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+.header-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.header-left .logo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 20px;
+    font-weight: 600;
+    color: #1a1a1a;
+}
+
+.logo-icon {
+    font-size: 24px;
+}
+
+.header-center {
+    flex: 1;
+    max-width: 400px;
+    margin: 0 40px;
+}
+
+.search-form {
+    display: flex;
+    gap: 8px;
+}
+
+.search-input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.search-input:focus {
+    border-color: #1a73e8;
+}
+
+.search-btn {
+    padding: 8px 16px;
+    background: #1a73e8;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+
+.search-btn:hover {
+    background: #1557b0;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.user-status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+}
+
+.user-status .user-name {
+    color: #1a73e8;
+    font-weight: 500;
+}
+
+.user-status .user-center-link {
+    padding: 4px 12px;
+    background: #f0f7ff;
+    color: #1a73e8;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.user-status .user-center-link:hover {
+    background: #e6f0ff;
+}
+
+.login-link {
+    padding: 6px 16px;
+    background: #1a73e8;
+    color: #fff;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.login-link:hover {
+    background: #1557b0;
+}
+
+.back-link {
+    color: #666;
+    font-size: 14px;
+    transition: color 0.2s;
+}
+
+.back-link:hover {
+    color: #1a73e8;
+}
+
+.create-btn {
+    padding: 8px 16px;
+    background: #28a745;
+    color: #fff;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background 0.2s;
+}
+
+.create-btn:hover {
+    background: #218838;
+}
+
+/* ==================== 主内容区 ==================== */
+.forum-main {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* 标签过滤 */
+.tag-filter {
+    background: #fff;
+    padding: 16px;
+    border-radius: 4px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.tag-item {
+    padding: 6px 14px;
+    border-radius: 16px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: #f0f0f0;
+    color: #666;
+}
+
+.tag-item:hover {
+    background: #e0e0e0;
+}
+
+.tag-item.active {
+    background: #1a73e8;
+    color: #fff;
+}
+
+.tag-count {
+    font-size: 11px;
+    opacity: 0.7;
+    margin-left: 4px;
+}
+
+.tag-delete-btn {
+    display: none;
+    margin-left: 8px;
+    padding: 2px 6px;
+    background: rgba(255, 255, 255, 0.3);
+    border: none;
+    border-radius: 50%;
+    color: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    line-height: 1;
+    transition: all 0.2s;
+}
+
+.tag-item:hover .tag-delete-btn {
+    display: inline-block;
+}
+
+.tag-delete-btn:hover {
+    background: #ff4d4f;
+    color: #fff;
+}
+
+/* ==================== 帖子工具栏 ==================== */
+.post-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    padding: 12px 20px;
+    background: #fff;
+    border-radius: 4px;
+    margin-bottom: 12px;
+}
+
+.sort-select {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: #666;
+}
+
+.sort-select label {
+    font-weight: 500;
+}
+
+.sort-select select {
+    padding: 6px 12px;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    background: #fff;
+    font-size: 14px;
+    color: #333;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.sort-select select:hover {
+    border-color: #1a73e8;
+}
+
+.sort-select select:focus {
+    border-color: #1a73e8;
+    box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.1);
+}
+
+/* ==================== 帖子列表 ==================== */
+.post-list-container {
+    background: #fff;
+    border-radius: 4px;
+}
+
+.post-list {
+    min-height: 400px;
+}
+
+.post-item {
+    padding: 16px 20px;
+    border-bottom: 1px solid #f0f0f0;
+    transition: background 0.2s;
+}
+
+.post-item:hover {
+    background: #fafafa;
+}
+
+.post-item:last-child {
+    border-bottom: none;
+}
+
+.post-title {
+    font-size: 16px;
+    font-weight: 500;
+    color: #1a1a1a;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.post-title a {
+    color: inherit;
+    transition: color 0.2s;
+}
+
+.post-title a:hover {
+    color: #1a73e8;
+}
+
+.pinned-badge {
+    background: #ff9500;
+    color: #fff;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: normal;
+}
+
+.post-summary {
+    font-size: 14px;
+    color: #666;
+    margin-bottom: 10px;
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.post-meta {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 13px;
+    color: #999;
+}
+
+.post-author {
+    color: #1a73e8;
+}
+
+.post-tags {
+    display: flex;
+    gap: 6px;
+}
+
+.post-tag {
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    color: #fff;
+}
+
+/* ==================== 分页 ==================== */
+.pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    padding: 20px;
+}
+
+.page-btn {
+    padding: 8px 14px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: #fff;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.page-btn:hover {
+    border-color: #1a73e8;
+    color: #1a73e8;
+}
+
+.page-btn.active {
+    background: #1a73e8;
+    color: #fff;
+    border-color: #1a73e8;
+}
+
+.page-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.page-ellipsis {
+    padding: 0 8px;
+    color: #999;
+}
+
+/* ==================== 加载状态 ==================== */
+.loading {
+    text-align: center;
+    padding: 60px 20px;
+    color: #999;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: #999;
+}
+
+.empty-state-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+}
+
+/* ==================== 页脚 ==================== */
+.forum-footer {
+    text-align: center;
+    padding: 30px 20px;
+    color: #999;
+    font-size: 13px;
+}
+
+/* ==================== 点赞按钮 ==================== */
+.like-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    color: #666;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.like-btn:hover {
+    background: #f0f0f0;
+}
+
+.like-btn.liked {
+    color: #e74c3c;
+}
+
+.like-btn.liked .like-icon {
+    animation: like-scale 0.3s ease;
+}
+
+.like-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+@keyframes like-scale {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.3); }
+    100% { transform: scale(1); }
+}
+
+/* ==================== 管理下拉菜单 ==================== */
+.admin-dropdown {
+    position: relative;
+    display: inline-block;
+    margin-left: 12px;
+}
+
+.admin-dropdown-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #666;
+    transition: all 0.2s;
+}
+
+.admin-dropdown-toggle:hover {
+    background: #e9ecef;
+    border-color: #dee2e6;
+}
+
+.admin-dropdown-toggle::after {
+    content: '';
+    border: 4px solid transparent;
+    border-top-color: currentColor;
+    margin-top: 2px;
+}
+
+.admin-dropdown.open .admin-dropdown-toggle {
+    background: #e9ecef;
+    border-color: #dee2e6;
+}
+
+.admin-dropdown-menu {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    margin-top: 4px;
+    min-width: 120px;
+    background: #fff;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-8px);
+    transition: all 0.2s ease;
+    z-index: 100;
+    overflow: hidden;
+}
+
+.admin-dropdown.open .admin-dropdown-menu {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+.admin-dropdown-item {
+    display: block;
+    width: 100%;
+    padding: 10px 14px;
+    text-align: left;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    color: #333;
+    transition: background 0.15s;
+}
+
+.admin-dropdown-item:hover {
+    background: #f8f9fa;
+}
+
+.admin-dropdown-item.danger {
+    color: #dc3545;
+}
+
+.admin-dropdown-item.danger:hover {
+    background: #fff5f5;
+}
+
+.admin-dropdown-divider {
+    height: 1px;
+    background: #e9ecef;
+    margin: 4px 0;
+}
+
+/* ==================== 禁言弹窗 ==================== */
+.mute-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.2s;
+}
+
+.mute-modal-overlay.show {
+    opacity: 1;
+    visibility: visible;
+}
+
+.mute-modal {
+    background: #fff;
+    border-radius: 8px;
+    padding: 24px;
+    width: 320px;
+    max-width: 90%;
+}
+
+.mute-modal h3 {
+    margin-bottom: 16px;
+    font-size: 16px;
+    color: #1a1a1a;
+}
+
+.mute-modal label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 14px;
+    color: #666;
+}
+
+.mute-modal input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    margin-bottom: 16px;
+    outline: none;
+}
+
+.mute-modal input:focus {
+    border-color: #1a73e8;
+}
+
+.mute-modal-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+}
+
+.mute-modal-actions button {
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.mute-modal-actions .cancel-btn {
+    background: #f8f9fa;
+    border: 1px solid #ddd;
+    color: #666;
+}
+
+.mute-modal-actions .cancel-btn:hover {
+    background: #e9ecef;
+}
+
+.mute-modal-actions .confirm-btn {
+    background: #dc3545;
+    border: none;
+    color: #fff;
+}
+
+.mute-modal-actions .confirm-btn:hover {
+    background: #c82333;
+}
+
+/* ==================== 确认弹框 ==================== */
+.confirm-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+}
+
+.confirm-modal-content {
+    background: #fff;
+    border-radius: 12px;
+    width: 400px;
+    max-width: 90%;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    animation: modal-in 0.2s ease;
+}
+
+@keyframes modal-in {
+    from { opacity: 0; transform: scale(0.9); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+.confirm-modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid #eee;
+}
+
+.confirm-modal-header h3 {
+    margin: 0;
+    font-size: 16px;
+    color: #333;
+}
+
+.confirm-modal-body {
+    padding: 20px;
+}
+
+.confirm-modal-body p {
+    margin: 0;
+    color: #666;
+    line-height: 1.6;
+    white-space: pre-line;
+}
+
+.confirm-modal-footer {
+    padding: 16px 20px;
+    border-top: 1px solid #eee;
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+.confirm-modal-btn {
+    padding: 8px 20px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.confirm-modal-btn.cancel-btn {
+    background: #f5f5f5;
+    border: 1px solid #ddd;
+    color: #666;
+}
+
+.confirm-modal-btn.cancel-btn:hover {
+    background: #eee;
+}
+
+.confirm-modal-btn.confirm-btn {
+    background: #ff4d4f;
+    border: 1px solid #ff4d4f;
+    color: #fff;
+}
+
+.confirm-modal-btn.confirm-btn:hover {
+    background: #ff7875;
+}
+
+/* ==================== Toast 提示 ==================== */
+.forum-toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 12px 24px;
+    color: #fff;
+    border-radius: 4px;
+    font-size: 14px;
+    z-index: 2000;
+    animation: toast-in 0.3s ease;
+}
+
+.forum-toast-success { background: #28a745; }
+.forum-toast-error { background: #dc3545; }
+.forum-toast-info { background: #333; }
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@keyframes toast-out {
+    from { opacity: 1; transform: translateX(-50%) translateY(0); }
+    to { opacity: 0; transform: translateX(-50%) translateY(20px); }
+}
+
+/* ==================== 响应式 ==================== */
+@media (max-width: 768px) {
+    .header-container {
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+    
+    .header-center {
+        order: 3;
+        width: 100%;
+        margin: 0;
+        max-width: none;
+    }
+    
+    .post-meta {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+}
+
+/* ==================== 通知下拉菜单样式 ==================== */
+.notification-dropdown-container {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.notification-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    background-color: #ef4444;
+    color: white;
+    font-size: 10px;
+    font-weight: bold;
+    padding: 2px 6px;
+    border-radius: 10px;
+    border: 2px solid white;
+    line-height: 1;
+    z-index: 2;
+}
+
+.notification-dropdown {
+    position: absolute;
+    top: calc(100% + 15px);
+    right: -10px;
+    width: 320px;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05);
+    border: 1px solid #e2e8f0;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-10px);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 1000;
+    overflow: hidden;
+}
+
+.notification-dropdown-container.open .notification-dropdown {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+.notification-dropdown::before {
+    content: '';
+    position: absolute;
+    top: -6px;
+    right: 20px;
+    width: 12px;
+    height: 12px;
+    background: white;
+    transform: rotate(45deg);
+    border-top: 1px solid #e2e8f0;
+    border-left: 1px solid #e2e8f0;
+}
+
+.notification-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px;
+    border-bottom: 1px solid #f1f5f9;
+    background: #f8fafc;
+}
+
+.notification-header h4 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.mark-all-read-btn {
+    background: none;
+    border: none;
+    color: #007bff;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.mark-all-read-btn:hover {
+    background: #e0f2fe;
+}
+
+.notification-list {
+    max-height: 360px;
+    overflow-y: auto;
+}
+
+.notification-item {
+    display: block;
+    padding: 12px 16px;
+    border-bottom: 1px solid #f0f0f0;
+    text-decoration: none;
+    color: inherit;
+    transition: background 0.2s;
+}
+
+.notification-item:hover {
+    background: #f8fafc;
+}
+
+.notification-item.unread {
+    background: #eff6ff;
+}
+
+.notification-item.unread:hover {
+    background: #e0f2fe;
+}
+
+.notification-footer {
+    padding: 12px;
+    text-align: center;
+    border-top: 1px solid #f1f5f9;
+    background: #f8fafc;
+}
+
+.view-all-notifications-btn {
+    background: none;
+    border: none;
+    color: #64748b;
+    font-size: 13px;
+    cursor: pointer;
+    font-weight: 500;
+    width: 100%;
+    padding: 8px;
+    border-radius: 6px;
+    transition: all 0.2s;
+}
+
+.view-all-notifications-btn:hover {
+    color: #0f172a;
+    background: #e2e8f0;
+}
+
+/* ==================== @提及高亮样式 ==================== */
+.mention-highlight {
+    color: #007bff !important;
+    font-weight: 500;
+    text-decoration: none;
+    background-color: #e7f3ff;
+    padding: 1px 4px;
+    border-radius: 3px;
+    transition: all 0.2s ease;
+}
+
+.mention-highlight:hover {
+    background-color: #cce5ff;
+    text-decoration: underline;
+}
+
+/* 帖子内容中的 @提及 样式 */
+.post-content .mention-highlight,
+.comment-content .mention-highlight {
+    color: #007bff !important;
+    font-weight: 500;
+    background-color: #e7f3ff;
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
+.post-content .mention-highlight:hover,
+.comment-content .mention-highlight:hover {
+    background-color: #cce5ff;
+    text-decoration: underline;
+}
+
+/* ==================== 用户管理样式 ==================== */
+.user-management-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.user-management-header h3 {
+    margin: 0;
+    font-size: 18px;
+    color: #333;
+}
+
+.user-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.user-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 16px;
+    transition: box-shadow 0.2s;
+}
+
+.user-item:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.user-item-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.user-item-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    font-weight: bold;
+}
+
+.user-item-details {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.user-item-name {
+    font-size: 16px;
+    font-weight: 500;
+    color: #333;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.user-item-role {
+    font-size: 12px;
+    color: #666;
+    background: #f0f0f0;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.user-item-meta {
+    display: flex;
+    gap: 16px;
+    font-size: 13px;
+    color: #666;
+}
+
+.muted-info {
+    font-size: 12px;
+    color: #dc3545;
+    background: #fff5f5;
+    padding: 4px 8px;
+    border-radius: 4px;
+    margin-top: 4px;
+}
+
+.badge-muted {
+    font-size: 12px;
+    color: #dc3545;
+    background: #fff5f5;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.user-item-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.action-btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.action-btn.mute {
+    background: #fff;
+    color: #dc3545;
+    border: 1px solid #dc3545;
+}
+
+.action-btn.mute:hover {
+    background: #dc3545;
+    color: #fff;
+}
+
+.action-btn.unmute {
+    background: #28a745;
+    color: #fff;
+}
+
+.action-btn.unmute:hover {
+    background: #218838;
+}
+
+.self-badge {
+    font-size: 12px;
+    color: #666;
+    background: #f0f0f0;
+    padding: 4px 12px;
+    border-radius: 4px;
+}
+
+/* 禁言模态框样式 */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    background: #fff;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.modal-header h3 {
+    margin: 0;
+    font-size: 18px;
+    color: #333;
+}
+
+.modal-close {
+    font-size: 24px;
+    cursor: pointer;
+    color: #666;
+}
+
+.modal-close:hover {
+    color: #333;
+}
+
+.modal-body {
+    padding: 20px;
+}
+
+.form-group {
+    margin-bottom: 16px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #333;
+}
+
+/* 匿名开关样式 - 覆盖上面的 label 样式 */
+.form-group.anonymous-option label.anonymous-label {
+    display: flex;
+    margin-bottom: 0;
+}
+
+.anonymous-option {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    margin-bottom: 8px;
+}
+
+.anonymous-label {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.anonymous-checkbox {
+    display: none;
+}
+
+.anonymous-slider {
+    position: relative;
+    width: 44px;
+    height: 24px;
+    background: #e0e0e0;
+    border-radius: 12px;
+    transition: all 0.3s ease;
+}
+
+.anonymous-slider::before {
+    content: '';
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    left: 2px;
+    top: 2px;
+    background: #fff;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.anonymous-checkbox:checked + .anonymous-slider {
+    background: #1a73e8;
+}
+
+.anonymous-checkbox:checked + .anonymous-slider::before {
+    transform: translateX(20px);
+}
+
+.anonymous-text {
+    font-size: 14px;
+    font-weight: 500;
+    color: #333;
+}
+
+.anonymous-hint {
+    font-size: 12px;
+    color: #999;
+}
+
+.form-input,
+.form-textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: border-color 0.2s;
+}
+
+.form-input:focus,
+.form-textarea:focus {
+    outline: none;
+    border-color: #007bff;
+}
+
+.form-textarea {
+    resize: vertical;
+    min-height: 80px;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 20px;
+    border-top: 1px solid #e2e8f0;
+}
+
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.btn-secondary {
+    background: #f0f0f0;
+    color: #333;
+}
+
+.btn-secondary:hover {
+    background: #e0e0e0;
+}
+
+.btn-danger {
+    background: #dc3545;
+    color: #fff;
+}
+
+.btn-danger:hover {
+    background: #c82333;
+}
+
+/* ==================== 帖子详情页面样式 ==================== */
+.post-detail-container {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+}
+
+.post-detail-content {
+    padding: 24px;
+}
+
+.post-detail-article {
+    margin-bottom: 32px;
+}
+
+.post-detail-title {
+    font-size: 24px;
+    font-weight: 600;
+    color: #1a1a1a;
+    margin-bottom: 16px;
+    line-height: 1.4;
+}
+
+.post-detail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+    padding: 16px 0;
+    border-bottom: 1px solid #e8e8e8;
+    margin-bottom: 20px;
+    font-size: 14px;
+    color: #666;
+}
+
+.post-author {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.author-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.author-name {
+    font-weight: 500;
+    color: #333;
+}
+
+.post-detail-body {
+    font-size: 16px;
+    line-height: 1.8;
+    color: #333;
+    padding: 20px 0;
+}
+
+.post-detail-body pre {
+    background: #f6f8fa;
+    padding: 16px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 16px 0;
+}
+
+.post-detail-body code {
+    background: #f6f8fa;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'Monaco', 'Menlo', monospace;
+    font-size: 14px;
+}
+
+.post-detail-body pre code {
+    background: none;
+    padding: 0;
+}
+
+.post-detail-actions {
+    padding-top: 20px;
+    border-top: 1px solid #e8e8e8;
+    display: flex;
+    gap: 16px;
+}
+
+.action-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border: 1px solid #d9d9d9;
+    border-radius: 8px;
+    background: #fff;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.action-btn:hover {
+    border-color: #1890ff;
+    color: #1890ff;
+}
+
+.action-btn.like-btn.liked {
+    background: #fff1f0;
+    border-color: #ff4d4f;
+    color: #ff4d4f;
+}
+
+/* 评论区域样式 */
+.comments-section {
+    padding: 24px;
+    border-top: 1px solid #e8e8e8;
+}
+
+.comments-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 20px;
+    color: #333;
+}
+
+.comment-form {
+    margin-bottom: 24px;
+}
+
+.comment-textarea {
+    width: 100%;
+    min-height: 100px;
+    padding: 12px;
+    border: 1px solid #d9d9d9;
+    border-radius: 8px;
+    font-size: 14px;
+    resize: vertical;
+    transition: border-color 0.2s;
+}
+
+.comment-textarea:focus {
+    outline: none;
+    border-color: #1890ff;
+}
+
+.comment-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 12px;
+}
+
+.char-count {
+    font-size: 12px;
+    color: #999;
+}
+
+.submit-btn {
+    padding: 8px 24px;
+    background: #1890ff;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+
+.submit-btn:hover {
+    background: #40a9ff;
+}
+
+.comments-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.comment-item {
+    display: flex;
+    gap: 12px;
+    padding: 16px;
+    background: #fafafa;
+    border-radius: 8px;
+}
+
+.comment-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+.comment-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.comment-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.comment-author {
+    font-weight: 500;
+    color: #333;
+}
+
+.comment-time {
+    font-size: 12px;
+    color: #999;
+}
+
+.comment-content {
+    font-size: 14px;
+    line-height: 1.6;
+    color: #555;
+}
+
+/* 空状态和错误状态 */
+.empty-state,
+.error-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: #666;
+}
+
+.empty-icon,
+.error-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+}
+
+.back-btn {
+    display: inline-block;
+    margin-top: 16px;
+    padding: 10px 24px;
+    background: #1890ff;
+    color: white;
+    border-radius: 6px;
+    text-decoration: none;
+    transition: background 0.2s;
+}
+
+.back-btn:hover {
+    background: #40a9ff;
+}
+
+/* 帖子详情标签样式 */
+.post-detail-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 12px 0 16px 0;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #e8e8e8;
+}
+
+.post-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    border-radius: 16px;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.post-tag:hover {
+    opacity: 0.8;
+}
+
+/* 点赞按钮样式优化 */
+.like-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.like-btn .like-count {
+    font-size: 14px;
+    color: #666;
+}
+
+.like-btn.liked .like-count {
+    color: #ff4d4f;
+}
+
+/* 返回链接样式 */
+.back-link {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 12px;
+    color: #666;
+    text-decoration: none;
+    font-size: 14px;
+    border-radius: 6px;
+    transition: all 0.2s;
+}
+
+.back-link:hover {
+    background: #f0f0f0;
+    color: #333;
+}
+
+/* 评论删除按钮样式 */
+.comment-delete-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    opacity: 0.6;
+    transition: all 0.2s;
+}
+
+.comment-delete-btn:hover {
+    opacity: 1;
+    background: #fff0f0;
+}
+
+.comment-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+/* 子评论（回复）样式 */
+.comment-replies {
+    margin-top: 12px;
+    padding-left: 20px;
+    border-left: 2px solid #e8e8e8;
+}
+
+.comment-item.comment-reply {
+    padding: 12px;
+    margin-top: 8px;
+    background: #fafafa;
+    border-radius: 6px;
+}
+
+.comment-item.comment-reply .comment-avatar {
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+}
+
+.comment-item.comment-reply .comment-content {
+    font-size: 13px;
+}

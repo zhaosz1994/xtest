@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>发布帖子 - xTest 社区</title>
+    <link rel="stylesheet" href="css/forum.css">
+    <link rel="stylesheet" href="css/post-create.css">
+    <link rel="stylesheet" href="https://unpkg.com/vditor@3.9.3/dist/index.css" />
+</head>
+<body>
+    <header class="forum-header">
+        <div class="header-container">
+            <div class="header-left">
+                <a href="forum.html" class="logo">
+                    <span class="logo-icon">💬</span>
+                    <span class="logo-text">xTest 社区</span>
+                </a>
+            </div>
+            <div class="header-right">
+                <div id="user-status" class="user-status"></div>
+                <a href="forum.html" class="back-link">← 返回社区</a>
+                <a href="/" class="back-link">返回 xTest</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="create-main">
+        <div class="create-container">
+            <h1 class="create-title">发布新帖子</h1>
+            
+            <form id="post-form" class="post-form">
+                <div class="form-group">
+                    <label class="form-label" for="post-title">标题</label>
+                    <input 
+                        type="text" 
+                        id="post-title" 
+                        class="form-input" 
+                        placeholder="请输入帖子标题（最多200字）"
+                        maxlength="200"
+                        required
+                    >
+                    <div class="form-hint">
+                        <span id="title-count">0</span>/200
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">标签</label>
+                    <div id="tag-selector" class="tag-selector"></div>
+                    <div class="form-hint">选择合适的标签，方便他人查找</div>
+                </div>
+                
+                <div class="form-group anonymous-option">
+                    <label class="anonymous-label">
+                        <input type="checkbox" id="anonymous-checkbox" class="anonymous-checkbox">
+                        <span class="anonymous-slider"></span>
+                        <span class="anonymous-text">匿名发布</span>
+                    </label>
+                    <div class="form-hint anonymous-hint">
+                        👤 匿名发布后，其他用户将看到"匿名工程师"，而非您的真实用户名
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">内容</label>
+                    <div id="vditor" class="vditor-container"></div>
+                    <div class="form-hint">支持 Markdown 语法，可插入图片、代码块等</div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">附件上传</label>
+                    <div class="attachment-upload-area">
+                        <input type="file" id="attachment-input" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.svg,.bmp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.md,.txt,.json,.xml,.yaml,.yml,.c,.cpp,.h,.hpp,.py,.tcl,.sh,.bash,.js,.ts,.java,.go,.rs,.rb,.php,.zip,.tar,.gz,.rar" style="display: none;">
+                        <button type="button" class="upload-btn" onclick="document.getElementById('attachment-input').click()">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,11L16,15H13.5V18H10.5V15H8L12,11Z"/>
+                            </svg>
+                            选择文件
+                        </button>
+                        <span class="upload-hint">支持图片、PDF、Office文档、代码文件等（单个文件最大50MB）</span>
+                    </div>
+                    <div id="attachment-list" class="attachment-list"></div>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="saveDraft()">保存草稿</button>
+                    <button type="submit" class="btn btn-primary" id="submit-btn">发布帖子</button>
+                </div>
+            </form>
+        </div>
+    </main>
+
+    <footer class="forum-footer">
+        <p>© centec <span id="current-year"></span> xTest 社区 - 测试经验沉淀平台</p>
+    </footer>
+
+    <script src="https://unpkg.com/vditor@3.9.3/dist/index.min.js"></script>
+    <script src="js/forum-toast.js"></script>
+    <script src="js/post-create.js"></script>
+</body>
+</html>

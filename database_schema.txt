@@ -1,0 +1,1422 @@
+========================================
+数据库: ctcsdk_testplan
+导出时间: 2026-03-07
+========================================
+
+============================================================
+表名: users
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS users (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  username VARCHAR(50) UNIQUE NOT NULL,
+  password VARCHAR(255) NOT NULL,
+  role VARCHAR(20) NOT NULL,
+  email VARCHAR(100) UNIQUE NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| username | VARCHAR(50) | NO | UNI | - | - | - |
+| password | VARCHAR(255) | NO | - | - | - | - |
+| role | VARCHAR(20) | NO | - | - | - | - |
+| email | VARCHAR(100) | NO | UNI | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+用户表，存储系统用户信息，包括用户名、密码、角色和邮箱等。
+
+
+============================================================
+表名: modules
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS modules (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  module_id VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  library_id INT,
+  parent_id INT,
+  order_index INT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| module_id | VARCHAR(50) | NO | UNI | - | - | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| library_id | INT | YES | - | - | - | - |
+| parent_id | INT | YES | - | - | - | - |
+| order_index | INT | YES | - | 0 | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+模块表，存储测试模块信息，支持多级层级结构（通过parent_id）。
+
+
+============================================================
+表名: level1_points
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS level1_points (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  module_id INT NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  test_type VARCHAR(50) DEFAULT '功能测试',
+  order_index INT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| module_id | INT | NO | - | - | - | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| test_type | VARCHAR(50) | YES | - | 功能测试 | - | - |
+| order_index | INT | YES | - | 0 | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+一级测试点表，存储模块下的一级测试点信息。
+
+
+============================================================
+表名: chips
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS chips (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  chip_id VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  description TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| chip_id | VARCHAR(50) | NO | UNI | - | - | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| description | TEXT | YES | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+芯片表，存储测试芯片信息。
+
+
+============================================================
+表名: level2_points
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS level2_points (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  level1_id INT NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  test_steps TEXT NOT NULL,
+  expected_behavior TEXT NOT NULL,
+  test_environment VARCHAR(255) NOT NULL,
+  case_name VARCHAR(100) NOT NULL,
+  remarks TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| level1_id | INT | NO | - | - | - | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| test_steps | TEXT | NO | - | - | - | - |
+| expected_behavior | TEXT | NO | - | - | - | - |
+| test_environment | VARCHAR(255) | NO | - | - | - | - |
+| case_name | VARCHAR(100) | NO | - | - | - | - |
+| remarks | TEXT | YES | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+二级测试点表，存储测试步骤和预期结果等详细信息。
+
+
+============================================================
+表名: history
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS history (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  user VARCHAR(50) NOT NULL,
+  action VARCHAR(50) NOT NULL,
+  content TEXT NOT NULL,
+  version VARCHAR(20) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| user | VARCHAR(50) | NO | - | - | - | - |
+| action | VARCHAR(50) | NO | - | - | - | - |
+| content | TEXT | NO | - | - | - | - |
+| version | VARCHAR(20) | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+历史记录表，记录用户操作历史。
+
+
+============================================================
+表名: testpoint_chips
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS testpoint_chips (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  testpoint_id INT NOT NULL,
+  chip_id INT NOT NULL,
+  chip_sequence VARCHAR(255) NOT NULL DEFAULT '',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_testpoint_chip (testpoint_id, chip_id)
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| testpoint_id | INT | NO | MUL | - | - | - |
+| chip_id | INT | NO | - | - | - | - |
+| chip_sequence | VARCHAR(255) | NO | - | '' | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 索引信息
+UNIQUE `unique_testpoint_chip` (testpoint_id, chip_id) USING BTREE
+
+-- 表说明
+测试点芯片关联表，多对多关系，记录测试点与芯片的关联。
+
+
+============================================================
+表名: testpoint_status
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS testpoint_status (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  testpoint_id INT NOT NULL,
+  chip_id INT NOT NULL,
+  test_result VARCHAR(20) NOT NULL,
+  test_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_testpoint_chip_status (testpoint_id, chip_id)
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| testpoint_id | INT | NO | MUL | - | - | - |
+| chip_id | INT | NO | - | - | - | - |
+| test_result | VARCHAR(20) | NO | - | - | - | - |
+| test_date | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 索引信息
+UNIQUE `unique_testpoint_chip_status` (testpoint_id, chip_id) USING BTREE
+
+-- 表说明
+测试点状态表，记录每个芯片对应的测试点测试状态。
+
+
+============================================================
+表名: history_snapshots
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS history_snapshots (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  entity_type VARCHAR(50) NOT NULL,
+  entity_id INT NOT NULL,
+  snapshot_data TEXT NOT NULL,
+  version VARCHAR(20) NOT NULL,
+  user VARCHAR(50) NOT NULL,
+  action VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| entity_type | VARCHAR(50) | NO | - | - | - | 实体类型(module, level1_point, level2_point, chip) |
+| entity_id | INT | NO | - | - | - | - |
+| snapshot_data | TEXT | NO | - | - | - | JSON格式的完整数据快照 |
+| version | VARCHAR(20) | NO | - | - | - | - |
+| user | VARCHAR(50) | NO | - | - | - | - |
+| action | VARCHAR(50) | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+历史快照表，用于版本恢复，存储实体的完整数据快照。
+
+
+============================================================
+表名: test_plans
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_plans (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(100) NOT NULL,
+  owner VARCHAR(50) NOT NULL,
+  status VARCHAR(20) NOT NULL,
+  test_phase VARCHAR(50) NOT NULL,
+  project VARCHAR(100) NOT NULL,
+  iteration VARCHAR(50),
+  description TEXT,
+  start_date DATE,
+  end_date DATE,
+  pass_rate DECIMAL(5,2),
+  tested_cases INT DEFAULT 0,
+  total_cases INT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  stage_id INT COMMENT '测试阶段ID',
+  software_id INT COMMENT '测试软件ID',
+  actual_start_time DATETIME COMMENT '实际开始时间',
+  actual_end_time DATETIME COMMENT '实际完成时间'
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| owner | VARCHAR(50) | NO | - | - | - | - |
+| status | VARCHAR(20) | NO | - | - | - | - |
+| test_phase | VARCHAR(50) | NO | - | - | - | - |
+| project | VARCHAR(100) | NO | - | - | - | - |
+| iteration | VARCHAR(50) | YES | - | - | - | - |
+| description | TEXT | YES | - | - | - | - |
+| start_date | DATE | YES | - | - | - | - |
+| end_date | DATE | YES | - | - | - | - |
+| pass_rate | DECIMAL(5,2) | YES | - | - | - | - |
+| tested_cases | INT | YES | - | 0 | - | - |
+| total_cases | INT | YES | - | 0 | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| stage_id | INT | YES | - | - | - | 测试阶段ID |
+| software_id | INT | YES | - | - | - | 测试软件ID |
+| actual_start_time | DATETIME | YES | - | - | - | 实际开始时间 |
+| actual_end_time | DATETIME | YES | - | - | - | 实际完成时间 |
+
+-- 表说明
+测试计划表，存储测试计划的基本信息和统计数据。
+
+
+============================================================
+表名: test_reports
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_reports (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(100) NOT NULL,
+  creator VARCHAR(50) NOT NULL,
+  project VARCHAR(100) NOT NULL,
+  iteration VARCHAR(50),
+  test_plan_id INT,
+  report_type VARCHAR(20) NOT NULL,
+  summary TEXT,
+  start_date DATE,
+  end_date DATE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (test_plan_id) REFERENCES test_plans(id) ON DELETE SET NULL
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| creator | VARCHAR(50) | NO | - | - | - | - |
+| project | VARCHAR(100) | NO | - | - | - | - |
+| iteration | VARCHAR(50) | YES | - | - | - | - |
+| test_plan_id | INT | YES | MUL | - | - | - |
+| report_type | VARCHAR(20) | NO | - | - | - | - |
+| summary | TEXT | YES | - | - | - | - |
+| start_date | DATE | YES | - | - | - | - |
+| end_date | DATE | YES | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 外键约束
+CONSTRAINT `test_reports_ibfk_1` FOREIGN KEY (`test_plan_id`) REFERENCES `test_plans` (`id`) ON DELETE SET NULL
+
+-- 表说明
+测试报告表，存储测试报告信息。
+
+
+============================================================
+表名: projects
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS projects (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(100) NOT NULL,
+  code VARCHAR(50) UNIQUE NOT NULL,
+  description TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| code | VARCHAR(50) | NO | UNI | - | - | - |
+| description | TEXT | YES | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+项目表，存储项目基本信息。
+
+
+============================================================
+表名: case_libraries
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS case_libraries (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(100) NOT NULL,
+  creator VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  module_count INT DEFAULT 0,
+  config TEXT,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| creator | VARCHAR(50) | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| module_count | INT | YES | - | 0 | - | - |
+| config | TEXT | YES | - | - | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+用例库表，存储测试用例库信息。
+
+
+============================================================
+表名: test_cases
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_cases (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  case_id VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  priority VARCHAR(20) NOT NULL,
+  type VARCHAR(50) NOT NULL,
+  precondition TEXT,
+  purpose TEXT,
+  steps TEXT NOT NULL,
+  expected TEXT NOT NULL,
+  creator VARCHAR(50) NOT NULL,
+  library_id INT,
+  module_id INT NOT NULL,
+  level1_id INT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  owner VARCHAR(50) NOT NULL DEFAULT "admin",
+  remark TEXT,
+  key_config TEXT,
+  method VARCHAR(50) DEFAULT "自动化",
+  status VARCHAR(50) DEFAULT "维护中"
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| case_id | VARCHAR(50) | NO | UNI | - | - | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| priority | VARCHAR(20) | NO | - | - | - | - |
+| type | VARCHAR(50) | NO | - | - | - | - |
+| precondition | TEXT | YES | - | - | - | - |
+| purpose | TEXT | YES | - | - | - | - |
+| steps | TEXT | NO | - | - | - | - |
+| expected | TEXT | NO | - | - | - | - |
+| creator | VARCHAR(50) | NO | - | - | - | - |
+| library_id | INT | YES | - | - | - | - |
+| module_id | INT | NO | - | - | - | - |
+| level1_id | INT | YES | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| owner | VARCHAR(50) | NO | - | admin | - | - |
+| remark | TEXT | YES | - | - | - | - |
+| key_config | TEXT | YES | - | - | - | - |
+| method | VARCHAR(50) | YES | - | 自动化 | - | 测试方式 |
+| status | VARCHAR(50) | YES | - | 维护中 | - | 测试状态 |
+
+-- 表说明
+测试用例表，存储测试用例的详细信息。
+
+
+============================================================
+表名: test_case_projects
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_case_projects (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  test_case_id INT NOT NULL,
+  project_id INT NOT NULL,
+  progress_id INT,
+  status_id INT,
+  remark VARCHAR(128),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_test_case_project (test_case_id, project_id),
+  FOREIGN KEY (test_case_id) REFERENCES test_cases(id) ON DELETE CASCADE,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (progress_id) REFERENCES test_progresses(id) ON DELETE SET NULL,
+  FOREIGN KEY (status_id) REFERENCES test_statuses(id) ON DELETE SET NULL
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| test_case_id | INT | NO | MUL | - | - | - |
+| project_id | INT | NO | - | - | - | - |
+| progress_id | INT | YES | MUL | - | - | - |
+| status_id | INT | YES | MUL | - | - | - |
+| remark | VARCHAR(128) | YES | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 索引信息
+UNIQUE `unique_test_case_project` (test_case_id, project_id) USING BTREE
+
+-- 外键约束
+CONSTRAINT `test_case_projects_ibfk_1` FOREIGN KEY (`test_case_id`) REFERENCES `test_cases` (`id`) ON DELETE CASCADE
+CONSTRAINT `test_case_projects_ibfk_2` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE
+CONSTRAINT `test_case_projects_ibfk_3` FOREIGN KEY (`progress_id`) REFERENCES `test_progresses` (`id`) ON DELETE SET NULL
+CONSTRAINT `test_case_projects_ibfk_4` FOREIGN KEY (`status_id`) REFERENCES `test_statuses` (`id`) ON DELETE SET NULL
+
+-- 表说明
+测试用例项目关联表，记录测试用例与项目的关联关系。
+
+
+============================================================
+表名: environments
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS environments (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  env_id VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  description TEXT,
+  creator VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| env_id | VARCHAR(50) | NO | UNI | - | - | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| description | TEXT | YES | - | - | - | - |
+| creator | VARCHAR(50) | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+环境表，存储测试环境配置信息。
+
+
+============================================================
+表名: test_methods
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_methods (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  method_id VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  description TEXT,
+  creator VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| method_id | VARCHAR(50) | NO | UNI | - | - | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| description | TEXT | YES | - | - | - | - |
+| creator | VARCHAR(50) | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+测试方式表，存储测试方式配置（如手动测试、自动化测试等）。
+
+
+============================================================
+表名: test_types
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_types (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  type_id VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  description TEXT,
+  creator VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| type_id | VARCHAR(50) | NO | UNI | - | - | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| description | TEXT | YES | - | - | - | - |
+| creator | VARCHAR(50) | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+测试类型表，存储测试类型配置（如功能测试、性能测试等）。
+
+
+============================================================
+表名: test_phases
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_phases (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  phase_id VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  description TEXT,
+  creator VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| phase_id | VARCHAR(50) | NO | UNI | - | - | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| description | TEXT | YES | - | - | - | - |
+| creator | VARCHAR(50) | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+测试阶段表，存储测试阶段配置。
+
+
+============================================================
+表名: test_softwares
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_softwares (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  software_id VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  description TEXT,
+  creator VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| software_id | VARCHAR(50) | NO | UNI | - | - | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| description | TEXT | YES | - | - | - | - |
+| creator | VARCHAR(50) | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+测试软件表，存储测试软件配置（如CTCSDK、Cmodel、SAI等）。
+
+
+============================================================
+表名: test_progresses
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_progresses (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  progress_id VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  description TEXT,
+  creator VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| progress_id | VARCHAR(50) | NO | UNI | - | - | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| description | TEXT | YES | - | - | - | - |
+| creator | VARCHAR(50) | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+测试进度表，存储测试进度配置。
+
+
+============================================================
+表名: test_statuses
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_statuses (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  status_id VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  description TEXT,
+  creator VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| status_id | VARCHAR(50) | NO | UNI | - | - | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| description | TEXT | YES | - | - | - | - |
+| creator | VARCHAR(50) | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+测试状态表，存储测试状态配置。
+
+
+============================================================
+表名: test_priorities
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_priorities (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  priority_id VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  description TEXT,
+  creator VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| priority_id | VARCHAR(50) | NO | UNI | - | - | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| description | TEXT | YES | - | - | - | - |
+| creator | VARCHAR(50) | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+优先级表，存储测试用例优先级配置（P0-P3）。
+
+
+============================================================
+表名: ai_config
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS ai_config (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  config_key VARCHAR(100) UNIQUE NOT NULL,
+  config_value TEXT,
+  description VARCHAR(255),
+  updated_by VARCHAR(50),
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| config_key | VARCHAR(100) | NO | UNI | - | - | - |
+| config_value | TEXT | YES | - | - | - | - |
+| description | VARCHAR(255) | YES | - | - | - | - |
+| updated_by | VARCHAR(50) | YES | - | - | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+AI配置表，存储全局AI功能配置。
+
+
+============================================================
+表名: ai_models
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS ai_models (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  model_id VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  provider VARCHAR(50) NOT NULL,
+  api_key TEXT NOT NULL,
+  endpoint VARCHAR(500) NOT NULL,
+  model_name VARCHAR(100) NOT NULL,
+  is_default BOOLEAN DEFAULT FALSE,
+  is_enabled BOOLEAN DEFAULT TRUE,
+  description TEXT,
+  created_by VARCHAR(50),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| model_id | VARCHAR(50) | NO | UNI | - | - | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| provider | VARCHAR(50) | NO | - | - | - | - |
+| api_key | TEXT | NO | - | - | - | - |
+| endpoint | VARCHAR(500) | NO | - | - | - | - |
+| model_name | VARCHAR(100) | NO | - | - | - | - |
+| is_default | BOOLEAN | YES | - | FALSE | - | - |
+| is_enabled | BOOLEAN | YES | - | TRUE | - | - |
+| description | TEXT | YES | - | - | - | - |
+| created_by | VARCHAR(50) | YES | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+AI模型表，支持多个AI模型配置（如DeepSeek、OpenAI、智谱AI等）。
+
+
+============================================================
+表名: ai_skills
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS ai_skills (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(100) UNIQUE NOT NULL COMMENT '技能标识名，如 analyze_pass_rate',
+  display_name VARCHAR(200) COMMENT '技能显示名称',
+  description TEXT COMMENT '技能描述',
+  definition JSON COMMENT 'LLM Tool Schema 定义',
+  execute_code TEXT COMMENT 'Node.js 可执行的 JS 脚本',
+  category VARCHAR(50) DEFAULT 'general' COMMENT '技能分类',
+  is_enabled BOOLEAN DEFAULT TRUE COMMENT '是否启用',
+  is_system BOOLEAN DEFAULT FALSE COMMENT '是否系统内置',
+  created_by VARCHAR(50),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_name (name),
+  INDEX idx_enabled (is_enabled),
+  INDEX idx_category (category)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| name | VARCHAR(100) | NO | UNI | - | - | 技能标识名，如 analyze_pass_rate |
+| display_name | VARCHAR(200) | YES | - | - | - | 技能显示名称 |
+| description | TEXT | YES | - | - | - | 技能描述 |
+| definition | JSON | YES | - | - | - | LLM Tool Schema 定义 |
+| execute_code | TEXT | YES | - | - | - | Node.js 可执行的 JS 脚本 |
+| category | VARCHAR(50) | YES | MUL | general | - | 技能分类 |
+| is_enabled | BOOLEAN | YES | MUL | TRUE | - | 是否启用 |
+| is_system | BOOLEAN | YES | - | FALSE | - | 是否系统内置 |
+| created_by | VARCHAR(50) | YES | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 索引信息
+INDEX `idx_name` (name) USING BTREE
+INDEX `idx_enabled` (is_enabled) USING BTREE
+INDEX `idx_category` (category) USING BTREE
+
+-- 表说明
+AI技能表，动态技能库，存储AI技能定义和执行代码。
+
+
+============================================================
+表名: report_templates
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS report_templates (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(200) NOT NULL COMMENT '模板名称',
+  description TEXT COMMENT '模板描述',
+  file_path VARCHAR(500) NOT NULL COMMENT '文件存储路径',
+  file_type VARCHAR(20) DEFAULT 'md' COMMENT '文件类型：md/txt',
+  is_default BOOLEAN DEFAULT FALSE COMMENT '是否默认模板',
+  created_by VARCHAR(50) COMMENT '创建者',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  updated_by VARCHAR(50) COMMENT '最后编辑者',
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最后编辑时间',
+  INDEX idx_name (name),
+  INDEX idx_default (is_default)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| name | VARCHAR(200) | NO | MUL | - | - | 模板名称 |
+| description | TEXT | YES | - | - | - | 模板描述 |
+| file_path | VARCHAR(500) | NO | - | - | - | 文件存储路径 |
+| file_type | VARCHAR(20) | YES | - | md | - | 文件类型：md/txt |
+| is_default | BOOLEAN | YES | MUL | FALSE | - | 是否默认模板 |
+| created_by | VARCHAR(50) | YES | - | - | - | 创建者 |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | 创建时间 |
+| updated_by | VARCHAR(50) | YES | - | - | - | 最后编辑者 |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | 最后编辑时间 |
+
+-- 索引信息
+INDEX `idx_name` (name) USING BTREE
+INDEX `idx_default` (is_default) USING BTREE
+
+-- 表说明
+报告模板表，存储测试报告模板信息。
+
+
+============================================================
+表名: test_case_environments
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_case_environments (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  test_case_id INT NOT NULL,
+  environment_id INT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (test_case_id) REFERENCES test_cases(id) ON DELETE CASCADE,
+  FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_test_case_environment (test_case_id, environment_id)
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| test_case_id | INT | NO | MUL | - | - | - |
+| environment_id | INT | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 索引信息
+UNIQUE `unique_test_case_environment` (test_case_id, environment_id) USING BTREE
+
+-- 外键约束
+CONSTRAINT `test_case_environments_ibfk_1` FOREIGN KEY (`test_case_id`) REFERENCES `test_cases` (`id`) ON DELETE CASCADE
+CONSTRAINT `test_case_environments_ibfk_2` FOREIGN KEY (`environment_id`) REFERENCES `environments` (`id`) ON DELETE CASCADE
+
+-- 表说明
+测试用例环境关联表，多对多关系。
+
+
+============================================================
+表名: test_case_methods
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_case_methods (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  test_case_id INT NOT NULL,
+  method_id INT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (test_case_id) REFERENCES test_cases(id) ON DELETE CASCADE,
+  FOREIGN KEY (method_id) REFERENCES test_methods(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_test_case_method (test_case_id, method_id)
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| test_case_id | INT | NO | MUL | - | - | - |
+| method_id | INT | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 索引信息
+UNIQUE `unique_test_case_method` (test_case_id, method_id) USING BTREE
+
+-- 外键约束
+CONSTRAINT `test_case_methods_ibfk_1` FOREIGN KEY (`test_case_id`) REFERENCES `test_cases` (`id`) ON DELETE CASCADE
+CONSTRAINT `test_case_methods_ibfk_2` FOREIGN KEY (`method_id`) REFERENCES `test_methods` (`id`) ON DELETE CASCADE
+
+-- 表说明
+测试用例测试方式关联表，多对多关系。
+
+
+============================================================
+表名: test_sources
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_sources (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  source_id VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  description TEXT,
+  creator VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| source_id | VARCHAR(50) | NO | UNI | - | - | - |
+| name | VARCHAR(100) | NO | - | - | - | - |
+| description | TEXT | YES | - | - | - | - |
+| creator | VARCHAR(50) | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 表说明
+测试点来源表，存储测试点来源配置（如PRD、客户需求等）。
+
+
+============================================================
+表名: test_case_sources
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_case_sources (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  test_case_id INT NOT NULL,
+  source_id INT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (test_case_id) REFERENCES test_cases(id) ON DELETE CASCADE,
+  FOREIGN KEY (source_id) REFERENCES test_sources(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_test_case_source (test_case_id, source_id)
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| test_case_id | INT | NO | MUL | - | - | - |
+| source_id | INT | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 索引信息
+UNIQUE `unique_test_case_source` (test_case_id, source_id) USING BTREE
+
+-- 外键约束
+CONSTRAINT `test_case_sources_ibfk_1` FOREIGN KEY (`test_case_id`) REFERENCES `test_cases` (`id`) ON DELETE CASCADE
+CONSTRAINT `test_case_sources_ibfk_2` FOREIGN KEY (`source_id`) REFERENCES `test_sources` (`id`) ON DELETE CASCADE
+
+-- 表说明
+测试用例测试点来源关联表，多对多关系。
+
+
+============================================================
+表名: test_case_test_types
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_case_test_types (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  test_case_id INT NOT NULL,
+  test_type_id INT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (test_case_id) REFERENCES test_cases(id) ON DELETE CASCADE,
+  FOREIGN KEY (test_type_id) REFERENCES test_types(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_test_case_test_type (test_case_id, test_type_id)
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| test_case_id | INT | NO | MUL | - | - | - |
+| test_type_id | INT | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 索引信息
+UNIQUE `unique_test_case_test_type` (test_case_id, test_type_id) USING BTREE
+
+-- 外键约束
+CONSTRAINT `test_case_test_types_ibfk_1` FOREIGN KEY (`test_case_id`) REFERENCES `test_cases` (`id`) ON DELETE CASCADE
+CONSTRAINT `test_case_test_types_ibfk_2` FOREIGN KEY (`test_type_id`) REFERENCES `test_types` (`id`) ON DELETE CASCADE
+
+-- 表说明
+测试用例测试类型关联表，多对多关系。
+
+
+============================================================
+表名: test_case_statuses
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_case_statuses (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  test_case_id INT NOT NULL,
+  status_id INT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (test_case_id) REFERENCES test_cases(id) ON DELETE CASCADE,
+  FOREIGN KEY (status_id) REFERENCES test_statuses(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_test_case_status (test_case_id, status_id)
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| test_case_id | INT | NO | MUL | - | - | - |
+| status_id | INT | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 索引信息
+UNIQUE `unique_test_case_status` (test_case_id, status_id) USING BTREE
+
+-- 外键约束
+CONSTRAINT `test_case_statuses_ibfk_1` FOREIGN KEY (`test_case_id`) REFERENCES `test_cases` (`id`) ON DELETE CASCADE
+CONSTRAINT `test_case_statuses_ibfk_2` FOREIGN KEY (`status_id`) REFERENCES `test_statuses` (`id`) ON DELETE CASCADE
+
+-- 表说明
+测试用例测试状态关联表，多对多关系。
+
+
+============================================================
+表名: test_case_phases
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_case_phases (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  test_case_id INT NOT NULL,
+  phase_id INT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (test_case_id) REFERENCES test_cases(id) ON DELETE CASCADE,
+  FOREIGN KEY (phase_id) REFERENCES test_phases(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_test_case_phase (test_case_id, phase_id)
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| test_case_id | INT | NO | MUL | - | - | - |
+| phase_id | INT | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 索引信息
+UNIQUE `unique_test_case_phase` (test_case_id, phase_id) USING BTREE
+
+-- 外键约束
+CONSTRAINT `test_case_phases_ibfk_1` FOREIGN KEY (`test_case_id`) REFERENCES `test_cases` (`id`) ON DELETE CASCADE
+CONSTRAINT `test_case_phases_ibfk_2` FOREIGN KEY (`phase_id`) REFERENCES `test_phases` (`id`) ON DELETE CASCADE
+
+-- 表说明
+测试用例测试阶段关联表，多对多关系。
+
+
+============================================================
+表名: test_case_progresses
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_case_progresses (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  test_case_id INT NOT NULL,
+  progress_id INT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (test_case_id) REFERENCES test_cases(id) ON DELETE CASCADE,
+  FOREIGN KEY (progress_id) REFERENCES test_progresses(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_test_case_progress (test_case_id, progress_id)
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| test_case_id | INT | NO | MUL | - | - | - |
+| progress_id | INT | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 索引信息
+UNIQUE `unique_test_case_progress` (test_case_id, progress_id) USING BTREE
+
+-- 外键约束
+CONSTRAINT `test_case_progresses_ibfk_1` FOREIGN KEY (`test_case_id`) REFERENCES `test_cases` (`id`) ON DELETE CASCADE
+CONSTRAINT `test_case_progresses_ibfk_2` FOREIGN KEY (`progress_id`) REFERENCES `test_progresses` (`id`) ON DELETE CASCADE
+
+-- 表说明
+测试用例测试进度关联表，多对多关系。
+
+
+============================================================
+表名: test_plan_rules
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_plan_rules (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  plan_id INT NOT NULL,
+  rule_type VARCHAR(30) NOT NULL COMMENT '规则类型: PRIORITY, AUTOMATION等',
+  rule_name VARCHAR(100) COMMENT '规则名称',
+  rule_config JSON NOT NULL COMMENT '规则配置JSON',
+  priority INT DEFAULT 0 COMMENT '规则优先级',
+  enabled TINYINT(1) DEFAULT 1 COMMENT '是否启用',
+  created_by VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (plan_id) REFERENCES test_plans(id) ON DELETE CASCADE
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| plan_id | INT | NO | MUL | - | - | - |
+| rule_type | VARCHAR(30) | NO | - | - | - | 规则类型: PRIORITY, AUTOMATION等 |
+| rule_name | VARCHAR(100) | YES | - | - | - | 规则名称 |
+| rule_config | JSON | NO | - | - | - | 规则配置JSON |
+| priority | INT | YES | - | 0 | - | 规则优先级 |
+| enabled | TINYINT(1) | YES | - | 1 | - | 是否启用 |
+| created_by | VARCHAR(50) | NO | - | - | - | - |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 外键约束
+CONSTRAINT `test_plan_rules_ibfk_1` FOREIGN KEY (`plan_id`) REFERENCES `test_plans` (`id`) ON DELETE CASCADE
+
+-- 表说明
+测试计划动态规则表，存储测试计划的筛选规则配置。
+
+
+============================================================
+表名: test_plan_cases
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_plan_cases (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  plan_id INT NOT NULL,
+  case_id INT NOT NULL,
+  test_point_id INT COMMENT '一级测试点ID',
+  module_id INT COMMENT '模块ID',
+  executor_id VARCHAR(50) COMMENT '执行者ID',
+  status VARCHAR(30) NOT NULL DEFAULT 'pending' COMMENT '执行状态: Pass, Fail, Block, ASIC_Hang, Core_Dump, Traffic_Drop, pending',
+  execution_time TIMESTAMP NULL COMMENT '执行时间',
+  duration INT COMMENT '执行耗时(秒)',
+  log_path VARCHAR(500) COMMENT '日志文件路径',
+  error_message TEXT COMMENT '错误信息',
+  retry_count INT DEFAULT 0 COMMENT '重试次数',
+  pfc_specific TINYINT(1) DEFAULT 0 COMMENT '是否为PFC专属测试',
+  buffer_test TINYINT(1) DEFAULT 0 COMMENT '是否为Buffer测试',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (plan_id) REFERENCES test_plans(id) ON DELETE CASCADE,
+  FOREIGN KEY (case_id) REFERENCES test_cases(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_plan_case (plan_id, case_id)
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| plan_id | INT | NO | MUL | - | - | - |
+| case_id | INT | NO | - | - | - | - |
+| test_point_id | INT | YES | - | - | - | 一级测试点ID |
+| module_id | INT | YES | - | - | - | 模块ID |
+| executor_id | VARCHAR(50) | YES | - | - | - | 执行者ID |
+| status | VARCHAR(30) | NO | - | pending | - | 执行状态: Pass, Fail, Block, ASIC_Hang, Core_Dump, Traffic_Drop, pending |
+| execution_time | TIMESTAMP | YES | - | - | - | 执行时间 |
+| duration | INT | YES | - | - | - | 执行耗时(秒) |
+| log_path | VARCHAR(500) | YES | - | - | - | 日志文件路径 |
+| error_message | TEXT | YES | - | - | - | 错误信息 |
+| retry_count | INT | YES | - | 0 | - | 重试次数 |
+| pfc_specific | TINYINT(1) | YES | - | 0 | - | 是否为PFC专属测试 |
+| buffer_test | TINYINT(1) | YES | - | 0 | - | 是否为Buffer测试 |
+| created_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| updated_at | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+
+-- 索引信息
+UNIQUE `unique_plan_case` (plan_id, case_id) USING BTREE
+
+-- 外键约束
+CONSTRAINT `test_plan_cases_ibfk_1` FOREIGN KEY (`plan_id`) REFERENCES `test_plans` (`id`) ON DELETE CASCADE
+CONSTRAINT `test_plan_cases_ibfk_2` FOREIGN KEY (`case_id`) REFERENCES `test_cases` (`id`) ON DELETE CASCADE
+
+-- 表说明
+测试计划用例执行快照表，存储测试计划中用例的执行状态和结果。
+
+
+============================================================
+表名: test_execution_logs
+============================================================
+
+-- 建表语句
+CREATE TABLE IF NOT EXISTS test_execution_logs (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  plan_case_id INT NOT NULL,
+  log_type VARCHAR(20) NOT NULL COMMENT '日志类型: INFO, WARNING, ERROR, DEBUG',
+  message TEXT NOT NULL,
+  timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  metadata JSON COMMENT '额外元数据',
+  FOREIGN KEY (plan_case_id) REFERENCES test_plan_cases(id) ON DELETE CASCADE
+);
+
+-- 字段详情
+| 字段名 | 字段类型 | 允许空值 | 键 | 默认值 | 额外信息 | 字段注释 |
+|--------|----------|----------|-----|--------|----------|----------|
+| id | INT | NO | PRI | - | auto_increment | - |
+| plan_case_id | INT | NO | MUL | - | - | - |
+| log_type | VARCHAR(20) | NO | - | - | - | 日志类型: INFO, WARNING, ERROR, DEBUG |
+| message | TEXT | NO | - | - | - | - |
+| timestamp | TIMESTAMP | NO | - | CURRENT_TIMESTAMP | - | - |
+| metadata | JSON | YES | - | - | - | 额外元数据 |
+
+-- 外键约束
+CONSTRAINT `test_execution_logs_ibfk_1` FOREIGN KEY (`plan_case_id`) REFERENCES `test_plan_cases` (`id`) ON DELETE CASCADE
+
+-- 表说明
+测试执行日志表，存储测试执行的详细日志信息。
+
+
+========================================
+数据库表统计
+========================================
+
+总表数: 35
+
+核心业务表:
+- users: 用户表
+- projects: 项目表
+- test_plans: 测试计划表
+- test_cases: 测试用例表
+- test_reports: 测试报告表
+
+配置管理表:
+- case_libraries: 用例库表
+- modules: 模块表
+- level1_points: 一级测试点表
+- level2_points: 二级测试点表
+- chips: 芯片表
+- environments: 环境表
+- test_methods: 测试方式表
+- test_types: 测试类型表
+- test_phases: 测试阶段表
+- test_softwares: 测试软件表
+- test_progresses: 测试进度表
+- test_statuses: 测试状态表
+- test_priorities: 优先级表
+- test_sources: 测试点来源表
+
+关联关系表:
+- test_case_projects: 测试用例项目关联表
+- test_case_environments: 测试用例环境关联表
+- test_case_methods: 测试用例测试方式关联表
+- test_case_sources: 测试用例测试点来源关联表
+- test_case_test_types: 测试用例测试类型关联表
+- test_case_statuses: 测试用例测试状态关联表
+- test_case_phases: 测试用例测试阶段关联表
+- test_case_progresses: 测试用例测试进度关联表
+- testpoint_chips: 测试点芯片关联表
+- testpoint_status: 测试点状态表
+
+测试执行表:
+- test_plan_rules: 测试计划动态规则表
+- test_plan_cases: 测试计划用例执行快照表
+- test_execution_logs: 测试执行日志表
+
+AI功能表:
+- ai_config: AI配置表
+- ai_models: AI模型表
+- ai_skills: AI技能表
+
+历史记录表:
+- history: 历史记录表
+- history_snapshots: 历史快照表
+
+模板管理表:
+- report_templates: 报告模板表
+
+========================================
+数据库设计特点
+========================================
+
+1. **多对多关系设计**: 使用中间表实现测试用例与项目、环境、方式、类型等多维度的关联关系。
+
+2. **配置中心设计**: 将测试方式、类型、阶段、状态、优先级等配置项独立成表，便于灵活配置和扩展。
+
+3. **测试计划管理**: 支持测试计划的动态规则配置，通过test_plan_rules表实现灵活的用例筛选规则。
+
+4. **执行状态跟踪**: test_plan_cases表记录每个测试计划中用例的执行状态，支持多种执行结果（Pass、Fail、Block等）。
+
+5. **AI功能集成**: 支持多个AI模型配置和动态技能扩展，实现智能化的测试管理。
+
+6. **历史版本管理**: 通过history_snapshots表实现数据的历史版本管理和恢复功能。
+
+7. **报告模板管理**: 支持自定义报告模板，提供灵活的报告生成能力。
+
+8. **外键约束**: 使用外键约束保证数据一致性，支持级联删除和SET NULL策略。
+
+9. **索引优化**: 为常用查询字段添加索引，提高查询性能。
+
+10. **字符集设置**: 使用utf8mb4字符集，支持存储emoji等特殊字符。

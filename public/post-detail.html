@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>帖子详情 - xTest 社区</title>
+    <link rel="stylesheet" href="css/forum.css">
+</head>
+<body>
+    <header class="forum-header">
+        <div class="header-container">
+            <div class="header-left">
+                <a href="forum.html" class="logo">
+                    <span class="logo-icon">💬</span>
+                    <span class="logo-text">xTest 社区</span>
+                </a>
+            </div>
+            <div class="header-right">
+                <div id="user-status" class="user-status">
+                    <a href="/" class="login-link">登录</a>
+                </div>
+                <a href="forum.html" class="back-link">← 返回社区</a>
+                <a href="/" class="back-link" style="margin-left: 8px;">返回 xTest</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="forum-main" style="max-width: 900px;">
+        <div class="post-detail-container">
+            <div id="post-content" class="post-detail-content">
+                <div class="loading">加载中...</div>
+            </div>
+            
+            <div class="comments-section">
+                <h3 class="comments-title">评论 <span id="comment-count">(0)</span></h3>
+                
+                <div id="comment-form" class="comment-form" style="display: none;">
+                    <textarea id="comment-input" class="comment-textarea" placeholder="写下你的评论..."></textarea>
+                    <div class="comment-actions">
+                        <span class="char-count"><span id="char-count">0</span>/500</span>
+                        <button class="submit-btn" onclick="submitComment()">发表评论</button>
+                    </div>
+                </div>
+                
+                <div id="comments-list" class="comments-list">
+                    <div class="loading">加载中...</div>
+                </div>
+                
+                <div id="comments-pagination" class="pagination-container"></div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="forum-footer">
+        <p>&copy; <span id="current-year"></span> xTest 社区 - 测试经验分享平台</p>
+    </footer>
+
+    <script src="js/forum.js"></script>
+    <script src="js/forum-toast.js"></script>
+    <script src="js/notification.js"></script>
+    <script src="js/post-detail.js"></script>
+</body>
+</html>

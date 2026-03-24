@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>测试备注功能</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .test-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .test-section h2 {
+            margin-top: 0;
+            color: #333;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, textarea, select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        textarea {
+            height: 100px;
+            resize: vertical;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .result {
+            margin-top: 15px;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h1>测试用例备注功能测试</h1>
+    
+    <div class="test-section">
+        <h2>1. 检查前端页面元素</h2>
+        <div class="form-group">
+            <label>新建用例页面备注文本框</label>
+            <p>检查位置：index.html 第1654行</p>
+            <p>元素ID：case-remark</p>
+            <p>状态：<span style="color: green;">✓ 已实现</span></p>
+        </div>
+        
+        <div class="form-group">
+            <label>编辑用例项目关联页面备注文本框</label>
+            <p>检查位置：index.html 第2035行</p>
+            <p>元素ID：project-associations-remark</p>
+            <p>状态：<span style="color: green;">✓ 已实现</span></p>
+        </div>
+        
+        <div class="form-group">
+            <label>编辑用例详情页面备注文本框</label>
+            <p>检查位置：index.html 第2147行</p>
+            <p>元素ID：detail-case-remark</p>
+            <p>状态：<span style="color: green;">✓ 已实现</span></p>
+        </div>
+    </div>
+    
+    <div class="test-section">
+        <h2>2. 检查前端JavaScript逻辑</h2>
+        <div class="form-group">
+            <label>编辑用例详情时填充备注</label>
+            <p>检查位置：script.js 第2840行</p>
+            <p>代码：<code>document.getElementById('detail-case-remark').value = testCase.remark || '';</code></p>
+            <p>状态：<span style="color: green;">✓ 已实现</span></p>
+        </div>
+        
+        <div class="form-group">
+            <label>保存用例详情时提交备注</label>
+            <p>检查位置：script.js 第3231行</p>
+            <p>代码：<code>remark: document.getElementById('detail-case-remark').value.trim()</code></p>
+            <p>状态：<span style="color: green;">✓ 已实现</span></p>
+        </div>
+        
+        <div class="form-group">
+            <label>新建用例时处理备注</label>
+            <p>检查位置：script.js 第5432行</p>
+            <p>代码：<code>const caseRemark = document.getElementById('case-remark');</code></p>
+            <p>状态：<span style="color: green;">✓ 已实现</span></p>
+        </div>
+    </div>
+    
+    <div class="test-section">
+        <h2>3. 检查后端API逻辑</h2>
+        <div class="form-group">
+            <label>创建测试用例时保存备注</label>
+            <p>检查位置：server.js 第403行</p>
+            <p>代码：<code>const safeRemark = req.body.remark || '';</code></p>
+            <p>状态：<span style="color: green;">✓ 已实现</span></p>
+        </div>
+        
+        <div class="form-group">
+            <label>更新测试用例时保存备注</label>
+            <p>检查位置：server.js 第685-703行</p>
+            <p>代码：将remark字段更新到数据库</p>
+            <p>状态：<span style="color: green;">✓ 已实现</span></p>
+        </div>
+        
+        <div class="form-group">
+            <label>查询测试用例时返回备注</label>
+            <p>检查位置：server.js 第586行</p>
+            <p>代码：SELECT语句包含remark字段</p>
+            <p>状态：<span style="color: green;">✓ 已实现</span></p>
+        </div>
+    </div>
+    
+    <div class="test-section">
+        <h2>4. 检查数据库结构</h2>
+        <div class="form-group">
+            <label>测试用例表remark字段</label>
+            <p>检查位置：server.js 数据库初始化代码</p>
+            <p>代码：确保test_cases表有remark字段</p>
+            <p>状态：<span style="color: green;">✓ 已实现</span></p>
+        </div>
+    </div>
+    
+    <div class="test-section">
+        <h2>5. 手动测试步骤</h2>
+        <ol>
+            <li>打开应用程序首页（http://localhost:3000）</li>
+            <li>点击"新建用例"按钮</li>
+            <li>填写测试用例的基本信息</li>
+            <li>在"测试备注"文本框中输入一些测试内容</li>
+            <li>点击"保存"按钮</li>
+            <li>验证测试用例是否成功创建</li>
+            <li>找到刚创建的测试用例，点击"编辑"按钮</li>
+            <li>检查"测试备注"文本框是否显示了之前输入的内容</li>
+            <li>修改备注内容，点击"保存"按钮</li>
+            <li>再次编辑该测试用例，验证备注是否已更新</li>
+        </ol>
+    </div>
+    
+    <div class="test-section">
+        <h2>6. 测试结果总结</h2>
+        <p>通过代码审查，已确认测试用例备注功能已完整实现：</p>
+        <ul>
+            <li>✓ 前端页面包含了所有必要的备注文本框</li>
+            <li>✓ 前端JavaScript正确处理备注字段的读取和保存</li>
+            <li>✓ 后端API正确处理备注字段的保存和查询</li>
+            <li>✓ 数据库表结构包含了备注字段</li>
+            <li>✓ 支持新建用例时添加备注</li>
+            <li>✓ 支持编辑用例时修改备注</li>
+            <li>✓ 支持从数据库加载备注到页面</li>
+        </ul>
+    </div>
+    
+    <div class="test-section">
+        <h2>7. 功能使用建议</h2>
+        <ul>
+            <li>在新建测试用例时，根据需要填写测试备注</li>
+            <li>在编辑测试用例时，可以随时更新备注内容</li>
+            <li>备注字段可以用于记录测试用例的特殊说明、注意事项或变更记录</li>
+            <li>备注内容会被保存到数据库，并在查询测试用例时显示</li>
+        </ul>
+    </div>
+</body>
+</html>

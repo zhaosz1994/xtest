@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>xTest 社区 - 测试经验分享</title>
+    <link rel="stylesheet" href="css/forum.css">
+</head>
+<body>
+    <header class="forum-header">
+        <div class="header-container">
+            <div class="header-left">
+                <a href="forum.html" class="logo">
+                    <span class="logo-icon">💬</span>
+                    <span class="logo-text">xTest 社区</span>
+                </a>
+            </div>
+            <div class="header-center">
+                <form class="search-form" onsubmit="handleSearch(event)">
+                    <input type="text" id="search-input" class="search-input" placeholder="搜索帖子...">
+                    <button type="submit" class="search-btn">搜索</button>
+                </form>
+            </div>
+            <div class="header-right">
+                <!-- 消息通知铃铛 -->
+                <div class="notification-dropdown-container" id="forum-notification-container" style="display: none; margin-right: 15px;">
+                    <button class="nav-action-btn" id="notification-bell-btn" title="消息通知" style="background: none; border: none; cursor: pointer; position: relative;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                            <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                        </svg>
+                        <span class="notification-badge" id="notification-badge" style="display: none; position: absolute; top: -5px; right: -5px; background: red; color: white; border-radius: 50%; font-size: 10px; padding: 2px 5px;">0</span>
+                    </button>
+                    <!-- 下拉列表容器由JS注入或在CSS中控制 -->
+                </div>
+                <div id="user-status" class="user-status">
+                    <a href="/" class="login-link">登录</a>
+                </div>
+                <a href="/" class="back-link">← 返回 xTest</a>
+                <a href="post-create.html" class="create-btn" id="create-btn">发布帖子</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="forum-main">
+        <div class="tag-filter">
+            <a href="javascript:void(0)" class="tag-item active" data-tag="">全部</a>
+            <div id="tag-list"></div>
+        </div>
+        
+        <div class="post-toolbar">
+            <div class="sort-select">
+                <label>排序：</label>
+                <select id="sort-select">
+                    <option value="time">按时间</option>
+                    <option value="likes">按点赞数</option>
+                    <option value="comments">按评论数</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="post-list-container">
+            <div id="post-list" class="post-list">
+                <div class="loading">加载中...</div>
+            </div>
+            
+            <div id="pagination" class="pagination"></div>
+        </div>
+    </main>
+
+    <footer class="forum-footer">
+        <p>© centec <span id="current-year"></span> xTest 社区 - 测试经验沉淀平台</p>
+    </footer>
+
+    <div id="confirm-modal" class="confirm-modal" style="display: none;">
+        <div class="confirm-modal-content">
+            <div class="confirm-modal-header">
+                <h3>确认</h3>
+            </div>
+            <div class="confirm-modal-body">
+                <p id="confirm-message"></p>
+            </div>
+            <div class="confirm-modal-footer">
+                <button class="confirm-modal-btn cancel-btn" onclick="closeConfirmModal(false)">取消</button>
+                <button class="confirm-modal-btn confirm-btn" onclick="closeConfirmModal(true)">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/notification.js"></script>
+    <script src="js/forum.js"></script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+{
+  "name": "xtest",
+  "version": "1.0.0",
+  "description": "A professional test management platform for developers and QA engineers",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "prod": "cross-env NODE_ENV=production node server.js",
+    "lint": "eslint .",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop ecosystem.config.js",
+    "pm2:restart": "pm2 restart ecosystem.config.js",
+    "pm2:reload": "pm2 reload ecosystem.config.js",
+    "pm2:logs": "pm2 logs ctcsdk-testplan",
+    "pm2:delete": "pm2 delete ecosystem.config.js"
+  },
+  "keywords": [
+    "test-management",
+    "test-plan",
+    "test-cases",
+    "qa",
+    "testing",
+    "mysql",
+    "express",
+    "nodejs"
+  ],
+  "author": "SDK xTest Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/xtest.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/xtest/issues"
+  },
+  "homepage": "https://github.com/yourusername/xtest#readme",
+  "engines": {
+    "node": ">=14.0.0",
+    "npm": ">=6.0.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "chart.js": "^4.4.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "mysql2": "^3.6.5",
+    "nodemailer": "^8.0.2",
+    "socket.io": "^4.7.2",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "nodemon": "^3.0.2"
+  }
+}

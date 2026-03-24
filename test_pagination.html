@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>分页组件测试</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f7fa;
+            padding: 40px 20px;
+            min-height: 100vh;
+        }
+        
+        .test-container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .test-section {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 32px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        }
+        
+        .test-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .test-title .badge {
+            font-size: 12px;
+            font-weight: 500;
+            padding: 4px 12px;
+            border-radius: 20px;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+        }
+        
+        .test-description {
+            color: #6b7280;
+            font-size: 14px;
+            margin-bottom: 24px;
+        }
+        
+        .test-result {
+            background: #f0fdf4;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 16px;
+        }
+        
+        .test-result-title {
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+        
+        .test-result-content {
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 13px;
+            color: #6b7280;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        
+        .scenario-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px));
+            gap: 24px;
+            margin-top: 24px;
+        }
+        
+        .scenario-card {
+            background: #f9fafb;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .scenario-card:hover {
+            border-color: #4f46e5;
+            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.15);
+        }
+        
+        .scenario-card.active {
+            border-color: #4f46e5;
+            background: #eef2ff;
+        }
+        
+        .scenario-card h4 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 8px;
+        }
+        
+        .scenario-card p {
+            font-size: 12px;
+            color: #6b7280;
+        }
+        
+        .test-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+            padding-top: 16px;
+            border-top: 1px solid #e5e7eb;
+        }
+        
+        .test-btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .test-btn-primary {
+            background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
+            color: white;
+        }
+        
+        .test-btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+        }
+        
+        .test-btn-secondary {
+            background: white;
+            border: 1px solid #d1d5db;
+            color: #374151;
+        }
+        
+        .test-btn-secondary:hover {
+            background: #f3f4f6;
+            border-color: #4f46e5;
+            color: #4f46e5;
+        }
+        
+        .log-entry {
+            padding: 8px 12px;
+            margin: 4px 0;
+            border-radius: 6px;
+            font-size: 12px;
+            font-family: 'Monaco', 'Menlo', monospace;
+        }
+        
+        .log-entry.success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .log-entry.error {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+        
+        .log-entry.info {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        
+        .pagination-test-area {
+            min-height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #f8fafc 0%, #f0fdf4 100%);
+            border-radius: 12px;
+            margin-top: 16px;
+        }
+        
+        [data-theme="dark"] body {
+            background: #111827;
+        }
+        
+        [data-theme="dark"] .test-section {
+            background: #1f2937;
+        }
+        
+        [data-theme="dark"] .test-title {
+            color: #f3f4f6;
+        }
+        
+        [data-theme="dark"] .test-description {
+            color: #9ca3af;
+        }
+        
+        [data-theme="dark"] .test-result {
+            background: #1f2937;
+        }
+        
+        [data-theme="dark"] .scenario-card {
+            background: #374151;
+            border-color: #4b5563;
+        }
+        
+        [data-theme="dark"] .scenario-card:hover {
+            border-color: #6366f1;
+        }
+        
+        [data-theme="dark"] .scenario-card.active {
+            background: #374151;
+            border-color: #6366f1;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1 style="text-align: center; margin-bottom: 32px; color: #374151;">
+            🧪 分页组件自动化测试
+        </h1>
+        
+        <!-- 测试场景选择 -->
+        <div class="test-section">
+            <div class="test-title">
+                📋 测试场景选择
+                <span class="badge">点击场景卡片切换</span>
+            </div>
+            <p class="test-description">选择不同的测试场景来验证分页组件的各种边界情况</p>
+            
+            <div class="scenario-grid" id="scenario-grid">
+                <!-- 场景卡片将由JS动态生成 -->
+            </div>
+        </div>
+        
+        <!-- 测试结果展示 -->
+        <div class="test-section">
+            <div class="test-title">
+                📊 测试结果
+                <span class="badge">实时显示测试输出</span>
+            </div>
+            <p class="test-description">查看测试日志和验证结果</p>
+            
+            <div class="test-result" id="test-result">
+                <div class="test-result-title">测试日志</div>
+                <div class="test-result-content" id="test-log">
+                    等待测试开始...
+                </div>
+            </div>
+        </div>
+        
+        <!-- 分页组件测试区域 -->
+        <div class="test-section">
+            <div class="test-title">
+                🎨 分页组件预览
+                <span class="badge">实时渲染效果</span>
+            </div>
+            <p class="test-description">当前场景的分页组件实际渲染效果</p>
+            
+            <div class="pagination-test-area">
+                <div id="test-pagination" class="pagination-container"></div>
+            </div>
+            
+            <div class="test-actions">
+                <button class="test-btn test-btn-primary" onclick="runAllTests()">
+                    ▶️ 运行所有测试
+                </button>
+                <button class="test-btn test-btn-secondary" onclick="clearLogs()">
+                    🗑️ 清空日志
+                </button>
+                <button class="test-btn test-btn-secondary" onclick="toggleTheme()">
+                    🌙 切换主题
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+    <script>
+        // 测试场景配置
+        const testScenarios = [
+            { id: 'few-pages', name: '少量页码 (5页)', totalPages: 5, description: '测试基本分页功能' },
+            { id: 'medium-pages', name: '中等页码 (20页)', totalPages: 20, description: '测试省略号显示' },
+            { id: 'many-pages', name: '大量页码 (100页)', totalPages: 100, description: '测试大量页码的智能显示' },
+            { id: 'huge-pages', name: '超多页码 (500页)', totalPages: 500, description: '测试极端情况' },
+            { id: 'extreme-pages', name: '极端页码 (1000页)', totalPages: 1000, description: '测试最大页码限制' },
+            { id: 'single-page', name: '单页情况 (1页)', totalPages: 1, description: '测试单页隐藏' },
+            { id: 'two-pages', name: '双页情况 (2页)', totalPages: 2, description: '测试最小分页' },
+            { id: 'seven-pages', name: '临界值 (7页)', totalPages: 7, description: '测试刚好7页的边界' },
+            { id: 'eight-pages', name: '临界值+1 (8页)', totalPages: 8, description: '测试超过7页开始省略' }
+        ];
+
+        let currentScenario = null;
+        let currentPage = 1;
+        let testLogs = [];
+        let passCount = 0;
+        let failCount = 0;
+
+        // 初始化场景卡片
+        function initScenarioCards() {
+            const grid = document.getElementById('scenario-grid');
+            grid.innerHTML = '';
+            
+            testScenarios.forEach(scenario => {
+                const card = document.createElement('div');
+                card.className = 'scenario-card';
+                card.innerHTML = `
+                    <h4>${scenario.name}</h4>
+                    <p>${scenario.description}</p>
+                    <p style="font-size: 11px; color: #9ca3af; margin-top: 8px;">
+                        总页数: <strong>${scenario.totalPages}</strong>
+                    </p>
+                `;
+                card.onclick = () => selectScenario(scenario);
+                grid.appendChild(card);
+            });
+        }
+
+        // 选择场景
+        function selectScenario(scenario) {
+            currentScenario = scenario;
+            currentPage = 1;
+            
+            // 更新卡片状态
+            document.querySelectorAll('.scenario-card').forEach(card => {
+                card.classList.remove('active');
+            });
+            event.currentTarget.classList.add('active');
+            
+            log('info', `✅ 已选择场景: ${scenario.name}`);
+            log('info', `📄 总页数: ${scenario.totalPages}`);
+            
+            // 渲染分页组件
+            renderTestPagination();
+        }
+
+        // 渲染测试分页组件
+        function renderTestPagination() {
+            if (!currentScenario) {
+                log('error', '❌ 请先选择测试场景');
+                return;
+            }
+            
+            const container = document.getElementById('test-pagination');
+            if (!container) {
+                log('error', '❌ 分页容器不存在');
+                return;
+            }
+            
+            // 调用实际的分页渲染函数
+            renderPagination('test-pagination', currentPage, currentScenario.totalPages, (page) => {
+                currentPage = page;
+                log('success', `📄 页码变更: ${page}`);
+                renderTestPagination();
+            });
+            
+            // 存储回调函数
+            window['paginationCallback_test-pagination'] = (page) => {
+                currentPage = page;
+                log('success', `📄 页码变更: ${page}`);
+                renderTestPagination();
+            };
+        }
+
+        // 日志函数
+        function log(type, message) {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${type}`;
+            logEntry.textContent = `[${timestamp}] ${message}`;
+            
+            const logContainer = document.getElementById('test-log');
+            logContainer.insertBefore(logEntry, logContainer.firstChild);
+            
+            testLogs.push({ type, timestamp, message });
+            
+            if (type === 'success') passCount++;
+            if (type === 'error') failCount++;
+        }
+
+        // 清空日志
+        function clearLogs() {
+            document.getElementById('test-log').innerHTML = '<div style="color: #6b7280; text-align: center; padding: 20px;">日志已清空</div>';
+            testLogs = [];
+            passCount = 0;
+            failCount = 0;
+            log('info', '🗑️ 日志已清空');
+        }
+
+        // 切换主题
+        function toggleTheme() {
+            const body = document.body;
+            const currentTheme = body.getAttribute('data-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            body.setAttribute('data-theme', newTheme);
+            log('info', `🌙 主题已切换为: ${newTheme}`);
+        }
+
+        // 运行所有测试
+        function runAllTests() {
+            log('info', '🚀 开始运行所有测试...');
+            
+            let scenarioIndex = 0;
+            
+            function runNextScenario() {
+                if (scenarioIndex >= testScenarios.length) {
+                    log('success', '✅ 所有测试完成!');
+                    log('info', `📊 测试统计: 通过 ${passCount}, 夽数 ${failCount}`);
+                    return;
+                }
+                
+                const scenario = testScenarios[scenarioIndex];
+                log('info', `\n📋 测试场景 ${scenarioIndex + 1}/${testScenarios.length}: ${scenario.name}`);
+                
+                selectScenario(scenario);
+                
+                // 测试各个页码位置
+                const testPages = [
+                    1, // 首页
+                    Math.floor(scenario.totalPages / 2), // 中间页
+                    scenario.totalPages // 末页
+                ].filter(p => p >= 1 && p <= scenario.totalPages);
+                
+                let pageIndex = 0;
+                
+                function testNextPage() {
+                    if (pageIndex >= testPages.length) {
+                        scenarioIndex++;
+                        setTimeout(runNextScenario, 500);
+                        return;
+                    }
+                    
+                    const page = testPages[pageIndex];
+                    log('info', `  📄 测试页码: ${page}`);
+                    
+                    // 模拟页码变更
+                    const callback = window['paginationCallback_test-pagination'];
+                    if (callback) {
+                        callback(page);
+                        
+                        // 验证分页组件状态
+                        setTimeout(() => {
+                            const container = document.getElementById('test-pagination');
+                            const buttons = container.querySelectorAll('.pagination-btn');
+                            const activeBtn = container.querySelector('.pagination-btn.active');
+                            
+                            if (activeBtn && activeBtn.textContent == page) {
+                                log('success', `  ✅ 页码 ${page} 激活状态正确`);
+                            } else {
+                                log('error', `  ❌ 页码 ${page} 激活状态错误`);
+                            }
+                            
+                            pageIndex++;
+                            setTimeout(testNextPage, 300);
+                        }, 100);
+                    } else {
+                        log('error', '  ❌ 回调函数不存在');
+                        scenarioIndex++;
+                        setTimeout(runNextScenario, 500);
+                    }
+                }
+                
+                setTimeout(testNextPage, 500);
+            }
+            
+            runNextScenario();
+        }
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            log('info', '✅ 测试页面加载完成');
+            log('info', '📌 请选择测试场景或点击"运行所有测试"');
+            initScenarioCards();
+            
+            // 默认选择第一个场景
+            setTimeout(() => {
+                const firstCard = document.querySelector('.scenario-card');
+                if (firstCard) {
+                    firstCard.click();
+                }
+            }, 100);
+        });
+    </script>
+</body>
+</html>

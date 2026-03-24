@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>编辑帖子 - xTest 社区</title>
+    <link rel="stylesheet" href="css/forum.css">
+    <link rel="stylesheet" href="css/post-create.css">
+    <link rel="stylesheet" href="https://unpkg.com/vditor@3.9.3/dist/index.css" />
+</head>
+<body>
+    <header class="forum-header">
+        <div class="header-container">
+            <div class="header-left">
+                <a href="forum.html" class="logo">
+                    <span class="logo-icon">💬</span>
+                    <span class="logo-text">xTest 社区</span>
+                </a>
+            </div>
+            <div class="header-right">
+                <div id="user-status" class="user-status"></div>
+                <a href="user-center.html" class="back-link">← 个人中心</a>
+                <a href="forum.html" class="back-link">返回社区</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="create-main">
+        <div class="create-container">
+            <h1 class="create-title">编辑帖子</h1>
+            
+            <form id="post-form" class="post-form">
+                <input type="hidden" id="post-id">
+                <div class="form-group">
+                    <label class="form-label" for="post-title">标题</label>
+                    <input 
+                        type="text" 
+                        id="post-title" 
+                        class="form-input" 
+                        placeholder="请输入帖子标题（最多200字）"
+                        maxlength="200"
+                        required
+                    >
+                    <div class="form-hint">
+                        <span id="title-count">0</span>/200
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">标签</label>
+                    <div id="tag-selector" class="tag-selector"></div>
+                    <div class="form-hint">选择合适的标签，方便他人查找</div>
+                </div>
+                
+                <div class="form-group anonymous-option">
+                    <label class="anonymous-label">
+                        <input type="checkbox" id="anonymous-checkbox" class="anonymous-checkbox">
+                        <span class="anonymous-slider"></span>
+                        <span class="anonymous-text">匿名发布</span>
+                    </label>
+                    <div class="form-hint anonymous-hint">
+                        👤 匿名发布后，其他用户将看到"匿名工程师"，而非您的真实用户名
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">内容</label>
+                    <div id="vditor" class="vditor-container"></div>
+                    <div class="form-hint">支持 Markdown 语法，可插入图片、代码块等</div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">附件</label>
+                    <div class="attachment-upload">
+                        <input type="file" id="attachment-input" multiple style="display: none;">
+                        <button type="button" class="upload-btn" onclick="document.getElementById('attachment-input').click()">
+                            📎 上传附件
+                        </button>
+                        <span class="upload-hint">支持所有格式，单个文件最大 100MB</span>
+                    </div>
+                    <div id="attachment-list" class="edit-attachment-list"></div>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="cancelEdit()">取消</button>
+                    <button type="submit" class="btn btn-primary" id="submit-btn">保存修改</button>
+                </div>
+            </form>
+        </div>
+    </main>
+
+    <footer class="forum-footer">
+        <p>© centec <span id="current-year"></span> xTest 社区 - 测试经验沉淀平台</p>
+    </footer>
+
+    <script src="https://unpkg.com/vditor@3.9.3/dist/index.min.js"></script>
+    <script src="js/forum-toast.js"></script>
+    <script src="js/post-edit.js"></script>
+</body>
+</html>

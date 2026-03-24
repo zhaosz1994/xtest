@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>个人中心 - xTest 社区</title>
+    <link rel="stylesheet" href="css/forum.css">
+    <link rel="stylesheet" href="css/user-center.css">
+</head>
+<body>
+    <header class="forum-header">
+        <div class="header-container">
+            <div class="header-left">
+                <a href="forum.html" class="logo">
+                    <span class="logo-icon">💬</span>
+                    <span class="logo-text">xTest 社区</span>
+                </a>
+            </div>
+            <div class="header-right">
+                <div id="user-status" class="user-status"></div>
+                <a href="forum.html" class="back-link">← 返回社区</a>
+                <a href="/" class="back-link">返回 xTest</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="user-center-main">
+        <div class="user-info-card">
+            <div class="user-avatar" id="user-avatar">U</div>
+            <div class="user-details">
+                <h2 id="user-name">用户名</h2>
+                <p id="user-role">角色</p>
+            </div>
+        </div>
+
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="my-posts">我的帖子</button>
+            <button class="tab-btn" data-tab="my-comments">我的评论</button>
+            <button class="tab-btn" data-tab="recycle-bin">回收站</button>
+            <button class="tab-btn" data-tab="user-management" id="user-management-tab" style="display: none;">用户管理</button>
+        </div>
+
+        <div class="tab-content">
+            <div id="my-posts" class="tab-panel active">
+                <div class="search-bar">
+                    <input type="text" id="post-search-input" class="search-input" placeholder="搜索帖子标题...">
+                    <button class="search-btn" onclick="searchPosts()">搜索</button>
+                </div>
+                <div id="post-list" class="post-list">
+                    <div class="loading">加载中...</div>
+                </div>
+                <div id="post-pagination" class="pagination-container"></div>
+            </div>
+
+            <div id="my-comments" class="tab-panel">
+                <div class="search-bar">
+                    <input type="text" id="comment-search-input" class="search-input" placeholder="搜索评论内容...">
+                    <button class="search-btn" onclick="searchComments()">搜索</button>
+                </div>
+                <div id="comment-list" class="comment-list">
+                    <div class="loading">点击"我的评论"标签加载</div>
+                </div>
+                <div id="comment-pagination" class="pagination-container"></div>
+            </div>
+
+            <div id="recycle-bin" class="tab-panel">
+                <div class="recycle-bin-header">
+                    <h3>🗑️ 回收站</h3>
+                    <p class="recycle-bin-tip">已删除的内容将在回收站保留，您可以随时恢复。最多显示最近删除的10条帖子和10条评论。</p>
+                </div>
+                
+                <div class="recycle-section">
+                    <h4>已删除的帖子</h4>
+                    <div id="deleted-posts-list" class="deleted-list">
+                        <div class="loading">加载中...</div>
+                    </div>
+                </div>
+                
+                <div class="recycle-section">
+                    <h4>已删除的评论</h4>
+                    <div id="deleted-comments-list" class="deleted-list">
+                        <div class="loading">加载中...</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="user-management" class="tab-panel">
+                <div class="user-management-header">
+                    <h3>用户管理</h3>
+                    <div class="search-bar">
+                        <input type="text" id="user-search-input" class="search-input" placeholder="搜索用户名...">
+                        <button class="search-btn" onclick="searchUsers()">搜索</button>
+                    </div>
+                </div>
+                <div id="user-list" class="user-list">
+                    <div class="loading">点击"用户管理"标签加载</div>
+                </div>
+                <div id="user-pagination" class="pagination-container"></div>
+            </div>
+        </div>
+    </main>
+
+    <div id="edit-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>编辑帖子</h3>
+                <span class="modal-close" onclick="closeEditModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-post-id">
+                <div class="form-group">
+                    <label>标题</label>
+                    <input type="text" id="edit-title" class="form-input" maxlength="200">
+                </div>
+                <div class="form-group">
+                    <label>内容</label>
+                    <textarea id="edit-content" class="form-textarea" rows="10"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>标签</label>
+                    <div id="edit-tag-selector" class="tag-selector"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeEditModal()">取消</button>
+                <button class="btn btn-primary" onclick="saveEditPost()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <footer class="forum-footer">
+        <p>© centec <span id="current-year"></span> xTest 社区 - 测试经验沉淀平台</p>
+    </footer>
+
+    <script src="js/forum-toast.js"></script>
+    <script src="js/user-center.js"></script>
+</body>
+</html>
