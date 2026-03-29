@@ -10879,11 +10879,9 @@ function addCaseLibrary() {
 }
 
 // 用例库数据
-let caseLibraries = [
-    { id: 1, name: '12345', creator: 'admin', createdAt: '2026-01-15 10:00:00', moduleCount: 3 }
-];
+let caseLibraries = [];
 
-// 加载用例库列表
+// 加载用例库列表用例库列表
 async function loadCaseLibraries() {
     try {
         showLoading('加载用例库列表中...');
