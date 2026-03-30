@@ -91,6 +91,98 @@ app.use('/api/email', require('./routes/email'));
 app.use('/api/templates', require('./routes/reportTemplates'));
 app.use('/api/forum', forumRouter);
 app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/testcases', require('./routes/testcases'));
+
+// 配置数据 API 端点（不带认证，供前端下拉框使用）
+app.get('/priorities/list', async (req, res) => {
+  try {
+    const [priorities] = await pool.execute('SELECT id, name FROM test_priorities ORDER BY id');
+    res.json({ success: true, priorities });
+  } catch (error) {
+    console.error('获取优先级列表错误:', error);
+    res.json({ success: false, priorities: [], message: '获取失败' });
+  }
+});
+
+app.get('/test-types/list', async (req, res) => {
+  try {
+    const [testTypes] = await pool.execute('SELECT id, name FROM test_types ORDER BY id');
+    res.json({ success: true, testTypes });
+  } catch (error) {
+    console.error('获取测试类型列表错误:', error);
+    res.json({ success: false, testTypes: [], message: '获取失败' });
+  }
+});
+
+app.get('/test-phases/list', async (req, res) => {
+  try {
+    const [testPhases] = await pool.execute('SELECT id, name FROM test_phases ORDER BY id');
+    res.json({ success: true, testPhases });
+  } catch (error) {
+    console.error('获取测试阶段列表错误:', error);
+    res.json({ success: false, testPhases: [], message: '获取失败' });
+  }
+});
+
+app.get('/environments/list', async (req, res) => {
+  try {
+    const [environments] = await pool.execute('SELECT id, name FROM environments ORDER BY id');
+    res.json({ success: true, environments });
+  } catch (error) {
+    console.error('获取环境列表错误:', error);
+    res.json({ success: false, environments: [], message: '获取失败' });
+  }
+});
+
+// 用户列表 API（供前端负责人下拉框使用）
+app.get('/users/list', async (req, res) => {
+  try {
+    const [users] = await pool.execute('SELECT id, username FROM users ORDER BY username');
+    res.json({ success: true, users });
+  } catch (error) {
+    console.error('获取用户列表错误:', error);
+    res.json({ success: false, users: [], message: '获取失败' });
+  }
+});
+
+// 一级测试点列表 API（供批量创建用例页面使用）
+app.post('/testpoints/level1/all', async (req, res) => {
+  const { libraryId, keyword } = req.body;
+
+  try {
+    let query = `
+      SELECT 
+        l1.id, 
+        l1.name, 
+        l1.test_type, 
+        l1.created_at, 
+        l1.updated_at,
+        l1.order_index,
+        COUNT(tc.id) as test_case_count,
+        m.name as module_name, 
+        m.id as module_id
+      FROM level1_points l1
+      JOIN modules m ON l1.module_id = m.id
+      LEFT JOIN test_cases tc ON l1.id = tc.level1_id
+      WHERE m.library_id = ?
+    `;
+    
+    const params = [libraryId];
+    
+    if (keyword && keyword.trim() !== '') {
+      query += ' AND l1.name LIKE ?';
+      params.push(`%${keyword.trim()}%`);
+    }
+    
+    query += ' GROUP BY l1.id, l1.name, l1.test_type, l1.created_at, l1.updated_at, l1.order_index, m.name, m.id ORDER BY m.order_index ASC, l1.order_index ASC';
+    
+    const [points] = await pool.execute(query, params);
+    res.json({ success: true, level1Points: points });
+  } catch (error) {
+    console.error('获取所有一级测试点错误:', error);
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
 
 // 静态文件服务 - 用于访问上传的图片
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
@@ -3792,95 +3884,21 @@ app.get('/api/dashboard/stats', async (req, res) => {
   try {
     console.log('接收到获取测试管理统计数据请求');
     
-    const { projectId, owner, statusId, progressId, libraryId } = req.query;
+    const [testCaseResult] = await pool.execute('SELECT COUNT(*) as count FROM test_cases');
+    const testCaseCount = testCaseResult[0].count;
     
-    // 构建查询条件
-    let whereClause = '1=1';
-    const params = [];
+    const [testReportResult] = await pool.execute('SELECT COUNT(*) as count FROM test_reports');
+    const testReportCount = testReportResult[0].count;
     
-    if (projectId && projectId !== 'all') {
-      whereClause += ' AND tcp.project_id = ?';
-      params.push(projectId);
-    }
-    
-    if (owner && owner !== 'all') {
-      whereClause += ' AND tcp.owner = ?';
-      params.push(owner);
-    }
-    
-    if (statusId && statusId !== 'all') {
-      whereClause += ' AND tcp.status_id = ?';
-      params.push(statusId);
-    }
-    
-    if (progressId && progressId !== 'all') {
-      whereClause += ' AND tcp.progress_id = ?';
-      params.push(progressId);
-    }
-    
-    if (libraryId && libraryId !== 'all') {
-      whereClause += ' AND tc.library_id = ?';
-      params.push(libraryId);
-    }
-    
-    // 获取测试用例总数
-    const testCaseCountQuery = `SELECT COUNT(*) as count FROM test_cases tc WHERE ${whereClause}`;
-    const [testCaseCountResult] = await pool.execute(testCaseCountQuery, params);
-    const totalTestCases = testCaseCountResult[0].count;
-    
-    // 获取测试状态统计
-    const statusStatsQuery = `
-      SELECT 
-        ts.name as status_name,
-        COUNT(tcp.id) as count
-      FROM test_statuses ts
-      LEFT JOIN test_case_projects tcp ON ts.id = tcp.status_id
-      LEFT JOIN test_cases tc ON tcp.test_case_id = tc.id
-      WHERE ${whereClause}
-      GROUP BY ts.id, ts.name
-      ORDER BY count DESC
-    `;
-    const [statusStats] = await pool.execute(statusStatsQuery, params);
-    
-    // 计算通过、失败、待测试数量
-    let passedCount = 0;
-    let failedCount = 0;
-    let pendingCount = 0;
-    
-    statusStats.forEach(stat => {
-      const statusName = (stat.status_name || '').toLowerCase();
-      if (statusName.includes('pass') || statusName.includes('通过')) {
-        passedCount += stat.count;
-      } else if (statusName.includes('fail') || statusName.includes('失败')) {
-        failedCount += stat.count;
-      } else {
-        pendingCount += stat.count;
-      }
-    });
-    
-    // 计算通过率
-    const totalTested = passedCount + failedCount;
-    const passRate = totalTested > 0 ? ((passedCount / totalTested) * 100).toFixed(1) : 0;
-    
-    // 获取最近7天执行次数
-    const recentExecutionsQuery = `
-      SELECT COUNT(*) as count
-      FROM test_case_projects tcp
-      LEFT JOIN test_cases tc ON tcp.test_case_id = tc.id
-      WHERE ${whereClause} AND tcp.updated_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-    `;
-    const [recentExecutionsResult] = await pool.execute(recentExecutionsQuery, params);
-    const recentExecutions = recentExecutionsResult[0].count;
+    const [testPlanResult] = await pool.execute('SELECT COUNT(*) as count FROM test_plans');
+    const testPlanCount = testPlanResult[0].count;
     
     res.json({
       success: true,
       stats: {
-        totalTestCases,
-        passedCount,
-        failedCount,
-        pendingCount,
-        passRate: passRate + '%',
-        recentExecutions
+        totalTestCases: testCaseCount,
+        testReportCount: testReportCount,
+        testPlanCount: testPlanCount
       }
     });
   } catch (error) {

@@ -5620,6 +5620,10 @@ h2 {
 
 .add-case-modal {
     z-index: 11000;
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding-top: 5vh;
+    padding-left: 0;
 }
 
 .add-case-content {
@@ -5628,6 +5632,77 @@ h2 {
     max-height: 90vh;
     display: flex;
     flex-direction: column;
+    position: relative;
+    min-width: 600px;
+    margin: 0 auto;
+}
+
+.modal-resizer {
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 6px;
+    height: 100%;
+    cursor: ew-resize;
+    background: transparent;
+    z-index: 10;
+}
+
+.modal-resizer::before {
+    content: '';
+    position: absolute;
+    right: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 2px;
+    height: 40px;
+    background-color: #e0e0e0;
+    border-radius: 1px;
+    opacity: 0;
+    transition: opacity 0.2s ease, background-color 0.2s ease;
+}
+
+.modal-resizer:hover::before,
+.modal-resizer.dragging::before {
+    opacity: 1;
+    background-color: #3b82f6;
+}
+
+.modal-resizer.dragging {
+    background: linear-gradient(to left, rgba(59, 130, 246, 0.1), transparent);
+}
+
+body.modal-resizing {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+}
+
+body.modal-resizing * {
+    cursor: ew-resize !important;
+}
+
+body.modal-dragging {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+}
+
+body.modal-dragging * {
+    cursor: grabbing !important;
+}
+
+body.panel-dragging {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+}
+
+body.panel-dragging * {
+    cursor: grabbing !important;
 }
 
 .add-case-header {
@@ -5637,6 +5712,12 @@ h2 {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    cursor: move;
+    user-select: none;
+}
+
+.add-case-header:active {
+    cursor: grabbing;
 }
 
 .ac-header-info h3 {
@@ -6001,6 +6082,12 @@ h2 {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    cursor: move;
+    user-select: none;
+}
+
+.floating-panel-header:active {
+    cursor: grabbing;
 }
 
 .floating-panel-header h3 {

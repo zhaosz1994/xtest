@@ -6,7 +6,7 @@
 /* 现代化统计卡片 */
 .dashboard-stats-modern{
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 20px;
     margin-bottom: 24px;
 }

@@ -355,59 +355,26 @@
                                     <span class="stat-value" id="testcase-count">0</span>
                                 </div>
                             </div>
-                            <div class="stat-card-modern stat-card-success clickable" onclick="drillDownToCases('passed')">
+                            <div class="stat-card-modern stat-card-success clickable" onclick="navigateToReports()">
                                 <div class="stat-icon">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                        <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                                     </svg>
                                 </div>
                                 <div class="stat-content">
-                                    <span class="stat-label">通过用例</span>
-                                    <span class="stat-value" id="passed-count">0</span>
+                                    <span class="stat-label">测试报告总数</span>
+                                    <span class="stat-value" id="test-report-count">0</span>
                                 </div>
                             </div>
-                            <div class="stat-card-modern stat-card-danger clickable" onclick="drillDownToCases('failed')">
+                            <div class="stat-card-modern stat-card-secondary clickable" onclick="navigateToPlans()">
                                 <div class="stat-icon">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                        <path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
                                     </svg>
                                 </div>
                                 <div class="stat-content">
-                                    <span class="stat-label">失败用例</span>
-                                    <span class="stat-value" id="failed-count">0</span>
-                                </div>
-                            </div>
-                            <div class="stat-card-modern stat-card-warning clickable" onclick="drillDownToCases('pending')">
-                                <div class="stat-icon">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                    </svg>
-                                </div>
-                                <div class="stat-content">
-                                    <span class="stat-label">待测试用例</span>
-                                    <span class="stat-value" id="pending-count">0</span>
-                                </div>
-                            </div>
-                            <div class="stat-card-modern stat-card-info clickable" onclick="drillDownToCases('passRate')">
-                                <div class="stat-icon">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
-                                    </svg>
-                                </div>
-                                <div class="stat-content">
-                                    <span class="stat-label">总通过率</span>
-                                    <span class="stat-value" id="total-pass-rate">0%</span>
-                                </div>
-                            </div>
-                            <div class="stat-card-modern stat-card-secondary clickable" onclick="drillDownToCases('recentExecutions')">
-                                <div class="stat-icon">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                                    </svg>
-                                </div>
-                                <div class="stat-content">
-                                    <span class="stat-label">最近执行次数</span>
-                                    <span class="stat-value" id="recent-executions-count">0</span>
+                                    <span class="stat-label">测试计划总数</span>
+                                    <span class="stat-value" id="test-plan-count">0</span>
                                 </div>
                             </div>
                         </div>
@@ -728,6 +695,7 @@
                                 <button class="add-button" id="add-case-button" style="display: none;">+</button>
                                 <div class="add-dropdown" id="add-case-dropdown">
                                     <a href="#" onclick="addTestCase()">新建用例</a>
+                                    <a href="#" onclick="batchCreateTestCases()">批量新建用例</a>
                                     <a href="#" onclick="addCaseLibrary()">新建用例库</a>
                                     <a href="#" onclick="addTestPlan()">新建测试计划</a>
                                     <a href="#" onclick="addTestReport()">新建测试报告</a>
@@ -825,7 +793,7 @@
                                     </svg>
                                     导出用例
                                 </button>
-                                <button class="primary-btn" onclick="openAddTestCaseModal()">+ 新建用例</button>
+                                <button class="primary-btn" onclick="batchCreateTestCases()">+ 新建用例</button>
                             </div>
                         </div>
                     </div>
@@ -1273,6 +1241,14 @@
                                         </svg>
                                         <input type="text" id="testcase-search-input" placeholder="模糊搜索用例..." class="search-input" style="width: 160px; height: 28px; padding: 0 10px 0 28px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; background: white; color: #1e293b; outline: none; transition: all 0.2s ease;">
                                     </div>
+                                    <button class="add-case-btn" onclick="batchCreateTestCases()" title="批量新建测试用例" style="background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0;">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+                                            <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+                                            <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+                                            <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+                                        </svg>
+                                    </button>
                                     <button class="add-case-btn" onclick="openAddTestCaseModal()" title="新建用例">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <path d="M12 5v14M5 12h14"></path>
@@ -3540,7 +3516,8 @@ return rows[0];'></textarea>
 
     <!-- 新建测试用例模态框 -->
     <div id="add-case-modal" class="modal add-case-modal" style="display: none;">
-        <div class="modal-content add-case-content">
+        <div class="modal-content add-case-content" id="add-case-content">
+            <div class="modal-resizer" id="add-case-resizer"></div>
             <div class="modal-header add-case-header">
                 <div class="ac-header-info">
                     <h3>新建测试用例</h3>
@@ -4661,6 +4638,12 @@ return rows[0];'></textarea>
                                         </select>
                                     </div>
                                     <div class="form-group">
+                                        <label class="form-label" for="detail-case-type">测试类型</label>
+                                        <select id="detail-case-type" name="type" class="form-select">
+                                            <option value="">加载中...</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
                                         <label class="form-label" for="detail-case-owner">负责人</label>
                                         <input type="text" id="detail-case-owner" name="owner" class="form-input" placeholder="请输入负责人">
                                     </div>
@@ -4828,15 +4811,16 @@ return rows[0];'></textarea>
                                 </button>
                             </div>
                             <div class="form-card-body">
-                                <div id="detail-case-projects-list" class="case-projects-list">
-                                    <div class="empty-state">
+                                <div id="detail-case-projects-list" class="ac-projects-summary">
+                                    <div class="ac-projects-empty">
                                         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                                             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                                         </svg>
-                                        <p>暂无关联项目</p>
+                                        <p>暂未关联项目</p>
                                         <button type="button" onclick="openEditTestCaseProjectAssociationsModal()" class="btn btn-sm btn-primary">添加关联</button>
                                     </div>
                                 </div>
+                                <div id="detail-case-projects-container" style="display: none;"></div>
                             </div>
                         </div>
                     </div>

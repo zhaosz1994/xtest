@@ -321,8 +321,9 @@ let testCaseSearchKeyword = '';
 // 测试用例分页
 let currentTestCasePage = 1;
 
-// 当前选中的一级测试点ID
+// 当前选中的一级测试点ID和名称
 let selectedLevel1PointId = null;
+let selectedLevel1PointName = null;
 // 当前用例库编号、模块编号和一级测试点编号
 let currentLibraryId = null;
 let currentModuleId = null;
@@ -5099,9 +5100,11 @@ function initLevel1PointClickEvents() {
             this.classList.add('active');
 
             const pointId = this.getAttribute('data-point-id');
+            const pointName = this.querySelector('.level1-name')?.textContent || '';
             if (pointId) {
-                console.log('Selected level 1 point:', pointId);
+                console.log('Selected level 1 point:', pointId, pointName);
                 selectedLevel1PointId = pointId;
+                selectedLevel1PointName = pointName;
                 currentLibraryId = currentCaseLibraryId;
                 currentModuleId = selectedModuleId;
 
@@ -5114,11 +5117,13 @@ function initLevel1PointClickEvents() {
             clearTimeout(hidePanelTimer);
 
             const pointId = this.getAttribute('data-point-id');
+            const pointName = this.querySelector('.level1-name')?.textContent || '';
             if (pointId) {
                 currentPointId = pointId;
 
                 showPanelTimer = setTimeout(() => {
                     selectedLevel1PointId = pointId;
+                    selectedLevel1PointName = pointName;
                     currentLibraryId = currentCaseLibraryId;
                     currentModuleId = selectedModuleId;
 
@@ -5223,6 +5228,9 @@ async function showFloatingPanel(pointId, rowElement) {
         if (loading) loading.style.display = 'none';
         if (table) table.style.display = 'table';
 
+        // 初始化拖拽功能
+        initFloatingPanelDrag();
+
     } catch (error) {
         console.error('显示悬浮面板错误:', error);
         const panel = document.getElementById('test-points-floating-panel');
@@ -5268,7 +5276,83 @@ async function toggleFloatingPanel(pointId, rowElement) {
 
 // 关闭悬浮面板
 function closeFloatingPanel() {
+    resetFloatingPanelPosition();
     hideFloatingPanel();
+}
+
+// 初始化浮动面板拖拽功能
+function initFloatingPanelDrag() {
+    const panel = document.getElementById('test-points-floating-panel');
+    const header = panel?.querySelector('.floating-panel-header');
+    
+    if (!panel || !header) return;
+    
+    if (panel.dataset.dragInitialized === 'true') return;
+    panel.dataset.dragInitialized = 'true';
+
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+
+    header.addEventListener('mousedown', (e) => {
+        if (e.target.closest('.close-panel-btn') || e.target.closest('.add-case-btn') || 
+            e.target.closest('button') || e.target.closest('input')) return;
+        
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        
+        const rect = panel.getBoundingClientRect();
+        startLeft = rect.left;
+        startTop = rect.top;
+        
+        panel.style.right = 'auto';
+        panel.style.left = startLeft + 'px';
+        panel.style.top = startTop + 'px';
+        
+        document.body.classList.add('panel-dragging');
+        
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        
+        const deltaX = e.clientX - startX;
+        const deltaY = e.clientY - startY;
+        
+        let newLeft = startLeft + deltaX;
+        let newTop = startTop + deltaY;
+        
+        // 边界限制
+        const maxLeft = window.innerWidth - panel.offsetWidth - 10;
+        const maxTop = window.innerHeight - 100;
+        
+        newLeft = Math.max(10, Math.min(newLeft, maxLeft));
+        newTop = Math.max(10, Math.min(newTop, maxTop));
+        
+        panel.style.left = newLeft + 'px';
+        panel.style.top = newTop + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            document.body.classList.remove('panel-dragging');
+        }
+    });
+}
+
+// 重置浮动面板位置
+function resetFloatingPanelPosition() {
+    const panel = document.getElementById('test-points-floating-panel');
+    if (panel) {
+        panel.style.left = '';
+        panel.style.top = '';
+        panel.style.right = '';
+    }
 }
 
 // 刷新测试用例列表（搜索时调用）
@@ -5740,6 +5824,9 @@ async function openTestCaseDetailModal(testCase) {
     // 加载优先级
     await loadPrioritiesForDetail(testCase.priority);
 
+    // 加载测试类型
+    await loadTestTypesForDetail(testCase.type || '');
+
     // 加载测试阶段
     await loadPhasesForDetail(testCase.test_phase || '');
 
@@ -6014,6 +6101,54 @@ async function loadPrioritiesForDetail(selectedPriority) {
                 <option value="P1" ${selectedPriority === 'P1' ? 'selected' : ''}>P1 - 严重级</option>
                 <option value="P2" ${selectedPriority === 'P2' ? 'selected' : ''}>P2 - 一般级</option>
                 <option value="P3" ${selectedPriority === 'P3' ? 'selected' : ''}>P3 - 提示级</option>
+            `;
+        }
+    }
+}
+
+// 加载测试类型用于测试用例详情
+async function loadTestTypesForDetail(selectedType) {
+    try {
+        const testTypesData = await apiRequest('/test-types/list');
+
+        let testTypeList = [];
+        if (testTypesData.success && testTypesData.testTypes) {
+            testTypeList = testTypesData.testTypes;
+        } else if (Array.isArray(testTypesData)) {
+            testTypeList = testTypesData;
+        }
+
+        const typeSelect = document.getElementById('detail-case-type');
+        if (!typeSelect) {
+            console.error('找不到测试类型下拉框元素');
+            return;
+        }
+
+        typeSelect.innerHTML = '<option value="">请选择测试类型</option>';
+
+        testTypeList.forEach(type => {
+            const option = document.createElement('option');
+            option.value = type.name;
+            option.textContent = type.name;
+            if (type.name === selectedType) {
+                option.selected = true;
+            }
+            typeSelect.appendChild(option);
+        });
+
+        if (!selectedType && testTypeList.length > 0) {
+            typeSelect.value = testTypeList[0].name;
+        }
+
+    } catch (error) {
+        console.error('加载测试类型失败:', error);
+        const typeSelect = document.getElementById('detail-case-type');
+        if (typeSelect) {
+            typeSelect.innerHTML = `
+                <option value="功能测试" ${selectedType === '功能测试' ? 'selected' : ''}>功能测试</option>
+                <option value="性能测试" ${selectedType === '性能测试' ? 'selected' : ''}>性能测试</option>
+                <option value="安全测试" ${selectedType === '安全测试' ? 'selected' : ''}>安全测试</option>
+                <option value="兼容性测试" ${selectedType === '兼容性测试' ? 'selected' : ''}>兼容性测试</option>
             `;
         }
     }
@@ -7321,7 +7456,7 @@ async function saveTestCaseDetail() {
             caseId: document.getElementById('detail-case-id').value,
             name: document.getElementById('detail-case-name').value.trim(),
             priority: document.getElementById('detail-case-priority').value,
-            type: 'functional', // 测试类型通过testTypes字段处理
+            type: document.getElementById('detail-case-type').value,
             precondition: document.getElementById('detail-case-precondition').value.trim(),
             purpose: document.getElementById('detail-case-purpose').value.trim(),
             steps: document.getElementById('detail-case-steps').value.trim(),
@@ -8561,8 +8696,266 @@ function showStep(stepNumber) {
 
 // 添加用例
 function addTestCase() {
-    // Call the full function that loads modules and projects
     openAddTestCaseModal();
+}
+
+function batchCreateTestCases() {
+    if (!selectedModuleId) {
+        openBatchCreateSelectModal();
+        return;
+    }
+    
+    const currentLibraryIdVal = currentCaseLibraryId || '';
+    let currentLibraryNameVal = '';
+    const currentModuleNameVal = window.currentModule ? window.currentModule.name : '';
+    
+    if (caseLibraries && currentCaseLibraryId) {
+        const currentLib = caseLibraries.find(lib => lib.id == currentCaseLibraryId);
+        if (currentLib) {
+            currentLibraryNameVal = currentLib.name || '';
+        }
+    }
+    
+    let url = `/batch-create-cases.html?moduleId=${selectedModuleId}&libraryId=${currentLibraryIdVal}&moduleName=${encodeURIComponent(currentModuleNameVal)}&libraryName=${encodeURIComponent(currentLibraryNameVal)}&returnUrl=${encodeURIComponent(window.location.href)}`;
+    
+    if (selectedLevel1PointId) {
+        url += `&level1Id=${selectedLevel1PointId}&level1Name=${encodeURIComponent(selectedLevel1PointName || '')}`;
+    }
+    
+    // 在新浏览器页签中打开批量创建页面
+    window.open(url, '_blank');
+}
+
+let batchCreateSelectedLibrary = null;
+let batchCreateSelectedModule = null;
+let batchCreateSelectedLevel1 = null;
+
+async function openBatchCreateSelectModal() {
+    let modal = document.getElementById('batch-create-select-modal');
+    
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'batch-create-select-modal';
+        modal.className = 'modal';
+        modal.style.cssText = 'display: none; z-index: 99999;';
+        modal.innerHTML = `
+            <div class="modal-overlay" onclick="closeBatchCreateSelectModal()"></div>
+            <div class="modal-content" style="max-width: 500px;">
+                <div class="modal-header">
+                    <h3>选择创建位置</h3>
+                    <span class="close" onclick="closeBatchCreateSelectModal()">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #333;">用例库 <span style="color: #ff4d4f;">*</span></label>
+                        <select id="batch-select-library" class="form-control" style="width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;" onchange="onBatchSelectLibrary(this.value)">
+                            <option value="">请选择用例库</option>
+                        </select>
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #333;">模块 <span style="color: #ff4d4f;">*</span></label>
+                        <select id="batch-select-module" class="form-control" style="width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;" onchange="onBatchSelectModule(this.value)" disabled>
+                            <option value="">请先选择用例库</option>
+                        </select>
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #333;">一级测试点 <span style="color: #999;">(可选)</span></label>
+                        <select id="batch-select-level1" class="form-control" style="width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;" onchange="onBatchSelectLevel1(this.value)" disabled>
+                            <option value="">请先选择模块</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 12px; padding: 12px 24px; border-top: 1px solid #f0f0f0; background: #fafafa;">
+                    <button class="btn btn-secondary" onclick="closeBatchCreateSelectModal()">取消</button>
+                    <button class="btn btn-primary" id="batch-create-confirm-btn" onclick="confirmBatchCreate()">确定</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+    
+    batchCreateSelectedLibrary = null;
+    batchCreateSelectedModule = null;
+    batchCreateSelectedLevel1 = null;
+    
+    const librarySelect = document.getElementById('batch-select-library');
+    const moduleSelect = document.getElementById('batch-select-module');
+    const level1Select = document.getElementById('batch-select-level1');
+    
+    librarySelect.innerHTML = '<option value="">请选择用例库</option>';
+    moduleSelect.innerHTML = '<option value="">请先选择用例库</option>';
+    moduleSelect.disabled = true;
+    level1Select.innerHTML = '<option value="">请先选择模块</option>';
+    level1Select.disabled = true;
+    
+    try {
+        const result = await apiRequest('/libraries/list', { useCache: false });
+        if (result.success && result.libraries) {
+            result.libraries.forEach(lib => {
+                const option = document.createElement('option');
+                option.value = lib.id;
+                option.textContent = lib.name;
+                option.dataset.name = lib.name;
+                if (currentCaseLibraryId && lib.id == currentCaseLibraryId) {
+                    option.selected = true;
+                }
+                librarySelect.appendChild(option);
+            });
+            
+            if (currentCaseLibraryId) {
+                await onBatchSelectLibrary(currentCaseLibraryId);
+            }
+        }
+    } catch (error) {
+        console.error('加载用例库列表失败:', error);
+    }
+    
+    modal.style.display = 'flex';
+}
+
+function closeBatchCreateSelectModal() {
+    const modal = document.getElementById('batch-create-select-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+async function onBatchSelectLibrary(libraryId) {
+    const moduleSelect = document.getElementById('batch-select-module');
+    const level1Select = document.getElementById('batch-select-level1');
+    
+    batchCreateSelectedLibrary = null;
+    batchCreateSelectedModule = null;
+    batchCreateSelectedLevel1 = null;
+    
+    level1Select.innerHTML = '<option value="">请先选择模块</option>';
+    level1Select.disabled = true;
+    
+    if (!libraryId) {
+        moduleSelect.innerHTML = '<option value="">请先选择用例库</option>';
+        moduleSelect.disabled = true;
+        return;
+    }
+    
+    const librarySelect = document.getElementById('batch-select-library');
+    const selectedOption = librarySelect.options[librarySelect.selectedIndex];
+    batchCreateSelectedLibrary = {
+        id: libraryId,
+        name: selectedOption.dataset.name || selectedOption.textContent
+    };
+    
+    moduleSelect.innerHTML = '<option value="">加载中...</option>';
+    moduleSelect.disabled = true;
+    
+    try {
+        const result = await apiRequest('/modules/list', {
+            method: 'POST',
+            body: JSON.stringify({ libraryId: libraryId, page: 1, pageSize: 1000 })
+        });
+        
+        moduleSelect.innerHTML = '<option value="">请选择模块</option>';
+        
+        if (result.success && result.modules && result.modules.length > 0) {
+            result.modules.forEach(mod => {
+                const option = document.createElement('option');
+                option.value = mod.id;
+                option.textContent = mod.name;
+                option.dataset.name = mod.name;
+                moduleSelect.appendChild(option);
+            });
+            moduleSelect.disabled = false;
+        } else {
+            moduleSelect.innerHTML = '<option value="">该用例库下暂无模块</option>';
+        }
+    } catch (error) {
+        console.error('加载模块列表失败:', error);
+        moduleSelect.innerHTML = '<option value="">加载失败</option>';
+    }
+}
+
+async function onBatchSelectModule(moduleId) {
+    const level1Select = document.getElementById('batch-select-level1');
+    
+    batchCreateSelectedModule = null;
+    batchCreateSelectedLevel1 = null;
+    
+    if (!moduleId) {
+        level1Select.innerHTML = '<option value="">请先选择模块</option>';
+        level1Select.disabled = true;
+        return;
+    }
+    
+    const moduleSelect = document.getElementById('batch-select-module');
+    const selectedOption = moduleSelect.options[moduleSelect.selectedIndex];
+    batchCreateSelectedModule = {
+        id: moduleId,
+        name: selectedOption.dataset.name || selectedOption.textContent
+    };
+    
+    level1Select.innerHTML = '<option value="">加载中...</option>';
+    level1Select.disabled = true;
+    
+    try {
+        const result = await apiRequest(`/testpoints/level1/${moduleId}`, { useCache: false });
+        
+        level1Select.innerHTML = '<option value="">不指定（可选）</option>';
+        
+        if (result.success && result.level1Points && result.level1Points.length > 0) {
+            result.level1Points.forEach(l1 => {
+                const option = document.createElement('option');
+                option.value = l1.id;
+                option.textContent = l1.name;
+                option.dataset.name = l1.name;
+                level1Select.appendChild(option);
+            });
+            level1Select.disabled = false;
+        } else {
+            level1Select.innerHTML = '<option value="">该模块下暂无一级测试点</option>';
+            level1Select.disabled = false;
+        }
+    } catch (error) {
+        console.error('加载一级测试点列表失败:', error);
+        level1Select.innerHTML = '<option value="">加载失败</option>';
+        level1Select.disabled = false;
+    }
+}
+
+function onBatchSelectLevel1(level1Id) {
+    if (!level1Id) {
+        batchCreateSelectedLevel1 = null;
+        return;
+    }
+    
+    const level1Select = document.getElementById('batch-select-level1');
+    const selectedOption = level1Select.options[level1Select.selectedIndex];
+    batchCreateSelectedLevel1 = {
+        id: level1Id,
+        name: selectedOption.dataset.name || selectedOption.textContent
+    };
+}
+
+async function confirmBatchCreate() {
+    if (!batchCreateSelectedLibrary || !batchCreateSelectedModule) {
+        showErrorMessage('请选择用例库和模块');
+        return;
+    }
+    
+    const libraryId = batchCreateSelectedLibrary.id;
+    const libraryName = batchCreateSelectedLibrary.name;
+    const moduleId = batchCreateSelectedModule.id;
+    const moduleName = batchCreateSelectedModule.name;
+    const level1Id = batchCreateSelectedLevel1 ? batchCreateSelectedLevel1.id : '';
+    const level1Name = batchCreateSelectedLevel1 ? batchCreateSelectedLevel1.name : '';
+    
+    closeBatchCreateSelectModal();
+    
+    let url = `/batch-create-cases.html?moduleId=${moduleId}&libraryId=${libraryId}&moduleName=${encodeURIComponent(moduleName)}&libraryName=${encodeURIComponent(libraryName)}&returnUrl=${encodeURIComponent(window.location.href)}`;
+    
+    if (level1Id) {
+        url += `&level1Id=${level1Id}&level1Name=${encodeURIComponent(level1Name)}`;
+    }
+    
+    window.location.href = url;
 }
 
 // 加载测试阶段列表用于测试用例创建
@@ -8707,6 +9100,9 @@ async function openAddTestCaseModal() {
 
         // 更新关联项目摘要
         updateNewCaseProjectsSummary();
+        
+        // 初始化模态框拖拽调整宽度
+        initAddCaseModalResizer();
 
     } catch (error) {
         console.error('Error in openAddTestCaseModal:', error);
@@ -9899,7 +10295,139 @@ function closeTestCaseModal() {
     // 清除临时关联项目数据
     localStorage.removeItem('tempProjectAssociations');
 
+    // 重置模态框位置
+    resetAddCaseModalPosition();
+
     console.log('[新建用例] 模态框已关闭，状态已重置');
+}
+
+// 初始化新建测试用例模态框的拖拽调整宽度功能
+function initAddCaseModalResizer() {
+    const modalContent = document.getElementById('add-case-content');
+    const resizer = document.getElementById('add-case-resizer');
+    const modalHeader = modalContent?.querySelector('.add-case-header');
+    
+    if (!modalContent || !resizer) return;
+    
+    if (modalContent.dataset.resizerInitialized === 'true') return;
+    modalContent.dataset.resizerInitialized = 'true';
+
+    let isResizing = false;
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startWidth = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    const minWidth = 600;
+    const maxWidthRatio = 0.95;
+
+    // 调整宽度功能
+    resizer.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        startX = e.clientX;
+        startWidth = modalContent.offsetWidth;
+        
+        resizer.classList.add('dragging');
+        document.body.classList.add('modal-resizing');
+        
+        e.preventDefault();
+        e.stopPropagation();
+    });
+
+    // 拖拽移动功能（通过header）
+    if (modalHeader) {
+        modalHeader.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.close-modal') || e.target.closest('button')) return;
+            
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            
+            const rect = modalContent.getBoundingClientRect();
+            startLeft = rect.left;
+            startTop = rect.top;
+            
+            modalContent.style.position = 'fixed';
+            modalContent.style.left = startLeft + 'px';
+            modalContent.style.top = startTop + 'px';
+            modalContent.style.margin = '0';
+            
+            document.body.classList.add('modal-dragging');
+            
+            e.preventDefault();
+        });
+    }
+
+    document.addEventListener('mousemove', (e) => {
+        // 调整宽度
+        if (isResizing) {
+            const deltaX = e.clientX - startX;
+            const newWidth = startWidth + deltaX;
+            const maxWidth = window.innerWidth * maxWidthRatio;
+            
+            if (newWidth >= minWidth && newWidth <= maxWidth) {
+                modalContent.style.width = newWidth + 'px';
+                modalContent.style.maxWidth = newWidth + 'px';
+            } else if (newWidth < minWidth) {
+                modalContent.style.width = minWidth + 'px';
+                modalContent.style.maxWidth = minWidth + 'px';
+            } else if (newWidth > maxWidth) {
+                modalContent.style.width = maxWidth + 'px';
+                modalContent.style.maxWidth = maxWidth + 'px';
+            }
+        }
+        
+        // 拖拽移动
+        if (isDragging) {
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+            
+            let newLeft = startLeft + deltaX;
+            let newTop = startTop + deltaY;
+            
+            // 边界限制
+            const maxLeft = window.innerWidth - modalContent.offsetWidth - 10;
+            const maxTop = window.innerHeight - 100;
+            
+            newLeft = Math.max(10, Math.min(newLeft, maxLeft));
+            newTop = Math.max(10, Math.min(newTop, maxTop));
+            
+            modalContent.style.left = newLeft + 'px';
+            modalContent.style.top = newTop + 'px';
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isResizing) {
+            isResizing = false;
+            resizer.classList.remove('dragging');
+            document.body.classList.remove('modal-resizing');
+        }
+        if (isDragging) {
+            isDragging = false;
+            document.body.classList.remove('modal-dragging');
+        }
+    });
+
+    // 双击重置宽度
+    resizer.addEventListener('dblclick', () => {
+        modalContent.style.width = '';
+        modalContent.style.maxWidth = '800px';
+    });
+}
+
+// 重置模态框位置
+function resetAddCaseModalPosition() {
+    const modalContent = document.getElementById('add-case-content');
+    if (modalContent) {
+        modalContent.style.position = '';
+        modalContent.style.left = '';
+        modalContent.style.top = '';
+        modalContent.style.margin = '';
+        modalContent.style.width = '';
+        modalContent.style.maxWidth = '';
+    }
 }
 
 // 提交测试用例表单
@@ -13519,8 +14047,7 @@ async function updateStats() {
         if (dataSourceEl) dataSourceEl.textContent = '实时数据';
 
         // 获取测试管理统计数据
-        const filters = getCurrentFilters();
-        const statsData = await apiRequest(`/dashboard/stats?${new URLSearchParams(filters).toString()}`);
+        const statsData = await apiRequest('/dashboard/stats');
 
         if (statsData.success) {
             const stats = statsData.stats;
@@ -13529,20 +14056,11 @@ async function updateStats() {
             const testcaseCountEl = document.getElementById('testcase-count');
             if (testcaseCountEl) testcaseCountEl.textContent = stats.totalTestCases || 0;
 
-            const passedCountEl = document.getElementById('passed-count');
-            if (passedCountEl) passedCountEl.textContent = stats.passedCount || 0;
+            const testReportCountEl = document.getElementById('test-report-count');
+            if (testReportCountEl) testReportCountEl.textContent = stats.testReportCount || 0;
 
-            const failedCountEl = document.getElementById('failed-count');
-            if (failedCountEl) failedCountEl.textContent = stats.failedCount || 0;
-
-            const pendingCountEl = document.getElementById('pending-count');
-            if (pendingCountEl) pendingCountEl.textContent = stats.pendingCount || 0;
-
-            const passRateEl = document.getElementById('total-pass-rate');
-            if (passRateEl) passRateEl.textContent = stats.passRate || '0%';
-
-            const recentExecutionsEl = document.getElementById('recent-executions-count');
-            if (recentExecutionsEl) recentExecutionsEl.textContent = stats.recentExecutions || 0;
+            const testPlanCountEl = document.getElementById('test-plan-count');
+            if (testPlanCountEl) testPlanCountEl.textContent = stats.testPlanCount || 0;
         }
 
         // 更新最后刷新时间
@@ -13653,6 +14171,14 @@ function applyFiltersToCaseLibrary(filters) {
     if (typeof loadCasesWithFilters === 'function') {
         loadCasesWithFilters(filters);
     }
+}
+
+function navigateToReports() {
+    window.location.hash = '#test-reports';
+}
+
+function navigateToPlans() {
+    window.location.hash = '#test-plans';
 }
 
 // 加载筛选器选项

@@ -2,10 +2,10 @@
 
 <div align="center">
 
-!\[Version]\(https\://img.shields.io/badge/version-1.0.0-blue.svg null)
-!\[License]\(https\://img.shields.io/badge/license-MIT-green.svg null)
-!\[Node]\(https\://img.shields.io/badge/node-%3E%3D14.0.0-brightgreen.svg null)
-!\[MySQL]\(https\://img.shields.io/badge/mysql-%3E%3D5.7-orange.svg null)
+!\[Version]\(<https://img.shields.io/badge/version-1.0.0-blue.svg> null)
+!\[License]\(<https://img.shields.io/badge/license-MIT-green.svg> null)
+!\[Node]\(<https://img.shields.io/badge/node-%3E%3D14.0.0-brightgreen.svg> null)
+!\[MySQL]\(<https://img.shields.io/badge/mysql-%3E%3D5.7-orange.svg> null)
 
 一个专业的测试管理平台，为开发者和测试工程师提供完整的测试计划、测试用例、测试执行和测试报告管理功能。
 
@@ -57,6 +57,7 @@ xTest 是一个功能完善的测试管理平台，支持：
 | **用例库**  | 多级结构  | 库 → 模块 → 测试点 → 用例 |
 | <br />   | 用例类型  | 功能、性能、兼容性、安全测试    |
 | <br />   | 导入导出  | 支持 Excel 导入导出     |
+| <br />   | 批量创建  | 快速批量创建测试用例，支持默认值设置 |
 | **测试报告** | 自动生成  | 日报、周报、最终报告        |
 | <br />   | 模板管理  | 自定义报告模板           |
 | <br />   | 多格式导出 | 支持 Markdown、PDF   |
@@ -416,8 +417,8 @@ chmod -R 755 uploads/
 
 ## 联系方式
 
-- 项目主页：<https://github.com/yourusername/xtest>
-- 问题反馈：<https://github.com/yourusername/xtest/issues>
+- 项目主页：[https://github.com/zhaosz1994/xtest](https://github.com/yourusername/xtest)
+- 问题反馈：[https://github.com/zhaosz1994/xtest/issues](https://github.com/yourusername/xtest/issues)
 - 邮箱：<your.email@example.com>
 
 ***
