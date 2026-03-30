@@ -33,12 +33,6 @@
                         </svg>
                     </span>
                 </nav>
-                <div class="level1-dropdown" id="level1-dropdown" style="display: none;">
-                    <div class="level1-dropdown-search">
-                        <input type="text" placeholder="搜索一级测试点..." id="level1-search-input">
-                    </div>
-                    <div class="level1-dropdown-list" id="level1-dropdown-list"></div>
-                </div>
             </div>
             <div class="header-right">
                 <button class="btn btn-secondary" id="bulk-defaults-btn">
@@ -133,6 +127,38 @@
     </div>
 
     <div id="drawer-overlay" class="drawer-overlay"></div>
+    
+    <div id="level1-panel-overlay" class="level1-panel-overlay"></div>
+    <div id="level1-panel" class="level1-panel">
+        <div class="level1-panel-resizer" id="level1-panel-resizer"></div>
+        <div class="level1-panel-header">
+            <div class="level1-panel-title">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                </svg>
+                <span>测试点列表</span>
+            </div>
+            <button class="level1-panel-close-btn" id="level1-panel-close-btn">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
+        </div>
+        <div class="level1-panel-search">
+            <div class="level1-search-wrapper">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.35-4.35"></path>
+                </svg>
+                <input type="text" placeholder="搜索测试点..." id="level1-search-input">
+            </div>
+        </div>
+        <div class="level1-panel-body">
+            <div class="level1-panel-list" id="level1-dropdown-list"></div>
+        </div>
+    </div>
+    
     <div id="detail-drawer" class="drawer">
         <div class="drawer-resizer" id="drawer-resizer"></div>
         <div class="drawer-header">

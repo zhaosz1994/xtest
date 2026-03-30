@@ -220,10 +220,12 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
                 projs.forEach(assoc => {
                     const projectId = parseInt(assoc.project_id || assoc.id);
                     if (!isNaN(projectId)) {
+                        // 如果项目没有指定负责人，则使用用例的负责人
+                        const projectOwner = assoc.owner || caseData.owner || currentUser.username;
                         projectRelations.push([
                             dbId,
                             projectId,
-                            assoc.owner || null,
+                            projectOwner,
                             assoc.progressId || assoc.progress_id || null,
                             assoc.statusId || assoc.status_id || null,
                             assoc.remark || ''

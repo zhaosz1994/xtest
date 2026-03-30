@@ -1216,13 +1216,66 @@ h2 {
 }
 
 /* 中间用例列表样式 */
+.case-list-wrapper {
+    position: relative;
+    flex: 1;
+    min-width: 400px;
+    max-width: 100%;
+}
+
+.case-list-resizer {
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 6px;
+    height: 100%;
+    cursor: ew-resize;
+    background: transparent;
+    z-index: 10;
+}
+
+.case-list-resizer::before {
+    content: '';
+    position: absolute;
+    right: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 2px;
+    height: 40px;
+    background-color: #e0e0e0;
+    border-radius: 1px;
+    opacity: 0;
+    transition: opacity 0.2s ease, background-color 0.2s ease;
+}
+
+.case-list-resizer:hover::before,
+.case-list-resizer.dragging::before {
+    opacity: 1;
+    background-color: #1890ff;
+}
+
+.case-list-resizer.dragging {
+    background: linear-gradient(to left, rgba(24, 144, 255, 0.1), transparent);
+}
+
+body.case-list-resizing {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+}
+
+body.case-list-resizing * {
+    cursor: ew-resize !important;
+}
+
 .case-list {
     background-color: #fff;
     border-radius: 4px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     overflow: hidden;
-    flex: 1;
-    min-width: 600px;
+    width: 100%;
+    height: 100%;
 }
 
 .case-list-table {
@@ -6054,7 +6107,8 @@ body.panel-dragging * {
     top: 80px;
     right: 20px;
     width: 70%;
-    max-width: 1200px;
+    min-width: 600px;
+    max-width: 95%;
     max-height: 70vh;
     background: #ffffff;
     border-radius: 12px;
@@ -6064,6 +6118,52 @@ body.panel-dragging * {
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     transform: translateX(20px);
     opacity: 0;
+}
+
+.floating-panel-resizer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 6px;
+    height: 100%;
+    cursor: ew-resize;
+    background: transparent;
+    z-index: 10;
+}
+
+.floating-panel-resizer::before {
+    content: '';
+    position: absolute;
+    left: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 2px;
+    height: 40px;
+    background-color: #e0e0e0;
+    border-radius: 1px;
+    opacity: 0;
+    transition: opacity 0.2s ease, background-color 0.2s ease;
+}
+
+.floating-panel-resizer:hover::before,
+.floating-panel-resizer.dragging::before {
+    opacity: 1;
+    background-color: #1890ff;
+}
+
+.floating-panel-resizer.dragging {
+    background: linear-gradient(to left, rgba(24, 144, 255, 0.1), transparent);
+}
+
+body.floating-panel-resizing {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+}
+
+body.floating-panel-resizing * {
+    cursor: ew-resize !important;
 }
 
 .test-points-floating-panel.show {

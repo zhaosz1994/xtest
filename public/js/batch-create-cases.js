@@ -626,7 +626,7 @@
         // 初始化 TagSelector 组件
         initDrawerTagSelectors(row);
 
-        // 初始化关联项目
+        // 初始化关联项目（异步加载项目列表）
         initDrawerProjects(row);
 
         const drawerOverlay = document.getElementById('drawer-overlay');
@@ -723,7 +723,12 @@
         }
     }
 
-    function initDrawerProjects(row) {
+    async function initDrawerProjects(row) {
+        // 确保项目列表已加载，以便能正确显示项目名称
+        if (allProjects.length === 0) {
+            await loadAllProjects();
+        }
+        
         try {
             const projectsValue = row.projects || '';
             if (typeof projectsValue === 'string') {
@@ -1278,13 +1283,15 @@
     }
 
     function toggleLevel1Dropdown(show) {
-        const dropdown = document.getElementById('level1-dropdown');
+        const panel = document.getElementById('level1-panel');
+        const overlay = document.getElementById('level1-panel-overlay');
         const clickableItem = document.getElementById('breadcrumb-level1');
 
-        if (!dropdown || !clickableItem) return;
+        if (!panel || !clickableItem) return;
 
         if (show) {
-            dropdown.style.display = 'block';
+            panel.classList.add('active');
+            if (overlay) overlay.classList.add('active');
             clickableItem.classList.add('active');
             renderLevel1Dropdown();
             const searchInput = document.getElementById('level1-search-input');
@@ -1293,7 +1300,8 @@
                 searchInput.focus();
             }
         } else {
-            dropdown.style.display = 'none';
+            panel.classList.remove('active');
+            if (overlay) overlay.classList.remove('active');
             clickableItem.classList.remove('active');
         }
     }
@@ -1305,7 +1313,9 @@
 
         if (newModuleId && newModuleId != moduleId) {
             currentUrl.searchParams.set('moduleId', newModuleId);
-            currentUrl.searchParams.set('moduleName', newModuleName || '');
+            if (newModuleName) {
+                currentUrl.searchParams.set('moduleName', newModuleName);
+            }
         }
 
         window.location.href = currentUrl.toString();
@@ -1467,13 +1477,15 @@
             window.createCloneCaseModal();
         }
 
-        document.addEventListener('click', (e) => {
-            const dropdown = document.getElementById('level1-dropdown');
-            const clickableItem = document.getElementById('breadcrumb-level1');
-            if (dropdown && clickableItem && !clickableItem.contains(e.target) && !dropdown.contains(e.target)) {
-                toggleLevel1Dropdown(false);
-            }
-        });
+        const level1PanelCloseBtn = document.getElementById('level1-panel-close-btn');
+        const level1PanelOverlay = document.getElementById('level1-panel-overlay');
+        
+        if (level1PanelCloseBtn) {
+            level1PanelCloseBtn.addEventListener('click', () => toggleLevel1Dropdown(false));
+        }
+        if (level1PanelOverlay) {
+            level1PanelOverlay.addEventListener('click', () => toggleLevel1Dropdown(false));
+        }
 
         document.querySelectorAll('.modal-overlay').forEach(overlay => {
             overlay.addEventListener('click', () => {
@@ -1612,17 +1624,219 @@
         return true;
     }
 
+    let needSelectLocation = false;
+    let locationSelectData = {
+        libraries: [],
+        modules: [],
+        level1Points: []
+    };
+
     function checkParams() {
-        if (!moduleId) {
-            showErrorMessage('缺少必要参数：moduleId');
-            return false;
+        if (!moduleId || moduleName === '未知模块') {
+            needSelectLocation = true;
+            return true;
         }
         return true;
+    }
+
+    function createLocationSelectModal() {
+        if (document.getElementById('location-select-modal')) return;
+
+        const modal = document.createElement('div');
+        modal.id = 'location-select-modal';
+        modal.className = 'modal';
+        modal.style.display = 'none';
+        modal.innerHTML = `
+            <div class="modal-overlay" id="location-modal-overlay"></div>
+            <div class="modal-content" style="max-width: 480px;">
+                <div class="modal-header">
+                    <span class="modal-icon confirm-icon">📁</span>
+                    <h3>选择创建位置</h3>
+                    <button type="button" class="close" id="location-modal-close" style="background:none; border:none; font-size:20px; cursor:pointer; margin-left:auto;">&times;</button>
+                </div>
+                <div class="modal-body" style="padding: 20px;">
+                    <div class="location-field-row">
+                        <label class="location-field-label">用例库 <span class="required">*</span></label>
+                        <select id="location-library-select" class="location-select">
+                            <option value="">请选择用例库</option>
+                        </select>
+                    </div>
+                    <div class="location-field-row">
+                        <label class="location-field-label">模块 <span class="required">*</span></label>
+                        <select id="location-module-select" class="location-select" disabled>
+                            <option value="">请选择模块</option>
+                        </select>
+                    </div>
+                    <div class="location-field-row">
+                        <label class="location-field-label">一级测试点 <span style="color:#999;">(可选)</span></label>
+                        <select id="location-level1-select" class="location-select" disabled>
+                            <option value="">请选择一级测试点</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="location-cancel-btn">取消</button>
+                    <button class="btn btn-primary" id="location-confirm-btn" disabled>确定</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        document.getElementById('location-modal-overlay').addEventListener('click', closeLocationSelectModal);
+        document.getElementById('location-modal-close').addEventListener('click', closeLocationSelectModal);
+        document.getElementById('location-cancel-btn').addEventListener('click', closeLocationSelectModal);
+        document.getElementById('location-confirm-btn').addEventListener('click', confirmLocationSelection);
+
+        document.getElementById('location-library-select').addEventListener('change', onLocationLibraryChange);
+        document.getElementById('location-module-select').addEventListener('change', onLocationModuleChange);
+    }
+
+    function openLocationSelectModal() {
+        const modal = document.getElementById('location-select-modal');
+        if (modal) {
+            modal.style.display = 'flex';
+            loadLocationLibraries();
+        }
+    }
+
+    function closeLocationSelectModal() {
+        const modal = document.getElementById('location-select-modal');
+        if (modal) modal.style.display = 'none';
+        if (needSelectLocation) {
+            if (returnUrl) {
+                window.location.href = returnUrl;
+            } else if (document.referrer) {
+                window.history.back();
+            } else {
+                window.location.href = '/#/';
+            }
+        }
+    }
+
+    async function loadLocationLibraries() {
+        const libSelect = document.getElementById('location-library-select');
+        try {
+            const res = await apiRequest('/api/libraries/list');
+            if (res.success && res.libraries) {
+                locationSelectData.libraries = res.libraries;
+                libSelect.innerHTML = '<option value="">请选择用例库</option>' + 
+                    res.libraries.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('');
+            }
+        } catch (e) {
+            console.error('Load libraries failed', e);
+            libSelect.innerHTML = '<option value="">加载失败</option>';
+        }
+    }
+
+    async function onLocationLibraryChange(e) {
+        const libId = e.target.value;
+        const modSelect = document.getElementById('location-module-select');
+        const lv1Select = document.getElementById('location-level1-select');
+        const confirmBtn = document.getElementById('location-confirm-btn');
+
+        modSelect.innerHTML = '<option value="">请选择模块</option>';
+        lv1Select.innerHTML = '<option value="">请选择一级测试点</option>';
+        lv1Select.disabled = true;
+        confirmBtn.disabled = true;
+        locationSelectData.modules = [];
+        locationSelectData.level1Points = [];
+
+        if (!libId) {
+            modSelect.disabled = true;
+            return;
+        }
+
+        modSelect.disabled = false;
+        modSelect.innerHTML = '<option value="">加载中...</option>';
+
+        try {
+            const res = await apiRequest(`/api/modules/by-library/${libId}`);
+            if (res.success && res.modules) {
+                locationSelectData.modules = res.modules;
+                modSelect.innerHTML = '<option value="">请选择模块</option>' + 
+                    res.modules.map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
+            } else {
+                modSelect.innerHTML = '<option value="">暂无模块</option>';
+            }
+        } catch (e) {
+            console.error('Load modules failed', e);
+            modSelect.innerHTML = '<option value="">加载失败</option>';
+        }
+    }
+
+    async function onLocationModuleChange(e) {
+        const modId = e.target.value;
+        const lv1Select = document.getElementById('location-level1-select');
+        const confirmBtn = document.getElementById('location-confirm-btn');
+
+        lv1Select.innerHTML = '<option value="">请选择一级测试点</option>';
+        locationSelectData.level1Points = [];
+
+        if (!modId) {
+            lv1Select.disabled = true;
+            confirmBtn.disabled = true;
+            return;
+        }
+
+        lv1Select.disabled = false;
+        lv1Select.innerHTML = '<option value="">加载中...</option>';
+        confirmBtn.disabled = false;
+
+        try {
+            const res = await apiRequest(`/api/testpoints/level1/${modId}`);
+            const pointsList = res.level1Points || res.points || [];
+            if (res.success && pointsList.length > 0) {
+                locationSelectData.level1Points = pointsList;
+                lv1Select.innerHTML = '<option value="">请选择一级测试点</option>' + 
+                    pointsList.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+            } else {
+                lv1Select.innerHTML = '<option value="">暂无一级测试点</option>';
+            }
+        } catch (e) {
+            console.error('Load level1 points failed', e);
+            lv1Select.innerHTML = '<option value="">加载失败</option>';
+        }
+    }
+
+    function confirmLocationSelection() {
+        const libId = document.getElementById('location-library-select').value;
+        const modId = document.getElementById('location-module-select').value;
+        const lv1Id = document.getElementById('location-level1-select').value;
+
+        if (!libId || !modId) {
+            showErrorMessage('请选择用例库和模块');
+            return;
+        }
+
+        const libName = locationSelectData.libraries.find(l => String(l.id) === String(libId))?.name || '';
+        const modName = locationSelectData.modules.find(m => String(m.id) === String(modId))?.name || '';
+        const lv1Name = locationSelectData.level1Points.find(p => String(p.id) === String(lv1Id))?.name || '';
+
+        const currentUrl = new URL(window.location.href);
+        currentUrl.searchParams.set('libraryId', libId);
+        currentUrl.searchParams.set('libraryName', libName);
+        currentUrl.searchParams.set('moduleId', modId);
+        currentUrl.searchParams.set('moduleName', modName);
+        if (lv1Id) {
+            currentUrl.searchParams.set('level1Id', lv1Id);
+            currentUrl.searchParams.set('level1Name', lv1Name);
+        } else {
+            currentUrl.searchParams.delete('level1Id');
+            currentUrl.searchParams.delete('level1Name');
+        }
+
+        window.location.href = currentUrl.toString();
     }
 
     async function init() {
         if (!checkAuth()) return;
         if (!checkParams()) return;
+
+        if (needSelectLocation) {
+            createLocationSelectModal();
+            openLocationSelectModal();
+            return;
+        }
 
         await Promise.all([
             loadConfigData(),
@@ -1630,12 +1844,10 @@
             loadUsers()
         ]);
 
-        // 若 URL 中未传 owner，则取当前登录用户名作为默认值
         if (!defaultOwner && currentUser) {
             defaultOwner = currentUser.username || currentUser.name || currentUser.login || '';
         }
 
-        // 优先从 sessionStorage 恢复草稿数据
         let restored = false;
         try {
             const saved = sessionStorage.getItem(DRAFT_KEY);
@@ -1658,6 +1870,59 @@
         initEventListeners();
         initDrawerResizer();
         initTableResizer();
+        initLevel1PanelResizer();
+    }
+
+    function initLevel1PanelResizer() {
+        const panel = document.getElementById('level1-panel');
+        const resizer = document.getElementById('level1-panel-resizer');
+        
+        if (!panel || !resizer) return;
+
+        let isResizing = false;
+        let startX = 0;
+        let startWidth = 0;
+        const minWidth = 320;
+        const maxWidthRatio = 0.8;
+
+        resizer.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            startX = e.clientX;
+            startWidth = panel.offsetWidth;
+            
+            resizer.classList.add('dragging');
+            document.body.classList.add('level1-panel-resizing');
+            
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            
+            const deltaX = startX - e.clientX;
+            const newWidth = startWidth + deltaX;
+            const maxWidth = window.innerWidth * maxWidthRatio;
+            
+            if (newWidth >= minWidth && newWidth <= maxWidth) {
+                panel.style.width = newWidth + 'px';
+            } else if (newWidth < minWidth) {
+                panel.style.width = minWidth + 'px';
+            } else if (newWidth > maxWidth) {
+                panel.style.width = maxWidth + 'px';
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                resizer.classList.remove('dragging');
+                document.body.classList.remove('level1-panel-resizing');
+            }
+        });
+
+        resizer.addEventListener('dblclick', () => {
+            panel.style.width = '480px';
+        });
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -2076,16 +2341,9 @@
             sourcesValue = targetCase.sources.join(',');
         }
 
-        // 处理项目字段
-        let projectsValue = [];
-        if (targetCase.projects && Array.isArray(targetCase.projects) && targetCase.projects.length > 0) {
-            projectsValue = targetCase.projects;
-        }
-
         // 处理测试阶段字段
         let phaseValue = '';
         if (targetCase.phases && Array.isArray(targetCase.phases) && targetCase.phases.length > 0) {
-            // 如果有多个测试阶段，使用第一个
             phaseValue = targetCase.phases[0];
         } else if (targetCase.phase) {
             phaseValue = targetCase.phase;
@@ -2093,9 +2351,24 @@
 
         // 处理测试方式字段
         let methodsValue = targetCase.method ? targetCase.method : 'manual';
-        // 如果有多个测试方式，使用第一个
         if (targetCase.methods && Array.isArray(targetCase.methods) && targetCase.methods.length > 0) {
             methodsValue = targetCase.methods[0];
+        }
+
+        // ★ 关键修复：优先用 defaultOwner（页面传入的负责人），其次当前登录用户，最后才原用例负责人
+        //   这里先算好 effectiveOwner，再统一赋给行本身和各项目关联
+        const effectiveOwner = defaultOwner
+            || (typeof currentUser !== 'undefined' ? (currentUser?.username || '') : '')
+            || targetCase.owner
+            || '';
+
+        // 处理项目字段 - 将负责人设置为 effectiveOwner
+        let projectsValue = [];
+        if (targetCase.projects && Array.isArray(targetCase.projects) && targetCase.projects.length > 0) {
+            projectsValue = targetCase.projects.map(p => ({
+                ...p,
+                owner: effectiveOwner  // ★ 直接赋值，不留空，避免后端保存到数据库时变为 NULL
+            }));
         }
 
         const newRow = {
@@ -2103,7 +2376,7 @@
             name: targetCase.name + '-Clone',
             priority: targetCase.priority,
             type: targetCase.type,
-            owner: typeof currentUser !== 'undefined' ? currentUser?.username : (targetCase.owner || ''),
+            owner: effectiveOwner,  // ★ 同样使用已计算好的 effectiveOwner
             phase: phaseValue,
             env: envValue,
             precondition: targetCase.precondition || '',

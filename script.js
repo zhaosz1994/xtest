@@ -357,6 +357,118 @@ function throttle(func, limit) {
 }
 
 // ========================================
+// 测试点列表拖拽调整宽度
+// ========================================
+function initCaseListResizer() {
+    const wrapper = document.getElementById('case-list-wrapper');
+    const resizer = document.getElementById('case-list-resizer');
+    
+    if (!wrapper || !resizer) return;
+
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 0;
+    const minWidth = 400;
+    const maxWidthRatio = 0.6;
+
+    resizer.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        startX = e.clientX;
+        startWidth = wrapper.offsetWidth;
+        
+        resizer.classList.add('dragging');
+        document.body.classList.add('case-list-resizing');
+        
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+        
+        const deltaX = e.clientX - startX;
+        const newWidth = startWidth + deltaX;
+        const maxWidth = window.innerWidth * maxWidthRatio;
+        
+        if (newWidth >= minWidth && newWidth <= maxWidth) {
+            wrapper.style.flex = 'none';
+            wrapper.style.width = newWidth + 'px';
+        } else if (newWidth < minWidth) {
+            wrapper.style.flex = 'none';
+            wrapper.style.width = minWidth + 'px';
+        } else if (newWidth > maxWidth) {
+            wrapper.style.flex = 'none';
+            wrapper.style.width = maxWidth + 'px';
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isResizing) {
+            isResizing = false;
+            resizer.classList.remove('dragging');
+            document.body.classList.remove('case-list-resizing');
+        }
+    });
+
+    resizer.addEventListener('dblclick', () => {
+        wrapper.style.flex = '1';
+        wrapper.style.width = '';
+    });
+}
+
+function initFloatingPanelResizer() {
+    const panel = document.getElementById('test-points-floating-panel');
+    const resizer = document.getElementById('floating-panel-resizer');
+    
+    if (!panel || !resizer) return;
+
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 0;
+    const minWidth = 600;
+    const maxWidthRatio = 0.95;
+
+    resizer.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        startX = e.clientX;
+        startWidth = panel.offsetWidth;
+        
+        resizer.classList.add('dragging');
+        document.body.classList.add('floating-panel-resizing');
+        
+        e.preventDefault();
+        e.stopPropagation();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+        
+        const deltaX = startX - e.clientX;
+        const newWidth = startWidth + deltaX;
+        const maxWidth = window.innerWidth * maxWidthRatio;
+        
+        if (newWidth >= minWidth && newWidth <= maxWidth) {
+            panel.style.width = newWidth + 'px';
+        } else if (newWidth < minWidth) {
+            panel.style.width = minWidth + 'px';
+        } else if (newWidth > maxWidth) {
+            panel.style.width = maxWidth + 'px';
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isResizing) {
+            isResizing = false;
+            resizer.classList.remove('dragging');
+            document.body.classList.remove('floating-panel-resizing');
+        }
+    });
+
+    resizer.addEventListener('dblclick', () => {
+        panel.style.width = '70%';
+    });
+}
+
+// ========================================
 // 搜索事件绑定
 // ========================================
 function initSearchEvents() {
@@ -7679,9 +7791,34 @@ async function deleteTestCase() {
 }
 
 // 打开添加一级测试点模态框
-function openAddLevel1PointModal() {
+async function openAddLevel1PointModal() {
     const modal = document.getElementById('add-level1-point-modal');
+    
+    // 从配置中心加载测试类型
+    try {
+        const testTypesData = await apiRequest('/test-types/list');
+        const typeSelect = document.getElementById('level1-point-type');
+        
+        if (testTypesData && testTypesData.success && Array.isArray(testTypesData.testTypes) && testTypesData.testTypes.length > 0) {
+            typeSelect.innerHTML = testTypesData.testTypes.map(type => 
+                `<option value="${type.name}">${type.name}</option>`
+            ).join('');
+        } else {
+            typeSelect.innerHTML = `
+                <option value="功能测试">功能测试</option>
+                <option value="性能测试">性能测试</option>
+                <option value="兼容性测试">兼容性测试</option>
+                <option value="安全测试">安全测试</option>
+            `;
+        }
+    } catch (error) {
+        console.error('加载测试类型失败:', error);
+    }
+    
     modal.style.display = 'block';
+    
+    // 初始化拖拽调整宽度功能
+    initLevel1PointModalResizer('add');
 }
 
 // 关闭添加一级测试点模态框
@@ -7691,6 +7828,142 @@ function closeAddLevel1PointModal() {
 
     // 重置表单
     document.getElementById('add-level1-point-form').reset();
+    
+    // 重置模态框位置和宽度
+    resetLevel1PointModalPosition('add');
+}
+
+// 初始化一级测试点模态框的拖拽调整宽度功能
+function initLevel1PointModalResizer(type) {
+    const contentId = type === 'add' ? 'add-level1-point-content' : 'edit-level1-point-content';
+    const resizerId = type === 'add' ? 'add-level1-point-resizer' : 'edit-level1-point-resizer';
+    
+    const modalContent = document.getElementById(contentId);
+    const resizer = document.getElementById(resizerId);
+    const modalHeader = modalContent?.querySelector('.modal-header');
+    
+    if (!modalContent || !resizer) return;
+    
+    if (modalContent.dataset.resizerInitialized === 'true') return;
+    modalContent.dataset.resizerInitialized = 'true';
+
+    let isResizing = false;
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startWidth = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    const minWidth = 400;
+    const maxWidthRatio = 0.95;
+
+    // 调整宽度功能
+    resizer.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        startX = e.clientX;
+        startWidth = modalContent.offsetWidth;
+        
+        resizer.classList.add('dragging');
+        document.body.classList.add('modal-resizing');
+        
+        e.preventDefault();
+        e.stopPropagation();
+    });
+
+    // 拖拽移动功能（通过header）
+    if (modalHeader) {
+        modalHeader.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.close') || e.target.closest('.close-btn') || e.target.closest('button')) return;
+            
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            
+            const rect = modalContent.getBoundingClientRect();
+            startLeft = rect.left;
+            startTop = rect.top;
+            
+            modalContent.style.position = 'fixed';
+            modalContent.style.left = startLeft + 'px';
+            modalContent.style.top = startTop + 'px';
+            modalContent.style.margin = '0';
+            
+            document.body.classList.add('modal-dragging');
+            
+            e.preventDefault();
+        });
+    }
+
+    document.addEventListener('mousemove', (e) => {
+        // 调整宽度
+        if (isResizing) {
+            const deltaX = e.clientX - startX;
+            const newWidth = startWidth + deltaX;
+            const maxWidth = window.innerWidth * maxWidthRatio;
+            
+            if (newWidth >= minWidth && newWidth <= maxWidth) {
+                modalContent.style.width = newWidth + 'px';
+                modalContent.style.maxWidth = newWidth + 'px';
+            } else if (newWidth < minWidth) {
+                modalContent.style.width = minWidth + 'px';
+                modalContent.style.maxWidth = minWidth + 'px';
+            } else if (newWidth > maxWidth) {
+                modalContent.style.width = maxWidth + 'px';
+                modalContent.style.maxWidth = maxWidth + 'px';
+            }
+        }
+        
+        // 拖拽移动
+        if (isDragging) {
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+            
+            let newLeft = startLeft + deltaX;
+            let newTop = startTop + deltaY;
+            
+            // 边界限制
+            const maxLeft = window.innerWidth - modalContent.offsetWidth - 10;
+            const maxTop = window.innerHeight - 100;
+            
+            newLeft = Math.max(10, Math.min(newLeft, maxLeft));
+            newTop = Math.max(10, Math.min(newTop, maxTop));
+            
+            modalContent.style.left = newLeft + 'px';
+            modalContent.style.top = newTop + 'px';
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isResizing) {
+            isResizing = false;
+            resizer.classList.remove('dragging');
+            document.body.classList.remove('modal-resizing');
+        }
+        if (isDragging) {
+            isDragging = false;
+            document.body.classList.remove('modal-dragging');
+        }
+    });
+
+    // 双击重置宽度
+    resizer.addEventListener('dblclick', () => {
+        modalContent.style.width = '';
+        modalContent.style.maxWidth = '520px';
+    });
+}
+
+// 重置一级测试点模态框位置
+function resetLevel1PointModalPosition(type) {
+    const contentId = type === 'add' ? 'add-level1-point-content' : 'edit-level1-point-content';
+    const modalContent = document.getElementById(contentId);
+    if (modalContent) {
+        modalContent.style.position = '';
+        modalContent.style.left = '';
+        modalContent.style.top = '';
+        modalContent.style.margin = '';
+        modalContent.style.width = '';
+        modalContent.style.maxWidth = '520px';
+    }
 }
 
 // 提交添加一级测试点表单
@@ -15156,6 +15429,10 @@ document.addEventListener('DOMContentLoaded', async function () {
 
     initSearchEvents();
 
+    initCaseListResizer();
+
+    initFloatingPanelResizer();
+
     const savedToken = localStorage.getItem('authToken');
     const savedUser = localStorage.getItem('currentUser');
 
@@ -18116,7 +18393,28 @@ async function openEditLevel1PointModal(pointId) {
 
             document.getElementById('edit-level1-point-id').value = point.id;
             document.getElementById('edit-level1-point-name').value = point.name || '';
-            document.getElementById('edit-level1-point-type').value = point.test_type || point.type || '功能测试';
+            
+            // 从配置中心加载测试类型
+            const typeSelect = document.getElementById('edit-level1-point-type');
+            try {
+                const testTypesData = await apiRequest('/test-types/list');
+                if (testTypesData && testTypesData.success && Array.isArray(testTypesData.testTypes) && testTypesData.testTypes.length > 0) {
+                    typeSelect.innerHTML = testTypesData.testTypes.map(type => 
+                        `<option value="${type.name}">${type.name}</option>`
+                    ).join('');
+                } else {
+                    typeSelect.innerHTML = `
+                        <option value="功能测试">功能测试</option>
+                        <option value="性能测试">性能测试</option>
+                        <option value="兼容性测试">兼容性测试</option>
+                        <option value="安全测试">安全测试</option>
+                    `;
+                }
+            } catch (error) {
+                console.error('加载测试类型失败:', error);
+            }
+            
+            typeSelect.value = point.test_type || point.type || '功能测试';
 
             const counter = document.getElementById('edit-level1-point-name-counter');
             if (counter) {
@@ -18124,6 +18422,9 @@ async function openEditLevel1PointModal(pointId) {
             }
 
             document.getElementById('edit-level1-point-modal').style.display = 'block';
+            
+            // 初始化拖拽调整宽度功能
+            initLevel1PointModalResizer('edit');
         } else {
             showErrorMessage('加载测试点数据失败: ' + (response.message || '未知错误'));
         }
@@ -18145,6 +18446,9 @@ function closeEditLevel1PointModal() {
     if (form) {
         form.reset();
     }
+    
+    // 重置模态框位置和宽度
+    resetLevel1PointModalPosition('edit');
 }
 
 // 提交编辑一级测试点表单

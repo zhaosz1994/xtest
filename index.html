@@ -831,7 +831,9 @@
                         </div>
                         
                         <!-- 中间用例列表 -->
-                        <div class="case-list">
+                        <div class="case-list-wrapper" id="case-list-wrapper">
+                            <div class="case-list-resizer" id="case-list-resizer"></div>
+                            <div class="case-list">
                             <style>
                                 .add-case-btn {
                                     width: 36px;
@@ -1184,7 +1186,7 @@
                                             <circle cx="11" cy="11" r="8"></circle>
                                             <path d="M21 21l-4.35-4.35"></path>
                                         </svg>
-                                        <input type="text" id="level1-search-input" placeholder="模糊搜索名称..." class="search-input" style="width: 200px; height: 32px; padding: 0 12px 0 32px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; background: white; color: #1e293b; outline: none; transition: all 0.2s ease;">
+                                        <input type="text" id="level1-search-input" placeholder="模糊搜索名称..." class="search-input" style="width: 400px; height: 32px; padding: 0 12px 0 32px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; background: white; color: #1e293b; outline: none; transition: all 0.2s ease;">
                                     </div>
                                     <button class="add-case-btn edit-btn" onclick="openEditLevel1PointsModal()" title="调整一级测试点顺序">
                                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1218,9 +1220,11 @@
                                 <div id="level1-pagination" class="pagination" style="margin-top: 0; padding: 12px 16px; border-top: 1px solid #e2e8f0;"></div>
                             </div>
                         </div>
+                            </div>
                         
                         <!-- 右侧测试点详情浮动面板 -->
                         <div class="test-points-floating-panel" id="test-points-floating-panel" style="display: none;">
+                            <div class="floating-panel-resizer" id="floating-panel-resizer"></div>
                             <div class="floating-panel-header">
                                 <div style="display: flex; align-items: center; gap: 12px;">
                                     <div style="width: 36px; height: 36px; background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); border-radius: 8px; display: flex; align-items: center; justify-content: center;">
@@ -1239,7 +1243,7 @@
                                             <circle cx="11" cy="11" r="8"></circle>
                                             <path d="M21 21l-4.35-4.35"></path>
                                         </svg>
-                                        <input type="text" id="testcase-search-input" placeholder="模糊搜索用例..." class="search-input" style="width: 160px; height: 28px; padding: 0 10px 0 28px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; background: white; color: #1e293b; outline: none; transition: all 0.2s ease;">
+                                        <input type="text" id="testcase-search-input" placeholder="模糊搜索用例..." class="search-input" style="width: 320px; height: 28px; padding: 0 10px 0 28px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; background: white; color: #1e293b; outline: none; transition: all 0.2s ease;">
                                     </div>
                                     <button class="add-case-btn" onclick="batchCreateTestCases()" title="批量新建测试用例" style="background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0;">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3771,8 +3775,9 @@ return rows[0];'></textarea>
 
     <!-- 新增一级测试点模态框 -->
     <div id="add-level1-point-modal" class="modal" style="display: none;">
-        <div class="modal-content" style="max-width: 520px;">
-            <div class="modal-header" style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-bottom: 1px solid #e2e8f0; padding: 20px 24px;">
+        <div class="modal-content" id="add-level1-point-content" style="max-width: 520px; min-width: 400px;">
+            <div class="modal-resizer" id="add-level1-point-resizer"></div>
+            <div class="modal-header" style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-bottom: 1px solid #e2e8f0; padding: 20px 24px; cursor: move;">
                 <div style="display: flex; align-items: center; gap: 12px;">
                     <div style="width: 40px; height: 40px; background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); border-radius: 10px; display: flex; align-items: center; justify-content: center;">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
@@ -3839,8 +3844,9 @@ return rows[0];'></textarea>
     
     <!-- 编辑一级测试点模态框 -->
     <div id="edit-level1-point-modal" class="modal" style="display: none;">
-        <div class="modal-content" style="max-width: 520px;">
-            <div class="modal-header" style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-bottom: 1px solid #e2e8f0; padding: 20px 24px;">
+        <div class="modal-content" id="edit-level1-point-content" style="max-width: 520px; min-width: 400px;">
+            <div class="modal-resizer" id="edit-level1-point-resizer"></div>
+            <div class="modal-header" style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-bottom: 1px solid #e2e8f0; padding: 20px 24px; cursor: move;">
                 <div style="display: flex; align-items: center; gap: 12px;">
                     <div style="width: 40px; height: 40px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 10px; display: flex; align-items: center; justify-content: center;">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
