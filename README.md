@@ -177,7 +177,7 @@ npm run pm2:start
 
 **默认账号**：
 
-- 管理员：`admin` / `admin123`
+- 管理员：`admin` / `ctc@2026.`
 - 测试人员：`tester1` / `tester123`
 
 ***

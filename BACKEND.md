@@ -570,7 +570,7 @@ async function initDatabase() {
     if (users.length === 0) {
       // 创建默认管理员用户
       const bcrypt = require('bcryptjs');
-      const hashedPassword = await bcrypt.hash('admin123', 10);
+      const hashedPassword = await bcrypt.hash('ctc@2026.', 10);
       await pool.execute(
         'INSERT INTO users (username, password, role, email) VALUES (?, ?, ?, ?)',
         ['admin', hashedPassword, '管理员', 'admin@example.com']

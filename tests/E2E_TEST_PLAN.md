@@ -524,7 +524,7 @@ test.describe('测试计划 CRUD 流程', () => {
       
       // 填写登录信息
       await page.fill('#username', 'admin');
-      await page.fill('#password', 'admin123');
+      await page.fill('#password', 'ctc@2026.');
       
       // 点击登录按钮
       await page.click('#login-btn');
@@ -702,7 +702,7 @@ test.describe('测试计划 CRUD 流程', () => {
     await page.goto('/');
     await page.waitForSelector('#login-form', { state: 'visible' });
     await page.fill('#username', 'admin');
-    await page.fill('#password', 'admin123');
+    await page.fill('#password', 'ctc@2026.');
     await page.click('#login-btn');
     await page.waitForSelector('#user-info');
     
@@ -741,7 +741,7 @@ test.describe('测试计划 CRUD 流程', () => {
     await page.goto('/');
     await page.waitForSelector('#login-form', { state: 'visible' });
     await page.fill('#username', 'admin');
-    await page.fill('#password', 'admin123');
+    await page.fill('#password', 'ctc@2026.');
     await page.click('#login-btn');
     await page.waitForSelector('#user-info');
     

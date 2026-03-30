@@ -1557,7 +1557,7 @@ async function loadData() {
             } else {
                 // 加载失败时使用默认数据
                 mockUsers = [
-                    { username: 'admin', password: 'admin123', role: '管理员', email: 'admin@example.com' },
+                    { username: 'admin', password: 'ctc@2026.', role: '管理员', email: 'admin@example.com' },
                     { username: 'tester1', password: 'tester123', role: '测试人员', email: 'tester1@example.com' }
                 ];
             }
@@ -1565,7 +1565,7 @@ async function loadData() {
             console.error('加载用户数据失败:', error);
             // 加载失败时使用默认数据
             mockUsers = [
-                { username: 'admin', password: 'admin123', role: '管理员', email: 'admin@example.com' },
+                { username: 'admin', password: 'ctc@2026.', role: '管理员', email: 'admin@example.com' },
                 { username: 'tester1', password: 'tester123', role: '测试人员', email: 'tester1@example.com' }
             ];
         }
@@ -1643,7 +1643,7 @@ async function loadData() {
         console.error('加载数据失败:', error);
         // 加载失败时使用默认数据
         mockUsers = [
-            { username: 'admin', password: 'admin123', role: '管理员', email: 'admin@example.com' },
+            { username: 'admin', password: 'ctc@2026.', role: '管理员', email: 'admin@example.com' },
             { username: 'tester1', password: 'tester123', role: '测试人员', email: 'tester1@example.com' }
         ];
         historyRecords = [
@@ -7993,7 +7993,7 @@ async function submitAddLevel1PointForm() {
                     method: 'POST',
                     body: JSON.stringify({
                         username: 'admin',
-                        password: 'admin123'
+                        password: 'ctc@2026.'
                     })
                 });
 
@@ -8077,7 +8077,7 @@ async function submitAddLevel1PointForm() {
                         method: 'POST',
                         body: JSON.stringify({
                             username: 'admin',
-                            password: 'admin123'
+                            password: 'ctc@2026.'
                         })
                     });
 
@@ -16236,8 +16236,7 @@ document.addEventListener('DOMContentLoaded', function () {
 function initPageWithDefaultData() {
     // 使用默认数据
     const mockUsers = [
-        { username: 'admin', password: 'admin123', role: '管理员', email: 'admin@example.com' },
-        { username: 'tester1', password: 'tester123', role: '测试人员', email: 'tester1@example.com' }
+        { username: 'admin', password: 'ctc@2026.', role: '管理员', email: 'zhaosz@centec.com' }
     ];
 
     const historyRecords = [
