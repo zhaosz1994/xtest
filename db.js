@@ -1,20 +1,28 @@
 const mysql = require('mysql2');
 require('dotenv').config();
 
-const pool = mysql.createPool({
-  host: process.env.DB_HOST,
+// 基础配置
+const dbConfig = {
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   waitForConnections: true,
-  connectionLimit: 50, // 增加连接池大小以支持1000+用户
-  queueLimit: 100, // 限制等待队列大小
+  connectionLimit: 50,
+  queueLimit: 100,
   enableKeepAlive: true,
-  keepAliveInitialDelay: 30000, // 30秒
-  connectTimeout: 10000, // 连接超时10秒
-  acquireTimeout: 30000, // 获取连接超时30秒
-  timezone: '+08:00' // 设置时区为中国时区
-});
+  keepAliveInitialDelay: 30000,
+  connectTimeout: 10000,
+  timezone: '+08:00'
+};
+
+// 动态判断：如果环境变量里配了 Socket 就优先用 Socket，否则用 Host
+if (process.env.DB_SOCKET) {
+  dbConfig.socketPath = process.env.DB_SOCKET;
+} else {
+  dbConfig.host = process.env.DB_HOST || '127.0.0.1'; // 默认回退到本地 host
+}
+
+const pool = mysql.createPool(dbConfig);
 
 // 添加连接池状态监控
 setInterval(() => {

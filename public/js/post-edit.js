@@ -74,6 +74,7 @@ function updateUserStatus() {
 
 function initVditor() {
     PostEdit.vditor = new Vditor('vditor', {
+        cdn: '/vditor',
         height: 400,
         placeholder: '请输入帖子内容，支持 Markdown 语法...',
         theme: 'classic',

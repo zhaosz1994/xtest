@@ -14140,6 +14140,8 @@ async function login() {
 
             // 重新加载数据
             await loadData();
+            await loadProjects();
+            await loadCaseLibraries();
 
             // 如果当前在配置中心页面，刷新配置数据
             const currentRoute = Router.getCurrentRoute();
@@ -15470,6 +15472,11 @@ document.addEventListener('DOMContentLoaded', async function () {
             if (testlinkContainer) {
                 testlinkContainer.style.display = 'flex';
             }
+
+            // 只有已登录用户才加载业务数据
+            await loadData();
+            await loadProjects();
+            await loadCaseLibraries();
         } catch (e) {
             console.error('[页面加载] 恢复登录状态失败:', e);
             localStorage.removeItem('authToken');
@@ -15492,11 +15499,6 @@ document.addEventListener('DOMContentLoaded', async function () {
             rememberMeCheckbox.checked = true;
         }
     }
-
-    // 初始化页面（调用API加载数据）
-    await loadData();
-    await loadProjects();
-    await loadCaseLibraries(); // 加载用例库
 
     // 初始化 Hash 路由系统
     Router.init();

@@ -50,6 +50,7 @@
     "mysql2": "^3.6.5",
     "nodemailer": "^8.0.2",
     "socket.io": "^4.7.2",
+    "vditor": "^3.11.2",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

@@ -4,6 +4,7 @@ const path = require('path');
 const pool = require('./db');
 const { authenticateToken, requireAdmin } = require('./middleware');
 const usersRouter = require('./routes/users');
+const logger = require('./services/logger');
 // 暂时注释掉模块路由，直接在server.js中实现
 // const modulesRouter = require('./routes/modules');
 const testpointsRouter = require('./routes/testpoints');
@@ -39,7 +40,7 @@ const cors_config = {
     origin: function (origin, callback) {
         const allowedOrigins = process.env.CORS_ORIGINS 
             ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
-            : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+            : ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://10.10.25.154:8000'];
         
         if (!origin || allowedOrigins.indexOf(origin) !== -1) {
             callback(null, true);
@@ -66,6 +67,7 @@ app.use('/styles-theme.css', express.static(path.join(__dirname, 'styles-theme.c
 app.use('/styles-design-system.css', express.static(path.join(__dirname, 'styles-design-system.css')));
 app.use('/script.js', express.static(path.join(__dirname, 'script.js')));
 app.use('/context-menu.css', express.static(path.join(__dirname, 'context-menu.css')));
+app.use('/js', express.static(path.join(__dirname, 'js')));
 
 // 根路径重定向到 index.html
 app.get('/', (req, res) => {
@@ -7693,41 +7695,35 @@ async function startServer() {
     
     // 启动服务器
     server.listen(PORT, () => {
-      console.log(`服务器运行在 http://localhost:${PORT}`);
-      console.log('WebSocket服务已启动');
-      console.log('服务器启动成功，等待请求...');
+      logger.info(`服务器运行在 http://localhost:${PORT}`);
+      logger.info('WebSocket服务已启动');
+      logger.info('服务器启动成功，等待请求...');
     });
     
-    // 监听服务器错误
     server.on('error', (error) => {
-      console.error('服务器错误:', error);
+      logger.error('服务器错误', { error: error.message, stack: error.stack });
     });
     
-    // 优雅关闭服务器的函数
-function gracefulShutdown(signal) {
-      console.log(`收到 ${signal} 信号，正在关闭服务器...`);
+    function gracefulShutdown(signal) {
+      logger.info(`收到 ${signal} 信号，正在关闭服务器...`);
       
-      // 简化关闭逻辑，确保进程能正常退出
       try {
-        // 关闭WebSocket服务
         io.close();
-        console.log('WebSocket服务已关闭');
+        logger.info('WebSocket服务已关闭');
       } catch (error) {
-        console.error('关闭WebSocket服务时出错:', error.message);
+        logger.error('关闭WebSocket服务时出错', { error: error.message });
       }
       
       try {
-        // 关闭HTTP服务器
         server.close();
-        console.log('HTTP服务器已关闭');
+        logger.info('HTTP服务器已关闭');
       } catch (error) {
-        console.error('关闭HTTP服务器时出错:', error.message);
+        logger.error('关闭HTTP服务器时出错', { error: error.message });
       }
       
-      // 直接退出进程，不等待异步操作完成
-      console.log('服务器正在退出...');
+      logger.info('服务器正在退出...');
       process.exit(0);
-}
+    }
 
 // 监听进程终止信号 - 跨平台兼容
 // SIGINT: Ctrl+C 终止信号 (Windows/macOS/Linux)
@@ -7738,16 +7734,15 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
     
     // 防止进程意外退出
     process.on('uncaughtException', (error) => {
-      console.error('未捕获的异常:', error);
+      logger.fatal('未捕获的异常', { error: error.message, stack: error.stack });
     });
     
     process.on('unhandledRejection', (error) => {
-      console.error('未处理的Promise拒绝:', error);
+      logger.error('未处理的Promise拒绝', { error: error?.message || String(error) });
     });
     
   } catch (error) {
-    console.error('服务器启动失败:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.fatal('服务器启动失败', { error: error.message, stack: error.stack });
   }
 }
 
