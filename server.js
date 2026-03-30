@@ -1082,7 +1082,7 @@ app.post('/api/cases/list', async (req, res) => {
     const { libraryId, moduleId, level1Id, page = 1, pageSize = 32 } = req.body;
     const offset = (page - 1) * pageSize;
     
-    let query = 'SELECT id, case_id, name, priority, type, precondition, purpose, steps, expected, remark, creator, owner, library_id, module_id, level1_id, created_at, updated_at FROM test_cases WHERE 1=1';
+    let query = 'SELECT id, case_id, name, priority, type, method, status, key_config, precondition, purpose, steps, expected, remark, creator, owner, library_id, module_id, level1_id, created_at, updated_at FROM test_cases WHERE 1=1';
     let params = [];
     
     // 转换为正确的数据类型，并确保是有效的数字
@@ -1146,6 +1146,9 @@ app.post('/api/cases/list', async (req, res) => {
         name: testCase.name,
         priority: testCase.priority,
         type: testCase.type,
+        method: testCase.method || 'manual',
+        status: testCase.status || '维护中',
+        key_config: testCase.key_config || '',
         precondition: testCase.precondition || '',
         purpose: testCase.purpose || '',
         steps: testCase.steps || '',
@@ -3482,7 +3485,7 @@ app.get('/api/cases/match/:libraryId/:moduleId/:level1Id', async (req, res) => {
       SELECT 
         tc.id, tc.case_id, tc.name, tc.priority, tc.type, tc.creator, tc.purpose,
         tc.precondition, tc.steps, tc.expected, tc.owner, tc.library_id, tc.module_id, tc.level1_id,
-        tc.created_at, tc.updated_at, tc.remark 
+        tc.created_at, tc.updated_at, tc.remark, tc.key_config
       FROM test_cases tc
       WHERE tc.library_id = ? AND tc.module_id = ? AND tc.level1_id = ?
     `;
