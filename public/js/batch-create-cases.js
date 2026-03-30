@@ -440,6 +440,14 @@
                             <line x1="16" y1="17" x2="8" y2="17"></line>
                         </svg>
                     </button>
+                    <button class="action-btn clone-btn" data-action="clone" data-index="${index}" data-tooltip="从库中克隆已有用例">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="10" cy="10" r="7"></circle>
+                            <line x1="21" y1="21" x2="15" y2="15"></line>
+                            <line x1="10" y1="7" x2="10" y2="13"></line>
+                            <line x1="7" y1="10" x2="13" y2="10"></line>
+                        </svg>
+                    </button>
                     <button class="action-btn copy-btn" data-action="copy" data-index="${index}" data-tooltip="复制">
                         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
@@ -517,6 +525,8 @@
 
         if (action === 'copy') {
             copyRow(index);
+        } else if (action === 'clone') {
+            window.openCloneCaseModal(index);
         } else if (action === 'delete') {
             deleteRow(index);
         } else if (action === 'detail') {
@@ -1453,6 +1463,10 @@
 
         if (bulkDefaultsBtn) bulkDefaultsBtn.addEventListener('click', applyBulkDefaults);
 
+        if (typeof window.createCloneCaseModal === 'function') {
+            window.createCloneCaseModal();
+        }
+
         document.addEventListener('click', (e) => {
             const dropdown = document.getElementById('level1-dropdown');
             const clickableItem = document.getElementById('breadcrumb-level1');
@@ -1755,6 +1769,375 @@
             tableWrapper.style.maxWidth = '';
         });
     }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // 从现有数据库克隆用例功能 (Clone Existing Case Feature)
+    // ────────────────────────────────────────────────────────────────────────
+    let currentCloneTargetIndex = null;
+    let currentCloneCasesList = [];
+
+    window.createCloneCaseModal = function() {
+        if (document.getElementById('clone-case-modal')) return;
+
+        const modal = document.createElement('div');
+        modal.id = 'clone-case-modal';
+        modal.className = 'modal pa-modal';
+        modal.style.display = 'none';
+        modal.innerHTML = `
+            <div class="modal-overlay" id="clone-modal-overlay"></div>
+            <div class="modal-content pa-modal-content" id="clone-modal-content" style="width: 840px; height: 640px; max-width: 90vw; display: flex; flex-direction: column;">
+                <div class="modal-header pa-modal-header" id="clone-modal-header">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="7"></circle><line x1="21" y1="21" x2="15" y2="15"></line><line x1="10" y1="7" x2="10" y2="13"></line><line x1="7" y1="10" x2="13" y2="10"></line></svg>
+                        <h3 style="margin: 0; font-size: 16px;">从库中克隆用例</h3>
+                    </div>
+                    <button type="button" class="close" id="clone-modal-close" style="background:none; border:none; font-size:20px; cursor:pointer;">&times;</button>
+                </div>
+                <div class="clone-toolbar">
+                    <div class="clone-filter-group">
+                        <label class="clone-filter-label">用例库</label>
+                        <select id="clone-lib-select" class="form-select pa-select" onchange="window.fetchModulesForClone(this.value)"><option value="">加载中...</option></select>
+                    </div>
+                    <div class="clone-filter-group">
+                        <label class="clone-filter-label">模块</label>
+                        <select id="clone-mod-select" class="form-select pa-select" onchange="window.fetchLevel1ForClone(this.value)"><option value="">所有模块</option></select>
+                    </div>
+                    <div class="clone-filter-group">
+                        <label class="clone-filter-label">一级测试点</label>
+                        <select id="clone-lv1-select" class="form-select pa-select" onchange="window.fetchCloneCases()"><option value="all">包含所有测试点</option></select>
+                    </div>
+                    <div class="clone-filter-group" style="flex: 2; min-width: 180px;">
+                        <label class="clone-filter-label">用例关键字</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" id="clone-search-input" class="form-input pa-input" placeholder="输入名称或ID过滤查询结果..." oninput="window.renderCloneCaseList()" onkeypress="if(event.key==='Enter') window.fetchCloneCases()">
+                            <button class="btn btn-primary btn-sm" onclick="window.fetchCloneCases()" style="flex-shrink:0;">刷新服务器</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="clone-list-container">
+                    <table class="clone-cases-table" id="clone-cases-table">
+                        <thead>
+                            <tr>
+                                <th style="width:40px; text-align:center;">选择</th>
+                                <th>用例名称</th>
+                                <th style="width:120px;">级别 / 方式</th>
+                                <th style="width:100px;">创建人</th>
+                            </tr>
+                        </thead>
+                        <tbody id="clone-cases-tbody">
+                            <tr><td colspan="4" style="text-align:center; padding: 40px; color: #94a3b8;">正在加载可用用例...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="modal-footer" style="padding: 16px; display: flex; justify-content: flex-end; gap: 12px; background: #fff;">
+                    <span id="clone-selection-hint" style="margin-right: auto; align-self: center; font-size: 13px; color: #64748b;">未选择待克隆的源用例</span>
+                    <button class="btn btn-secondary" id="clone-cancel-btn">取消</button>
+                    <button class="btn btn-primary" id="clone-confirm-btn" disabled>确认克隆至下一行</button>
+                </div>
+                <div class="pa-modal-resizer" id="clone-modal-resizer">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                        <path d="M11 10a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm-4 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm4-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
+                    </svg>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        document.getElementById('clone-modal-close').addEventListener('click', window.closeCloneCaseModal);
+        document.getElementById('clone-cancel-btn').addEventListener('click', window.closeCloneCaseModal);
+        document.getElementById('clone-confirm-btn').addEventListener('click', window.confirmCloneCase);
+        document.getElementById('clone-modal-overlay').addEventListener('click', window.closeCloneCaseModal);
+
+        window.initCloneModalDrag();
+    };
+
+    window.initCloneModalDrag = function() {
+        const content = document.getElementById('clone-modal-content');
+        const header = document.getElementById('clone-modal-header');
+        const resizer = document.getElementById('clone-modal-resizer');
+        if (!content || content.dataset.dragInitialized === 'true') return;
+        content.dataset.dragInitialized = 'true';
+
+        let isDragging = false, dragLockTimer = null, startX = 0, startY = 0, startLeft = 0, startTop = 0;
+        header.addEventListener('mousedown', (e) => {
+            if (e.target.closest('button')) return;
+            startX = e.clientX; startY = e.clientY;
+            dragLockTimer = setTimeout(() => {
+                const rect = content.getBoundingClientRect();
+                startLeft = rect.left; startTop = rect.top;
+                if (content.style.position !== 'absolute') {
+                    content.style.position = 'absolute';
+                    content.style.left = startLeft + 'px';
+                    content.style.top = startTop + 'px';
+                    content.style.transform = 'none'; content.style.margin = '0';
+                }
+                isDragging = true;
+                header.style.cursor = 'move';
+                document.body.classList.add('modal-dragging');
+            }, 100);
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            content.style.left = Math.max(10, Math.min(startLeft + (e.clientX - startX), window.innerWidth - content.offsetWidth - 10)) + 'px';
+            content.style.top  = Math.max(10, Math.min(startTop + (e.clientY - startY), window.innerHeight - header.offsetHeight - 10)) + 'px';
+        });
+        document.addEventListener('mouseup', () => {
+            clearTimeout(dragLockTimer);
+            if (isDragging) { isDragging = false; header.style.cursor = 'default'; document.body.classList.remove('modal-dragging'); }
+        });
+
+        let isResizing = false, rStartX = 0, rStartY = 0, rStartW = 0, rStartH = 0;
+        resizer.addEventListener('mousedown', (e) => {
+            isResizing = true; rStartX = e.clientX; rStartY = e.clientY;
+            rStartW = content.offsetWidth; rStartH = content.offsetHeight;
+            document.body.classList.add('modal-resizing');
+            e.preventDefault(); e.stopPropagation();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            content.style.width  = Math.max(500, Math.min(rStartW + (e.clientX - rStartX), window.innerWidth - 40)) + 'px';
+            content.style.height = Math.max(400, Math.min(rStartH + (e.clientY - rStartY), window.innerHeight - 40)) + 'px';
+        });
+        document.addEventListener('mouseup', () => { if (isResizing) { isResizing = false; document.body.classList.remove('modal-resizing'); } });
+    };
+
+    window.openCloneCaseModal = async function(index) {
+        if (batchData.length >= MAX_ROWS) {
+            showErrorMessage(`已达到最大行数限制（${MAX_ROWS}条），请分批提交`);
+            return;
+        }
+        currentCloneTargetIndex = index;
+        const modal = document.getElementById('clone-case-modal');
+        if (modal) modal.style.display = 'flex';
+        
+        document.getElementById('clone-search-input').value = '';
+        currentCloneCasesList = [];
+        window.renderCloneCaseList();
+
+        try {
+            const libSelect = document.getElementById('clone-lib-select');
+            const res = await apiRequest('/api/libraries/list');
+            if (res.success && res.libraries) {
+                libSelect.innerHTML = '<option value="all">所有用例库</option>' + res.libraries.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('');
+                libSelect.value = libraryId || 'all';
+                await window.fetchModulesForClone(libSelect.value);
+            }
+        } catch (e) {
+            console.error('Fetch libraries failed', e);
+        }
+    };
+
+    window.fetchModulesForClone = async function(libId) {
+        const modSelect = document.getElementById('clone-mod-select');
+        modSelect.innerHTML = '<option value="">加载中...</option>';
+        if (!libId || libId === 'all') { modSelect.innerHTML = '<option value="all">所有模块</option>'; await window.fetchLevel1ForClone('all'); return; }
+        try {
+            const res = await apiRequest(`/api/modules/by-library/${libId}`);
+            if (res.success && res.modules) {
+                modSelect.innerHTML = '<option value="all">所有模块</option>' + res.modules.map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
+                if (String(libId) === String(libraryId) && moduleId) modSelect.value = moduleId;
+                await window.fetchLevel1ForClone(modSelect.value);
+            }
+        } catch (e) {
+            console.error('Fetch modules failed', e);
+        }
+    };
+
+    window.fetchLevel1ForClone = async function(modId) {
+        const lv1Select = document.getElementById('clone-lv1-select');
+        lv1Select.innerHTML = '<option value="all">包含所有测试点</option>';
+        if (!modId || modId === 'all') { await window.fetchCloneCases(); return; }
+        try {
+            const res = await apiRequest(`/api/testpoints/level1/${modId}`);
+            const pointsList = res.level1Points || res.points;
+            if (res.success && pointsList) {
+                lv1Select.innerHTML = '<option value="all">包含所有测试点</option>' + pointsList.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+                if (String(modId) === String(moduleId) && typeof level1Id !== 'undefined') lv1Select.value = level1Id || 'all';
+                await window.fetchCloneCases();
+            }
+        } catch (e) {
+            console.error('Fetch level1 points failed', e);
+        }
+    };
+
+    window.fetchCloneCases = async function() {
+        const tbody = document.getElementById('clone-cases-tbody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 40px; color: #94a3b8;">加载中，可能包含大量用例...</td></tr>';
+        
+        const libId = document.getElementById('clone-lib-select').value;
+        const modId = document.getElementById('clone-mod-select').value;
+        const lv1Id = document.getElementById('clone-lv1-select').value;
+
+        try {
+            const result = await apiRequest('/api/cases/list', {
+                method: 'POST',
+                body: JSON.stringify({ libraryId: libId || 'all', moduleId: modId || 'all', level1Id: lv1Id || 'all', page: 1, pageSize: 9999 })
+            });
+            if (result.success && result.testCases) {
+                currentCloneCasesList = result.testCases;
+                window.renderCloneCaseList();
+            } else {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 40px; color: #ef4444;">获取用例失败</td></tr>';
+            }
+        } catch (error) {
+            console.error('Fetch cases error:', error);
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 40px; color: #ef4444;">请求出错</td></tr>';
+        }
+    };
+
+    window.renderCloneCaseList = function() {
+        const tbody = document.getElementById('clone-cases-tbody');
+        const keyword = (document.getElementById('clone-search-input')?.value || '').toLowerCase();
+        
+        let filtered = currentCloneCasesList;
+        if (keyword) {
+            filtered = filtered.filter(c => c.name.toLowerCase().includes(keyword) || (c.caseId && c.caseId.toLowerCase().includes(keyword)));
+        }
+
+        if (!filtered || filtered.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 40px; color: #94a3b8;">未匹配到相应的测试用例记录</td></tr>';
+            window.selectCloneCase(null);
+            return;
+        }
+
+        tbody.innerHTML = filtered.map(c => `
+            <tr class="clone-case-row" data-id="${c.id}" onclick="window.selectCloneCase(${c.id})">
+                <td style="text-align:center;"><input type="radio" name="clone_case_radio" value="${c.id}" style="pointer-events:none;"></td>
+                <td>
+                    <div class="clone-case-name">${escapeHtml(c.name)}</div>
+                    <div style="font-size:11px; color:#94a3b8; font-family: monospace;">${escapeHtml(c.caseId || '')}</div>
+                </td>
+                <td style="font-size:12px;">
+                    <span style="color:#0ea5e9;">${escapeHtml(c.priority)}</span><br>
+                    <span style="color:#64748b;">${escapeHtml(c.type)}</span> / <span style="color:#64748b;">${escapeHtml(c.method || 'manual')}</span>
+                </td>
+                <td style="font-size:12px;">${escapeHtml(c.creator)}</td>
+            </tr>
+        `).join('');
+
+        window.selectCloneCase(null);
+    };
+
+    window.selectCloneCase = function(id) {
+        document.querySelectorAll('.clone-case-row').forEach(row => {
+            row.classList.remove('selected');
+            const radio = row.querySelector('input[type="radio"]');
+            if (radio) radio.checked = false;
+        });
+        const btn = document.getElementById('clone-confirm-btn');
+        const hint = document.getElementById('clone-selection-hint');
+        if (id) {
+            const tr = document.querySelector(`.clone-case-row[data-id="${id}"]`);
+            if (tr) {
+                tr.classList.add('selected');
+                tr.querySelector('input[type="radio"]').checked = true;
+            }
+            btn.disabled = false;
+            const targetCase = currentCloneCasesList.find(c => String(c.id) === String(id));
+            hint.innerHTML = `即将克隆新模板：<strong style="color:#0f172a;">${escapeHtml(targetCase.name)}</strong>`;
+        } else {
+            btn.disabled = true;
+            hint.textContent = '请选中列表中你需要克隆的测试用例底板';
+        }
+    };
+
+    window.closeCloneCaseModal = function() {
+        const modal = document.getElementById('clone-case-modal');
+        if (modal) modal.style.display = 'none';
+        currentCloneTargetIndex = null;
+    };
+
+    window.confirmCloneCase = async function() {
+        const selectedRadio = document.querySelector('input[name="clone_case_radio"]:checked');
+        if (!selectedRadio || currentCloneTargetIndex === null) return;
+        
+        const targetCase = currentCloneCasesList.find(c => String(c.id) === String(selectedRadio.value));
+        if (!targetCase) return;
+
+        // 若当前有打开了修改中的抽屉，先提交保存缓冲数据以防破坏草稿数据连续性
+        syncDrawerToData();
+        
+        if (batchData.length >= MAX_ROWS) {
+            showErrorMessage(`已达到最大行数限制（${MAX_ROWS}条）`);
+            return;
+        }
+
+        // 处理环境字段，优先使用environments数组，如果没有则使用单个env
+        let envValue = '';
+        if (targetCase.environments && Array.isArray(targetCase.environments) && targetCase.environments.length > 0) {
+            envValue = targetCase.environments.join(',');
+        } else if (targetCase.env) {
+            envValue = targetCase.env;
+        }
+
+        // 处理来源字段
+        let sourcesValue = '';
+        if (targetCase.sources && Array.isArray(targetCase.sources) && targetCase.sources.length > 0) {
+            sourcesValue = targetCase.sources.join(',');
+        }
+
+        // 处理项目字段
+        let projectsValue = [];
+        if (targetCase.projects && Array.isArray(targetCase.projects) && targetCase.projects.length > 0) {
+            projectsValue = targetCase.projects;
+        }
+
+        // 处理测试阶段字段
+        let phaseValue = '';
+        if (targetCase.phases && Array.isArray(targetCase.phases) && targetCase.phases.length > 0) {
+            // 如果有多个测试阶段，使用第一个
+            phaseValue = targetCase.phases[0];
+        } else if (targetCase.phase) {
+            phaseValue = targetCase.phase;
+        }
+
+        // 处理测试方式字段
+        let methodsValue = targetCase.method ? targetCase.method : 'manual';
+        // 如果有多个测试方式，使用第一个
+        if (targetCase.methods && Array.isArray(targetCase.methods) && targetCase.methods.length > 0) {
+            methodsValue = targetCase.methods[0];
+        }
+
+        const newRow = {
+            id: Date.now() + Math.random(),
+            name: targetCase.name + '-Clone',
+            priority: targetCase.priority,
+            type: targetCase.type,
+            owner: typeof currentUser !== 'undefined' ? currentUser?.username : (targetCase.owner || ''),
+            phase: phaseValue,
+            env: envValue,
+            precondition: targetCase.precondition || '',
+            purpose: targetCase.purpose || '',
+            steps: targetCase.steps || '',
+            expected: targetCase.expected || '',
+            remark: targetCase.remark || '',
+            key_config: targetCase.key_config || '',
+            environments: envValue,
+            methods: methodsValue,
+            sources: sourcesValue,
+            projects: projectsValue
+        };
+        
+        const index = currentCloneTargetIndex;
+        batchData.splice(index + 1, 0, newRow);
+        
+        const tbody = document.getElementById('table-body');
+        if (tbody) {
+            const tr = document.createElement('tr');
+            tr.dataset.rowIndex = index + 1;
+            tr.innerHTML = getRowHTML(newRow, index + 1);
+            const refNode = tbody.children[index + 1];
+            if (refNode) tbody.insertBefore(tr, refNode);
+            else tbody.appendChild(tr);
+        }
+        
+        updateIndicesFrom(index + 1);
+        updateRowCountHint();
+        try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(batchData)); } catch(_) {}
+        
+        window.closeCloneCaseModal();
+        showSuccessMessage(`成功克隆「${targetCase.name}」到第 ${index + 2} 行`);
+    };
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);

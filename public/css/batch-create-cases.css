@@ -1734,3 +1734,18 @@ body.drawer-resizing * {
 body.modal-dragging * { user-select: none; }
 body.modal-resizing { cursor: se-resize !important; }
 body.modal-resizing * { user-select: none; }
+
+/* ──────────────────────────────────────────────────────────
+ * Clone Case Modal Styles
+ * ────────────────────────────────────────────────────────── */
+.clone-toolbar { padding: 16px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.clone-filter-group { display: flex; flex-direction: column; flex: 1; min-width: 140px; }
+.clone-filter-label { font-size: 12px; color: #64748b; margin-bottom: 4px; }
+.clone-list-container { flex: 1; overflow-y: auto; position: relative; background: #fff; border-bottom: 1px solid #e2e8f0; }
+.clone-cases-table { width: 100%; border-collapse: collapse; }
+.clone-cases-table th { position: sticky; top: 0; background: #f1f5f9; z-index: 10; padding: 10px 12px; text-align: left; font-size: 13px; font-weight: 600; color: #475569; border-bottom: 1px solid #e2e8f0; }
+.clone-case-row { border-bottom: 1px solid #f1f5f9; transition: background 0.2s; cursor: pointer; }
+.clone-case-row:hover { background-color: #f8fafc; }
+.clone-case-row.selected { background-color: #e0f2fe; }
+.clone-case-row td { padding: 10px 12px; font-size: 13px; color: #334155; }
+.clone-case-name { font-weight: 500; color: #0f172a; }

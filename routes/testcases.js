@@ -55,7 +55,16 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
 
         // ── 预加载关联数据映射表（避免循环内重复查询）────────────
         const uniqueEnvNames   = [...new Set(cases.map(c => c.env).filter(Boolean))];
-        const uniquePhaseNames = [...new Set(cases.map(c => c.phase).filter(Boolean))];
+        
+        // 收集单个phase字段和phases数组中的所有测试阶段
+        const collectPhases = (c) => {
+            const phases = [];
+            if (c.phase) phases.push(c.phase);
+            if (c.phases && Array.isArray(c.phases)) phases.push(...c.phases);
+            return phases;
+        };
+        const uniquePhaseNames = [...new Set(cases.flatMap(collectPhases).filter(Boolean))];
+        
         const uniqueTypeNames  = [...new Set(cases.map(c => c.type).filter(Boolean))];
         
         // 收集逗号分隔的多选值（来源、方式、环境扩展）
@@ -184,8 +193,19 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
             if (caseData.env && envMap.has(caseData.env)) {
                 envRelations.push([dbId, envMap.get(caseData.env)]);
             }
+            
+            // 处理单个phase字段
             if (caseData.phase && phaseMap.has(caseData.phase)) {
                 phaseRelations.push([dbId, phaseMap.get(caseData.phase)]);
+            }
+            
+            // 处理phases数组
+            if (caseData.phases && Array.isArray(caseData.phases)) {
+                caseData.phases.forEach(phase => {
+                    if (phase && phaseMap.has(phase)) {
+                        phaseRelations.push([dbId, phaseMap.get(phase)]);
+                    }
+                });
             }
             if (caseData.type && typeMap.has(caseData.type)) {
                 typeRelations.push([dbId, typeMap.get(caseData.type)]);

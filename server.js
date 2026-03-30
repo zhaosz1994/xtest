@@ -579,6 +579,9 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
         [sourceModuleId]
       );
       
+      // 测试用例ID映射表：old_id -> new_id
+      const testCaseIdMap = new Map();
+      
       for (let i = 0; i < testCases.length; i++) {
         const tc = testCases[i];
         // 生成新的case_id - 使用时间戳+索引+随机数确保唯一性
@@ -601,7 +604,8 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
           status = '维护中';
         }
         
-        await connection.execute(
+        // 插入新测试用例
+        const [result] = await connection.execute(
           `INSERT INTO test_cases (
             case_id, name, priority, type, precondition, purpose, 
             steps, expected, creator, library_id, module_id, level1_id,
@@ -628,10 +632,130 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
           ]
         );
         
+        // 记录测试用例ID映射
+        testCaseIdMap.set(tc.id, result.insertId);
         clonedCaseCount++;
       }
       
       console.log(`[克隆] 克隆了 ${clonedCaseCount} 个测试用例`);
+      
+      // 5. 克隆测试用例的关联环境
+      if (testCaseIdMap.size > 0) {
+        const [envRelations] = await connection.execute(
+          `SELECT tce.test_case_id, tce.environment_id 
+           FROM test_case_environments tce 
+           JOIN test_cases tc ON tce.test_case_id = tc.id 
+           WHERE tc.module_id = ?`,
+          [sourceModuleId]
+        );
+        
+        if (envRelations.length > 0) {
+          const envInsertValues = envRelations
+            .filter(rel => testCaseIdMap.has(rel.test_case_id))
+            .map(rel => `(${testCaseIdMap.get(rel.test_case_id)}, ${rel.environment_id})`)
+            .join(',');
+          
+          await connection.execute(
+            `INSERT IGNORE INTO test_case_environments (test_case_id, environment_id) 
+             VALUES ${envInsertValues}`
+          );
+        }
+      }
+      
+      // 6. 克隆测试用例的关联来源
+      if (testCaseIdMap.size > 0) {
+        const [sourceRelations] = await connection.execute(
+          `SELECT tcs.test_case_id, tcs.source_id 
+           FROM test_case_sources tcs 
+           JOIN test_cases tc ON tcs.test_case_id = tc.id 
+           WHERE tc.module_id = ?`,
+          [sourceModuleId]
+        );
+        
+        if (sourceRelations.length > 0) {
+          const sourceInsertValues = sourceRelations
+            .filter(rel => testCaseIdMap.has(rel.test_case_id))
+            .map(rel => `(${testCaseIdMap.get(rel.test_case_id)}, ${rel.source_id})`)
+            .join(',');
+          
+          await connection.execute(
+            `INSERT IGNORE INTO test_case_sources (test_case_id, source_id) 
+             VALUES ${sourceInsertValues}`
+          );
+        }
+      }
+      
+      // 7. 克隆测试用例的关联项目
+      if (testCaseIdMap.size > 0) {
+        const [projectRelations] = await connection.execute(
+          `SELECT tcp.test_case_id, tcp.project_id, tcp.owner, tcp.progress_id, tcp.status_id, tcp.remark 
+           FROM test_case_projects tcp 
+           JOIN test_cases tc ON tcp.test_case_id = tc.id 
+           WHERE tc.module_id = ?`,
+          [sourceModuleId]
+        );
+        
+        if (projectRelations.length > 0) {
+          const projectInsertValues = projectRelations
+            .filter(rel => testCaseIdMap.has(rel.test_case_id))
+            .map(rel => {
+              const newOwner = resetOwner ? null : rel.owner;
+              return `(${testCaseIdMap.get(rel.test_case_id)}, ${rel.project_id}, ${newOwner ? `'${connection.escape(newOwner)}'` : 'NULL'}, ${rel.progress_id || 'NULL'}, ${rel.status_id || 'NULL'}, '${connection.escape(rel.remark || '')}', CURRENT_TIMESTAMP)`;
+            })
+            .join(',');
+          
+          await connection.execute(
+            `INSERT IGNORE INTO test_case_projects (test_case_id, project_id, owner, progress_id, status_id, remark, created_at) 
+             VALUES ${projectInsertValues}`
+          );
+        }
+      }
+      
+      // 8. 克隆测试用例的关联测试阶段
+      if (testCaseIdMap.size > 0) {
+        const [phaseRelations] = await connection.execute(
+          `SELECT tcp.test_case_id, tcp.phase_id 
+           FROM test_case_phases tcp 
+           JOIN test_cases tc ON tcp.test_case_id = tc.id 
+           WHERE tc.module_id = ?`,
+          [sourceModuleId]
+        );
+        
+        if (phaseRelations.length > 0) {
+          const phaseInsertValues = phaseRelations
+            .filter(rel => testCaseIdMap.has(rel.test_case_id))
+            .map(rel => `(${testCaseIdMap.get(rel.test_case_id)}, ${rel.phase_id})`)
+            .join(',');
+          
+          await connection.execute(
+            `INSERT IGNORE INTO test_case_phases (test_case_id, phase_id) 
+             VALUES ${phaseInsertValues}`
+          );
+        }
+      }
+      
+      // 9. 克隆测试用例的关联测试方式
+      if (testCaseIdMap.size > 0) {
+        const [methodRelations] = await connection.execute(
+          `SELECT tcm.test_case_id, tcm.method_id 
+           FROM test_case_methods tcm 
+           JOIN test_cases tc ON tcm.test_case_id = tc.id 
+           WHERE tc.module_id = ?`,
+          [sourceModuleId]
+        );
+        
+        if (methodRelations.length > 0) {
+          const methodInsertValues = methodRelations
+            .filter(rel => testCaseIdMap.has(rel.test_case_id))
+            .map(rel => `(${testCaseIdMap.get(rel.test_case_id)}, ${rel.method_id})`)
+            .join(',');
+          
+          await connection.execute(
+            `INSERT IGNORE INTO test_case_methods (test_case_id, method_id) 
+             VALUES ${methodInsertValues}`
+          );
+        }
+      }
     }
     
     // 5. 记录操作日志
@@ -1136,32 +1260,149 @@ app.post('/api/cases/list', async (req, res) => {
     // 使用query方法代替execute方法，可能对参数类型的处理更宽松
     const [testCases] = await pool.query(query, safeParams);
     
+    // 获取所有测试用例的ID
+    const testCaseIds = testCases.map(tc => tc.id);
+    
+    // 获取测试用例的关联环境
+    let environmentsMap = new Map();
+    if (testCaseIds.length > 0) {
+      const envQuery = `
+        SELECT tce.test_case_id, e.name 
+        FROM test_case_environments tce 
+        JOIN environments e ON tce.environment_id = e.id 
+        WHERE tce.test_case_id IN (${testCaseIds.map(() => '?').join(',')})
+      `;
+      const [envResults] = await pool.query(envQuery, testCaseIds);
+      envResults.forEach(result => {
+        if (!environmentsMap.has(result.test_case_id)) {
+          environmentsMap.set(result.test_case_id, []);
+        }
+        environmentsMap.get(result.test_case_id).push(result.name);
+      });
+    }
+    
+    // 获取测试用例的关联来源
+    let sourcesMap = new Map();
+    if (testCaseIds.length > 0) {
+      const sourceQuery = `
+        SELECT tcs.test_case_id, s.name 
+        FROM test_case_sources tcs 
+        JOIN test_sources s ON tcs.source_id = s.id 
+        WHERE tcs.test_case_id IN (${testCaseIds.map(() => '?').join(',')})
+      `;
+      const [sourceResults] = await pool.query(sourceQuery, testCaseIds);
+      sourceResults.forEach(result => {
+        if (!sourcesMap.has(result.test_case_id)) {
+          sourcesMap.set(result.test_case_id, []);
+        }
+        sourcesMap.get(result.test_case_id).push(result.name);
+      });
+    }
+    
+    // 获取测试用例的关联项目
+    let projectsMap = new Map();
+    if (testCaseIds.length > 0) {
+      const projectQuery = `
+        SELECT tcp.test_case_id, tcp.project_id, tcp.owner, tcp.progress_id, tcp.status_id, tcp.remark, p.name 
+        FROM test_case_projects tcp 
+        JOIN projects p ON tcp.project_id = p.id 
+        WHERE tcp.test_case_id IN (${testCaseIds.map(() => '?').join(',')})
+      `;
+      const [projectResults] = await pool.query(projectQuery, testCaseIds);
+      projectResults.forEach(result => {
+        if (!projectsMap.has(result.test_case_id)) {
+          projectsMap.set(result.test_case_id, []);
+        }
+        projectsMap.get(result.test_case_id).push({
+          project_id: result.project_id,
+          id: result.project_id,
+          name: result.name,
+          owner: result.owner,
+          progress_id: result.progress_id,
+          status_id: result.status_id,
+          remark: result.remark
+        });
+      });
+    }
+    
+    // 获取测试用例的关联方式
+    let methodsMap = new Map();
+    if (testCaseIds.length > 0) {
+      const methodQuery = `
+        SELECT tcm.test_case_id, tm.name 
+        FROM test_case_methods tcm 
+        JOIN test_methods tm ON tcm.method_id = tm.id 
+        WHERE tcm.test_case_id IN (${testCaseIds.map(() => '?').join(',')})
+      `;
+      const [methodResults] = await pool.query(methodQuery, testCaseIds);
+      methodResults.forEach(result => {
+        if (!methodsMap.has(result.test_case_id)) {
+          methodsMap.set(result.test_case_id, []);
+        }
+        methodsMap.get(result.test_case_id).push(result.name);
+      });
+    }
+    
+    // 获取测试用例的关联阶段
+    let phasesMap = new Map();
+    if (testCaseIds.length > 0) {
+      const phaseQuery = `
+        SELECT tcp.test_case_id, tp.name 
+        FROM test_case_phases tcp 
+        JOIN test_phases tp ON tcp.phase_id = tp.id 
+        WHERE tcp.test_case_id IN (${testCaseIds.map(() => '?').join(',')})
+      `;
+      const [phaseResults] = await pool.query(phaseQuery, testCaseIds);
+      phaseResults.forEach(result => {
+        if (!phasesMap.has(result.test_case_id)) {
+          phasesMap.set(result.test_case_id, []);
+        }
+        phasesMap.get(result.test_case_id).push(result.name);
+      });
+    }
+    
     console.log('查询结果:', testCases);
     
     res.json({ 
       success: true,
-      testCases: testCases.map(testCase => ({
-        id: testCase.id,
-        caseId: testCase.case_id,
-        name: testCase.name,
-        priority: testCase.priority,
-        type: testCase.type,
-        method: testCase.method || 'manual',
-        status: testCase.status || '维护中',
-        key_config: testCase.key_config || '',
-        precondition: testCase.precondition || '',
-        purpose: testCase.purpose || '',
-        steps: testCase.steps || '',
-        expected: testCase.expected || '',
-        remark: testCase.remark || '',
-        creator: testCase.creator,
-        owner: testCase.owner || testCase.creator,
-        libraryId: testCase.library_id,
-        moduleId: testCase.module_id,
-        level1Id: testCase.level1_id,
-        createdAt: testCase.created_at,
-        updatedAt: testCase.updated_at
-      }))
+      testCases: testCases.map(testCase => {
+        // 获取关联的测试方式，如果没有则使用test_case表中的method字段
+        const methods = methodsMap.get(testCase.id) || [];
+        const method = methods.length > 0 ? methods[0] : (testCase.method || 'manual');
+        
+        // 获取关联的测试阶段
+        const phases = phasesMap.get(testCase.id) || [];
+        const phase = phases.length > 0 ? phases[0] : testCase.phase || '';
+        
+        return {
+          id: testCase.id,
+          caseId: testCase.case_id,
+          name: testCase.name,
+          priority: testCase.priority,
+          type: testCase.type,
+          method: method,
+          phase: phase,
+          status: testCase.status || '维护中',
+          key_config: testCase.key_config || '',
+          precondition: testCase.precondition || '',
+          purpose: testCase.purpose || '',
+          steps: testCase.steps || '',
+          expected: testCase.expected || '',
+          remark: testCase.remark || '',
+          creator: testCase.creator,
+          owner: testCase.owner || testCase.creator,
+          libraryId: testCase.library_id,
+          moduleId: testCase.module_id,
+          level1Id: testCase.level1_id,
+          environments: environmentsMap.get(testCase.id) || [],
+          sources: sourcesMap.get(testCase.id) || [],
+          methods: methods,
+          phases: phases,
+          projects: projectsMap.get(testCase.id) || [],
+          createdAt: testCase.created_at,
+          updatedAt: testCase.updated_at
+        };
+      })
     });
   } catch (error) {
     console.error('获取测试用例列表错误:', error);
