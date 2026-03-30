@@ -222,7 +222,7 @@ function initVditor() {
             'insert-before', 'insert-after', '|',
             'undo', 'redo', '|',
             'fullscreen', 'edit-mode',
-            { name: 'preview', tip: '预览', icon: '<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 4.5C7 4.5 4.5 7 4.5 12S7 19.5 12 19.5 19.5 17 19.5 12C17 19.5 19.5 17 19.5 12 19.5 4.5 17 4.5 12Z"/><path fill="currentColor" d="M12 8c-2.2 0-4 1.8-4 4s1.8 4 4 4 4-1.8 4-4-1.8-4-4-4z"/></svg>', click: () => PostCreate.vditor.preview() }
+            { name: 'preview', tip: '预览', icon: '<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>', click: () => PostCreate.vditor.preview() }
         ],
         preview: { url: '/api/forum/preview', parse: (markdown) => markdown },
         input: (value) => {
