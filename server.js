@@ -4197,6 +4197,8 @@ app.get('/api/dashboard/project-progress', async (req, res) => {
         COUNT(tcp.id) as total_cases,
         SUM(CASE WHEN ts.status_category = 'passed' THEN 1 ELSE 0 END) as passed_count,
         SUM(CASE WHEN ts.status_category = 'failed' THEN 1 ELSE 0 END) as failed_count,
+        SUM(CASE WHEN ts.status_category = 'blocked' THEN 1 ELSE 0 END) as blocked_count,
+        SUM(CASE WHEN ts.status_category = 'paused' THEN 1 ELSE 0 END) as paused_count,
         SUM(CASE WHEN ts.status_category = 'pending' OR ts.status_category IS NULL THEN 1 ELSE 0 END) as pending_count
       FROM projects p
       LEFT JOIN test_case_projects tcp ON p.id = tcp.project_id
@@ -4208,10 +4210,13 @@ app.get('/api/dashboard/project-progress', async (req, res) => {
     `, params);
     
     // 计算每个项目的通过率和进度
+    // 通过率分母：pass + fail + asic_hang + core_dump + traffic_drop（不包含 blocked 和 paused）
+    // 进度分母：所有非 pending 的用例
     const projectProgress = projectStats.map(project => {
-      const totalTested = (project.passed_count || 0) + (project.failed_count || 0);
-      const passRate = totalTested > 0 ? ((project.passed_count || 0) / totalTested * 100).toFixed(1) : 0;
-      const progress = project.total_cases > 0 ? (totalTested / project.total_cases * 100).toFixed(1) : 0;
+      const validTested = (project.passed_count || 0) + (project.failed_count || 0);
+      const testedForProgress = (project.passed_count || 0) + (project.failed_count || 0) + (project.blocked_count || 0) + (project.paused_count || 0);
+      const passRate = validTested > 0 ? ((project.passed_count || 0) / validTested * 100).toFixed(1) : 0;
+      const progress = project.total_cases > 0 ? (testedForProgress / project.total_cases * 100).toFixed(1) : 0;
       
       return {
         projectId: project.id,
@@ -4219,6 +4224,8 @@ app.get('/api/dashboard/project-progress', async (req, res) => {
         totalCases: project.total_cases || 0,
         passedCount: project.passed_count || 0,
         failedCount: project.failed_count || 0,
+        blockedCount: project.blocked_count || 0,
+        pausedCount: project.paused_count || 0,
         pendingCount: project.pending_count || 0,
         passRate: passRate + '%',
         progress: progress + '%'
@@ -4278,6 +4285,8 @@ app.get('/api/dashboard/owner-analysis', async (req, res) => {
         COUNT(tcp.id) as total_tasks,
         SUM(CASE WHEN ts.status_category = 'passed' THEN 1 ELSE 0 END) as passed_count,
         SUM(CASE WHEN ts.status_category = 'failed' THEN 1 ELSE 0 END) as failed_count,
+        SUM(CASE WHEN ts.status_category = 'blocked' THEN 1 ELSE 0 END) as blocked_count,
+        SUM(CASE WHEN ts.status_category = 'paused' THEN 1 ELSE 0 END) as paused_count,
         SUM(CASE WHEN ts.status_category = 'pending' OR ts.status_category IS NULL THEN 1 ELSE 0 END) as pending_count,
         SUM(CASE WHEN tp.status_category = 'completed' THEN 1 ELSE 0 END) as completed_count,
         SUM(CASE WHEN tp.status_category = 'in_progress' THEN 1 ELSE 0 END) as in_progress_count,
@@ -4292,15 +4301,18 @@ app.get('/api/dashboard/owner-analysis', async (req, res) => {
     `, params);
     
     // 计算每个负责人的通过率
+    // 通过率分母：pass + fail + asic_hang + core_dump + traffic_drop（不包含 blocked 和 paused）
     const ownerAnalysis = ownerStats.map(owner => {
-      const totalTested = (owner.passed_count || 0) + (owner.failed_count || 0);
-      const passRate = totalTested > 0 ? ((owner.passed_count || 0) / totalTested * 100).toFixed(1) : 0;
+      const validTested = (owner.passed_count || 0) + (owner.failed_count || 0);
+      const passRate = validTested > 0 ? ((owner.passed_count || 0) / validTested * 100).toFixed(1) : 0;
       
       return {
         owner: owner.owner,
         totalTasks: owner.total_tasks || 0,
         passedCount: owner.passed_count || 0,
         failedCount: owner.failed_count || 0,
+        blockedCount: owner.blocked_count || 0,
+        pausedCount: owner.paused_count || 0,
         pendingCount: owner.pending_count || 0,
         completedCount: owner.completed_count || 0,
         inProgressCount: owner.in_progress_count || 0,
@@ -4465,12 +4477,14 @@ app.get('/api/dashboard/trend/pass-rate', async (req, res) => {
     }
     
     // 获取每日通过率趋势
+    // 通过率分母：pass + fail + asic_hang + core_dump + traffic_drop（不包含 blocked）
     const trendQuery = `
       SELECT 
         DATE(tcp.updated_at) as date,
         COUNT(*) as total,
-        SUM(CASE WHEN ts.name LIKE '%pass%' OR ts.name LIKE '%通过%' THEN 1 ELSE 0 END) as passed,
-        SUM(CASE WHEN ts.name LIKE '%fail%' OR ts.name LIKE '%失败%' THEN 1 ELSE 0 END) as failed
+        SUM(CASE WHEN ts.status_category = 'passed' THEN 1 ELSE 0 END) as passed,
+        SUM(CASE WHEN ts.status_category = 'failed' THEN 1 ELSE 0 END) as failed,
+        SUM(CASE WHEN ts.status_category = 'blocked' THEN 1 ELSE 0 END) as blocked
       FROM test_case_projects tcp
       LEFT JOIN test_statuses ts ON tcp.status_id = ts.id
       LEFT JOIN test_cases tc ON tcp.test_case_id = tc.id
@@ -4491,13 +4505,26 @@ app.get('/api/dashboard/trend/pass-rate', async (req, res) => {
     for (let i = daysNum - 1; i >= 0; i--) {
       const date = new Date();
       date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().split('T')[0];
+      // 使用本地时区格式化日期，避免UTC时区问题
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const dateStr = `${year}-${month}-${day}`;
       labels.push(date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }));
       
-      const dayData = trendResults.find(r => r.date && r.date.toISOString && r.date.toISOString().split('T')[0] === dateStr);
+      const dayData = trendResults.find(r => {
+        if (!r.date) return false;
+        // 处理数据库返回的日期对象
+        const dbDate = r.date instanceof Date ? r.date : new Date(r.date);
+        const dbYear = dbDate.getFullYear();
+        const dbMonth = String(dbDate.getMonth() + 1).padStart(2, '0');
+        const dbDay = String(dbDate.getDate()).padStart(2, '0');
+        const dbDateStr = `${dbYear}-${dbMonth}-${dbDay}`;
+        return dbDateStr === dateStr;
+      });
       if (dayData) {
-        const total = (dayData.passed || 0) + (dayData.failed || 0);
-        passRates.push(total > 0 ? ((dayData.passed / total) * 100).toFixed(1) : 0);
+        const validTested = (dayData.passed || 0) + (dayData.failed || 0);
+        passRates.push(validTested > 0 ? ((dayData.passed / validTested) * 100).toFixed(1) : 0);
         passedCounts.push(dayData.passed || 0);
         failedCounts.push(dayData.failed || 0);
       } else {
@@ -4570,10 +4597,23 @@ app.get('/api/dashboard/trend/executions', async (req, res) => {
     for (let i = daysNum - 1; i >= 0; i--) {
       const date = new Date();
       date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().split('T')[0];
+      // 使用本地时区格式化日期，避免UTC时区问题
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const dateStr = `${year}-${month}-${day}`;
       labels.push(date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }));
       
-      const dayData = trendResults.find(r => r.date && r.date.toISOString && r.date.toISOString().split('T')[0] === dateStr);
+      const dayData = trendResults.find(r => {
+        if (!r.date) return false;
+        // 处理数据库返回的日期对象
+        const dbDate = r.date instanceof Date ? r.date : new Date(r.date);
+        const dbYear = dbDate.getFullYear();
+        const dbMonth = String(dbDate.getMonth() + 1).padStart(2, '0');
+        const dbDay = String(dbDate.getDate()).padStart(2, '0');
+        const dbDateStr = `${dbYear}-${dbMonth}-${dbDay}`;
+        return dbDateStr === dateStr;
+      });
       if (dayData) {
         passedCounts.push(dayData.passed || 0);
         failedCounts.push(dayData.failed || 0);
@@ -4589,6 +4629,126 @@ app.get('/api/dashboard/trend/executions', async (req, res) => {
     });
   } catch (error) {
     console.error('获取执行次数趋势数据错误:', error);
+    res.json({ success: false, message: '服务器错误', error: error.message });
+  }
+});
+
+// 获取测试进度趋势数据
+app.get('/api/dashboard/trend/progress', async (req, res) => {
+  try {
+    console.log('接收到获取测试进度趋势数据请求');
+    
+    const { projectId, owner, statusId, progressId, libraryId, days = 7 } = req.query;
+    const daysNum = parseInt(days) || 7;
+    
+    // 构建查询条件
+    let whereClause = '1=1';
+    const params = [];
+    
+    if (projectId && projectId !== 'all') {
+      whereClause += ' AND tcp.project_id = ?';
+      params.push(projectId);
+    }
+    
+    if (owner && owner !== 'all') {
+      whereClause += ' AND tcp.owner = ?';
+      params.push(owner);
+    }
+    
+    if (libraryId && libraryId !== 'all') {
+      whereClause += ' AND tc.library_id = ?';
+      params.push(libraryId);
+    }
+    
+    // 获取每日各进度的用例数量趋势
+    const trendQuery = `
+      SELECT 
+        DATE(tcp.updated_at) as date,
+        tp.name as progress_name,
+        COUNT(*) as count
+      FROM test_case_projects tcp
+      LEFT JOIN test_progresses tp ON tcp.progress_id = tp.id
+      LEFT JOIN test_cases tc ON tcp.test_case_id = tc.id
+      WHERE ${whereClause} AND tcp.updated_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+      GROUP BY DATE(tcp.updated_at), tp.name
+      ORDER BY date ASC
+    `;
+    params.push(daysNum);
+    
+    const [trendResults] = await pool.execute(trendQuery, params);
+    
+    // 获取所有进度名称
+    const progressNames = [...new Set(trendResults.map(r => r.progress_name).filter(Boolean))];
+    
+    // 生成日期标签和数据
+    const labels = [];
+    const datasets = {};
+    
+    // 初始化每个进度的数据集
+    progressNames.forEach(name => {
+      datasets[name] = [];
+    });
+    
+    for (let i = daysNum - 1; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      // 使用本地时区格式化日期，避免UTC时区问题
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const dateStr = `${year}-${month}-${day}`;
+      labels.push(date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }));
+      
+      // 获取当天的数据
+      const dayData = trendResults.filter(r => {
+        if (!r.date) return false;
+        // 处理数据库返回的日期对象
+        const dbDate = r.date instanceof Date ? r.date : new Date(r.date);
+        const dbYear = dbDate.getFullYear();
+        const dbMonth = String(dbDate.getMonth() + 1).padStart(2, '0');
+        const dbDay = String(dbDate.getDate()).padStart(2, '0');
+        const dbDateStr = `${dbYear}-${dbMonth}-${dbDay}`;
+        return dbDateStr === dateStr;
+      });
+      
+      // 为每个进度填充数据
+      progressNames.forEach(name => {
+        const progressData = dayData.find(d => d.progress_name === name);
+        datasets[name].push(progressData ? progressData.count : 0);
+      });
+    }
+    
+    // 定义进度对应的颜色
+    const progressColors = {
+      '未开始': { border: 'rgba(102, 102, 102, 1)', bg: 'rgba(102, 102, 102, 0.1)' },
+      '进行中': { border: 'rgba(24, 144, 255, 1)', bg: 'rgba(24, 144, 255, 0.1)' },
+      '已完成': { border: 'rgba(82, 196, 26, 1)', bg: 'rgba(82, 196, 26, 0.1)' },
+      '已阻塞': { border: 'rgba(255, 77, 79, 1)', bg: 'rgba(255, 77, 79, 0.1)' },
+      '待定': { border: 'rgba(250, 173, 20, 1)', bg: 'rgba(250, 173, 20, 0.1)' }
+    };
+    
+    // 构建图表数据集
+    const chartDatasets = progressNames.map(name => {
+      const colors = progressColors[name] || { 
+        border: `rgba(${Math.random() * 255}, ${Math.random() * 255}, ${Math.random() * 255}, 1)`,
+        bg: `rgba(${Math.random() * 255}, ${Math.random() * 255}, ${Math.random() * 255}, 0.1)`
+      };
+      return {
+        label: name || '未知',
+        data: datasets[name],
+        borderColor: colors.border,
+        backgroundColor: colors.bg,
+        fill: true,
+        tension: 0.4
+      };
+    });
+    
+    res.json({
+      success: true,
+      trendData: { labels, datasets: chartDatasets }
+    });
+  } catch (error) {
+    console.error('获取测试进度趋势数据错误:', error);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -5143,6 +5303,38 @@ async function initDatabase() {
         console.log('检查test_progresses表status_category字段:', error.message);
       }
       
+      // 插入默认测试进度数据
+      try {
+        const [existingProgresses] = await connection.execute('SELECT COUNT(*) as count FROM test_progresses');
+        if (existingProgresses[0].count === 0) {
+          await connection.execute(`
+            INSERT INTO test_progresses (progress_id, name, description, status_category, creator) VALUES
+            ('PROGRESS_001', '未开始', '测试任务尚未开始', 'not_started', 'admin'),
+            ('PROGRESS_002', '进行中', '测试任务正在进行', 'in_progress', 'admin'),
+            ('PROGRESS_003', '已完成', '测试任务已完成', 'completed', 'admin')
+          `);
+          console.log('默认测试进度数据插入成功');
+        } else {
+          // 更新现有测试进度数据的status_category字段
+          await connection.execute(`
+            UPDATE test_progresses SET status_category = 'not_started' WHERE name LIKE '%未开始%' OR name LIKE '%待%' AND status_category IS NULL
+          `);
+          await connection.execute(`
+            UPDATE test_progresses SET status_category = 'in_progress' WHERE name LIKE '%进行中%' OR name LIKE '%进行%' AND status_category IS NULL
+          `);
+          await connection.execute(`
+            UPDATE test_progresses SET status_category = 'completed' WHERE name LIKE '%完成%' OR name LIKE '%已%' AND status_category IS NULL
+          `);
+          // 确保所有记录都有status_category值
+          await connection.execute(`
+            UPDATE test_progresses SET status_category = 'not_started' WHERE status_category IS NULL
+          `);
+          console.log('测试进度数据status_category字段已更新');
+        }
+      } catch (error) {
+        console.log('插入默认测试进度数据错误:', error.message);
+      }
+      
       // 创建测试状态表（test_case_projects 外键依赖）
       await connection.execute(`
         CREATE TABLE IF NOT EXISTS test_statuses (
@@ -5179,6 +5371,42 @@ async function initDatabase() {
         }
       } catch (error) {
         console.log('检查test_statuses表字段:', error.message);
+      }
+      
+      // 插入默认测试状态数据
+      try {
+        const [existingStatuses] = await connection.execute('SELECT COUNT(*) as count FROM test_statuses');
+        if (existingStatuses[0].count === 0) {
+          await connection.execute(`
+            INSERT INTO test_statuses (status_id, name, description, status_category, sort_order, is_active, creator) VALUES
+            ('STATUS_001', '待测试', '测试用例尚未执行', 'pending', 1, 1, 'admin'),
+            ('STATUS_002', '通过', '测试用例执行通过', 'passed', 2, 1, 'admin'),
+            ('STATUS_003', '失败', '测试用例执行失败', 'failed', 3, 1, 'admin'),
+            ('STATUS_004', '阻塞', '测试用例被阻塞无法执行', 'blocked', 4, 1, 'admin')
+          `);
+          console.log('默认测试状态数据插入成功');
+        } else {
+          // 更新现有测试状态数据的status_category字段
+          await connection.execute(`
+            UPDATE test_statuses SET status_category = 'pending' WHERE (name LIKE '%待%' OR name LIKE '%未%') AND status_category IS NULL
+          `);
+          await connection.execute(`
+            UPDATE test_statuses SET status_category = 'passed' WHERE (name LIKE '%通过%' OR name LIKE '%成功%') AND status_category IS NULL
+          `);
+          await connection.execute(`
+            UPDATE test_statuses SET status_category = 'failed' WHERE (name LIKE '%失败%' OR name LIKE '%错误%') AND status_category IS NULL
+          `);
+          await connection.execute(`
+            UPDATE test_statuses SET status_category = 'blocked' WHERE (name LIKE '%阻塞%' OR name LIKE '%暂停%') AND status_category IS NULL
+          `);
+          // 确保所有记录都有status_category值
+          await connection.execute(`
+            UPDATE test_statuses SET status_category = 'pending' WHERE status_category IS NULL
+          `);
+          console.log('测试状态数据status_category字段已更新');
+        }
+      } catch (error) {
+        console.log('插入默认测试状态数据错误:', error.message);
       }
       
       // 创建测试用例项目关联表（现在可以安全创建，因为外键依赖的表已存在）
@@ -7035,9 +7263,40 @@ app.post('/api/testplans/auto_sync', async (req, res) => {
     
     console.log('接收到自动同步请求:', { plan_id, case_id, case_external_id, status });
     
-    // 验证状态值
-    const validStatuses = ['Pass', 'Fail', 'Block', 'ASIC_Hang', 'Core_Dump', 'Traffic_Drop', 'pending', 'Skip'];
-    if (!validStatuses.includes(status)) {
+    const normalizeStatus = (status) => {
+      if (!status) return null;
+      const statusLower = status.toLowerCase().trim();
+      const statusMap = {
+        'pass': 'pass',
+        '通过': 'pass',
+        'fail': 'fail',
+        '失败': 'fail',
+        'block': 'blocked',
+        'blocked': 'blocked',
+        '阻塞': 'blocked',
+        'pause': 'paused',
+        'paused': 'paused',
+        '暂停': 'paused',
+        'pending': 'pending',
+        '未执行': 'pending',
+        '待测试': 'pending',
+        '未开始': 'pending',
+        'asic_hang': 'asic_hang',
+        'asic挂起': 'asic_hang',
+        'core_dump': 'core_dump',
+        '核心转储': 'core_dump',
+        '挂死': 'core_dump',
+        'traffic_drop': 'traffic_drop',
+        '流量丢失': 'traffic_drop',
+        'skip': 'skip',
+        '跳过': 'skip'
+      };
+      return statusMap[statusLower] || statusMap[status] || null;
+    };
+    
+    const normalizedStatus = normalizeStatus(status);
+    const validStatuses = ['pass', 'fail', 'blocked', 'paused', 'pending', 'asic_hang', 'core_dump', 'traffic_drop', 'skip'];
+    if (!normalizedStatus || !validStatuses.includes(normalizedStatus)) {
       return res.json({ success: false, message: `无效的状态值: ${status}。有效值: ${validStatuses.join(', ')}` });
     }
     
@@ -7071,7 +7330,7 @@ app.post('/api/testplans/auto_sync', async (req, res) => {
            updated_at = CURRENT_TIMESTAMP
        WHERE plan_id = ? AND case_id = ?`,
       [
-        status,
+        normalizedStatus,
         executor_id || 'auto_sync',
         duration || null,
         log_path || null,
@@ -7132,20 +7391,22 @@ async function updatePlanStatistics(connection, planId) {
       SUM(CASE WHEN status = 'Pass' THEN 1 ELSE 0 END) as passed,
       SUM(CASE WHEN status = 'Fail' THEN 1 ELSE 0 END) as failed,
       SUM(CASE WHEN status = 'Block' THEN 1 ELSE 0 END) as blocked,
+      SUM(CASE WHEN status = 'Paused' THEN 1 ELSE 0 END) as paused,
       SUM(CASE WHEN status = 'ASIC_Hang' THEN 1 ELSE 0 END) as asic_hang,
       SUM(CASE WHEN status = 'Core_Dump' THEN 1 ELSE 0 END) as core_dump,
       SUM(CASE WHEN status = 'Traffic_Drop' THEN 1 ELSE 0 END) as traffic_drop,
-      SUM(CASE WHEN status != 'pending' THEN 1 ELSE 0 END) as tested
+      SUM(CASE WHEN status IN ('Pass', 'Fail', 'ASIC_Hang', 'Core_Dump', 'Traffic_Drop') THEN 1 ELSE 0 END) as valid_tested,
+      SUM(CASE WHEN status != 'pending' THEN 1 ELSE 0 END) as tested_progress
     FROM test_plan_cases
     WHERE plan_id = ?
   `, [planId]);
   
   const stat = stats[0];
-  const passRate = stat.tested > 0 ? ((stat.passed / stat.tested) * 100).toFixed(2) : 0;
+  const passRate = stat.valid_tested > 0 ? ((stat.passed / stat.valid_tested) * 100).toFixed(2) : 0;
   
   await connection.execute(
     'UPDATE test_plans SET total_cases = ?, tested_cases = ?, pass_rate = ? WHERE id = ?',
-    [stat.total, stat.tested, passRate, planId]
+    [stat.total, stat.tested_progress, passRate, planId]
   );
 }
 
@@ -7179,11 +7440,13 @@ app.get('/api/testplans/:id/report', async (req, res) => {
         SUM(CASE WHEN status = 'Pass' THEN 1 ELSE 0 END) as passed,
         SUM(CASE WHEN status = 'Fail' THEN 1 ELSE 0 END) as failed,
         SUM(CASE WHEN status = 'Block' THEN 1 ELSE 0 END) as blocked,
+        SUM(CASE WHEN status = 'Paused' THEN 1 ELSE 0 END) as paused,
         SUM(CASE WHEN status = 'ASIC_Hang' THEN 1 ELSE 0 END) as asic_hang,
         SUM(CASE WHEN status = 'Core_Dump' THEN 1 ELSE 0 END) as core_dump,
         SUM(CASE WHEN status = 'Traffic_Drop' THEN 1 ELSE 0 END) as traffic_drop,
         SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN status != 'pending' THEN 1 ELSE 0 END) as tested,
+        SUM(CASE WHEN status IN ('Pass', 'Fail', 'ASIC_Hang', 'Core_Dump', 'Traffic_Drop') THEN 1 ELSE 0 END) as valid_tested,
+        SUM(CASE WHEN status != 'pending' THEN 1 ELSE 0 END) as tested_progress,
         AVG(CASE WHEN duration IS NOT NULL THEN duration ELSE NULL END) as avg_duration
       FROM test_plan_cases
       WHERE plan_id = ?
@@ -7241,7 +7504,7 @@ app.get('/api/testplans/:id/report', async (req, res) => {
     `, [planId]);
     
     const stat = stats[0];
-    const passRate = stat.tested > 0 ? ((stat.passed / stat.tested) * 100).toFixed(2) : 0;
+    const passRate = stat.valid_tested > 0 ? ((stat.passed / stat.valid_tested) * 100).toFixed(2) : 0;
     
     const report = {
       success: true,
@@ -7267,10 +7530,11 @@ app.get('/api/testplans/:id/report', async (req, res) => {
       matrix: matrix[0] || null,
       statistics: {
         total_cases: stat.total_cases || 0,
-        tested_cases: stat.tested || 0,
+        tested_cases: stat.tested_progress || 0,
         passed: stat.passed || 0,
         failed: stat.failed || 0,
         blocked: stat.blocked || 0,
+        paused: stat.paused || 0,
         asic_hang: stat.asic_hang || 0,
         core_dump: stat.core_dump || 0,
         traffic_drop: stat.traffic_drop || 0,

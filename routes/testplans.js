@@ -528,12 +528,52 @@ router.put('/:planId/cases/:caseId', authenticateToken, async (req, res) => {
   const { status, executor_id, error_message, bug_id } = req.body;
   const currentUser = req.user;
   
+  console.log('Request body:', req.body);
+  console.log('Extracted status:', status);
+  
   const connection = await pool.getConnection();
   try {
-    const validStatuses = ['pass', 'fail', 'blocked', 'pending', 'asic_hang', 'core_dump', 'traffic_drop'];
-    if (!validStatuses.includes(status)) {
+    const normalizeStatus = (statusInput) => {
+      if (!statusInput) return null;
+      console.log('normalizeStatus input:', statusInput);
+      const statusLower = statusInput.toLowerCase().trim();
+      console.log('normalizeStatus statusLower:', statusLower);
+      const statusMap = {
+        'pass': 'pass',
+        '通过': 'pass',
+        'fail': 'fail',
+        '失败': 'fail',
+        'blocked': 'blocked',
+        '阻塞': 'blocked',
+        'pause': 'paused',
+        'paused': 'paused',
+        '暂停': 'paused',
+        'pending': 'pending',
+        '未执行': 'pending',
+        '待测试': 'pending',
+        '未开始': 'pending',
+        'asic_hang': 'asic_hang',
+        'asic挂起': 'asic_hang',
+        'core_dump': 'core_dump',
+        '核心转储': 'core_dump',
+        '挂死': 'core_dump',
+        'traffic_drop': 'traffic_drop',
+        '流量丢失': 'traffic_drop'
+      };
+      const result = statusMap[statusLower] || statusMap[statusInput] || null;
+      console.log('normalizeStatus result:', result);
+      return result;
+    };
+    
+    const normalizedStatus = normalizeStatus(status);
+    console.log('Normalized status:', normalizedStatus);
+    const validStatuses = ['pass', 'fail', 'blocked', 'paused', 'pending', 'asic_hang', 'core_dump', 'traffic_drop'];
+    console.log('Valid statuses:', validStatuses);
+    console.log('Is normalizedStatus valid?', normalizedStatus && validStatuses.includes(normalizedStatus));
+    if (!normalizedStatus || !validStatuses.includes(normalizedStatus)) {
       connection.release();
-      return res.status(400).json({ success: false, message: '无效的状态值' });
+      console.log('Invalid status:', status);
+      return res.status(400).json({ success: false, message: `无效的状态值: ${status}` });
     }
     
     await connection.beginTransaction();
@@ -547,7 +587,7 @@ router.put('/:planId/cases/:caseId', authenticateToken, async (req, res) => {
           execution_time = CASE WHEN status = 'pending' AND ? != 'pending' THEN NOW() ELSE execution_time END,
           updated_at = NOW()
       WHERE plan_id = ? AND case_id = ?
-    `, [status, executor_id || currentUser.username, error_message || null, bug_id || null, status, planId, caseId]);
+    `, [normalizedStatus, executor_id || currentUser.username, error_message || null, bug_id || null, normalizedStatus, planId, caseId]);
     
     await updatePlanStatisticsWithTx(connection, planId);
     
@@ -569,12 +609,52 @@ router.put('/:planId/cases/batch', authenticateToken, async (req, res) => {
   const { caseIds, status, bug_id } = req.body;
   const currentUser = req.user;
   
+  console.log('Batch request body:', req.body);
+  console.log('Batch extracted status:', status);
+  
   const connection = await pool.getConnection();
   try {
-    const validStatuses = ['pass', 'fail', 'blocked', 'pending', 'asic_hang', 'core_dump', 'traffic_drop'];
-    if (!validStatuses.includes(status)) {
+    const normalizeStatus = (statusInput) => {
+      if (!statusInput) return null;
+      console.log('Batch normalizeStatus input:', statusInput);
+      const statusLower = statusInput.toLowerCase().trim();
+      console.log('Batch normalizeStatus statusLower:', statusLower);
+      const statusMap = {
+        'pass': 'pass',
+        '通过': 'pass',
+        'fail': 'fail',
+        '失败': 'fail',
+        'blocked': 'blocked',
+        '阻塞': 'blocked',
+        'pause': 'paused',
+        'paused': 'paused',
+        '暂停': 'paused',
+        'pending': 'pending',
+        '未执行': 'pending',
+        '待测试': 'pending',
+        '未开始': 'pending',
+        'asic_hang': 'asic_hang',
+        'asic挂起': 'asic_hang',
+        'core_dump': 'core_dump',
+        '核心转储': 'core_dump',
+        '挂死': 'core_dump',
+        'traffic_drop': 'traffic_drop',
+        '流量丢失': 'traffic_drop'
+      };
+      const result = statusMap[statusLower] || statusMap[statusInput] || null;
+      console.log('Batch normalizeStatus result:', result);
+      return result;
+    };
+    
+    const normalizedStatus = normalizeStatus(status);
+    console.log('Batch normalized status:', normalizedStatus);
+    const validStatuses = ['pass', 'fail', 'blocked', 'paused', 'pending', 'asic_hang', 'core_dump', 'traffic_drop'];
+    console.log('Batch valid statuses:', validStatuses);
+    console.log('Batch is normalizedStatus valid?', normalizedStatus && validStatuses.includes(normalizedStatus));
+    if (!normalizedStatus || !validStatuses.includes(normalizedStatus)) {
       connection.release();
-      return res.status(400).json({ success: false, message: '无效的状态值' });
+      console.log('Batch invalid status:', status);
+      return res.status(400).json({ success: false, message: `无效的状态值: ${status}` });
     }
     
     if (!caseIds || !Array.isArray(caseIds) || caseIds.length === 0) {
@@ -593,7 +673,7 @@ router.put('/:planId/cases/batch', authenticateToken, async (req, res) => {
           execution_time = CASE WHEN status = 'pending' AND ? != 'pending' THEN NOW() ELSE execution_time END,
           updated_at = NOW()
       WHERE plan_id = ? AND case_id IN (${placeholders})
-    `, [status, currentUser.username, bug_id || null, status, planId, ...caseIds]);
+    `, [normalizedStatus, currentUser.username, bug_id || null, normalizedStatus, planId, ...caseIds]);
     
     await updatePlanStatisticsWithTx(connection, planId);
     
@@ -614,15 +694,16 @@ async function updatePlanStatisticsWithTx(connection, planId) {
   const [stats] = await connection.execute(`
     SELECT 
       COUNT(*) as total,
-      SUM(CASE WHEN status != 'pending' THEN 1 ELSE 0 END) as tested,
+      SUM(CASE WHEN status IN ('pass', 'fail', 'asic_hang', 'core_dump', 'traffic_drop') THEN 1 ELSE 0 END) as valid_tested,
+      SUM(CASE WHEN status != 'pending' THEN 1 ELSE 0 END) as tested_progress,
       SUM(CASE WHEN status = 'pass' THEN 1 ELSE 0 END) as passed
     FROM test_plan_cases
     WHERE plan_id = ?
   `, [planId]);
   
   if (stats.length > 0) {
-    const { total, tested, passed } = stats[0];
-    const passRate = tested > 0 ? Math.round((passed / tested) * 100) : 0;
+    const { total, valid_tested, tested_progress, passed } = stats[0];
+    const passRate = valid_tested > 0 ? Math.round((passed / valid_tested) * 100) : 0;
     
     await connection.execute(`
       UPDATE test_plans 
@@ -631,7 +712,7 @@ async function updatePlanStatisticsWithTx(connection, planId) {
           pass_rate = ?,
           updated_at = NOW()
       WHERE id = ?
-    `, [total, tested, passRate, planId]);
+    `, [total, tested_progress, passRate, planId]);
   }
 }
 

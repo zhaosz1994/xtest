@@ -98,6 +98,7 @@ const Router = {
         const route = this.routes[routeName];
 
         console.log('[Router] 路由变化:', routeName, route);
+        console.log('[Router] 是否已认证:', this.isAuthenticated());
 
         if (!route) {
             console.warn('[Router] 未知路由，跳转到默认页面');
@@ -107,7 +108,7 @@ const Router = {
 
         if (route.requiresAuth && !this.isAuthenticated()) {
             console.log('[Router] 需要登录，跳转到登录页');
-            this.showLoginSection();
+            this.navigateTo('login');
             return;
         }
 
@@ -126,6 +127,7 @@ const Router = {
             }
         }
 
+        console.log('[Router] 显示页面:', route.section);
         this.showSection(route.section, route.title);
 
         document.title = route.title + ' - xTest';
@@ -134,15 +136,15 @@ const Router = {
     },
 
     isAuthenticated() {
-        return authToken && currentUser;
+        return !!(authToken && currentUser);
     },
 
     isAdmin() {
-        return currentUser && (
+        return !!(currentUser && (
             currentUser.role === '管理员' ||
             currentUser.role === 'admin' ||
             currentUser.role === 'Administrator'
-        );
+        ));
     },
 
     showSection(sectionId, title) {
@@ -202,6 +204,8 @@ const Router = {
     },
 
     showLoginSection() {
+        console.log('[Router] 显示登录页面');
+        
         document.querySelectorAll('section').forEach(section => {
             section.style.display = 'none';
         });
@@ -209,11 +213,15 @@ const Router = {
         const testlinkContainer = document.querySelector('.testlink-container');
         if (testlinkContainer) {
             testlinkContainer.style.display = 'none';
+            console.log('[Router] 隐藏testlink-container');
         }
 
         const loginSection = document.getElementById('login-section');
         if (loginSection) {
             loginSection.style.display = 'flex';
+            console.log('[Router] 显示login-section');
+        } else {
+            console.error('[Router] 未找到login-section元素');
         }
     },
 
@@ -1695,7 +1703,13 @@ function initWebSocket() {
 
         // 监听在线用户更新
         socket.on('onlineUsers', (users) => {
-            onlineUsers = users;
+            const uniqueUsersMap = new Map();
+            users.forEach(user => {
+                if (user && user.username) {
+                    uniqueUsersMap.set(user.username, user);
+                }
+            });
+            onlineUsers = Array.from(uniqueUsersMap.values());
             updateOnlineUsersDisplay();
         });
 
@@ -2027,20 +2041,10 @@ function renderTestPlansTable(filteredPlans = null) {
                 <td>${plan.ownerName || plan.owner}</td>
                 <td><span class="status-tag ${statusTagClass}">${getStatusText(actualStatus)}</span></td>
                 <td>
-                    <div class="pass-rate-cell">
-                        <div class="progress-bar-container">
-                            <div class="progress-bar pass-rate-bar" style="width: ${plan.passRate}%"></div>
-                        </div>
-                        <span class="progress-text">${plan.passRate}%</span>
-                    </div>
+                    ${renderProgressBar(plan.passRate, 'pass-rate')}
                 </td>
                 <td>
-                    <div class="progress-cell">
-                        <div class="progress-bar-container">
-                            <div class="progress-bar" style="width: ${progressPercent}%"></div>
-                        </div>
-                        <span class="progress-text">${plan.testedCases}/${plan.totalCases}</span>
-                    </div>
+                    ${renderProgressBar(progressPercent, 'progress')}
                 </td>
                 <td>${plan.projectName || plan.project || '-'}</td>
                 <td>${plan.iteration || '-'}</td>
@@ -12213,8 +12217,10 @@ function applyMenuVisibilityByRole() {
         if (profilePanel) {
             profilePanel.classList.add('active');
         }
-        // 加载个人设置数据
-        loadProfileData();
+        // 加载个人设置数据（仅已登录用户）
+        if (currentUser) {
+            loadProfileData();
+        }
     } else {
         // 管理员默认显示用户管理
         const usersMenuItem = document.querySelector('.menu-item[data-panel="users-config"]');
@@ -14033,20 +14039,17 @@ async function submitTestReportForm() {
 
 // 检查当前用户是否为管理员
 function isAdmin() {
-    // 检查currentUser是否存在，以及其role属性是否为管理员
-    return currentUser && (currentUser.role === '管理员' || currentUser.role === 'admin');
+    return !!(currentUser && (currentUser.role === '管理员' || currentUser.role === 'admin' || currentUser.role === 'Administrator'));
 }
 
 // 用户登录
 async function login() {
     const username = document.getElementById('username').value;
     const password = document.getElementById('password').value;
-    const rememberMe = document.getElementById('remember-me').checked;
-
+    const rememberMe = true;
     try {
         showLoading('登录中...');
 
-        // 调用登录API，传递rememberMe参数
         const loginData = await apiRequest('/users/login', {
             method: 'POST',
             body: JSON.stringify({ username, password, rememberMe })
@@ -14060,15 +14063,10 @@ async function login() {
             localStorage.setItem('currentUser', JSON.stringify(currentUser));
             console.log('[登录] Token已保存到localStorage');
 
-            if (rememberMe) {
-                localStorage.setItem('rememberedUsername', username);
-                localStorage.setItem('rememberMe', 'true');
-                console.log('[登录] 已记住用户名:', username);
-            } else {
-                localStorage.removeItem('rememberedUsername');
-                localStorage.removeItem('rememberMe');
-                console.log('[登录] 已清除记住的用户名');
-            }
+            document.documentElement.classList.add('authenticated');
+
+            localStorage.setItem('rememberedUsername', username);
+            console.log('[登录] 已记住用户名:', username);
 
             // 发送WebSocket登录事件
             if (socket && socket.connected) {
@@ -14160,9 +14158,6 @@ async function login() {
 
             // 使用路由系统跳转到首页
             Router.navigateTo('dashboard');
-
-            // 更新统计数据
-            updateStats();
         } else {
             // 处理登录失败情况（包括审核状态）
             const errorMsg = loginData.message || '用户名或密码错误';
@@ -14219,25 +14214,29 @@ async function register() {
 
 // 登出功能
 function logout() {
+    console.log('[登出] 开始执行登出操作');
+    
     if (socket && socket.connected && currentUser) {
         socket.emit('logout');
     }
 
+    const username = currentUser ? currentUser.username : '未知用户';
+    
     currentUser = null;
     authToken = null;
 
     localStorage.removeItem('authToken');
     localStorage.removeItem('currentUser');
     console.log('[登出] 已清除localStorage中的登录信息');
+    console.log('[登出] currentUser:', currentUser, 'authToken:', authToken);
 
-    document.getElementById('login-section').style.display = 'flex';
+    document.documentElement.classList.remove('authenticated');
 
-    // 隐藏其他页面
-    document.getElementById('dashboard-section').style.display = 'none';
-    document.getElementById('testplans-section').style.display = 'none';
-    document.getElementById('cases-section').style.display = 'none';
-    document.getElementById('reports-section').style.display = 'none';
-    document.getElementById('settings-section').style.display = 'none';
+    // 更新用户信息
+    const userInfoElement = document.getElementById('user-info');
+    if (userInfoElement) {
+        userInfoElement.innerHTML = '未登录 <button id="logout-btn" class="secondary-btn" style="display: none;">登出</button>';
+    }
 
     // 隐藏配置中心导航链接
     const settingsLink = document.querySelector('.nav-left a[href="#/settings"]');
@@ -14246,14 +14245,13 @@ function logout() {
         console.log('登出后，隐藏配置中心链接');
     }
 
-    // 更新用户信息
-    const userInfoElement = document.getElementById('user-info');
-    if (userInfoElement) {
-        userInfoElement.innerHTML = '未登录 <button id="logout-btn" class="secondary-btn" style="display: none;">登出</button>';
-    }
-
     // 记录登出历史
-    addHistoryRecord('登出', `用户 ${currentUser ? currentUser.username : '未知用户'} 登出系统`);
+    addHistoryRecord('登出', `用户 ${username} 登出系统`);
+    
+    // 使用路由系统导航到登录页面
+    console.log('[登出] 准备导航到登录页面');
+    Router.navigateTo('login');
+    console.log('[登出] 导航命令已执行，当前hash:', window.location.hash);
 }
 
 // 添加历史记录
@@ -14612,6 +14610,7 @@ async function switchTrendPeriod(days) {
     // 重新加载趋势图
     await initPassRateTrendChart(days);
     await initExecutionTrendChart(days);
+    await initProgressTrendChart();
 }
 
 async function initPassRateTrendChart(days) {
@@ -14776,6 +14775,10 @@ async function initProjectProgressChart() {
 
         const projects = data.projectProgress.slice(0, 10); // 只显示前10个项目
 
+        if (chartInstances.projectProgressChart) {
+            chartInstances.projectProgressChart.destroy();
+        }
+
         chartInstances.projectProgressChart = new Chart(ctx, {
             type: 'bar',
             data: {
@@ -14848,6 +14851,10 @@ async function initStatusDistributionChart() {
 
         const statuses = data.statusDistribution.filter(s => s.count > 0);
 
+        if (chartInstances.statusDistributionChart) {
+            chartInstances.statusDistributionChart.destroy();
+        }
+
         const colors = [
             'rgba(82, 196, 26, 0.8)',
             'rgba(255, 77, 79, 0.8)',
@@ -14899,6 +14906,10 @@ async function initOwnerTasksChart() {
         if (!data.success || !data.ownerAnalysis) return;
 
         const owners = data.ownerAnalysis.slice(0, 10); // 只显示前10个负责人
+
+        if (chartInstances.ownerTasksChart) {
+            chartInstances.ownerTasksChart.destroy();
+        }
 
         chartInstances.ownerTasksChart = new Chart(ctx, {
             type: 'bar',
@@ -14971,6 +14982,10 @@ async function initOwnerPassRateChart() {
 
         const owners = data.ownerAnalysis.slice(0, 10); // 只显示前10个负责人
 
+        if (chartInstances.ownerPassRateChart) {
+            chartInstances.ownerPassRateChart.destroy();
+        }
+
         chartInstances.ownerPassRateChart = new Chart(ctx, {
             type: 'bar',
             data: {
@@ -15025,39 +15040,29 @@ async function initProgressTrendChart() {
     }
 
     try {
-        // 模拟趋势数据（实际应该从数据库获取历史数据）
-        const labels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+        const filters = getCurrentFilters();
+        filters.days = currentTrendPeriod || 7;
+        const data = await apiRequest(`/dashboard/trend/progress?${new URLSearchParams(filters).toString()}`);
+
+        if (!data.success || !data.trendData) {
+            // 如果API不可用，显示无数据提示
+            ctx.parentElement.innerHTML = '<div class="no-data-message" style="display:flex;align-items:center;justify-content:center;height:100%;color:#999;">暂无趋势数据</div>';
+            return;
+        }
+
+        const trendData = data.trendData;
+        
+        // 如果没有数据集，显示无数据提示
+        if (!trendData.datasets || trendData.datasets.length === 0) {
+            ctx.parentElement.innerHTML = '<div class="no-data-message" style="display:flex;align-items:center;justify-content:center;height:100%;color:#999;">暂无趋势数据</div>';
+            return;
+        }
 
         chartInstances.progressTrendChart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: labels,
-                datasets: [
-                    {
-                        label: '通过',
-                        data: [65, 70, 75, 80, 85, 88, 92],
-                        borderColor: 'rgba(82, 196, 26, 1)',
-                        backgroundColor: 'rgba(82, 196, 26, 0.1)',
-                        fill: true,
-                        tension: 0.4
-                    },
-                    {
-                        label: '失败',
-                        data: [15, 12, 10, 8, 6, 5, 4],
-                        borderColor: 'rgba(255, 77, 79, 1)',
-                        backgroundColor: 'rgba(255, 77, 79, 0.1)',
-                        fill: true,
-                        tension: 0.4
-                    },
-                    {
-                        label: '待测试',
-                        data: [20, 18, 15, 12, 9, 7, 4],
-                        borderColor: 'rgba(102, 102, 102, 1)',
-                        backgroundColor: 'rgba(102, 102, 102, 0.1)',
-                        fill: true,
-                        tension: 0.4
-                    }
-                ]
+                labels: trendData.labels,
+                datasets: trendData.datasets
             },
             options: {
                 responsive: true,
@@ -15084,6 +15089,7 @@ async function initProgressTrendChart() {
         });
     } catch (error) {
         console.error('初始化测试进度趋势图表错误:', error);
+        ctx.parentElement.innerHTML = '<div class="no-data-message" style="display:flex;align-items:center;justify-content:center;height:100%;color:#999;">加载失败</div>';
     }
 }
 
@@ -15128,10 +15134,7 @@ async function loadProjectDetailsTable() {
                 <td style="color: #8c8c8c;">${project.pendingCount}</td>
                 <td>${project.passRate}</td>
                 <td>
-                    <div class="progress-bar-container">
-                        <div class="progress-bar-fill ${getProgressClass(project.progress)}" style="width: ${project.progress}"></div>
-                    </div>
-                    <span style="font-size: 12px; color: #8c8c8c;">${project.progress}</span>
+                    ${renderProgressBar(project.progress, 'progress')}
                 </td>
             </tr>
         `).join('');
@@ -15184,6 +15187,30 @@ function getProgressClass(progress) {
     return 'danger';
 }
 
+function renderProgressBar(value, type = 'progress') {
+    const percent = Math.min(Math.max(parseFloat(value) || 0, 0), 100);
+    let colorClass = '';
+
+    if (type === 'progress') {
+        colorClass = 'progress-blue';
+    } else if (type === 'pass-rate') {
+        if (percent >= 90) {
+            colorClass = 'progress-green';
+        } else if (percent >= 60) {
+            colorClass = 'progress-orange';
+        } else {
+            colorClass = 'progress-red';
+        }
+    }
+
+    return `
+        <div class="progress-container">
+            <div class="progress-bar ${colorClass}" style="width: ${percent}%;"></div>
+            <span class="progress-text">${percent.toFixed(1)}%</span>
+        </div>
+    `;
+}
+
 // 应用仪表板筛选器
 async function applyDashboardFilters() {
     const projectFilter = document.getElementById('project-filter');
@@ -15225,17 +15252,93 @@ function resetDashboardFilters() {
 }
 
 // 导出项目数据
-function exportProjectData() {
+async function exportProjectData() {
     console.log('导出项目数据');
-    // TODO: 实现导出功能
-    showSuccessMessage('导出功能开发中...');
+    
+    try {
+        const filters = getCurrentFilters();
+        const data = await apiRequest(`/dashboard/project-progress?${new URLSearchParams(filters).toString()}`);
+        
+        if (!data.success || !data.projectProgress || data.projectProgress.length === 0) {
+            showErrorMessage('没有可导出的数据');
+            return;
+        }
+        
+        const headers = ['项目名称', '用例总数', '通过', '失败', '待测试', '通过率', '进度'];
+        const rows = data.projectProgress.map(project => [
+            project.projectName,
+            project.totalCases,
+            project.passedCount,
+            project.failedCount,
+            project.pendingCount,
+            project.passRate,
+            project.progress
+        ]);
+        
+        exportToExcel('项目测试详情', headers, rows, '项目测试详情');
+        showSuccessMessage('导出成功');
+    } catch (error) {
+        console.error('导出项目数据错误:', error);
+        showErrorMessage('导出失败: ' + error.message);
+    }
 }
 
 // 导出负责人数据
-function exportOwnerData() {
+async function exportOwnerData() {
     console.log('导出负责人数据');
-    // TODO: 实现导出功能
-    showSuccessMessage('导出功能开发中...');
+    
+    try {
+        const data = await apiRequest('/dashboard/owner-analysis');
+        
+        if (!data.success || !data.ownerAnalysis || data.ownerAnalysis.length === 0) {
+            showErrorMessage('没有可导出的数据');
+            return;
+        }
+        
+        const headers = ['负责人', '任务总数', '已完成', '进行中', '未开始', '通过率'];
+        const rows = data.ownerAnalysis.map(owner => [
+            owner.owner,
+            owner.totalTasks,
+            owner.completedCount,
+            owner.inProgressCount,
+            owner.notStartedCount,
+            owner.passRate
+        ]);
+        
+        exportToExcel('负责人任务详情', headers, rows, '负责人任务详情');
+        showSuccessMessage('导出成功');
+    } catch (error) {
+        console.error('导出负责人数据错误:', error);
+        showErrorMessage('导出失败: ' + error.message);
+    }
+}
+
+// 通用导出Excel函数
+function exportToExcel(sheetName, headers, rows, filename) {
+    const BOM = '\uFEFF';
+    let csvContent = BOM + headers.join(',') + '\n';
+    
+    rows.forEach(row => {
+        const escapedRow = row.map(cell => {
+            const cellStr = String(cell || '');
+            if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
+                return '"' + cellStr.replace(/"/g, '""') + '"';
+            }
+            return cellStr;
+        });
+        csvContent += escapedRow.join(',') + '\n';
+    });
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${filename}_${new Date().toISOString().slice(0,10)}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 }
 
 // 初始化图表
@@ -15485,18 +15588,12 @@ document.addEventListener('DOMContentLoaded', async function () {
     }
 
     const rememberedUsername = localStorage.getItem('rememberedUsername');
-    const rememberMeChecked = localStorage.getItem('rememberMe') === 'true';
 
-    if (rememberedUsername && rememberMeChecked) {
+    if (rememberedUsername) {
         const usernameInput = document.getElementById('username');
-        const rememberMeCheckbox = document.getElementById('remember-me');
-
         if (usernameInput) {
             usernameInput.value = rememberedUsername;
             console.log('[登录] 已自动填充记住的用户名:', rememberedUsername);
-        }
-        if (rememberMeCheckbox) {
-            rememberMeCheckbox.checked = true;
         }
     }
 
@@ -15532,11 +15629,15 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
     }
 
-    // 初始化配置中心
-    initConfigCenter();
+    // 初始化配置中心（仅已登录用户）
+    if (currentUser) {
+        initConfigCenter();
+    }
 
-    // 初始化模块数据
-    initModuleData();
+    // 初始化模块数据（仅已登录用户）
+    if (currentUser) {
+        initModuleData();
+    }
 
     // 顶部导航栏搜索功能
     const topSearchInput = document.querySelector('.nav-right .search-input');
@@ -15787,12 +15888,6 @@ document.addEventListener('DOMContentLoaded', async function () {
             closeCaseLibraryModal();
         }
     });
-
-    // 登出按钮点击
-    const logoutBtn = document.getElementById('logout-btn');
-    if (logoutBtn) {
-        logoutBtn.addEventListener('click', logout);
-    }
 
     // 登录/注册链接点击
     document.addEventListener('click', function (e) {
@@ -23413,10 +23508,7 @@ function renderAsyncTasks() {
             <div class="task-info">
                 <div class="task-name">${task.name}</div>
                 <div class="task-progress">
-                    <div class="progress-bar">
-                        <div class="progress-fill" style="width: ${task.progress}%"></div>
-                    </div>
-                    <span class="progress-text">${task.progress}%</span>
+                    ${renderProgressBar(task.progress, 'progress')}
                 </div>
             </div>
             <span class="task-status">${task.status}</span>
@@ -24232,7 +24324,7 @@ async function showCaseStatusEditor(caseId, planId, currentStatus, caseName) {
         const result = await apiRequest('/test-statuses/list');
         if (result.success && result.testStatuses && result.testStatuses.length > 0) {
             statusOptions = result.testStatuses.map(s => ({
-                value: s.status_id,
+                value: s.name,
                 label: s.name,
                 description: s.description
             }));
@@ -24333,6 +24425,9 @@ async function saveCaseStatus(caseId, planId) {
 
     const newStatus = statusSelect.value;
     const errorMessage = errorMessageField ? errorMessageField.value : '';
+
+    console.log('saveCaseStatus - newStatus:', newStatus);
+    console.log('saveCaseStatus - sending to backend:', { status: newStatus, error_message: errorMessage });
 
     try {
         showLoading('保存中...');
