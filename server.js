@@ -5,6 +5,7 @@ const pool = require('./db');
 const { authenticateToken, requireAdmin } = require('./middleware');
 const usersRouter = require('./routes/users');
 const logger = require('./services/logger');
+const { getUserAIConfig } = require('./services/aiService');
 // 暂时注释掉模块路由，直接在server.js中实现
 // const modulesRouter = require('./routes/modules');
 const testpointsRouter = require('./routes/testpoints');
@@ -2418,7 +2419,7 @@ app.get('/api/test-progresses/list', async (req, res) => {
 });
 
 // 获取AI配置
-app.get('/api/ai-config/get', async (req, res) => {
+app.get('/api/ai-config/get', authenticateToken, async (req, res) => {
   try {
     console.log('接收到获取AI配置请求');
     
@@ -2444,7 +2445,7 @@ app.get('/api/ai-config/get', async (req, res) => {
 });
 
 // 保存AI配置
-app.post('/api/ai-config/save', async (req, res) => {
+app.post('/api/ai-config/save', authenticateToken, requireAdmin, async (req, res) => {
   try {
     console.log('接收到保存AI配置请求:', req.body);
     
@@ -2471,23 +2472,26 @@ app.post('/api/ai-config/save', async (req, res) => {
   }
 });
 
-// 获取AI模型列表（支持 RBAC：管理员看全部，普通用户只看自己的）
+// 获取AI模型列表（只有admin用户可以看所有模型，其他用户只能看自己的）
 app.get('/api/ai-models/list', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到获取AI模型列表请求');
     const currentUserId = req.user.id;
-    const currentUserRole = req.user.role;
+    const currentUsername = req.user.username;
     
-    // 支持中英文角色值判断管理员权限
-    const isAdminRole = currentUserRole === '管理员' || currentUserRole === 'admin' || currentUserRole === 'Administrator';
+    console.log('接收到获取AI模型列表请求, 用户:', currentUsername, 'ID:', currentUserId);
+    
+    const isAdminUser = currentUsername === 'admin';
+    console.log('是否admin用户:', isAdminUser);
     
     let query, params;
-    if (isAdminRole) {
+    if (isAdminUser) {
+      console.log('admin用户，查询所有模型');
       query = `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, created_by, created_at, updated_at 
                FROM ai_models 
                ORDER BY is_default DESC, created_at ASC`;
       params = [];
     } else {
+      console.log('非admin用户，只查询自己的模型，user_id:', currentUserId);
       query = `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, created_by, created_at, updated_at 
                FROM ai_models 
                WHERE user_id = ?
@@ -2496,17 +2500,18 @@ app.get('/api/ai-models/list', authenticateToken, async (req, res) => {
     }
     
     const [models] = await pool.execute(query, params);
+    console.log('查询到的模型数量:', models.length, '模型IDs:', models.map(m => m.model_id));
     
     res.json({ 
       success: true, 
       models: models.map(m => ({
         ...m,
-        canEdit: isAdminRole || m.user_id === currentUserId,
-        canDelete: isAdminRole || m.user_id === currentUserId
+        canEdit: isAdminUser || m.user_id === currentUserId,
+        canDelete: isAdminUser || m.user_id === currentUserId
       })),
       currentUser: {
         id: currentUserId,
-        role: currentUserRole
+        username: currentUsername
       }
     });
   } catch (error) {
@@ -2521,7 +2526,7 @@ app.get('/api/ai-models/get', authenticateToken, async (req, res) => {
     const { modelId } = req.query;
     console.log('接收到获取单个AI模型请求:', { modelId });
     const currentUserId = req.user.id;
-    const currentUserRole = req.user.role;
+    const currentUsername = req.user.username;
     
     const [models] = await pool.execute(
       `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, created_by, created_at, updated_at 
@@ -2536,10 +2541,9 @@ app.get('/api/ai-models/get', authenticateToken, async (req, res) => {
     
     const model = models[0];
     
-    // 支持中英文角色值判断管理员权限
-    const isAdminRole = currentUserRole === '管理员' || currentUserRole === 'admin' || currentUserRole === 'Administrator';
+    const isAdminUser = currentUsername === 'admin';
     
-    if (!isAdminRole && model.user_id !== currentUserId) {
+    if (!isAdminUser && model.user_id !== currentUserId) {
       return res.status(403).json({ success: false, message: '您没有权限查看此AI模型' });
     }
     
@@ -2547,8 +2551,8 @@ app.get('/api/ai-models/get', authenticateToken, async (req, res) => {
       success: true, 
       model: {
         ...model,
-        canEdit: isAdminRole || model.user_id === currentUserId,
-        canDelete: isAdminRole || model.user_id === currentUserId
+        canEdit: isAdminUser || model.user_id === currentUserId,
+        canDelete: isAdminUser || model.user_id === currentUserId
       }
     });
   } catch (error) {
@@ -2601,7 +2605,7 @@ app.post('/api/ai-models/update', authenticateToken, async (req, res) => {
     
     const { modelId, name, provider, apiKey, endpoint, modelName, isDefault, isEnabled, description } = req.body;
     const currentUserId = req.user.id;
-    const currentUserRole = req.user.role;
+    const currentUsername = req.user.username;
     
     const [models] = await pool.execute(
       'SELECT id, user_id FROM ai_models WHERE model_id = ?',
@@ -2612,14 +2616,13 @@ app.post('/api/ai-models/update', authenticateToken, async (req, res) => {
       return res.json({ success: false, message: 'AI模型不存在' });
     }
     
-    // 支持中英文角色值判断管理员权限
-    const isAdminRole = currentUserRole === '管理员' || currentUserRole === 'admin' || currentUserRole === 'Administrator';
+    const isAdminUser = currentUsername === 'admin';
     
-    if (!isAdminRole && models[0].user_id !== currentUserId) {
+    if (!isAdminUser && models[0].user_id !== currentUserId) {
       return res.status(403).json({ success: false, message: '您没有权限修改此AI模型' });
     }
     
-    if (isDefault && isAdminRole) {
+    if (isDefault && isAdminUser) {
       await pool.execute('UPDATE ai_models SET is_default = FALSE');
     }
     
@@ -2644,7 +2647,7 @@ app.post('/api/ai-models/delete', authenticateToken, async (req, res) => {
     
     const { modelId } = req.body;
     const currentUserId = req.user.id;
-    const currentUserRole = req.user.role;
+    const currentUsername = req.user.username;
     
     const [models] = await pool.execute(
       'SELECT id, user_id FROM ai_models WHERE model_id = ?',
@@ -2655,10 +2658,9 @@ app.post('/api/ai-models/delete', authenticateToken, async (req, res) => {
       return res.json({ success: false, message: 'AI模型不存在' });
     }
     
-    // 支持中英文角色值判断管理员权限
-    const isAdminRole = currentUserRole === '管理员' || currentUserRole === 'admin' || currentUserRole === 'Administrator';
+    const isAdminUser = currentUsername === 'admin';
     
-    if (!isAdminRole && models[0].user_id !== currentUserId) {
+    if (!isAdminUser && models[0].user_id !== currentUserId) {
       return res.status(403).json({ success: false, message: '您没有权限删除此AI模型' });
     }
     
@@ -2703,28 +2705,16 @@ app.post('/api/ai-models/set-default', authenticateToken, requireAdmin, async (r
 });
 
 // AI 数据分析 API - 支持 Function Calling
-app.post('/api/ai/analyze', async (req, res) => {
+app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
   try {
     const { query, modelId, conversationHistory } = req.body;
+    const currentUserId = req.user.id;
     
     if (!query || query.trim() === '') {
       return res.json({ success: false, message: '请输入您的问题' });
     }
     
-    // 获取AI模型配置
-    let aiModel = null;
-    
-    if (modelId) {
-      const [models] = await pool.execute(
-        'SELECT * FROM ai_models WHERE (model_id = ? OR name = ?) AND is_enabled = TRUE',
-        [modelId, modelId]
-      );
-      aiModel = models[0];
-    }
-    
-    if (!aiModel) {
-      aiModel = await getSystemDefaultAIConfig();
-    }
+    const aiModel = await getUserAIConfig(currentUserId, modelId);
     
     if (!aiModel) {
       return res.json({ success: false, message: '未找到可用的AI模型配置，请先在配置中心添加AI模型' });
@@ -6571,48 +6561,18 @@ app.get('/api/configs/filter_options', async (req, res) => {
 });
 
 // 获取系统默认AI模型配置
-async function getSystemDefaultAIConfig() {
-  try {
-    const [models] = await pool.execute(
-      'SELECT * FROM ai_models WHERE is_default = TRUE AND is_enabled = TRUE LIMIT 1'
-    );
-    
-    if (models.length === 0) {
-      return null;
-    }
-    
-    return models[0];
-  } catch (error) {
-    console.error('获取系统默认AI配置错误:', error);
-    return null;
-  }
-}
-
 // AI智能解析筛选条件
-app.post('/api/testplans/ai_parse_filter', async (req, res) => {
+app.post('/api/testplans/ai_parse_filter', authenticateToken, async (req, res) => {
   try {
     const { query, modelId, model } = req.body;
+    const currentUserId = req.user.id;
     
     if (!query || query.trim() === '') {
       return res.json({ success: false, message: '请输入筛选条件描述' });
     }
     
-    // 获取AI模型配置 - 支持modelId或model参数
-    let aiModel = null;
     const modelIdentifier = modelId || model;
-    
-    if (modelIdentifier) {
-      const [models] = await pool.execute(
-        'SELECT * FROM ai_models WHERE (model_id = ? OR name = ?) AND is_enabled = TRUE',
-        [modelIdentifier, modelIdentifier]
-      );
-      aiModel = models[0];
-    }
-    
-    // 如果没有指定模型，使用默认模型
-    if (!aiModel) {
-      aiModel = await getSystemDefaultAIConfig();
-    }
+    const aiModel = await getUserAIConfig(currentUserId, modelIdentifier);
     
     if (!aiModel) {
       return res.json({ success: false, message: '未找到可用的AI模型配置，请先在配置中心添加AI模型' });

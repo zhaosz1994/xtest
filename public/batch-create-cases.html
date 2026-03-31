@@ -123,6 +123,24 @@
         </div>
     </div>
 
+    <div id="unsaved-modal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="modal-icon warning-icon">⚠</span>
+                <h3>提示</h3>
+            </div>
+            <div class="modal-body">
+                <p>您有未保存的测试用例，是否保存后返回列表？</p>
+            </div>
+            <div class="modal-footer" style="justify-content: center; gap: 12px;">
+                <button class="btn btn-secondary" id="unsaved-cancel">取消</button>
+                <button class="btn btn-primary" id="unsaved-save-and-back">批量保存并返回列表</button>
+                <button class="btn btn-secondary" id="unsaved-back-only">返回列表</button>
+            </div>
+        </div>
+    </div>
+
     <div id="drawer-overlay" class="drawer-overlay"></div>
     
     <div id="level1-panel-overlay" class="level1-panel-overlay"></div>

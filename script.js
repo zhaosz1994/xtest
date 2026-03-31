@@ -14227,28 +14227,26 @@ function logout() {
 
     localStorage.removeItem('authToken');
     localStorage.removeItem('currentUser');
-    console.log('[登出] 已清除localStorage中的登录信息');
-    console.log('[登出] currentUser:', currentUser, 'authToken:', authToken);
+    
+    aiModelsCache = [];
+    console.log('[登出] 已清除localStorage和缓存数据');
+    console.log('[登出] currentUser:', currentUser, 'authToken:', authToken, 'aiModelsCache:', aiModelsCache);
 
     document.documentElement.classList.remove('authenticated');
 
-    // 更新用户信息
     const userInfoElement = document.getElementById('user-info');
     if (userInfoElement) {
         userInfoElement.innerHTML = '未登录 <button id="logout-btn" class="secondary-btn" style="display: none;">登出</button>';
     }
 
-    // 隐藏配置中心导航链接
     const settingsLink = document.querySelector('.nav-left a[href="#/settings"]');
     if (settingsLink) {
         settingsLink.style.display = 'none';
         console.log('登出后，隐藏配置中心链接');
     }
 
-    // 记录登出历史
     addHistoryRecord('登出', `用户 ${username} 登出系统`);
     
-    // 使用路由系统导航到登录页面
     console.log('[登出] 准备导航到登录页面');
     Router.navigateTo('login');
     console.log('[登出] 导航命令已执行，当前hash:', window.location.hash);
@@ -18169,15 +18167,12 @@ async function submitPriorityForm() {
 // 调整一级测试点顺序相关函数
 
 // 打开调整一级测试点顺序的模态框
-function openEditLevel1PointsModal() {
+async function openEditLevel1PointsModal() {
     const modal = document.getElementById('edit-level1-points-modal');
     modal.style.display = 'block';
 
-    // 加载一级测试点数据
-    loadLevel1PointsForSorting();
-
-    // 初始化拖拽功能
-    initLevel1PointsSortable();
+    // 加载一级测试点数据（内部会初始化拖拽功能）
+    await loadLevel1PointsForSorting();
 }
 
 // 关闭调整一级测试点顺序的模态框
@@ -18281,6 +18276,9 @@ async function loadLevel1PointsForSorting() {
                 pointElement.draggable = true;
                 sortableContainer.appendChild(pointElement);
             });
+
+            // 数据加载完成后初始化拖拽功能
+            initLevel1PointsSortable();
         } else {
             console.error('加载一级测试点数据失败:', response.message);
             if (countElement) countElement.textContent = '0';
@@ -18319,9 +18317,16 @@ async function loadLevel1PointsForSorting() {
 }
 
 // 初始化拖拽功能
+let level1SortInitialized = false;
+
 function initLevel1PointsSortable() {
     const sortableContainer = document.getElementById('level1-points-sortable');
     if (!sortableContainer) return;
+
+    if (level1SortInitialized) {
+        return;
+    }
+    level1SortInitialized = true;
 
     let draggedElement = null;
 
@@ -18637,6 +18642,12 @@ async function deleteLevel1Point(pointId) {
                 
                 if (moduleIdToRefresh) {
                     await loadLevel1Points(moduleIdToRefresh);
+                }
+                
+                // 刷新调整一级测试点位置模态框中的列表
+                const sortModal = document.getElementById('edit-level1-points-modal');
+                if (sortModal && sortModal.style.display === 'block') {
+                    await loadLevel1PointsForSorting();
                 }
                 
                 // 清空测试用例列表显示
@@ -19433,11 +19444,20 @@ async function renderAIModelsList() {
     const models = await loadAIModels();
 
     if (models.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="no-data">暂无AI模型配置</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="no-data">暂无AI模型配置</td></tr>';
         return;
     }
 
-    tbody.innerHTML = models.map(model => `
+    tbody.innerHTML = models.map(model => {
+        const canEdit = model.canEdit;
+        const canDelete = model.canDelete;
+        const isOwner = model.user_id === (currentUser?.id);
+        
+        const ownerLabel = model.created_by 
+            ? model.created_by + (isOwner ? ' <span style="color:#4f46e5;">(我)</span>' : '')
+            : '-';
+        
+        return `
         <tr>
             <td>${model.name || '-'}</td>
             <td>${getProviderName(model.provider)}</td>
@@ -19450,14 +19470,21 @@ async function renderAIModelsList() {
             <td>
                 ${model.is_default ? '<span class="default-badge">⭐ 默认</span>' : '-'}
             </td>
+            <td style="font-size: 12px;">${ownerLabel}</td>
             <td>
                 <button class="config-action-btn test" onclick="testAIModelConnection('${model.model_id}')">测试</button>
-                <button class="config-action-btn edit" onclick="editAIModel('${model.model_id}')">编辑</button>
-                ${!model.is_default ? `<button class="config-action-btn" onclick="setDefaultAIModel('${model.model_id}')">设为默认</button>` : ''}
-                ${!model.is_default ? `<button class="config-action-btn delete" onclick="deleteAIModel('${model.model_id}')">删除</button>` : ''}
+                <button class="config-action-btn ${canEdit ? 'edit' : 'disabled'}" 
+                        onclick="${canEdit ? `editAIModel('${model.model_id}')` : ''}" 
+                        title="${canEdit ? '编辑' : '无编辑权限'}" 
+                        ${!canEdit ? 'disabled' : ''}>编辑</button>
+                ${!model.is_default && canEdit ? `<button class="config-action-btn" onclick="setDefaultAIModel('${model.model_id}')">设为默认</button>` : ''}
+                ${!model.is_default ? `<button class="config-action-btn ${canDelete ? 'delete' : 'disabled'}" 
+                        onclick="${canDelete ? `deleteAIModel('${model.model_id}')` : ''}" 
+                        title="${canDelete ? '删除' : '无删除权限'}" 
+                        ${!canDelete ? 'disabled' : ''}>删除</button>` : ''}
             </td>
         </tr>
-    `).join('');
+    `}).join('');
 }
 
 // 获取提供商名称
@@ -24542,21 +24569,27 @@ let importCurrentStep = 1;
 let importFileInfo = null;
 let importExcelHeaders = [];
 let importSystemFields = [];
+let importSystemSelectData = {};
+let importPreviewRows = [];
 
 // 系统字段定义
 const IMPORT_SYSTEM_FIELDS = [
-    { key: 'name', label: '用例名称', required: true },
-    { key: 'module_name', label: '模块名称', required: true },
-    { key: 'level1_name', label: '一级测试点', required: false },
-    { key: 'priority', label: '优先级', required: false },
-    { key: 'type', label: '用例类型', required: false },
+    { key: 'module_name', label: '模块名称', required: false, supportSystemSelect: true, systemTable: 'modules' },
+    { key: 'level1_name', label: '一级测试点', required: false, supportSystemSelect: true, systemTable: 'level1_points' },
+    { key: 'name', label: '用例名称', required: false },
+    { key: 'priority', label: '优先级', required: false, supportSystemSelect: true, systemTable: 'test_priorities' },
+    { key: 'source', label: '测试点来源', required: false, supportSystemSelect: true, systemTable: 'test_sources' },
     { key: 'precondition', label: '前置条件', required: false },
     { key: 'purpose', label: '测试目的', required: false },
     { key: 'steps', label: '测试步骤', required: false },
-    { key: 'expected', label: '预期结果', required: false },
-    { key: 'owner', label: '执行人', required: false },
-    { key: 'status', label: '执行状态', required: false },
     { key: 'key_config', label: '关键配置', required: false },
+    { key: 'expected', label: '预期结果', required: false },
+    { key: 'owner', label: '执行人', required: false, supportSystemSelect: true, systemTable: 'users' },
+    { key: 'status', label: '维护状态', required: false, supportSystemSelect: true, systemTable: 'test_statuses' },
+    { key: 'environment', label: '测试环境', required: false, supportSystemSelect: true, systemTable: 'environments' },
+    { key: 'method', label: '测试方式', required: false, supportSystemSelect: true, systemTable: 'test_methods' },
+    { key: 'phase', label: '测试阶段', required: false, supportSystemSelect: true, systemTable: 'test_phases' },
+    { key: 'test_type', label: '测试类型', required: false, supportSystemSelect: true, systemTable: 'test_types' },
     { key: 'remark', label: '备注', required: false }
 ];
 
@@ -24573,22 +24606,245 @@ function openImportExcelModal() {
         importCurrentStep = 1;
         updateImportStepUI();
         resetImportForm();
+        
+        initImportExcelModalResizer();
+    }
+}
+
+function initImportExcelModalResizer() {
+    const modalContent = document.getElementById('import-excel-content');
+    const resizer = document.getElementById('import-excel-resizer');
+    const modalHeader = modalContent?.querySelector('.modal-header');
+    
+    if (!modalContent || !resizer) return;
+    
+    if (modalContent.dataset.resizerInitialized === 'true') return;
+    modalContent.dataset.resizerInitialized = 'true';
+
+    let isResizing = false;
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startWidth = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    const minWidth = 500;
+    const maxWidthRatio = 0.95;
+
+    resizer.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        startX = e.clientX;
+        startWidth = modalContent.offsetWidth;
+        
+        resizer.classList.add('dragging');
+        document.body.classList.add('modal-resizing');
+        
+        e.preventDefault();
+        e.stopPropagation();
+    });
+
+    if (modalHeader) {
+        modalHeader.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.close') || e.target.closest('.close-btn') || e.target.closest('button')) return;
+            
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            
+            const rect = modalContent.getBoundingClientRect();
+            startLeft = rect.left;
+            startTop = rect.top;
+            
+            modalContent.style.position = 'fixed';
+            modalContent.style.left = startLeft + 'px';
+            modalContent.style.top = startTop + 'px';
+            modalContent.style.margin = '0';
+            
+            document.body.classList.add('modal-dragging');
+            
+            e.preventDefault();
+        });
+    }
+
+    document.addEventListener('mousemove', (e) => {
+        if (isResizing) {
+            const deltaX = e.clientX - startX;
+            const newWidth = startWidth + deltaX;
+            const maxWidth = window.innerWidth * maxWidthRatio;
+            
+            if (newWidth >= minWidth && newWidth <= maxWidth) {
+                modalContent.style.width = newWidth + 'px';
+                modalContent.style.maxWidth = newWidth + 'px';
+            } else if (newWidth < minWidth) {
+                modalContent.style.width = minWidth + 'px';
+                modalContent.style.maxWidth = minWidth + 'px';
+            } else if (newWidth > maxWidth) {
+                modalContent.style.width = maxWidth + 'px';
+                modalContent.style.maxWidth = maxWidth + 'px';
+            }
+        }
+        
+        if (isDragging) {
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+            
+            let newLeft = startLeft + deltaX;
+            let newTop = startTop + deltaY;
+            
+            const maxLeft = window.innerWidth - modalContent.offsetWidth - 10;
+            const maxTop = window.innerHeight - 100;
+            
+            newLeft = Math.max(10, Math.min(newLeft, maxLeft));
+            newTop = Math.max(10, Math.min(newTop, maxTop));
+            
+            modalContent.style.left = newLeft + 'px';
+            modalContent.style.top = newTop + 'px';
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isResizing) {
+            isResizing = false;
+            resizer.classList.remove('dragging');
+            document.body.classList.remove('modal-resizing');
+        }
+        if (isDragging) {
+            isDragging = false;
+            document.body.classList.remove('modal-dragging');
+        }
+    });
+
+    resizer.addEventListener('dblclick', () => {
+        modalContent.style.width = '';
+        modalContent.style.maxWidth = '700px';
+    });
+}
+
+function resetImportExcelModalPosition() {
+    const modalContent = document.getElementById('import-excel-content');
+    if (modalContent) {
+        modalContent.style.position = '';
+        modalContent.style.left = '';
+        modalContent.style.top = '';
+        modalContent.style.margin = '';
+        modalContent.style.width = '';
+        modalContent.style.maxWidth = '700px';
+    }
+}
+
+function showImportDetailTab(tab) {
+    const tabs = document.querySelectorAll('.detail-tab');
+    tabs.forEach(t => {
+        t.style.background = '#fff';
+        t.classList.remove('active');
+    });
+    
+    const activeTab = document.getElementById(`tab-${tab}`);
+    if (activeTab) {
+        activeTab.style.background = '#f5f5f5';
+        activeTab.classList.add('active');
+    }
+    
+    const content = document.getElementById('import-detail-content');
+    if (!window.importResultData) {
+        content.innerHTML = '<p style="color: #999;">暂无数据</p>';
+        return;
+    }
+    
+    const data = window.importResultData;
+    
+    if (tab === 'empty') {
+        const rows = data.skippedRows || [];
+        if (rows.length === 0) {
+            content.innerHTML = '<p style="color: #999; text-align: center;">没有空名称的行</p>';
+        } else {
+            let html = '<table style="width: 100%; border-collapse: collapse;"><thead><tr style="background: #f0f0f0;">';
+            html += '<th style="padding: 8px; border: 1px solid #ddd; text-align: left;">行号</th>';
+            html += '<th style="padding: 8px; border: 1px solid #ddd; text-align: left;">模块名称</th>';
+            html += '<th style="padding: 8px; border: 1px solid #ddd; text-align: left;">用例名称</th>';
+            html += '<th style="padding: 8px; border: 1px solid #ddd; text-align: left;">跳过原因</th>';
+            html += '</tr></thead><tbody>';
+            
+            rows.forEach(row => {
+                html += '<tr>';
+                html += `<td style="padding: 8px; border: 1px solid #ddd;">${row.rowNum}</td>`;
+                html += `<td style="padding: 8px; border: 1px solid #ddd;">${row.moduleName || '-'}</td>`;
+                const caseNameDisplay = row.caseName && row.caseName.length > 30 
+                    ? row.caseName.substring(0, 30) + '...' 
+                    : (row.caseName || '-');
+                html += `<td style="padding: 8px; border: 1px solid #ddd;" title="${row.caseName || ''}">${caseNameDisplay}</td>`;
+                let reasonHtml = row.reason;
+                if (row.detail && row.detail.value) {
+                    reasonHtml += `<br><span style="color: #666; font-size: 12px;">内容: ${row.detail.value}</span>`;
+                }
+                html += `<td style="padding: 8px; border: 1px solid #ddd; color: #f57c00;">${reasonHtml}</td>`;
+                html += '</tr>';
+            });
+            
+            html += '</tbody></table>';
+            content.innerHTML = html;
+        }
+    } else if (tab === 'duplicate') {
+        const rows = data.duplicateRows || [];
+        if (rows.length === 0) {
+            content.innerHTML = '<p style="color: #999; text-align: center;">没有重复的用例</p>';
+        } else {
+            let html = '<table style="width: 100%; border-collapse: collapse;"><thead><tr style="background: #f0f0f0;">';
+            html += '<th style="padding: 8px; border: 1px solid #ddd; text-align: left;">行号</th>';
+            html += '<th style="padding: 8px; border: 1px solid #ddd; text-align: left;">模块名称</th>';
+            html += '<th style="padding: 8px; border: 1px solid #ddd; text-align: left;">一级测试点</th>';
+            html += '<th style="padding: 8px; border: 1px solid #ddd; text-align: left;">用例名称</th>';
+            html += '<th style="padding: 8px; border: 1px solid #ddd; text-align: left;">跳过原因</th>';
+            html += '</tr></thead><tbody>';
+            
+            rows.forEach(row => {
+                html += '<tr>';
+                html += `<td style="padding: 8px; border: 1px solid #ddd;">${row.rowNum}</td>`;
+                html += `<td style="padding: 8px; border: 1px solid #ddd;">${row.moduleName || '-'}</td>`;
+                html += `<td style="padding: 8px; border: 1px solid #ddd;">${row.level1Name || '-'}</td>`;
+                html += `<td style="padding: 8px; border: 1px solid #ddd;">${row.caseName || '-'}</td>`;
+                html += `<td style="padding: 8px; border: 1px solid #ddd; color: #c62828;">${row.reason}</td>`;
+                html += '</tr>';
+            });
+            
+            html += '</tbody></table>';
+            content.innerHTML = html;
+        }
     }
 }
 
 // 关闭导入弹窗
-function closeImportExcelModal() {
+async function closeImportExcelModal() {
     const modal = document.getElementById('import-excel-modal');
     if (modal) {
         modal.style.display = 'none';
     }
+    
+    if (importFileInfo && importFileInfo.path) {
+        try {
+            await fetch('/api/excel/import/cleanup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filePath: importFileInfo.path })
+            });
+        } catch (e) {
+            console.warn('清理临时文件失败:', e);
+        }
+    }
+    
     resetImportForm();
+    resetImportExcelModalPosition();
+    
+    if (currentModuleId) {
+        await loadLevel1Points(currentModuleId);
+    }
 }
 
 // 重置导入表单
 function resetImportForm() {
     importFileInfo = null;
     importExcelHeaders = [];
+    window.importResultData = null;
     
     const fileInput = document.getElementById('excel-file-input');
     if (fileInput) fileInput.value = '';
@@ -24604,6 +24860,9 @@ function resetImportForm() {
     
     const resultEl = document.getElementById('import-result');
     if (resultEl) resultEl.style.display = 'none';
+    
+    const detailEl = document.getElementById('import-detail-section');
+    if (detailEl) detailEl.style.display = 'none';
 }
 
 // 更新步骤UI
@@ -24628,18 +24887,35 @@ function updateImportStepUI() {
     
     const prevBtn = document.getElementById('import-prev-btn');
     const nextBtn = document.getElementById('import-next-btn');
+    const cancelBtn = document.querySelector('#import-excel-modal .secondary-btn:not(#import-prev-btn)');
     
     if (prevBtn) {
         prevBtn.style.display = importCurrentStep > 1 ? 'inline-block' : 'none';
     }
     
     if (nextBtn) {
+        nextBtn.style.display = 'inline-block';
+        nextBtn.disabled = false;
+        nextBtn.onclick = nextImportStep;
+        
         if (importCurrentStep === 3) {
             nextBtn.textContent = '开始导入';
         } else {
             nextBtn.textContent = '下一步';
         }
     }
+    
+    if (cancelBtn) {
+        cancelBtn.style.display = 'inline-block';
+    }
+    
+    const progressEl = document.getElementById('import-progress');
+    const resultEl = document.getElementById('import-result');
+    const detailEl = document.getElementById('import-detail-section');
+    
+    if (progressEl) progressEl.style.display = 'none';
+    if (resultEl) resultEl.style.display = 'none';
+    if (detailEl) detailEl.style.display = 'none';
 }
 
 // 处理文件选择
@@ -24687,9 +24963,15 @@ async function handleExcelFileSelect(event) {
             importFileInfo = result.data.fileInfo;
             importExcelHeaders = result.data.headers;
             importSystemFields = result.data.systemFields;
+            importPreviewRows = result.data.previewRows || [];
             
             document.getElementById('import-next-btn').disabled = false;
-            showSuccessMessage(`文件解析成功，共${result.data.totalRows}行数据`);
+            
+            let msg = `文件解析成功，共${result.data.totalRows}行数据`;
+            if (result.data.fileInfo.hasMerges) {
+                msg += '（检测到合并单元格，已自动处理）';
+            }
+            showSuccessMessage(msg);
         } else {
             showErrorMessage(result.message || '文件解析失败');
         }
@@ -24754,17 +25036,20 @@ function prevImportStep() {
 }
 
 // 渲染字段映射
-function renderFieldMapping() {
+async function renderFieldMapping() {
     document.getElementById('excel-row-count').textContent = importFileInfo.totalRows;
+    
+    renderExcelPreview();
     
     const listEl = document.getElementById('field-mapping-list');
     listEl.innerHTML = '';
+    
+    await loadSystemSelectOptions();
     
     IMPORT_SYSTEM_FIELDS.forEach(field => {
         const row = document.createElement('div');
         row.className = 'mapping-row';
         
-        // 自动匹配
         let autoMatch = '';
         const matchedHeader = importExcelHeaders.find(h => {
             const hLower = h.toLowerCase();
@@ -24773,22 +25058,157 @@ function renderFieldMapping() {
         });
         if (matchedHeader) autoMatch = matchedHeader;
         
+        let systemSelectHtml = '';
+        if (field.supportSystemSelect) {
+            const options = importSystemSelectData[field.systemTable] || [];
+            systemSelectHtml = `
+                <div class="mapping-col system-select-col" id="system-select-container-${field.key}" style="display: none;">
+                    <select id="system-select-${field.key}" onchange="updateMappingStatus()">
+                        <option value="">-- 不选择 --</option>
+                        ${options.map(opt => 
+                            `<option value="${opt.value}">${opt.label}</option>`
+                        ).join('')}
+                    </select>
+                </div>
+            `;
+        }
+        
         row.innerHTML = `
             <div class="mapping-col">
                 ${field.label}${field.required ? '<span class="required-field">*</span>' : ''}
             </div>
             <div class="mapping-col">
-                <select id="mapping-${field.key}" onchange="updateMappingStatus()">
+                <select id="mapping-${field.key}" onchange="handleMappingChange('${field.key}', ${field.supportSystemSelect || false})">
                     <option value="">-- 不映射 --</option>
                     ${importExcelHeaders.map(h => 
                         `<option value="${h}" ${h === autoMatch ? 'selected' : ''}>${h}</option>`
                     ).join('')}
                 </select>
             </div>
+            ${systemSelectHtml}
         `;
         
         listEl.appendChild(row);
+        
+        if (field.supportSystemSelect) {
+            handleMappingChange(field.key, true);
+        }
     });
+    
+    updateMappingStatus();
+}
+
+// 渲染Excel预览
+function renderExcelPreview() {
+    const table = document.getElementById('excel-preview-table');
+    if (!table || !importPreviewRows || importPreviewRows.length === 0) {
+        return;
+    }
+    
+    const headerRow = parseInt(document.getElementById('header-row-input')?.value || 1);
+    const dataStartRow = parseInt(document.getElementById('data-start-row-input')?.value || 2);
+    
+    let html = '';
+    
+    importPreviewRows.forEach((row, idx) => {
+        const actualRowNum = idx + 1;
+        const isHeaderRow = actualRowNum === headerRow;
+        const isDataStartRow = actualRowNum === dataStartRow;
+        
+        let rowStyle = '';
+        if (isHeaderRow) {
+            rowStyle = 'background: #e3f2fd; font-weight: bold;';
+        } else if (isDataStartRow) {
+            rowStyle = 'background: #e8f5e9;';
+        }
+        
+        html += `<tr style="${rowStyle}">`;
+        html += `<td style="padding: 6px 8px; border: 1px solid #ddd; background: #f5f5f5; text-align: center; font-weight: bold; min-width: 40px;">${actualRowNum}</td>`;
+        
+        row.forEach(cell => {
+            const cellText = cell || '';
+            const displayText = cellText.length > 30 ? cellText.substring(0, 30) + '...' : cellText;
+            html += `<td style="padding: 6px 8px; border: 1px solid #ddd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${cellText}">${displayText}</td>`;
+        });
+        
+        html += '</tr>';
+    });
+    
+    table.innerHTML = html;
+}
+
+// 更新预览
+function updatePreviewFromRowSelection() {
+    const headerRow = parseInt(document.getElementById('header-row-input').value || 1);
+    const dataStartRow = parseInt(document.getElementById('data-start-row-input').value || 2);
+    
+    if (headerRow < 1 || dataStartRow < 1) {
+        showErrorMessage('行号必须大于0');
+        return;
+    }
+    
+    if (headerRow > dataStartRow) {
+        showErrorMessage('表头行号必须小于数据起始行号');
+        return;
+    }
+    
+    if (importPreviewRows && importPreviewRows.length >= headerRow) {
+        importExcelHeaders = importPreviewRows[headerRow - 1] || [];
+        
+        const listEl = document.getElementById('field-mapping-list');
+        if (listEl && listEl.children.length > 0) {
+            IMPORT_SYSTEM_FIELDS.forEach(field => {
+                const select = document.getElementById(`mapping-${field.key}`);
+                if (select) {
+                    const currentValue = select.value;
+                    select.innerHTML = `
+                        <option value="">-- 不映射 --</option>
+                        ${importExcelHeaders.map(h => 
+                            `<option value="${h}" ${h === currentValue ? 'selected' : ''}>${h}</option>`
+                        ).join('')}
+                    `;
+                }
+            });
+        }
+    }
+    
+    renderExcelPreview();
+    showSuccessMessage('预览已更新');
+}
+
+// 加载系统下拉选项数据
+async function loadSystemSelectOptions() {
+    try {
+        const response = await fetch(`/api/excel/import/system-options?libraryId=${currentCaseLibraryId}`);
+        const result = await response.json();
+        
+        if (result.success) {
+            importSystemSelectData = result.data;
+        }
+    } catch (error) {
+        console.error('加载系统选项失败:', error);
+        importSystemSelectData = {};
+    }
+}
+
+// 处理映射变化
+function handleMappingChange(fieldKey, supportSystemSelect) {
+    const mappingSelect = document.getElementById(`mapping-${fieldKey}`);
+    const systemSelectContainer = document.getElementById(`system-select-container-${fieldKey}`);
+    
+    if (!mappingSelect || !systemSelectContainer) return;
+    
+    // 如果选择了"不映射"且支持系统选择，则显示系统选择下拉框
+    if (supportSystemSelect && !mappingSelect.value) {
+        systemSelectContainer.style.display = 'block';
+    } else {
+        systemSelectContainer.style.display = 'none';
+        // 清空系统选择
+        const systemSelect = document.getElementById(`system-select-${fieldKey}`);
+        if (systemSelect) systemSelect.value = '';
+    }
+    
+    updateMappingStatus();
 }
 
 // 获取字段映射
@@ -24797,7 +25217,19 @@ function getFieldMapping() {
     IMPORT_SYSTEM_FIELDS.forEach(field => {
         const select = document.getElementById(`mapping-${field.key}`);
         if (select && select.value) {
-            mapping[field.key] = select.value;
+            mapping[field.key] = {
+                type: 'excel',
+                value: select.value
+            };
+        } else if (field.supportSystemSelect) {
+            // 如果Excel列未映射，检查是否选择了系统值
+            const systemSelect = document.getElementById(`system-select-${field.key}`);
+            if (systemSelect && systemSelect.value) {
+                mapping[field.key] = {
+                    type: 'system',
+                    value: systemSelect.value
+                };
+            }
         }
     });
     return mapping;
@@ -24808,7 +25240,7 @@ function updateMappingStatus() {
     const mapping = getFieldMapping();
     const allRequiredMapped = IMPORT_SYSTEM_FIELDS
         .filter(f => f.required)
-        .every(f => mapping[f.key]);
+        .every(f => mapping[f.key] && mapping[f.key].value);
     
     document.getElementById('import-next-btn').disabled = !allRequiredMapped;
 }
@@ -24816,8 +25248,11 @@ function updateMappingStatus() {
 // 渲染导入摘要
 function renderImportSummary() {
     const libraryName = document.getElementById('current-case-library')?.textContent || '当前用例库';
+    const dataStartRow = parseInt(document.getElementById('data-start-row-input')?.value || 2);
+    const actualDataRows = Math.max(0, importFileInfo.totalRows - dataStartRow + 1);
+    
     document.getElementById('import-target-library').textContent = libraryName;
-    document.getElementById('import-total-rows').textContent = importFileInfo.totalRows;
+    document.getElementById('import-total-rows').textContent = actualDataRows;
 }
 
 // 执行导入
@@ -24825,8 +25260,9 @@ async function executeImport() {
     const mapping = getFieldMapping();
     const createMissingModules = document.getElementById('create-missing-modules').checked;
     const createMissingLevel1 = document.getElementById('create-missing-level1').checked;
+    const headerRow = parseInt(document.getElementById('header-row-input')?.value || 1);
+    const dataStartRow = parseInt(document.getElementById('data-start-row-input')?.value || 2);
     
-    // 显示进度
     document.getElementById('import-progress').style.display = 'block';
     document.getElementById('import-result').style.display = 'none';
     document.getElementById('import-next-btn').disabled = true;
@@ -24846,7 +25282,9 @@ async function executeImport() {
                 mapping,
                 libraryId: currentCaseLibraryId,
                 createMissingModules,
-                createMissingLevel1
+                createMissingLevel1,
+                headerRow,
+                dataStartRow
             })
         });
         
@@ -24859,7 +25297,44 @@ async function executeImport() {
             document.getElementById('import-result').style.display = 'block';
             document.getElementById('import-result-text').textContent = result.message;
             
-            // 刷新用例列表
+            if (result.data) {
+                const data = result.data;
+                document.getElementById('stat-success').textContent = data.successCount || 0;
+                document.getElementById('stat-skip').textContent = data.skipCount || 0;
+                document.getElementById('stat-duplicate').textContent = data.duplicateCount || 0;
+                
+                window.importResultData = data;
+                
+                if (data.skipCount > 0 || data.duplicateCount > 0) {
+                    document.getElementById('import-detail-section').style.display = 'block';
+                    showImportDetailTab('duplicate');
+                } else {
+                    document.getElementById('import-detail-section').style.display = 'none';
+                }
+            }
+            
+            const nextBtn = document.getElementById('import-next-btn');
+            const prevBtn = document.getElementById('import-prev-btn');
+            const cancelBtn = document.querySelector('#import-excel-modal .secondary-btn:not(#import-prev-btn)');
+            
+            const hasFailures = result.data && (result.data.skipCount > 0 || result.data.duplicateCount > 0);
+            
+            if (hasFailures) {
+                if (prevBtn) prevBtn.style.display = 'inline-block';
+                if (cancelBtn) cancelBtn.style.display = 'inline-block';
+                if (nextBtn) {
+                    nextBtn.textContent = '完成';
+                    nextBtn.onclick = function() { closeImportExcelModal(); };
+                }
+            } else {
+                if (prevBtn) prevBtn.style.display = 'none';
+                if (cancelBtn) cancelBtn.style.display = 'none';
+                if (nextBtn) {
+                    nextBtn.textContent = '完成';
+                    nextBtn.onclick = function() { closeImportExcelModal(); };
+                }
+            }
+            
             await loadTestCases();
         } else {
             progressText.textContent = '导入失败';

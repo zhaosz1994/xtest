@@ -283,6 +283,9 @@ router.delete('/level1/delete/:id', authenticateToken, async (req, res) => {
     await connection.beginTransaction();
 
     try {
+      // 删除关联的测试用例
+      await connection.execute('DELETE FROM test_cases WHERE level1_id = ?', [id]);
+      
       // 删除关联的二级测试点
       await connection.execute('DELETE FROM level2_points WHERE level1_id = ?', [id]);
       

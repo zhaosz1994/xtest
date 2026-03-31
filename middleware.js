@@ -19,11 +19,10 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// 管理员权限中间件
+// 管理员权限中间件（只有admin用户）
 const requireAdmin = (req, res, next) => {
-  // 支持中英文角色值判断管理员权限
-  if (req.user.role !== '管理员' && req.user.role !== 'admin' && req.user.role !== 'Administrator') {
-    return res.status(403).json({ message: '需要管理员权限' });
+  if (req.user.username !== 'admin') {
+    return res.status(403).json({ message: '需要admin用户权限' });
   }
   next();
 };
@@ -75,8 +74,7 @@ const canModifyAIModel = async (req, res, next) => {
   const pool = require('./db');
   const modelId = req.params.id || req.body.id;
   
-  // 支持中英文角色值判断管理员权限
-  if (req.user.role === '管理员' || req.user.role === 'admin' || req.user.role === 'Administrator') {
+  if (req.user.username === 'admin') {
     return next();
   }
   
@@ -158,10 +156,9 @@ const canModifyAISkill = async (req, res, next) => {
   }
 };
 
-// 辅助函数：判断是否为管理员
+// 辅助函数：判断是否为admin用户
 const isAdmin = (user) => {
-  // 支持中英文角色值判断管理员权限
-  return user && (user.role === '管理员' || user.role === 'admin' || user.role === 'Administrator');
+  return user && user.username === 'admin';
 };
 
 // 辅助函数：判断是否为资源所有者

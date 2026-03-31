@@ -265,6 +265,41 @@
         });
     }
 
+    function hasUnsavedData() {
+        return batchData.some(row => row.name && row.name.trim() !== '');
+    }
+
+    function showUnsavedModal() {
+        return new Promise((resolve) => {
+            const modal = document.getElementById('unsaved-modal');
+            const btnCancel = document.getElementById('unsaved-cancel');
+            const btnSaveAndBack = document.getElementById('unsaved-save-and-back');
+            const btnBackOnly = document.getElementById('unsaved-back-only');
+
+            if (!modal) {
+                resolve('back');
+                return;
+            }
+
+            modal.style.display = 'flex';
+
+            const cleanup = () => {
+                btnCancel.removeEventListener('click', handleCancel);
+                btnSaveAndBack.removeEventListener('click', handleSaveAndBack);
+                btnBackOnly.removeEventListener('click', handleBackOnly);
+                modal.style.display = 'none';
+            };
+
+            const handleCancel = () => { cleanup(); resolve('cancel'); };
+            const handleSaveAndBack = () => { cleanup(); resolve('save_and_back'); };
+            const handleBackOnly = () => { cleanup(); resolve('back'); };
+
+            btnCancel.addEventListener('click', handleCancel);
+            btnSaveAndBack.addEventListener('click', handleSaveAndBack);
+            btnBackOnly.addEventListener('click', handleBackOnly);
+        });
+    }
+
     // P1修复：统一不带 /api 前缀（与主站script.js保持一致）
     async function apiRequest(endpoint, options = {}) {
         const url = `${API_BASE_URL}${endpoint}`;
@@ -1233,13 +1268,101 @@
     }
 
     // P1修复：returnUrl 优先，其次 history.back()，最后 hash 路由跳转
-    function goBack() {
+    async function goBack() {
+        if (hasUnsavedData()) {
+            const result = await showUnsavedModal();
+            if (result === 'cancel') {
+                return;
+            } else if (result === 'save_and_back') {
+                const errors = validateData();
+                if (errors.length > 0) {
+                    showErrorMessage(errors[0]);
+                    return;
+                }
+                const success = await saveBatchAndReturn();
+                if (!success) return;
+            }
+        }
+        navigateBack();
+    }
+
+    function navigateBack() {
         if (returnUrl) {
             window.location.href = returnUrl;
         } else if (document.referrer && document.referrer.includes(window.location.host)) {
             window.history.back();
         } else {
             window.location.href = `/#/cases`;
+        }
+    }
+
+    async function saveBatchAndReturn() {
+        if (isSaving) return false;
+
+        if (currentEditingIndex !== null) {
+            syncDrawerToData();
+        }
+
+        isSaving = true;
+        const saveBtn = document.getElementById('save-btn');
+        const btnText = saveBtn?.querySelector('.btn-text');
+        const btnLoading = saveBtn?.querySelector('.btn-loading');
+
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            if (btnText) btnText.style.display = 'none';
+            if (btnLoading) btnLoading.style.display = 'flex';
+        }
+
+        try {
+            const payload = {
+                moduleId: moduleId,
+                level1Id: level1Id,
+                libraryId: libraryId,
+                cases: batchData.map(row => ({
+                    name: row.name.trim(),
+                    priority: row.priority,
+                    type: row.type,
+                    owner: row.owner || currentUser?.username || '',
+                    phase: row.phase,
+                    env: row.env,
+                    precondition: row.precondition || '',
+                    purpose: row.purpose || '',
+                    steps: row.steps || '',
+                    expected: row.expected || '',
+                    key_config: row.key_config || '',
+                    remark: row.remark || '',
+                    projects: row.projects || '',
+                    environments: row.environments || '',
+                    methods: row.methods || '',
+                    sources: row.sources || ''
+                }))
+            };
+
+            const result = await apiRequest('/api/testcases/batch-create', {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+
+            if (result.success) {
+                try { sessionStorage.removeItem(DRAFT_KEY); } catch(_) {}
+                showSuccessMessage(`成功创建 ${result.data?.count || batchData.length} 个测试用例`);
+                return true;
+            } else {
+                showErrorMessage(result.message || '批量创建失败');
+                return false;
+            }
+        } catch (error) {
+            console.error('保存错误:', error);
+            showErrorMessage('保存失败，请重试');
+            return false;
+        } finally {
+            isSaving = false;
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                if (btnText) btnText.style.display = 'inline';
+                if (btnLoading) btnLoading.style.display = 'none';
+            }
         }
     }
 
@@ -1413,14 +1536,7 @@
         if (backBtn) backBtn.addEventListener('click', goBack);
 
         if (cancelBtn) {
-            cancelBtn.addEventListener('click', async () => {
-                const hasData = batchData.some(row => row.name && row.name.trim() !== '');
-                if (hasData) {
-                    const confirmed = await showConfirmMessage('确定要取消吗？已填写的数据将不会保存。');
-                    if (!confirmed) return;
-                }
-                goBack();
-            });
+            cancelBtn.addEventListener('click', goBack);
         }
 
         // P1修复：直接调用 saveBatch，不再使用 debounce

@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../db');
 const { authenticateToken } = require('../middleware');
 const reportService = require('../services/reportService');
+const { getUserAIConfig } = require('../services/aiService');
 const { logActivity } = require('./history');
 require('dotenv').config();
 
@@ -226,6 +227,7 @@ router.get('/detail/:id', authenticateToken, async (req, res) => {
 router.post('/generate/:testPlanId', authenticateToken, async (req, res) => {
   const { testPlanId } = req.params;
   const { useAI = true } = req.body;
+  const currentUserId = req.user.id;
   
   try {
     const reportData = await reportService.assembleReportData(testPlanId);
@@ -233,12 +235,9 @@ router.post('/generate/:testPlanId', authenticateToken, async (req, res) => {
     let aiAnalysis = null;
     if (useAI) {
       try {
-        const [aiModels] = await pool.execute(
-          'SELECT * FROM ai_models WHERE is_enabled = TRUE AND is_default = TRUE LIMIT 1'
-        );
+        const aiModel = await getUserAIConfig(currentUserId);
         
-        if (aiModels.length > 0) {
-          const aiModel = aiModels[0];
+        if (aiModel) {
           aiAnalysis = await generateAIAnalysis(reportData, aiModel);
         }
       } catch (aiError) {
@@ -806,12 +805,10 @@ async function processAsyncJob(jobId, config) {
       job.progress = 50;
       
       try {
-        const [aiModels] = await pool.execute(
-          'SELECT * FROM ai_models WHERE is_enabled = TRUE AND is_default = TRUE LIMIT 1'
-        );
+        const aiModel = await getUserAIConfig(job.userId);
         
-        if (aiModels.length > 0) {
-          aiAnalysis = await generateAIAnalysis(reportData, aiModels[0]);
+        if (aiModel) {
+          aiAnalysis = await generateAIAnalysis(reportData, aiModel);
         }
       } catch (aiError) {
         console.error('[报告生成] AI分析生成失败:', aiError);

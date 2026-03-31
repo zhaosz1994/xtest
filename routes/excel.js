@@ -80,23 +80,23 @@ router.post('/upload-image', imageUpload.single('image'), (req, res) => {
 
 // 系统预设字段（补充缺失字段）
 const SYSTEM_FIELDS = [
-  { key: 'name', label: '用例名称', required: true },
-  { key: 'module_name', label: '模块名称', required: true },
-  { key: 'level1_name', label: '一级测试点', required: false },
-  { key: 'priority', label: '优先级', required: false },
-  { key: 'type', label: '用例类型', required: false },
+  { key: 'name', label: '用例名称', required: false },
+  { key: 'module_name', label: '模块名称', required: false },
+  { key: 'level1_name', label: '一级测试点', required: false, supportSystemSelect: true, systemTable: 'level1_points' },
+  { key: 'priority', label: '优先级', required: false, supportSystemSelect: true, systemTable: 'test_priorities' },
+  { key: 'source', label: '测试点来源', required: false, supportSystemSelect: true, systemTable: 'test_sources' },
   { key: 'precondition', label: '前置条件', required: false },
   { key: 'purpose', label: '测试目的', required: false },
   { key: 'steps', label: '测试步骤', required: false },
-  { key: 'expected', label: '预期结果', required: false },
-  { key: 'owner', label: '执行人', required: false },
-  { key: 'status', label: '维护状态', required: false },
   { key: 'key_config', label: '关键配置', required: false },
-  { key: 'remark', label: '备注', required: false },
-  { key: 'bug_id', label: 'Bug ID', required: false },
-  { key: 'method', label: '测试方式', required: false },
-  { key: 'environment', label: '测试环境', required: false },
-  { key: 'phase', label: '测试阶段', required: false }
+  { key: 'expected', label: '预期结果', required: false },
+  { key: 'owner', label: '执行人', required: false, supportSystemSelect: true, systemTable: 'users' },
+  { key: 'status', label: '维护状态', required: false, supportSystemSelect: true, systemTable: 'test_statuses' },
+  { key: 'environment', label: '测试环境', required: false, supportSystemSelect: true, systemTable: 'environments' },
+  { key: 'method', label: '测试方式', required: false, supportSystemSelect: true, systemTable: 'test_methods' },
+  { key: 'phase', label: '测试阶段', required: false, supportSystemSelect: true, systemTable: 'test_phases' },
+  { key: 'test_type', label: '测试类型', required: false, supportSystemSelect: true, systemTable: 'test_types' },
+  { key: 'remark', label: '备注', required: false }
 ];
 
 /**
@@ -281,7 +281,13 @@ router.get('/export', async (req, res) => {
       WHERE tct.test_case_id IN (${caseIds.map(() => '?').join(',')})
     `, caseIds);
     
-    // 构建关联数据映射
+    const [sources] = await pool.execute(`
+      SELECT tcs.test_case_id, ts.name as source_name
+      FROM test_case_sources tcs
+      JOIN test_sources ts ON tcs.source_id = ts.id
+      WHERE tcs.test_case_id IN (${caseIds.map(() => '?').join(',')})
+    `, caseIds);
+    
     const envMap = {};
     environments.forEach(e => {
       if (!envMap[e.test_case_id]) envMap[e.test_case_id] = [];
@@ -306,11 +312,17 @@ router.get('/export', async (req, res) => {
       typeMap[t.test_case_id].push(t.type_name);
     });
     
+    const sourceMap = {};
+    sources.forEach(s => {
+      if (!sourceMap[s.test_case_id]) sourceMap[s.test_case_id] = [];
+      sourceMap[s.test_case_id].push(s.source_name);
+    });
+    
     const headers = [
-      '用例库名称', '模块名称', '一级测试点', '用例名称', '优先级', '用例类型',
-      '前置条件', '测试目的', '测试步骤', '预期结果', '执行人', '维护状态',
+      '用例库名称', '模块名称', '一级测试点', '用例名称', '优先级', '测试点来源',
+      '前置条件', '测试目的', '测试步骤', '关键配置', '预期结果', '执行人', '维护状态',
       '测试环境', '测试方式', '测试阶段', '测试类型',
-      '关键配置', '备注', '创建时间'
+      '备注', '创建时间'
     ];
     
     const data = cases.map(c => [
@@ -319,18 +331,18 @@ router.get('/export', async (req, res) => {
       shouldIncludeLevel1 ? (c.level1_name || '') : '',
       c.case_name || '',
       c.priority || '',
-      c.type || '',
+      (sourceMap[c.case_id] || []).join(', '),
       c.precondition || '',
       c.purpose || '',
       c.steps || '',
+      c.key_config || '',
       c.expected || '',
       c.owner || '',
-      c.status || '',  // 维护状态
+      c.status || '',
       (envMap[c.case_id] || []).join(', '),
       (methodMap[c.case_id] || []).join(', '),
       (phaseMap[c.case_id] || []).join(', '),
       (typeMap[c.case_id] || []).join(', '),
-      c.key_config || '',
       c.remark || '',
       c.created_at ? new Date(c.created_at).toLocaleString('zh-CN') : ''
     ]);
@@ -379,22 +391,44 @@ router.post('/import/parse-headers', upload.single('file'), async (req, res) => 
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
     
-    // 获取表头（第一行）
     const range = XLSX.utils.decode_range(sheet['!ref']);
-    const headers = [];
     
-    for (let col = range.s.c; col <= range.e.c; col++) {
-      const cellAddress = XLSX.utils.encode_cell({ r: 0, c: col });
-      const cell = sheet[cellAddress];
-      headers.push(cell ? String(cell.v).trim() : `列${col + 1}`);
+    const merges = sheet['!merges'] || [];
+    merges.forEach(merge => {
+      const masterCell = sheet[XLSX.utils.encode_cell({ r: merge.s.r, c: merge.s.c })];
+      if (masterCell && masterCell.v !== undefined) {
+        for (let r = merge.s.r; r <= merge.e.r; r++) {
+          for (let c = merge.s.c; c <= merge.e.c; c++) {
+            const cellAddress = XLSX.utils.encode_cell({ r, c });
+            if (!sheet[cellAddress]) {
+              sheet[cellAddress] = { v: masterCell.v, t: masterCell.t };
+            } else if (sheet[cellAddress].v === undefined || sheet[cellAddress].v === '') {
+              sheet[cellAddress].v = masterCell.v;
+            }
+          }
+        }
+      }
+    });
+    
+    const previewRows = [];
+    for (let r = 0; r <= Math.min(15, range.e.r); r++) {
+      const row = [];
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const cellAddress = XLSX.utils.encode_cell({ r, c });
+        const cell = sheet[cellAddress];
+        row.push(cell ? String(cell.v || '').trim() : '');
+      }
+      previewRows.push(row);
     }
     
-    // 保存文件路径供后续使用
+    const headers = previewRows[0] || [];
+    
     const fileInfo = {
       path: req.file.path,
       originalName: req.file.originalname,
       sheetName,
-      totalRows: range.e.r
+      totalRows: range.e.r + 1,
+      hasMerges: merges.length > 0
     };
     
     res.json({
@@ -403,13 +437,169 @@ router.post('/import/parse-headers', upload.single('file'), async (req, res) => 
         headers,
         systemFields: SYSTEM_FIELDS,
         fileInfo,
-        totalRows: range.e.r
+        totalRows: range.e.r + 1,
+        previewRows
       }
     });
     
   } catch (error) {
     console.error('解析Excel表头错误:', error);
     res.json({ success: false, message: '解析文件失败: ' + error.message });
+  }
+});
+
+/**
+ * GET /api/excel/import/system-options
+ * 获取系统下拉选项数据
+ */
+router.get('/import/system-options', async (req, res) => {
+  try {
+    const { libraryId } = req.query;
+    const data = {};
+    
+    // 获取当前用例库下的模块列表
+    if (libraryId) {
+      const [modules] = await pool.execute(
+        'SELECT id, name FROM modules WHERE library_id = ? ORDER BY order_index, name',
+        [libraryId]
+      );
+      data.modules = modules.map(item => ({
+        value: item.name,
+        label: item.name
+      }));
+    } else {
+      data.modules = [];
+    }
+    
+    // 获取一级测试点（需要根据当前用例库过滤）
+    if (libraryId) {
+      const [level1Points] = await pool.execute(
+        'SELECT l1.id, l1.name FROM level1_points l1 ' +
+        'JOIN modules m ON l1.module_id = m.id ' +
+        'WHERE m.library_id = ? ORDER BY l1.name',
+        [libraryId]
+      );
+      data.level1_points = level1Points.map(item => ({
+        value: item.name,
+        label: item.name
+      }));
+    } else {
+      const [level1Points] = await pool.execute(
+        'SELECT id, name FROM level1_points ORDER BY name'
+      );
+      data.level1_points = level1Points.map(item => ({
+        value: item.name,
+        label: item.name
+      }));
+    }
+    
+    // 获取优先级
+    const [priorities] = await pool.execute(
+      'SELECT id, name FROM test_priorities ORDER BY id'
+    );
+    data.test_priorities = priorities.map(item => ({
+      value: item.name,
+      label: item.name
+    }));
+    
+    // 如果没有优先级数据，提供默认值
+    if (priorities.length === 0) {
+      data.test_priorities = [
+        { value: 'P0', label: 'P0' },
+        { value: 'P1', label: 'P1' },
+        { value: 'P2', label: 'P2' },
+        { value: 'P3', label: 'P3' }
+      ];
+    }
+    
+    // 获取测试类型
+    const [testTypes] = await pool.execute(
+      'SELECT id, name FROM test_types ORDER BY name'
+    );
+    data.test_types = testTypes.map(item => ({
+      value: item.name,
+      label: item.name
+    }));
+    
+    // 获取用户列表（执行人）
+    const [users] = await pool.execute(
+      'SELECT id, username FROM users ORDER BY username'
+    );
+    data.users = users.map(item => ({
+      value: item.username,
+      label: item.username
+    }));
+    
+    // 获取测试状态
+    const [statuses] = await pool.execute(
+      'SELECT id, name FROM test_statuses ORDER BY name'
+    );
+    data.test_statuses = statuses.map(item => ({
+      value: item.name,
+      label: item.name
+    }));
+    
+    // 如果没有状态数据，提供默认值
+    if (statuses.length === 0) {
+      data.test_statuses = [
+        { value: '维护中', label: '维护中' },
+        { value: '未执行', label: '未执行' },
+        { value: '执行中', label: '执行中' }
+      ];
+    }
+    
+    // 获取测试环境
+    const [environments] = await pool.execute(
+      'SELECT id, name FROM environments ORDER BY name'
+    );
+    data.environments = environments.map(item => ({
+      value: item.name,
+      label: item.name
+    }));
+    
+    // 获取测试方式
+    const [methods] = await pool.execute(
+      'SELECT id, name FROM test_methods ORDER BY name'
+    );
+    data.test_methods = methods.map(item => ({
+      value: item.name,
+      label: item.name
+    }));
+    
+    // 如果没有测试方式数据，提供默认值
+    if (methods.length === 0) {
+      data.test_methods = [
+        { value: '手动', label: '手动' },
+        { value: '自动化', label: '自动化' }
+      ];
+    }
+    
+    // 获取测试阶段
+    const [phases] = await pool.execute(
+      'SELECT id, name FROM test_phases ORDER BY name'
+    );
+    data.test_phases = phases.map(item => ({
+      value: item.name,
+      label: item.name
+    }));
+    
+    // 获取测试点来源
+    const [sources] = await pool.execute(
+      'SELECT id, name FROM test_sources ORDER BY name'
+    );
+    data.test_sources = sources.map(item => ({
+      value: item.name,
+      label: item.name
+    }));
+    
+    res.json({
+      success: true,
+      data
+    });
+    
+  } catch (error) {
+    console.error('获取系统选项失败:', error);
+    res.json({ success: false, message: '获取系统选项失败: ' + error.message });
   }
 });
 
@@ -421,51 +611,62 @@ router.post('/import/execute', async (req, res) => {
   const connection = await pool.getConnection();
   
   try {
-    const { filePath, mapping, libraryId, createMissingModules, createMissingLevel1 } = req.body;
+    const { filePath, mapping, libraryId, createMissingModules, createMissingLevel1, headerRow, dataStartRow } = req.body;
     
     if (!filePath || !mapping || !libraryId) {
       return res.json({ success: false, message: '缺少必要参数' });
     }
     
-    // 检查文件是否存在
     if (!fs.existsSync(filePath)) {
       return res.json({ success: false, message: '文件不存在，请重新上传' });
     }
     
-    // 读取Excel数据
     const workbook = XLSX.readFile(filePath);
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+    
+    const merges = sheet['!merges'] || [];
+    merges.forEach(merge => {
+      const masterCell = sheet[XLSX.utils.encode_cell({ r: merge.s.r, c: merge.s.c })];
+      if (masterCell && masterCell.v !== undefined) {
+        for (let r = merge.s.r; r <= merge.e.r; r++) {
+          for (let c = merge.s.c; c <= merge.e.c; c++) {
+            const cellAddress = XLSX.utils.encode_cell({ r, c });
+            if (!sheet[cellAddress]) {
+              sheet[cellAddress] = { v: masterCell.v, t: masterCell.t };
+            } else if (sheet[cellAddress].v === undefined || sheet[cellAddress].v === '') {
+              sheet[cellAddress].v = masterCell.v;
+            }
+          }
+        }
+      }
+    });
+    
+    const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
     
     if (jsonData.length < 2) {
       return res.json({ success: false, message: 'Excel文件没有数据行' });
     }
     
-    // 获取表头和数据行
-    const headers = jsonData[0];
-    const dataRows = jsonData.slice(1);
+    const headerRowIndex = headerRow ? (parseInt(headerRow) - 1) : 0;
+    const dataStartRowIndex = dataStartRow ? (parseInt(dataStartRow) - 1) : (headerRowIndex + 1);
     
-    // 构建字段索引映射
+    const headers = jsonData[headerRowIndex] || [];
+    const dataRows = jsonData.slice(dataStartRowIndex);
+    
     const fieldIndexMap = {};
-    for (const [systemField, excelColumn] of Object.entries(mapping)) {
-      if (excelColumn) {
-        const colIndex = headers.findIndex(h => String(h).trim() === excelColumn);
-        if (colIndex !== -1) {
-          fieldIndexMap[systemField] = colIndex;
+    const systemValueMap = {};
+    
+    for (const [systemField, fieldMapping] of Object.entries(mapping)) {
+      if (fieldMapping && fieldMapping.value) {
+        if (fieldMapping.type === 'excel') {
+          const colIndex = headers.findIndex(h => String(h).trim() === fieldMapping.value);
+          if (colIndex !== -1) {
+            fieldIndexMap[systemField] = colIndex;
+          }
+        } else if (fieldMapping.type === 'system') {
+          systemValueMap[systemField] = fieldMapping.value;
         }
       }
-    }
-    
-    // 检查必填字段
-    const missingRequired = SYSTEM_FIELDS
-      .filter(f => f.required && fieldIndexMap[f.key] === undefined)
-      .map(f => f.label);
-    
-    if (missingRequired.length > 0) {
-      return res.json({ 
-        success: false, 
-        message: `缺少必填字段映射: ${missingRequired.join(', ')}` 
-      });
     }
     
     await connection.beginTransaction();
@@ -506,6 +707,9 @@ router.post('/import/execute', async (req, res) => {
     
     const [typeRows] = await connection.execute('SELECT id, name FROM test_types');
     const typeMap = new Map(typeRows.map(r => [r.name.trim(), r.id]));
+    
+    const [sourceRows] = await connection.execute('SELECT id, name FROM test_sources');
+    const sourceMap = new Map(sourceRows.map(r => [r.name.trim(), r.id]));
 
     // 辅助函数：根据名称列表（逗号分隔）获取对应的字典ID数组
     const parseMapIds = (namesStr, mapData) => {
@@ -520,29 +724,72 @@ router.post('/import/execute', async (req, res) => {
     // 统计
     let successCount = 0;
     let skipCount = 0;
+    let duplicateCount = 0;
+    let emptyNameCount = 0;
+    let emptyModuleCount = 0;
+    const skippedRows = [];
+    const duplicateRows = [];
     const errors = [];
     
-    // 批量插入优化：收集所有待插入的数据
     const casesToInsert = [];
-    const batchSize = 100; // 每批插入100条
+    const batchSize = 100;
     
-    // 处理每一行数据（仅收集数据， 不执行插入）
     for (let i = 0; i < dataRows.length; i++) {
       const row = dataRows[i];
-      const rowNum = i + 2;
+      const rowNum = dataStartRowIndex + i + 1;
       
       try {
-        // 提取字段值
+        // 提取字段值（优先从Excel，其次从系统选择）
         const getValue = (field) => {
+          // 先检查是否有Excel映射
           const idx = fieldIndexMap[field];
-          return idx !== undefined ? String(row[idx] || '').trim() : '';
+          if (idx !== undefined) {
+            return String(row[idx] || '').trim();
+          }
+          // 如果没有Excel映射，检查是否有系统选择的值
+          if (systemValueMap[field]) {
+            return systemValueMap[field];
+          }
+          return '';
         };
         
         const caseName = getValue('name');
         const moduleName = getValue('module_name');
         const level1Name = getValue('level1_name');
         
-        if (!caseName || !moduleName) {
+        if (!caseName && !moduleName) {
+          emptyNameCount++;
+          emptyModuleCount++;
+          skippedRows.push({
+            rowNum,
+            reason: '用例名称和模块名称都为空',
+            caseName: '',
+            moduleName: ''
+          });
+          skipCount++;
+          continue;
+        }
+        
+        if (!caseName) {
+          emptyNameCount++;
+          skippedRows.push({
+            rowNum,
+            reason: '用例名称为空',
+            caseName: '',
+            moduleName: moduleName || ''
+          });
+          skipCount++;
+          continue;
+        }
+        
+        if (!moduleName) {
+          emptyModuleCount++;
+          skippedRows.push({
+            rowNum,
+            reason: '模块名称为空',
+            caseName,
+            moduleName: ''
+          });
           skipCount++;
           continue;
         }
@@ -579,15 +826,76 @@ router.post('/import/execute', async (req, res) => {
         // 检查用例名称是否重复 (纯内存操作，极速)
         const caseSignature = `${moduleId}-${caseName}`;
         if (caseNameModuleSet.has(caseSignature)) {
-          errors.push(`第${rowNum}行: 用例名称"${caseName}"在模块中已存在`);
+          duplicateCount++;
+          duplicateRows.push({
+            rowNum,
+            caseName,
+            moduleName,
+            level1Name: level1Name || '',
+            reason: '用例名称在模块中已存在'
+          });
           skipCount++;
           continue;
         }
         caseNameModuleSet.add(caseSignature);
         
-        // 收集待插入数据及多对多关联缓存
+        const fieldLengths = {
+          name: { max: 500, label: '用例名称' },
+          priority: { max: 50, label: '优先级' },
+          type: { max: 100, label: '用例类型' },
+          precondition: { max: 2000, label: '前置条件' },
+          purpose: { max: 2000, label: '测试目的' },
+          steps: { max: 5000, label: '测试步骤' },
+          expected: { max: 2000, label: '预期结果' },
+          owner: { max: 100, label: '执行人' },
+          status: { max: 50, label: '维护状态' },
+          key_config: { max: 2000, label: '关键配置' },
+          remark: { max: 2000, label: '备注' }
+        };
+        
+        const fieldValueMap = {
+          name: caseName,
+          priority: getValue('priority') || 'P2',
+          type: getValue('type') || '功能测试',
+          precondition: getValue('precondition'),
+          purpose: getValue('purpose'),
+          steps: getValue('steps'),
+          expected: getValue('expected'),
+          owner: getValue('owner') || '',
+          status: getValue('status') || '维护中',
+          key_config: getValue('key_config'),
+          remark: getValue('remark')
+        };
+        
+        let tooLongField = null;
+        for (const [field, config] of Object.entries(fieldLengths)) {
+          const value = fieldValueMap[field];
+          if (value && value.length > config.max) {
+            tooLongField = {
+              field,
+              label: config.label,
+              max: config.max,
+              actual: value.length,
+              value: value.substring(0, 50) + '...'
+            };
+            break;
+          }
+        }
+        
+        if (tooLongField) {
+          skippedRows.push({
+            rowNum,
+            reason: `${tooLongField.label}超长（最大${tooLongField.max}字符，实际${tooLongField.actual}字符）`,
+            caseName,
+            moduleName,
+            detail: tooLongField
+          });
+          skipCount++;
+          continue;
+        }
+        
         casesToInsert.push({
-          caseId: 'CASE-' + Date.now() + '-' + Math.floor(Math.random() * 10000) + '-' + i, // 加上循环索引防止同时生成冲突
+          caseId: 'CASE-' + Date.now() + '-' + Math.floor(Math.random() * 10000) + '-' + i,
           caseName,
           priority: getValue('priority') || 'P2',
           type: getValue('type') || '功能测试',
@@ -603,11 +911,11 @@ router.post('/import/execute', async (req, res) => {
           moduleId,
           level1Id,
           creator: req.user?.username || 'import',
-          // 保留M2M ID列表用于后续二次插入
           environmentIds: parseMapIds(getValue('environment'), envMap),
           phaseIds: parseMapIds(getValue('phase'), phaseMap),
           methodIds: parseMapIds(getValue('method'), methodMap),
-          typeIds: parseMapIds(getValue('type'), typeMap) // 这个type有时既填名称也用来做多对多
+          typeIds: parseMapIds(getValue('type'), typeMap),
+          sourceIds: parseMapIds(getValue('source'), sourceMap)
         });
         
       } catch (rowError) {
@@ -650,9 +958,9 @@ router.post('/import/execute', async (req, res) => {
       const phaseInserts = [];
       const methodInserts = [];
       const typeInserts = [];
+      const sourceInserts = [];
       
       insertedRows.forEach(dbRow => {
-        // 从内存里匹配回来原始数据对象
         const memoryObj = batch.find(b => b.caseId === dbRow.case_id);
         if (memoryObj) {
           if (memoryObj.environmentIds.length) {
@@ -666,6 +974,9 @@ router.post('/import/execute', async (req, res) => {
           }
           if (memoryObj.typeIds.length) {
             memoryObj.typeIds.forEach(tid => typeInserts.push([dbRow.id, tid]));
+          }
+          if (memoryObj.sourceIds.length) {
+            memoryObj.sourceIds.forEach(sid => sourceInserts.push([dbRow.id, sid]));
           }
         }
       });
@@ -695,18 +1006,17 @@ router.post('/import/execute', async (req, res) => {
           typeInserts.flat()
         );
       }
+      if (sourceInserts.length > 0) {
+        await connection.execute(
+          `INSERT INTO test_case_sources (test_case_id, source_id) VALUES ${sourceInserts.map(() => '(?, ?)').join(', ')}`,
+          sourceInserts.flat()
+        );
+      }
       
       successCount += batch.length;
     }
     
     await connection.commit();
-    
-    // 删除临时文件
-    try {
-      fs.unlinkSync(filePath);
-    } catch (e) {
-      console.warn('删除临时文件失败:', e.message);
-    }
     
     res.json({
       success: true,
@@ -714,6 +1024,11 @@ router.post('/import/execute', async (req, res) => {
       data: {
         successCount,
         skipCount,
+        duplicateCount,
+        emptyNameCount,
+        emptyModuleCount,
+        skippedRows,
+        duplicateRows,
         errors: errors.slice(0, 20)
       }
     });
@@ -728,26 +1043,47 @@ router.post('/import/execute', async (req, res) => {
 });
 
 /**
+ * POST /api/excel/import/cleanup
+ * 清理临时文件
+ */
+router.post('/import/cleanup', (req, res) => {
+  try {
+    const { filePath } = req.body;
+    
+    if (filePath && fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('清理临时文件失败:', error);
+    res.json({ success: false, message: '清理失败' });
+  }
+});
+
+/**
  * GET /api/excel/template
  * 下载导入模板
  */
 router.get('/template', (req, res) => {
   try {
     const headers = [
-      '模块名称', '一级测试点', '用例名称', '优先级', '用例类型',
-      '前置条件', '测试目的', '测试步骤', '预期结果', '执行人', '执行状态',
-      '关键配置', '备注'
+      '模块名称', '一级测试点', '用例名称', '优先级', '测试点来源',
+      '前置条件', '测试目的', '测试步骤', '关键配置', '预期结果', '执行人', '执行状态',
+      '备注'
     ];
     
     const exampleData = [
-      ['用户管理模块', '登录功能', '验证用户名密码正确登录', 'P1', '功能测试',
+      ['用户管理模块', '登录功能', '验证用户名密码正确登录', 'P1', 'PRD需求',
        '1. 系统已启动\n2. 数据库已连接', '验证登录功能正常', 
        '1. 打开登录页面\n2. 输入用户名admin\n3. 输入密码123456\n4. 点击登录按钮',
-       '登录成功，跳转到首页', '张三', '维护中', '', ''],
-      ['用户管理模块', '登录功能', '验证密码错误提示', 'P2', '功能测试',
+       'l2 fdb add port 1 vlan 100',
+       '登录成功，跳转到首页', '张三', '维护中', ''],
+      ['用户管理模块', '登录功能', '验证密码错误提示', 'P2', '客户需求',
        '1. 系统已启动', '验证密码错误时的提示信息',
        '1. 打开登录页面\n2. 输入正确用户名\n3. 输入错误密码\n4. 点击登录',
-       '显示"密码错误"提示', '李四', '未执行', '', '']
+       '',
+       '显示"密码错误"提示', '李四', '未执行', '']
     ];
     
     const wb = XLSX.utils.book_new();

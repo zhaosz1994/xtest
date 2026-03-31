@@ -1108,3 +1108,118 @@ body {
         margin: 0 var(--space-4);
     }
 }
+
+/* =========================================================
+   暗黑模式深度优化补丁
+   ========================================================= */
+
+html.dark,
+html[data-theme="dark"],
+body.dark-mode {
+
+    --bg-base: #121212;
+    --bg-surface: #1e1e1e;
+    --bg-surface-hover: #2a2a2a;
+    --text-main: #e0e0e0;
+    --text-muted: #888888;
+    --border-dark: #333333;
+
+    background-color: var(--bg-base) !important;
+    color: var(--text-main) !important;
+
+    .testlink-main,
+    .testlink-content,
+    .dashboard-content,
+    .case-management-content,
+    .case-list-wrapper,
+    .case-list-content,
+    .level1-list-container {
+        background-color: var(--bg-base) !important;
+    }
+
+    .stat-card-modern,
+    .chart-container-large,
+    .chart-container-medium,
+    .chart-container-full,
+    .table-container,
+    .dashboard-recent-logins-modern,
+    .panel-section,
+    .form-card,
+    .modal-content,
+    .case-library-header,
+    .test-points-floating-panel,
+    .level1-list-header {
+        background-color: var(--bg-surface) !important;
+        border-color: var(--border-dark) !important;
+        color: var(--text-main) !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3) !important;
+        border: 1px solid var(--border-dark) !important;
+    }
+
+    select,
+    .filter-select-modern,
+    .filter-select,
+    .form-input,
+    .search-input,
+    textarea,
+    .form-select {
+        background-color: #2b2b2b !important;
+        color: var(--text-main) !important;
+        border: 1px solid var(--border-dark) !important;
+    }
+    
+    select:focus,
+    .filter-select-modern:focus,
+    .form-input:focus,
+    .search-input:focus {
+        border-color: #6366f1 !important;
+        background-color: #222 !important;
+    }
+
+    .data-table,
+    .case-library-table,
+    .testplan-table,
+    .execution-table,
+    .reports-data-table,
+    .config-table,
+    .test-points-table {
+        background-color: var(--bg-surface) !important;
+        border-color: var(--border-dark) !important;
+    }
+
+    table th,
+    .level1-list-header {
+        background: #252525 !important;
+        color: #ffffff !important;
+        border-bottom: 1px solid var(--border-dark) !important;
+    }
+
+    table td,
+    .level1-list-item {
+        background-color: var(--bg-surface) !important;
+        color: var(--text-main) !important;
+        border-bottom: 1px solid var(--border-dark) !important;
+    }
+
+    table tr:hover td,
+    .level1-list-item:hover {
+        background-color: var(--bg-surface-hover) !important;
+    }
+
+    h1, h2, h3, h4, h5, h6,
+    .stat-label,
+    .section-subtitle,
+    .form-label,
+    .level1-name,
+    label {
+        color: var(--text-main) !important;
+    }
+
+    .source-label,
+    .refresh-time,
+    .level1-count-label,
+    .level1-time,
+    .no-data {
+        color: var(--text-muted) !important;
+    }
+}

@@ -2430,12 +2430,13 @@
                                             <th>API端点</th>
                                             <th>状态</th>
                                             <th>默认</th>
+                                            <th>所有者</th>
                                             <th>操作</th>
                                         </tr>
                                     </thead>
                                     <tbody id="ai-models-config-body">
                                         <tr>
-                                            <td colspan="6" class="no-data">暂无AI模型配置</td>
+                                            <td colspan="7" class="no-data">暂无AI模型配置</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -3181,8 +3182,9 @@ return rows[0];'></textarea>
 
     <!-- 导入Excel模态框 -->
     <div id="import-excel-modal" class="modal" style="display: none;">
-        <div class="modal-content" style="max-width: 700px;">
-            <div class="modal-header">
+        <div class="modal-content" id="import-excel-content" style="max-width: 700px; min-width: 500px; position: relative;">
+            <div class="modal-resizer" id="import-excel-resizer"></div>
+            <div class="modal-header" style="cursor: move;">
                 <h3>导入测试用例</h3>
                 <span class="close" onclick="closeImportExcelModal()">&times;</span>
             </div>
@@ -3252,13 +3254,32 @@ return rows[0];'></textarea>
                         <span>检测到 <strong id="excel-row-count">0</strong> 行数据</span>
                         <span>请将Excel列映射到系统字段</span>
                     </div>
-                    <div class="field-mapping-table">
-                        <div class="mapping-header">
+                    <div class="row-selection" style="margin: 15px 0; padding: 12px; background: #f8f9fa; border-radius: 8px;">
+                        <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <label style="font-weight: 500; font-size: 13px;">表头所在行:</label>
+                                <input type="number" id="header-row-input" value="1" min="1" style="width: 70px; padding: 5px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px;">
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <label style="font-weight: 500; font-size: 13px;">数据起始行:</label>
+                                <input type="number" id="data-start-row-input" value="2" min="1" style="width: 70px; padding: 5px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px;">
+                            </div>
+                            <button class="secondary-btn" onclick="updatePreviewFromRowSelection()" style="padding: 5px 12px; font-size: 13px;">刷新预览</button>
+                        </div>
+                    </div>
+                    <div class="data-preview" style="margin-bottom: 15px;">
+                        <div style="font-weight: 500; margin-bottom: 6px; font-size: 13px;">数据预览（前16行）:</div>
+                        <div id="excel-preview-container" style="height: 150px; min-height: 80px; max-height: 400px; overflow: auto; border: 1px solid #e0e0e0; border-radius: 4px; resize: vertical;">
+                            <table id="excel-preview-table" style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                            </table>
+                        </div>
+                    </div>
+                    <div class="field-mapping-table" style="max-height: 480px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 8px;">
+                        <div class="mapping-header" style="position: sticky; top: 0; background: #f5f5f5; z-index: 1;">
                             <span class="mapping-col">系统字段</span>
                             <span class="mapping-col">Excel列</span>
                         </div>
                         <div id="field-mapping-list">
-                            <!-- 动态生成 -->
                         </div>
                     </div>
                     <div class="import-options">
@@ -3301,6 +3322,28 @@ return rows[0];'></textarea>
                             </svg>
                         </div>
                         <div class="result-text" id="import-result-text"></div>
+                        <div class="import-detail-section" id="import-detail-section" style="display: none; margin-top: 20px; text-align: left;">
+                            <div class="import-stats" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
+                                <div class="stat-card" style="background: #e8f5e9; padding: 15px; border-radius: 8px; text-align: center;">
+                                    <div class="stat-number" id="stat-success" style="font-size: 28px; font-weight: bold; color: #2e7d32;">0</div>
+                                    <div class="stat-label" style="color: #666; font-size: 14px;">导入成功</div>
+                                </div>
+                                <div class="stat-card" style="background: #fff3e0; padding: 15px; border-radius: 8px; text-align: center;">
+                                    <div class="stat-number" id="stat-skip" style="font-size: 28px; font-weight: bold; color: #f57c00;">0</div>
+                                    <div class="stat-label" style="color: #666; font-size: 14px;">跳过</div>
+                                </div>
+                                <div class="stat-card" style="background: #ffebee; padding: 15px; border-radius: 8px; text-align: center;">
+                                    <div class="stat-number" id="stat-duplicate" style="font-size: 28px; font-weight: bold; color: #c62828;">0</div>
+                                    <div class="stat-label" style="color: #666; font-size: 14px;">重复</div>
+                                </div>
+                            </div>
+                            <div class="import-detail-tabs" style="display: flex; gap: 10px; margin-bottom: 15px;">
+                                <button class="detail-tab active" onclick="showImportDetailTab('empty')" id="tab-empty" style="padding: 8px 16px; border: 1px solid #ddd; background: #f5f5f5; border-radius: 4px; cursor: pointer;">空名称行</button>
+                                <button class="detail-tab" onclick="showImportDetailTab('duplicate')" id="tab-duplicate" style="padding: 8px 16px; border: 1px solid #ddd; background: #fff; border-radius: 4px; cursor: pointer;">重复用例</button>
+                            </div>
+                            <div class="import-detail-content" id="import-detail-content" style="max-height: 300px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 15px; background: #fafafa;">
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
