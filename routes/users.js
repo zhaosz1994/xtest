@@ -45,7 +45,7 @@ router.post('/login', async (req, res) => {
     );
 
     // 记录登录日志
-    await logActivity(user.id, user.username, user.role, '用户登录', `用户 ${user.username} 登录系统${rememberMe ? '（记住我）' : ''}`, 'user', user.id, ipAddress, userAgent);
+    await logActivity(user.id, user.username, user.role, '用户登录', `用户 ${user.username} 登录系统${rememberMe ? '' : ''}`, 'user', user.id, ipAddress, userAgent);
 
     res.json({ 
       success: true,

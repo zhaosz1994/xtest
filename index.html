@@ -116,7 +116,7 @@
                     </button>
                     
                     <p class="form-footer">
-                        还没有账户？<a href="#register" class="link-primary">立即注册</a>
+                        还没有账户？<a href="javascript:void(0);" onclick="toggleAuthPage('register')" class="link-primary">立即注册</a>
                     </p>
                 </form>
             </div>
@@ -215,7 +215,7 @@
                     </button>
                     
                     <p class="form-footer">
-                        已有账户？<a href="#login" class="link-primary">立即登录</a>
+                        已有账户？<a href="javascript:void(0);" onclick="toggleAuthPage('login')" class="link-primary">立即登录</a>
                     </p>
                 </form>
             </div>
@@ -3257,6 +3257,11 @@ return rows[0];'></textarea>
                     <div class="row-selection" style="margin: 15px 0; padding: 12px; background: #f8f9fa; border-radius: 8px;">
                         <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
                             <div style="display: flex; align-items: center; gap: 6px;">
+                                <label style="font-weight: 500; font-size: 13px;">选择Sheet:</label>
+                                <select id="sheet-select" onchange="onSheetChange()" style="padding: 5px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; min-width: 120px;">
+                                </select>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 6px;">
                                 <label style="font-weight: 500; font-size: 13px;">表头所在行:</label>
                                 <input type="number" id="header-row-input" value="1" min="1" style="width: 70px; padding: 5px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px;">
                             </div>
@@ -3268,7 +3273,11 @@ return rows[0];'></textarea>
                         </div>
                     </div>
                     <div class="data-preview" style="margin-bottom: 15px;">
-                        <div style="font-weight: 500; margin-bottom: 6px; font-size: 13px;">数据预览（前16行）:</div>
+                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
+                            <span style="font-weight: 500; font-size: 13px;">数据预览（前</span>
+                            <input type="number" id="preview-rows-count" value="16" min="1" max="100" style="width: 50px; padding: 3px 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px;" onchange="updatePreviewRowCount()">
+                            <span style="font-weight: 500; font-size: 13px;">行）:</span>
+                        </div>
                         <div id="excel-preview-container" style="height: 150px; min-height: 80px; max-height: 400px; overflow: auto; border: 1px solid #e0e0e0; border-radius: 4px; resize: vertical;">
                             <table id="excel-preview-table" style="width: 100%; border-collapse: collapse; font-size: 12px;">
                             </table>
@@ -3348,9 +3357,9 @@ return rows[0];'></textarea>
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="secondary-btn" id="import-prev-btn" style="display: none;" onclick="prevImportStep()">上一步</button>
-                <button class="secondary-btn" onclick="closeImportExcelModal()">取消</button>
-                <button class="primary-btn" id="import-next-btn" onclick="nextImportStep()" disabled>下一步</button>
+                <button class="secondary-btn" id="import-prev-btn" style="display: none;">上一步</button>
+                <button class="secondary-btn" id="import-cancel-btn">取消</button>
+                <button class="primary-btn" id="import-next-btn" disabled>下一步</button>
             </div>
         </div>
     </div>

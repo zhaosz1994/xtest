@@ -388,7 +388,8 @@ router.post('/import/parse-headers', upload.single('file'), async (req, res) => 
     }
     
     const workbook = XLSX.readFile(req.file.path);
-    const sheetName = workbook.SheetNames[0];
+    const sheetNames = workbook.SheetNames;
+    const sheetName = sheetNames[0];
     const sheet = workbook.Sheets[sheetName];
     
     const range = XLSX.utils.decode_range(sheet['!ref']);
@@ -411,7 +412,7 @@ router.post('/import/parse-headers', upload.single('file'), async (req, res) => 
     });
     
     const previewRows = [];
-    for (let r = 0; r <= Math.min(15, range.e.r); r++) {
+    for (let r = 0; r <= range.e.r; r++) {
       const row = [];
       for (let c = range.s.c; c <= range.e.c; c++) {
         const cellAddress = XLSX.utils.encode_cell({ r, c });
@@ -427,6 +428,7 @@ router.post('/import/parse-headers', upload.single('file'), async (req, res) => 
       path: req.file.path,
       originalName: req.file.originalname,
       sheetName,
+      sheetNames,
       totalRows: range.e.r + 1,
       hasMerges: merges.length > 0
     };
@@ -438,13 +440,86 @@ router.post('/import/parse-headers', upload.single('file'), async (req, res) => 
         systemFields: SYSTEM_FIELDS,
         fileInfo,
         totalRows: range.e.r + 1,
-        previewRows
+        previewRows,
+        sheetNames
       }
     });
     
   } catch (error) {
     console.error('解析Excel表头错误:', error);
     res.json({ success: false, message: '解析文件失败: ' + error.message });
+  }
+});
+
+/**
+ * POST /api/excel/import/parse-sheet
+ * 根据sheet名称重新解析Excel
+ */
+router.post('/import/parse-sheet', async (req, res) => {
+  try {
+    const { filePath, sheetName } = req.body;
+    
+    if (!filePath || !sheetName) {
+      return res.json({ success: false, message: '缺少必要参数' });
+    }
+    
+    if (!fs.existsSync(filePath)) {
+      return res.json({ success: false, message: '文件不存在，请重新上传' });
+    }
+    
+    const workbook = XLSX.readFile(filePath);
+    const sheet = workbook.Sheets[sheetName];
+    
+    if (!sheet) {
+      return res.json({ success: false, message: 'Sheet不存在' });
+    }
+    
+    const range = XLSX.utils.decode_range(sheet['!ref']);
+    
+    const merges = sheet['!merges'] || [];
+    merges.forEach(merge => {
+      const masterCell = sheet[XLSX.utils.encode_cell({ r: merge.s.r, c: merge.s.c })];
+      if (masterCell && masterCell.v !== undefined) {
+        for (let r = merge.s.r; r <= merge.e.r; r++) {
+          for (let c = merge.s.c; c <= merge.e.c; c++) {
+            const cellAddress = XLSX.utils.encode_cell({ r, c });
+            if (!sheet[cellAddress]) {
+              sheet[cellAddress] = { v: masterCell.v, t: masterCell.t };
+            } else if (sheet[cellAddress].v === undefined || sheet[cellAddress].v === '') {
+              sheet[cellAddress].v = masterCell.v;
+            }
+          }
+        }
+      }
+    });
+    
+    const previewRows = [];
+    for (let r = 0; r <= range.e.r; r++) {
+      const row = [];
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const cellAddress = XLSX.utils.encode_cell({ r, c });
+        const cell = sheet[cellAddress];
+        row.push(cell ? String(cell.v || '').trim() : '');
+      }
+      previewRows.push(row);
+    }
+    
+    const headers = previewRows[0] || [];
+    
+    res.json({
+      success: true,
+      data: {
+        headers,
+        previewRows,
+        totalRows: range.e.r + 1,
+        sheetName,
+        hasMerges: merges.length > 0
+      }
+    });
+    
+  } catch (error) {
+    console.error('解析Sheet错误:', error);
+    res.json({ success: false, message: '解析Sheet失败: ' + error.message });
   }
 });
 
@@ -611,7 +686,7 @@ router.post('/import/execute', async (req, res) => {
   const connection = await pool.getConnection();
   
   try {
-    const { filePath, mapping, libraryId, createMissingModules, createMissingLevel1, headerRow, dataStartRow } = req.body;
+    const { filePath, mapping, libraryId, createMissingModules, createMissingLevel1, headerRow, dataStartRow, sheetName } = req.body;
     
     if (!filePath || !mapping || !libraryId) {
       return res.json({ success: false, message: '缺少必要参数' });
@@ -622,7 +697,12 @@ router.post('/import/execute', async (req, res) => {
     }
     
     const workbook = XLSX.readFile(filePath);
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const targetSheetName = sheetName || workbook.SheetNames[0];
+    const sheet = workbook.Sheets[targetSheetName];
+    
+    if (!sheet) {
+      return res.json({ success: false, message: `Sheet "${targetSheetName}" 不存在` });
+    }
     
     const merges = sheet['!merges'] || [];
     merges.forEach(merge => {

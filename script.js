@@ -10,6 +10,20 @@ let historyRecords = [];
 let chips = [];
 let projects = [];
 
+// 切换登录和注册页面视图
+function toggleAuthPage(page) {
+    const loginSection = document.getElementById('login-section');
+    const registerSection = document.getElementById('register-section');
+    
+    if (page === 'register') {
+        loginSection.style.setProperty('display', 'none', 'important');
+        registerSection.style.setProperty('display', 'flex', 'important');
+    } else if (page === 'login') {
+        registerSection.style.setProperty('display', 'none', 'important');
+        loginSection.style.setProperty('display', 'flex', 'important');
+    }
+}
+
 // ==================== 全局事件发布/订阅系统 ====================
 const DataEventManager = {
     events: {},
@@ -24571,6 +24585,8 @@ let importExcelHeaders = [];
 let importSystemFields = [];
 let importSystemSelectData = {};
 let importPreviewRows = [];
+let importSheetNames = [];
+let importPreviewRowCount = 16;
 
 // 系统字段定义
 const IMPORT_SYSTEM_FIELDS = [
@@ -24604,10 +24620,30 @@ function openImportExcelModal() {
     if (modal) {
         modal.style.display = 'block';
         importCurrentStep = 1;
-        updateImportStepUI();
         resetImportForm();
+        initImportButtonEvents();
+        updateImportStepUI();
         
         initImportExcelModalResizer();
+    }
+}
+
+// 初始化导入按钮事件
+function initImportButtonEvents() {
+    const prevBtn = document.getElementById('import-prev-btn');
+    const cancelBtn = document.getElementById('import-cancel-btn');
+    const nextBtn = document.getElementById('import-next-btn');
+    
+    if (prevBtn) {
+        prevBtn.onclick = prevImportStep;
+    }
+    
+    if (cancelBtn) {
+        cancelBtn.onclick = closeImportExcelModal;
+    }
+    
+    if (nextBtn) {
+        nextBtn.onclick = nextImportStep;
     }
 }
 
@@ -24814,36 +24850,42 @@ function showImportDetailTab(tab) {
 }
 
 // 关闭导入弹窗
-async function closeImportExcelModal() {
+function closeImportExcelModal() {
+    console.log('closeImportExcelModal called');
+    
     const modal = document.getElementById('import-excel-modal');
     if (modal) {
         modal.style.display = 'none';
+        console.log('modal hidden');
     }
     
+    // 异步清理，不阻塞关闭
     if (importFileInfo && importFileInfo.path) {
-        try {
-            await fetch('/api/excel/import/cleanup', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filePath: importFileInfo.path })
-            });
-        } catch (e) {
-            console.warn('清理临时文件失败:', e);
-        }
+        fetch('/api/excel/import/cleanup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filePath: importFileInfo.path })
+        }).catch(e => console.warn('清理临时文件失败:', e));
     }
     
     resetImportForm();
     resetImportExcelModalPosition();
     
+    // 异步刷新一级测试点，不阻塞关闭
     if (currentModuleId) {
-        await loadLevel1Points(currentModuleId);
+        loadLevel1Points(currentModuleId).catch(e => console.warn('刷新一级测试点失败:', e));
     }
+    
+    console.log('closeImportExcelModal done');
 }
 
 // 重置导入表单
 function resetImportForm() {
     importFileInfo = null;
     importExcelHeaders = [];
+    importPreviewRows = [];
+    importSheetNames = [];
+    importPreviewRowCount = 16;
     window.importResultData = null;
     
     const fileInput = document.getElementById('excel-file-input');
@@ -24853,7 +24895,11 @@ function resetImportForm() {
     if (fileInfoEl) fileInfoEl.style.display = 'none';
     
     const nextBtn = document.getElementById('import-next-btn');
-    if (nextBtn) nextBtn.disabled = true;
+    if (nextBtn) {
+        nextBtn.disabled = true;
+        nextBtn.textContent = '下一步';
+        nextBtn.onclick = nextImportStep;
+    }
     
     const progressEl = document.getElementById('import-progress');
     if (progressEl) progressEl.style.display = 'none';
@@ -24863,6 +24909,27 @@ function resetImportForm() {
     
     const detailEl = document.getElementById('import-detail-section');
     if (detailEl) detailEl.style.display = 'none';
+    
+    importCurrentStep = 1;
+    
+    for (let i = 1; i <= 3; i++) {
+        const stepEl = document.getElementById(`import-step-${i}`);
+        const contentEl = document.getElementById(`import-step-content-${i}`);
+        
+        if (stepEl) {
+            stepEl.classList.remove('active', 'completed');
+            if (i === 1) {
+                stepEl.classList.add('active');
+            }
+        }
+        
+        if (contentEl) {
+            contentEl.style.display = i === 1 ? 'block' : 'none';
+        }
+    }
+    
+    const prevBtn = document.getElementById('import-prev-btn');
+    if (prevBtn) prevBtn.style.display = 'none';
 }
 
 // 更新步骤UI
@@ -24887,10 +24954,11 @@ function updateImportStepUI() {
     
     const prevBtn = document.getElementById('import-prev-btn');
     const nextBtn = document.getElementById('import-next-btn');
-    const cancelBtn = document.querySelector('#import-excel-modal .secondary-btn:not(#import-prev-btn)');
+    const cancelBtn = document.getElementById('import-cancel-btn');
     
     if (prevBtn) {
         prevBtn.style.display = importCurrentStep > 1 ? 'inline-block' : 'none';
+        prevBtn.onclick = prevImportStep;
     }
     
     if (nextBtn) {
@@ -24907,6 +24975,7 @@ function updateImportStepUI() {
     
     if (cancelBtn) {
         cancelBtn.style.display = 'inline-block';
+        cancelBtn.onclick = closeImportExcelModal;
     }
     
     const progressEl = document.getElementById('import-progress');
@@ -24964,6 +25033,9 @@ async function handleExcelFileSelect(event) {
             importExcelHeaders = result.data.headers;
             importSystemFields = result.data.systemFields;
             importPreviewRows = result.data.previewRows || [];
+            importSheetNames = result.data.sheetNames || [];
+            
+            initSheetSelect();
             
             document.getElementById('import-next-btn').disabled = false;
             
@@ -24979,6 +25051,90 @@ async function handleExcelFileSelect(event) {
         hideLoading();
         showErrorMessage('文件上传失败: ' + error.message);
     }
+}
+
+// 初始化Sheet选择下拉框
+function initSheetSelect() {
+    const select = document.getElementById('sheet-select');
+    if (!select) return;
+    
+    select.innerHTML = '';
+    
+    if (importSheetNames && importSheetNames.length > 0) {
+        importSheetNames.forEach((name, index) => {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            if (importFileInfo && importFileInfo.sheetName === name) {
+                option.selected = true;
+            }
+            select.appendChild(option);
+        });
+    }
+}
+
+// Sheet选择变化处理
+async function onSheetChange() {
+    const select = document.getElementById('sheet-select');
+    const sheetName = select.value;
+    
+    if (!sheetName || !importFileInfo || !importFileInfo.path) return;
+    
+    showLoading('正在解析Sheet...');
+    
+    try {
+        const response = await fetch('/api/excel/import/parse-sheet', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                filePath: importFileInfo.path,
+                sheetName: sheetName
+            })
+        });
+        
+        const result = await response.json();
+        hideLoading();
+        
+        if (result.success) {
+            importExcelHeaders = result.data.headers;
+            importPreviewRows = result.data.previewRows || [];
+            importFileInfo.sheetName = sheetName;
+            importFileInfo.totalRows = result.data.totalRows;
+            
+            document.getElementById('header-row-input').value = 1;
+            document.getElementById('data-start-row-input').value = 2;
+            
+            renderExcelPreview();
+            updateFieldMappingOptions();
+            
+            let msg = `Sheet "${sheetName}" 解析成功，共${result.data.totalRows}行数据`;
+            if (result.data.hasMerges) {
+                msg += '（检测到合并单元格，已自动处理）';
+            }
+            showSuccessMessage(msg);
+        } else {
+            showErrorMessage(result.message || '解析Sheet失败');
+        }
+    } catch (error) {
+        hideLoading();
+        showErrorMessage('解析Sheet失败: ' + error.message);
+    }
+}
+
+// 更新字段映射下拉选项
+function updateFieldMappingOptions() {
+    IMPORT_SYSTEM_FIELDS.forEach(field => {
+        const select = document.getElementById(`mapping-${field.key}`);
+        if (select) {
+            const currentValue = select.value;
+            select.innerHTML = `
+                <option value="">-- 不映射 --</option>
+                ${importExcelHeaders.map(h => 
+                    `<option value="${h}" ${h === currentValue ? 'selected' : ''}>${h}</option>`
+                ).join('')}
+            `;
+        }
+    });
 }
 
 // 格式化文件大小
@@ -25107,10 +25263,12 @@ function renderExcelPreview() {
     
     const headerRow = parseInt(document.getElementById('header-row-input')?.value || 1);
     const dataStartRow = parseInt(document.getElementById('data-start-row-input')?.value || 2);
+    const maxRows = importPreviewRowCount || 16;
     
     let html = '';
     
-    importPreviewRows.forEach((row, idx) => {
+    const rowsToShow = importPreviewRows.slice(0, maxRows);
+    rowsToShow.forEach((row, idx) => {
         const actualRowNum = idx + 1;
         const isHeaderRow = actualRowNum === headerRow;
         const isDataStartRow = actualRowNum === dataStartRow;
@@ -25135,6 +25293,15 @@ function renderExcelPreview() {
     });
     
     table.innerHTML = html;
+}
+
+// 更新预览行数
+function updatePreviewRowCount() {
+    const input = document.getElementById('preview-rows-count');
+    if (input && !isNaN(input.value)) {
+        importPreviewRowCount = Math.min(100, Math.max(1, parseInt(input.value)));
+        renderExcelPreview();
+    }
 }
 
 // 更新预览
@@ -25274,6 +25441,9 @@ async function executeImport() {
     progressText.textContent = '正在导入数据...';
     
     try {
+        const sheetSelect = document.getElementById('sheet-select');
+        const sheetName = sheetSelect ? sheetSelect.value : (importFileInfo.sheetName || '');
+        
         const response = await fetch('/api/excel/import/execute', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -25284,7 +25454,8 @@ async function executeImport() {
                 createMissingModules,
                 createMissingLevel1,
                 headerRow,
-                dataStartRow
+                dataStartRow,
+                sheetName
             })
         });
         
@@ -25315,32 +25486,34 @@ async function executeImport() {
             
             const nextBtn = document.getElementById('import-next-btn');
             const prevBtn = document.getElementById('import-prev-btn');
-            const cancelBtn = document.querySelector('#import-excel-modal .secondary-btn:not(#import-prev-btn)');
+            const cancelBtn = document.getElementById('import-cancel-btn');
             
             const hasFailures = result.data && (result.data.skipCount > 0 || result.data.duplicateCount > 0);
+            
+            if (nextBtn) {
+                nextBtn.disabled = false;
+                nextBtn.textContent = '完成';
+                nextBtn.onclick = function() { 
+                    closeImportExcelModal(); 
+                };
+            }
             
             if (hasFailures) {
                 if (prevBtn) prevBtn.style.display = 'inline-block';
                 if (cancelBtn) cancelBtn.style.display = 'inline-block';
-                if (nextBtn) {
-                    nextBtn.textContent = '完成';
-                    nextBtn.onclick = function() { closeImportExcelModal(); };
-                }
             } else {
                 if (prevBtn) prevBtn.style.display = 'none';
                 if (cancelBtn) cancelBtn.style.display = 'none';
-                if (nextBtn) {
-                    nextBtn.textContent = '完成';
-                    nextBtn.onclick = function() { closeImportExcelModal(); };
-                }
             }
             
             await loadTestCases();
         } else {
+            document.getElementById('import-next-btn').disabled = false;
             progressText.textContent = '导入失败';
             showErrorMessage(result.message || '导入失败');
         }
     } catch (error) {
+        document.getElementById('import-next-btn').disabled = false;
         progressText.textContent = '导入失败';
         showErrorMessage('导入失败: ' + error.message);
     }

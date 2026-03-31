@@ -4184,7 +4184,7 @@ app.get('/api/dashboard/project-progress', async (req, res) => {
       SELECT 
         p.id,
         p.name as project_name,
-        COUNT(tcp.id) as total_cases,
+        COUNT(tcp.test_case_id) as total_cases,
         SUM(CASE WHEN ts.status_category = 'passed' THEN 1 ELSE 0 END) as passed_count,
         SUM(CASE WHEN ts.status_category = 'failed' THEN 1 ELSE 0 END) as failed_count,
         SUM(CASE WHEN ts.status_category = 'blocked' THEN 1 ELSE 0 END) as blocked_count,
@@ -4193,7 +4193,6 @@ app.get('/api/dashboard/project-progress', async (req, res) => {
       FROM projects p
       LEFT JOIN test_case_projects tcp ON p.id = tcp.project_id
       LEFT JOIN test_statuses ts ON tcp.status_id = ts.id
-      LEFT JOIN test_cases tc ON tcp.test_case_id = tc.id
       WHERE ${whereClause}
       GROUP BY p.id, p.name
       ORDER BY total_cases DESC
