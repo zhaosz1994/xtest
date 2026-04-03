@@ -20,24 +20,40 @@ router.get('/list', authenticateToken, async (req, res) => {
     `;
     
     let query = `
-      SELECT 
-        tp.id, 
-        tp.name, 
-        tp.owner, 
-        tp.status, 
-        tp.test_phase, 
-        tp.project, 
-        tp.iteration, 
-        tp.pass_rate, 
-        tp.tested_cases, 
-        tp.total_cases, 
-        tp.created_at, 
+      SELECT
+        tp.id,
+        tp.name,
+        tp.owner,
+        tp.status,
+        tp.test_phase,
+        tp.project,
+        tp.iteration,
+        tp.pass_rate,
+        tp.tested_cases,
+        tp.total_cases,
+        tp.created_at,
         tp.updated_at,
         u.username as owner_name,
-        p.name as project_name
+        p.name as project_name,
+        COALESCE(tc.pass_count, 0) as pass_count,
+        COALESCE(tc.fail_count, 0) as fail_count,
+        COALESCE(tc.blocked_count, 0) as blocked_count,
+        COALESCE(tc.paused_count, 0) as paused_count,
+        COALESCE(tc.pending_count, 0) as pending_count
       FROM test_plans tp
       LEFT JOIN users u ON tp.owner = u.username
       LEFT JOIN projects p ON tp.project = p.code
+      LEFT JOIN (
+        SELECT
+          plan_id,
+          SUM(CASE WHEN status = 'pass' THEN 1 ELSE 0 END) as pass_count,
+          SUM(CASE WHEN status IN ('fail', 'asic_hang', 'core_dump', 'traffic_drop') THEN 1 ELSE 0 END) as fail_count,
+          SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) as blocked_count,
+          SUM(CASE WHEN status = 'paused' THEN 1 ELSE 0 END) as paused_count,
+          SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending_count
+        FROM test_plan_cases
+        GROUP BY plan_id
+      ) tc ON tp.id = tc.plan_id
       WHERE 1=1
     `;
     
@@ -86,9 +102,11 @@ router.get('/list', authenticateToken, async (req, res) => {
       testedCases: plan.tested_cases || 0,
       totalCases: plan.total_cases || 0,
       resultDistribution: {
-        pass: Math.floor((plan.pass_rate || 0) / 100 * (plan.tested_cases || 0)),
-        fail: Math.floor(((100 - (plan.pass_rate || 0)) / 100) * (plan.tested_cases || 0)),
-        pending: (plan.total_cases || 0) - (plan.tested_cases || 0)
+        pass: plan.pass_count || 0,
+        fail: plan.fail_count || 0,
+        blocked: plan.blocked_count || 0,
+        paused: plan.paused_count || 0,
+        pending: plan.pending_count || 0
       },
       testPhase: plan.test_phase,
       project: plan.project,
@@ -369,18 +387,18 @@ router.delete('/delete/:id', authenticateToken, async (req, res) => {
 // 获取测试计划详情
 router.get('/detail/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
-  
+
   try {
     const [testPlans] = await pool.execute(`
       SELECT * FROM test_plans WHERE id = ?
     `, [id]);
-    
+
     if (testPlans.length === 0) {
       return res.status(404).json({ success: false, message: '测试计划不存在' });
     }
-    
+
     const plan = testPlans[0];
-    
+
     // 获取测试计划关联的用例
     const [planCases] = await pool.execute(`
       SELECT tpc.case_id, tc.library_id, tc.module_id, tc.level1_id
@@ -388,9 +406,35 @@ router.get('/detail/:id', authenticateToken, async (req, res) => {
       LEFT JOIN test_cases tc ON tpc.case_id = tc.id
       WHERE tpc.plan_id = ?
     `, [id]);
-    
-    res.json({ 
-      success: true, 
+
+    // 获取用例状态分布统计
+    const [statusStats] = await pool.execute(`
+      SELECT
+        status,
+        COUNT(*) as count
+      FROM test_plan_cases
+      WHERE plan_id = ?
+      GROUP BY status
+    `, [id]);
+
+    const statusStatistics = {};
+    const statusColors = {
+      pass: '#52c41a',
+      fail: '#ff4d4f',
+      blocked: '#faad14',
+      pending: '#d9d9d9',
+      paused: '#722ed1',
+      asic_hang: '#ff4d4f',
+      core_dump: '#ff4d4f',
+      traffic_drop: '#ff4d4f'
+    };
+
+    statusStats.forEach(item => {
+      statusStatistics[item.status] = item.count;
+    });
+
+    res.json({
+      success: true,
       plan: {
         id: plan.id,
         name: plan.name,
@@ -414,7 +458,9 @@ router.get('/detail/:id', authenticateToken, async (req, res) => {
           library_id: c.library_id,
           module_id: c.module_id,
           level1_id: c.level1_id
-        }))
+        })),
+        status_statistics: statusStatistics,
+        status_colors: statusColors
       }
     });
   } catch (error) {
@@ -690,9 +736,11 @@ router.put('/:planId/cases/batch', authenticateToken, async (req, res) => {
 });
 
 // 更新测试计划统计信息（带事务连接）
+// 注意: tested_cases 字段实际存储的是 tested_progress (非 pending 状态的用例数，含 paused)
+// 通过率计算: pass_rate = passed / valid_tested (只含 pass/fail/asic_hang/core_dump/traffic_drop)
 async function updatePlanStatisticsWithTx(connection, planId) {
   const [stats] = await connection.execute(`
-    SELECT 
+    SELECT
       COUNT(*) as total,
       SUM(CASE WHEN status IN ('pass', 'fail', 'asic_hang', 'core_dump', 'traffic_drop') THEN 1 ELSE 0 END) as valid_tested,
       SUM(CASE WHEN status != 'pending' THEN 1 ELSE 0 END) as tested_progress,
@@ -725,5 +773,59 @@ async function updatePlanStatistics(planId) {
     connection.release();
   }
 }
+
+// 重置测试计划（将所有用例状态重置为pending）
+router.post('/:id/reset', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const currentUser = req.user;
+  
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    
+    const [planRows] = await connection.execute(
+      'SELECT * FROM test_plans WHERE id = ?',
+      [id]
+    );
+    
+    if (planRows.length === 0) {
+      await connection.rollback();
+      connection.release();
+      return res.status(404).json({ success: false, message: '测试计划不存在' });
+    }
+    
+    await connection.execute(
+      `UPDATE test_plan_cases 
+       SET status = 'pending', 
+           executor_id = NULL, 
+           error_message = NULL,
+           bug_id = NULL,
+           execution_time = NULL,
+           updated_at = NOW()
+       WHERE plan_id = ?`,
+      [id]
+    );
+    
+    await connection.execute(
+      `UPDATE test_plans 
+       SET status = '未开始',
+           tested_cases = 0,
+           pass_rate = 0,
+           updated_at = NOW()
+       WHERE id = ?`,
+      [id]
+    );
+    
+    await connection.commit();
+    connection.release();
+    
+    res.json({ success: true, message: '测试计划已重置' });
+  } catch (error) {
+    await connection.rollback();
+    connection.release();
+    console.error('重置测试计划错误:', error);
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
 
 module.exports = router;

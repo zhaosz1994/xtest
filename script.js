@@ -10,6 +10,11 @@ let historyRecords = [];
 let chips = [];
 let projects = [];
 
+// 批量操作相关变量
+let selectedCaseIds = [];
+let selectedReviewCaseIds = [];
+let selectedReviewerId = null;
+
 // 切换登录和注册页面视图
 function toggleAuthPage(page) {
     const loginSection = document.getElementById('login-section');
@@ -61,10 +66,177 @@ const DataEvents = {
     DASHBOARD_REFRESH: 'dashboardRefresh'
 };
 
+// ==================== 测试用例编辑状态持久化管理器 ====================
+const TestCaseEditState = {
+    STORAGE_KEY: 'testCaseEditState',
+    SAVE_DELAY: 500,
+    saveTimer: null,
+
+    save(state) {
+        try {
+            const stateToSave = {
+                ...state,
+                timestamp: Date.now()
+            };
+            sessionStorage.setItem(this.STORAGE_KEY, JSON.stringify(stateToSave));
+            console.log('编辑状态已保存到sessionStorage:', stateToSave);
+        } catch (error) {
+            console.error('保存编辑状态失败:', error);
+        }
+    },
+
+    saveWithDelay(state) {
+        if (this.saveTimer) {
+            clearTimeout(this.saveTimer);
+        }
+        this.saveTimer = setTimeout(() => {
+            this.save(state);
+        }, this.SAVE_DELAY);
+    },
+
+    load() {
+        try {
+            const savedState = sessionStorage.getItem(this.STORAGE_KEY);
+            if (savedState) {
+                const state = JSON.parse(savedState);
+                console.log('从sessionStorage加载编辑状态:', state);
+                return state;
+            }
+        } catch (error) {
+            console.error('加载编辑状态失败:', error);
+        }
+        return null;
+    },
+
+    clear() {
+        try {
+            sessionStorage.removeItem(this.STORAGE_KEY);
+            console.log('编辑状态已清除');
+        } catch (error) {
+            console.error('清除编辑状态失败:', error);
+        }
+    },
+
+    collectFormData() {
+        const formFields = [
+            'detail-case-name',
+            'detail-case-id',
+            'detail-case-priority',
+            'detail-case-type',
+            'detail-case-owner',
+            'detail-case-precondition',
+            'detail-case-purpose',
+            'detail-case-steps',
+            'detail-case-expected',
+            'detail-case-key-config',
+            'detail-case-remark'
+        ];
+
+        const formData = {};
+        formFields.forEach(fieldId => {
+            const element = document.getElementById(fieldId);
+            if (element) {
+                formData[fieldId] = element.value;
+            }
+        });
+
+        const selectedPhases = TagSelector.getValues('detail-case-phases-selector') || [];
+        const selectedEnvironments = TagSelector.getValues('detail-case-environments-selector') || [];
+        const selectedMethods = TagSelector.getValues('detail-case-methods-selector') || [];
+        const selectedSources = TagSelector.getValues('detail-case-sources-selector') || [];
+
+        formData['detail-case-phases'] = selectedPhases;
+        formData['detail-case-environments'] = selectedEnvironments;
+        formData['detail-case-methods'] = selectedMethods;
+        formData['detail-case-sources'] = selectedSources;
+
+        return formData;
+    },
+
+    restoreFormData(formData) {
+        if (!formData) return;
+
+        Object.keys(formData).forEach(fieldId => {
+            if (fieldId.startsWith('detail-case-phases') ||
+                fieldId.startsWith('detail-case-environments') ||
+                fieldId.startsWith('detail-case-methods') ||
+                fieldId.startsWith('detail-case-sources')) {
+                return;
+            }
+
+            const element = document.getElementById(fieldId);
+            if (element) {
+                element.value = formData[fieldId] || '';
+            }
+        });
+
+        return {
+            phases: formData['detail-case-phases'] || [],
+            environments: formData['detail-case-environments'] || [],
+            methods: formData['detail-case-methods'] || [],
+            sources: formData['detail-case-sources'] || []
+        };
+    },
+
+    setupAutoSave(testCase) {
+        const formFields = [
+            'detail-case-name',
+            'detail-case-id',
+            'detail-case-priority',
+            'detail-case-type',
+            'detail-case-owner',
+            'detail-case-precondition',
+            'detail-case-purpose',
+            'detail-case-steps',
+            'detail-case-expected',
+            'detail-case-key-config',
+            'detail-case-remark'
+        ];
+
+        formFields.forEach(fieldId => {
+            const element = document.getElementById(fieldId);
+            if (element) {
+                element.addEventListener('input', () => {
+                    const formData = this.collectFormData();
+                    this.saveWithDelay({
+                        testCase: testCase,
+                        formData: formData
+                    });
+                });
+            }
+        });
+
+        const tagSelectors = [
+            'detail-case-phases-selector',
+            'detail-case-environments-selector',
+            'detail-case-methods-selector',
+            'detail-case-sources-selector'
+        ];
+
+        tagSelectors.forEach(selectorId => {
+            const container = document.getElementById(selectorId);
+            if (container) {
+                const originalOnChange = container._onChange;
+                container._onChange = (values) => {
+                    if (originalOnChange) {
+                        originalOnChange(values);
+                    }
+                    const formData = this.collectFormData();
+                    this.saveWithDelay({
+                        testCase: testCase,
+                        formData: formData
+                    });
+                };
+            }
+        });
+    }
+};
+
 // ==================== 轻量级 Hash 路由系统 ====================
 
 const Router = {
     routes: {
+        'workspace': { section: 'workspace', title: '我的工作台', requiresAuth: true },
         'dashboard': { section: 'dashboard', title: '测试管理', requiresAuth: true },
         'cases': { section: 'cases', title: '用例库', requiresAuth: true },
         'testplans': { section: 'testplans', title: '测试计划', requiresAuth: true },
@@ -74,7 +246,7 @@ const Router = {
         'register': { section: 'register', title: '注册', requiresAuth: false }
     },
 
-    defaultRoute: 'dashboard',
+    defaultRoute: 'workspace',
     loginRoute: 'login',
 
     init() {
@@ -167,6 +339,27 @@ const Router = {
             return;
         }
 
+        // 检查URL hash中是否包含libraryId参数，用于恢复用例库详情页
+        const hash = window.location.hash;
+        const libraryIdMatch = hash.match(/libraryId=(\d+)/);
+        if (sectionId === 'cases' && libraryIdMatch) {
+            const urlLibraryId = parseInt(libraryIdMatch[1]);
+            const library = caseLibraries.find(lib => lib.id == urlLibraryId);
+            if (library) {
+                console.log('[Router.showSection] 从URL恢复用例库详情:', library.name, 'ID:', urlLibraryId);
+                currentCaseLibraryId = urlLibraryId;
+
+                // 更新当前用例库名称显示
+                const currentCaseLibraryElement = document.getElementById('current-case-library');
+                if (currentCaseLibraryElement) {
+                    currentCaseLibraryElement.textContent = library.name;
+                }
+
+                // 切换到用例管理详情页
+                sectionId = 'case-management';
+            }
+        }
+
         document.querySelectorAll('section').forEach(section => {
             section.style.display = 'none';
         });
@@ -193,6 +386,11 @@ const Router = {
                     loadAllLevel1Points();
                 });
                 break;
+            case 'case-management':
+                clearLevel1PointsDisplay();
+                currentModulePage = 1;
+                initModuleData();
+                break;
             case 'testplans':
                 loadTestPlans().then(() => {
                     initTestPlanFilters();
@@ -209,6 +407,9 @@ const Router = {
                 loadUsers();
                 loadProjects();
                 initConfigCenter();
+                break;
+            case 'workspace':
+                initWorkspace();
                 break;
             case 'dashboard':
                 loadRecentLogins();
@@ -585,17 +786,33 @@ const ThemeSystem = {
 };
 
 // ========================================
-// 命令面板系统
+// 命令面板系统（支持全局搜索）
 // ========================================
 
 const CommandPalette = {
     isOpen: false,
+    mode: 'command',
     selectedIndex: 0,
+    selectedCategory: 0,
     commands: [],
     filteredCommands: [],
+    searchResults: null,
+    searchKeyword: '',
+    searchDebounce: null,
+    isLoading: false,
+    searchHistory: [],
+    abortController: null,
+    
+    config: {
+        debounceDelay: 300,
+        minSearchLength: 2,
+        maxHistoryItems: 10,
+        searchLimit: 5
+    },
 
     init() {
         this.commands = this.getCommands();
+        this.loadSearchHistory();
         this.render();
         this.bindEvents();
     },
@@ -603,12 +820,28 @@ const CommandPalette = {
     getCommands() {
         return [
             {
+                id: 'global-search',
+                title: '全局搜索',
+                description: '搜索测试计划、用例、帖子、评论',
+                icon: '🔍',
+                shortcut: ['/'],
+                action: () => this.switchToSearchMode()
+            },
+            {
                 id: 'new-testplan',
                 title: '新建测试计划',
                 description: '创建一个新的测试计划',
                 icon: '📋',
                 shortcut: ['N', 'P'],
-                action: () => { addTestPlan(); }
+                action: async () => { 
+                    this.close(); 
+                    if (typeof openAdvancedTestPlanModal === 'function') {
+                        await openAdvancedTestPlanModal();
+                    } else {
+                        console.warn('openAdvancedTestPlanModal function not found');
+                        addTestPlan();
+                    }
+                }
             },
             {
                 id: 'new-testcase',
@@ -616,20 +849,7 @@ const CommandPalette = {
                 description: '创建一个新的测试用例',
                 icon: '📝',
                 shortcut: ['N', 'C'],
-                action: () => { addTestCase(); }
-            },
-            {
-                id: 'search-testplan',
-                title: '搜索测试计划',
-                description: '快速查找测试计划',
-                icon: '🔍',
-                shortcut: ['/'],
-                action: () => {
-                    navigateTo('testplans');
-                    setTimeout(() => {
-                        document.getElementById('testplan-search-input')?.focus();
-                    }, 100);
-                }
+                action: () => { this.close(); addTestCase(); }
             },
             {
                 id: 'dashboard',
@@ -637,7 +857,7 @@ const CommandPalette = {
                 description: '查看测试概览',
                 icon: '📊',
                 shortcut: ['G', 'D'],
-                action: () => { navigateTo('dashboard'); }
+                action: () => { this.close(); Router.navigateTo('dashboard'); }
             },
             {
                 id: 'testplans',
@@ -645,7 +865,7 @@ const CommandPalette = {
                 description: '管理测试计划',
                 icon: '📋',
                 shortcut: ['G', 'P'],
-                action: () => { navigateTo('testplans'); }
+                action: () => { this.close(); Router.navigateTo('testplans'); }
             },
             {
                 id: 'cases',
@@ -653,7 +873,7 @@ const CommandPalette = {
                 description: '管理测试用例',
                 icon: '📁',
                 shortcut: ['G', 'C'],
-                action: () => { navigateTo('cases'); }
+                action: () => { this.close(); Router.navigateTo('cases'); }
             },
             {
                 id: 'reports',
@@ -661,7 +881,7 @@ const CommandPalette = {
                 description: '查看测试报告',
                 icon: '📈',
                 shortcut: ['G', 'R'],
-                action: () => { navigateTo('reports'); }
+                action: () => { this.close(); Router.navigateTo('reports'); }
             },
             {
                 id: 'settings',
@@ -669,7 +889,7 @@ const CommandPalette = {
                 description: '系统配置管理',
                 icon: '⚙️',
                 shortcut: ['G', 'S'],
-                action: () => { navigateTo('settings'); }
+                action: () => { this.close(); Router.navigateTo('settings'); }
             },
             {
                 id: 'toggle-theme',
@@ -685,7 +905,15 @@ const CommandPalette = {
                 description: '打开AI助手',
                 icon: '🤖',
                 shortcut: ['A', 'I'],
-                action: () => { openAIAssistant(); }
+                action: () => { this.close(); openAIAssistant(); }
+            },
+            {
+                id: 'forum',
+                title: '技术论坛',
+                description: '访问技术讨论区',
+                icon: '💬',
+                shortcut: ['G', 'F'],
+                action: () => { this.close(); window.open('/forum.html', '_blank'); }
             }
         ];
     },
@@ -697,11 +925,17 @@ const CommandPalette = {
         palette.innerHTML = `
             <div class="command-palette-container">
                 <div class="command-palette-input-wrapper">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="11" cy="11" r="8"></circle>
                         <path d="m21 21-4.35-4.35"></path>
                     </svg>
-                    <input type="text" class="command-palette-input" id="command-input" placeholder="输入命令或搜索..." autocomplete="off">
+                    <input type="text" 
+                           class="command-palette-input" 
+                           id="command-input" 
+                           placeholder="输入命令或搜索... (按 / 进入搜索模式)" 
+                           autocomplete="off"
+                           spellcheck="false">
+                    <span class="mode-indicator" id="mode-indicator"></span>
                     <div class="shortcut-hint">
                         <kbd>ESC</kbd> 关闭
                     </div>
@@ -709,11 +943,90 @@ const CommandPalette = {
                 <div class="command-palette-results" id="command-results"></div>
             </div>
         `;
-
+        
         document.body.appendChild(palette);
+        
         this.element = palette;
         this.input = palette.querySelector('#command-input');
         this.results = palette.querySelector('#command-results');
+        this.modeIndicator = palette.querySelector('#mode-indicator');
+    },
+
+    bindEvents() {
+        document.addEventListener('keydown', (e) => this.handleGlobalKeydown(e));
+        
+        this.input.addEventListener('input', (e) => this.handleInput(e));
+        
+        this.element.addEventListener('click', (e) => {
+            if (e.target === this.element) {
+                this.close();
+            }
+        });
+    },
+
+    handleGlobalKeydown(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            if (this.isOpen) {
+                this.close();
+            } else {
+                this.open();
+            }
+            return;
+        }
+        
+        if (this.isOpen) {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                if (this.mode === 'search') {
+                    this.switchToCommandMode();
+                } else {
+                    this.close();
+                }
+                return;
+            }
+            
+            if (e.key === '/' && this.mode === 'command') {
+                e.preventDefault();
+                this.switchToSearchMode();
+                return;
+            }
+            
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                this.selectNext();
+                return;
+            }
+            
+            if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                this.selectPrev();
+                return;
+            }
+            
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.execute();
+                return;
+            }
+            
+            if (e.key === 'Tab' && this.mode === 'search') {
+                e.preventDefault();
+                this.switchCategory(e.shiftKey ? -1 : 1);
+                return;
+            }
+        }
+    },
+
+    handleInput(e) {
+        const value = e.target.value;
+        
+        if (this.mode === 'search') {
+            this.searchKeyword = value;
+            this.performSearch(value);
+        } else {
+            this.filterCommands(value);
+        }
     },
 
     open() {
@@ -721,18 +1034,53 @@ const CommandPalette = {
         this.selectedIndex = 0;
         this.element.classList.add('active');
         this.input.value = '';
-        this.filter('');
         this.input.focus();
+        
+        if (this.mode === 'command') {
+            this.filterCommands('');
+        } else {
+            this.renderSearchPrompt();
+        }
     },
 
     close() {
         this.isOpen = false;
         this.element.classList.remove('active');
+        this.mode = 'command';
+        this.input.value = '';
+        this.modeIndicator.textContent = '';
+        this.input.placeholder = '输入命令或搜索... (按 / 进入搜索模式)';
+        
+        if (this.abortController) {
+            this.abortController.abort();
+            this.abortController = null;
+        }
     },
 
-    filter(query) {
-        const q = query.toLowerCase().trim();
+    switchToSearchMode() {
+        this.mode = 'search';
+        this.selectedIndex = 0;
+        this.selectedCategory = 0;
+        this.input.placeholder = '搜索测试计划、用例、帖子、评论...';
+        this.input.value = '';
+        this.modeIndicator.textContent = '搜索';
+        this.modeIndicator.classList.add('active');
+        this.input.focus();
+        this.renderSearchPrompt();
+    },
 
+    switchToCommandMode() {
+        this.mode = 'command';
+        this.input.value = '';
+        this.modeIndicator.textContent = '';
+        this.modeIndicator.classList.remove('active');
+        this.input.placeholder = '输入命令或搜索... (按 / 进入搜索模式)';
+        this.filterCommands('');
+    },
+
+    filterCommands(query) {
+        const q = query.toLowerCase().trim();
+        
         if (!q) {
             this.filteredCommands = this.commands;
         } else {
@@ -742,22 +1090,23 @@ const CommandPalette = {
                 cmd.id.toLowerCase().includes(q)
             );
         }
-
-        this.renderResults();
+        
+        this.selectedIndex = 0;
+        this.renderCommandResults();
     },
 
-    renderResults() {
+    renderCommandResults() {
         if (this.filteredCommands.length === 0) {
             this.results.innerHTML = `
-                <div class="empty-state" style="padding: 32px;">
+                <div class="empty-state">
                     <div class="empty-state-emoji">🔍</div>
                     <div class="empty-state-title">未找到匹配的命令</div>
-                    <div class="empty-state-description">尝试其他关键词</div>
+                    <div class="empty-state-description">尝试其他关键词或按 / 进行全局搜索</div>
                 </div>
             `;
             return;
         }
-
+        
         this.results.innerHTML = this.filteredCommands.map((cmd, index) => `
             <div class="command-palette-item ${index === this.selectedIndex ? 'selected' : ''}" 
                  data-index="${index}">
@@ -773,79 +1122,499 @@ const CommandPalette = {
                 ` : ''}
             </div>
         `).join('');
+        
+        this.bindCommandItemEvents();
+    },
 
-        // 绑定点击事件
+    bindCommandItemEvents() {
         this.results.querySelectorAll('.command-palette-item').forEach(item => {
             item.addEventListener('click', () => {
                 const index = parseInt(item.dataset.index);
-                this.execute(index);
+                this.executeCommand(index);
+            });
+            
+            item.addEventListener('mouseenter', () => {
+                this.selectedIndex = parseInt(item.dataset.index);
+                this.updateCommandSelection();
             });
         });
     },
 
-    execute(index) {
+    async performSearch(query) {
+        clearTimeout(this.searchDebounce);
+        
+        if (query.length < this.config.minSearchLength) {
+            this.renderSearchPrompt();
+            return;
+        }
+        
+        this.renderSearching();
+        
+        this.searchDebounce = setTimeout(async () => {
+            try {
+                this.isLoading = true;
+                
+                if (this.abortController) {
+                    this.abortController.abort();
+                }
+                this.abortController = new AbortController();
+                
+                const data = await apiRequest(
+                    `/search?keyword=${encodeURIComponent(query)}&limit=${this.config.searchLimit}`,
+                    { signal: this.abortController.signal }
+                );
+                
+                if (data.success) {
+                    this.searchResults = data.data;
+                    this.renderSearchResults(query);
+                    this.saveSearchHistory(query);
+                } else {
+                    this.renderSearchError(data.error?.message || '搜索失败');
+                }
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    return;
+                }
+                console.error('搜索错误:', error);
+                this.renderSearchError('搜索服务暂时不可用');
+            } finally {
+                this.isLoading = false;
+            }
+        }, this.config.debounceDelay);
+    },
+
+    renderSearchPrompt() {
+        const history = this.getSearchHistory();
+        
+        let html = '<div class="search-prompt">';
+        
+        if (history.length > 0) {
+            html += `
+                <div class="search-history">
+                    <div class="search-history-header">
+                        <span class="history-title">最近搜索</span>
+                        <button class="clear-history-btn" id="clear-history-btn">清除</button>
+                    </div>
+                    <div class="search-history-tags">
+                        ${history.map(h => `
+                            <span class="history-tag" data-keyword="${this.escapeHtml(h)}">${this.escapeHtml(h)}</span>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
+        html += `
+            <div class="search-hints">
+                <div class="search-hint-title">搜索提示</div>
+                <div class="search-hint-items">
+                    <div class="search-hint-item">
+                        <span class="hint-icon">💡</span>
+                        <span>输入至少 2 个字符开始搜索</span>
+                    </div>
+                    <div class="search-hint-item">
+                        <span class="hint-icon">⌨️</span>
+                        <span>使用 <kbd>↑</kbd> <kbd>↓</kbd> 导航，<kbd>Enter</kbd> 选择</span>
+                    </div>
+                    <div class="search-hint-item">
+                        <span class="hint-icon">🔄</span>
+                        <span>按 <kbd>Tab</kbd> 切换搜索分类</span>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        html += '</div>';
+        
+        this.results.innerHTML = html;
+        this.bindSearchPromptEvents();
+    },
+
+    bindSearchPromptEvents() {
+        this.results.querySelectorAll('.history-tag').forEach(tag => {
+            tag.addEventListener('click', () => {
+                const keyword = tag.dataset.keyword;
+                this.input.value = keyword;
+                this.searchKeyword = keyword;
+                this.performSearch(keyword);
+            });
+        });
+        
+        const clearBtn = this.results.querySelector('#clear-history-btn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                this.clearSearchHistory();
+                this.renderSearchPrompt();
+            });
+        }
+    },
+
+    renderSearching() {
+        this.results.innerHTML = `
+            <div class="search-loading">
+                <div class="loading-spinner"></div>
+                <div class="loading-text">搜索中...</div>
+            </div>
+        `;
+    },
+
+    renderSearchResults(keyword) {
+        const { testPlans, testCases, posts, comments } = this.searchResults;
+        
+        const categories = [
+            { key: 'testPlans', data: testPlans, icon: '📋', title: '测试计划' },
+            { key: 'testCases', data: testCases, icon: '📝', title: '测试用例' },
+            { key: 'posts', data: posts, icon: '💬', title: '论坛帖子' },
+            { key: 'comments', data: comments, icon: '💭', title: '评论' }
+        ].filter(c => c.data && c.data.items && c.data.items.length > 0);
+        
+        if (categories.length === 0) {
+            this.results.innerHTML = `
+                <div class="search-empty">
+                    <div class="search-empty-icon">🔍</div>
+                    <div class="search-empty-title">未找到 "${this.escapeHtml(keyword)}" 相关结果</div>
+                    <div class="search-empty-hint">尝试其他关键词或检查拼写</div>
+                </div>
+            `;
+            return;
+        }
+        
+        let html = '';
+        
+        categories.forEach((category, catIndex) => {
+            const isSelected = catIndex === this.selectedCategory;
+            
+            html += `
+                <div class="search-category ${isSelected ? 'selected' : ''}" data-category="${category.key}">
+                    <div class="search-category-header">
+                        <span class="category-icon">${category.icon}</span>
+                        <span class="category-title">${category.title}</span>
+                        <span class="category-count">${category.data.total} 个结果</span>
+                        ${category.data.hasMore ? '<span class="category-more">更多</span>' : ''}
+                    </div>
+                    <div class="search-category-items">
+                        ${category.data.items.map((item, itemIndex) => `
+                            <div class="search-item ${isSelected && itemIndex === this.selectedIndex ? 'selected' : ''}" 
+                                 data-type="${category.key.slice(0, -1).replace('testPlan', 'testplan').replace('testCase', 'case')}"
+                                 data-id="${item.id}"
+                                 ${item.postId ? `data-post-id="${item.postId}"` : ''}>
+                                <div class="search-item-icon">${category.icon}</div>
+                                <div class="search-item-content">
+                                    <div class="search-item-title">${this.highlightText(
+                                        item.name || item.title || item.contentPreview || item.content,
+                                        keyword
+                                    )}</div>
+                                    <div class="search-item-meta">
+                                        ${this.renderItemMeta(category.key, item)}
+                                    </div>
+                                </div>
+                                <div class="search-item-arrow">${category.key === 'posts' || category.key === 'comments' ? '↗' : '→'}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        });
+        
+        this.results.innerHTML = html;
+        this.bindSearchItemEvents();
+    },
+
+    renderItemMeta(categoryKey, item) {
+        switch (categoryKey) {
+            case 'testPlans':
+                return `
+                    <span>${item.projectName || item.project}</span>
+                    <span class="meta-separator">·</span>
+                    <span class="status-badge status-${item.status}">${item.status}</span>
+                    <span class="meta-separator">·</span>
+                    <span>${item.owner}</span>
+                `;
+            case 'testCases':
+                return `
+                    <span>${item.module}</span>
+                    <span class="meta-separator">·</span>
+                    <span class="priority-badge priority-${item.priority}">${item.priority}</span>
+                    <span class="meta-separator">·</span>
+                    <span>${item.type}</span>
+                `;
+            case 'posts':
+                return `
+                    <span>${item.author}</span>
+                    <span class="meta-separator">·</span>
+                    <span>💬 ${item.commentCount}</span>
+                    <span class="meta-separator">·</span>
+                    <span>${this.formatTime(item.createdAt)}</span>
+                `;
+            case 'comments':
+                return `
+                    <span>回复: ${item.postTitle}</span>
+                    <span class="meta-separator">·</span>
+                    <span>${item.author}</span>
+                    <span class="meta-separator">·</span>
+                    <span>${this.formatTime(item.createdAt)}</span>
+                `;
+            default:
+                return '';
+        }
+    },
+
+    bindSearchItemEvents() {
+        this.results.querySelectorAll('.search-item').forEach(item => {
+            item.addEventListener('click', () => {
+                this.navigateToResult(
+                    item.dataset.type,
+                    item.dataset.id,
+                    item.dataset.postId
+                );
+            });
+            
+            item.addEventListener('mouseenter', () => {
+                const categoryEl = item.closest('.search-category');
+                const categoryIndex = Array.from(
+                    this.results.querySelectorAll('.search-category')
+                ).indexOf(categoryEl);
+                
+                const itemIndex = Array.from(
+                    categoryEl.querySelectorAll('.search-item')
+                ).indexOf(item);
+                
+                this.selectedCategory = categoryIndex;
+                this.selectedIndex = itemIndex;
+                this.updateSearchSelection();
+            });
+        });
+    },
+
+    renderSearchError(message) {
+        this.results.innerHTML = `
+            <div class="search-error">
+                <div class="error-icon">⚠️</div>
+                <div class="error-title">搜索出错</div>
+                <div class="error-message">${this.escapeHtml(message)}</div>
+                <button class="retry-btn" id="search-retry-btn">重试</button>
+            </div>
+        `;
+        
+        this.results.querySelector('#search-retry-btn').addEventListener('click', () => {
+            this.performSearch(this.searchKeyword);
+        });
+    },
+
+    selectNext() {
+        if (this.mode === 'command') {
+            this.selectedIndex = Math.min(this.selectedIndex + 1, this.filteredCommands.length - 1);
+            this.updateCommandSelection();
+        } else {
+            this.selectNextSearchItem();
+        }
+    },
+
+    selectPrev() {
+        if (this.mode === 'command') {
+            this.selectedIndex = Math.max(this.selectedIndex - 1, 0);
+            this.updateCommandSelection();
+        } else {
+            this.selectPrevSearchItem();
+        }
+    },
+
+    selectNextSearchItem() {
+        const categories = this.results.querySelectorAll('.search-category');
+        if (categories.length === 0) return;
+        
+        const currentCategory = categories[this.selectedCategory];
+        const items = currentCategory.querySelectorAll('.search-item');
+        
+        if (this.selectedIndex < items.length - 1) {
+            this.selectedIndex++;
+        } else if (this.selectedCategory < categories.length - 1) {
+            this.selectedCategory++;
+            this.selectedIndex = 0;
+        }
+        
+        this.updateSearchSelection();
+    },
+
+    selectPrevSearchItem() {
+        if (this.selectedIndex > 0) {
+            this.selectedIndex--;
+        } else if (this.selectedCategory > 0) {
+            this.selectedCategory--;
+            const prevCategory = this.results.querySelectorAll('.search-category')[this.selectedCategory];
+            this.selectedIndex = prevCategory.querySelectorAll('.search-item').length - 1;
+        }
+        
+        this.updateSearchSelection();
+    },
+
+    switchCategory(direction) {
+        const categories = this.results.querySelectorAll('.search-category');
+        if (categories.length === 0) return;
+        
+        this.selectedCategory = Math.max(0, Math.min(
+            this.selectedCategory + direction,
+            categories.length - 1
+        ));
+        this.selectedIndex = 0;
+        this.updateSearchSelection();
+    },
+
+    updateCommandSelection() {
+        this.results.querySelectorAll('.command-palette-item').forEach((item, index) => {
+            item.classList.toggle('selected', index === this.selectedIndex);
+        });
+    },
+
+    updateSearchSelection() {
+        this.results.querySelectorAll('.search-category').forEach((cat, catIndex) => {
+            cat.classList.toggle('selected', catIndex === this.selectedCategory);
+        });
+        
+        const selectedCategory = this.results.querySelectorAll('.search-category')[this.selectedCategory];
+        if (selectedCategory) {
+            selectedCategory.querySelectorAll('.search-item').forEach((item, itemIndex) => {
+                item.classList.toggle('selected', itemIndex === this.selectedIndex);
+            });
+        }
+    },
+
+    executeCommand(index) {
         const cmd = this.filteredCommands[index];
         if (cmd && cmd.action) {
-            this.close();
+            if (cmd.id !== 'global-search') {
+                this.close();
+            }
             cmd.action();
         }
     },
 
-    selectNext() {
-        this.selectedIndex = Math.min(this.selectedIndex + 1, this.filteredCommands.length - 1);
-        this.renderResults();
-    },
-
-    selectPrev() {
-        this.selectedIndex = Math.max(this.selectedIndex - 1, 0);
-        this.renderResults();
-    },
-
-    bindEvents() {
-        // 全局快捷键
-        document.addEventListener('keydown', (e) => {
-            // Ctrl+K 或 Cmd+K 打开命令面板
-            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-                e.preventDefault();
-                if (this.isOpen) {
-                    this.close();
-                } else {
-                    this.open();
+    execute() {
+        if (this.mode === 'command') {
+            this.executeCommand(this.selectedIndex);
+        } else {
+            const categories = this.results.querySelectorAll('.search-category');
+            const selectedCategory = categories[this.selectedCategory];
+            if (selectedCategory) {
+                const selectedItem = selectedCategory.querySelectorAll('.search-item')[this.selectedIndex];
+                if (selectedItem) {
+                    this.navigateToResult(
+                        selectedItem.dataset.type,
+                        selectedItem.dataset.id,
+                        selectedItem.dataset.postId
+                    );
                 }
             }
+        }
+    },
 
-            // ESC 关闭
-            if (e.key === 'Escape' && this.isOpen) {
-                e.preventDefault();
-                this.close();
-            }
+    navigateToResult(type, id, postId) {
+        this.close();
+        
+        switch (type) {
+            case 'testplan':
+                Router.navigateTo('testplans');
+                setTimeout(async () => {
+                    if (typeof viewTestPlanDetail === 'function') {
+                        await viewTestPlanDetail(id);
+                    } else {
+                        console.warn('viewTestPlanDetail function not found');
+                        const testplan = document.querySelector(`[data-testplan-id="${id}"]`);
+                        if (testplan) {
+                            testplan.click();
+                            testplan.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                    }
+                }, 800);
+                break;
+            case 'case':
+                Router.navigateTo('cases');
+                setTimeout(async () => {
+                    if (typeof openDrawerCaseDetail === 'function') {
+                        await openDrawerCaseDetail(id);
+                    } else {
+                        console.warn('openDrawerCaseDetail function not found');
+                        const testCase = document.querySelector(`[data-case-id="${id}"]`);
+                        if (testCase) {
+                            testCase.click();
+                            testCase.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                    }
+                }, 800);
+                break;
+            case 'post':
+                window.open(`/post-detail.html?id=${id}`, '_blank');
+                break;
+            case 'comment':
+                window.open(`/post-detail.html?id=${postId}&comment=${id}`, '_blank');
+                break;
+        }
+    },
 
-            // 命令面板内的键盘导航
-            if (this.isOpen) {
-                if (e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    this.selectNext();
-                } else if (e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    this.selectPrev();
-                } else if (e.key === 'Enter') {
-                    e.preventDefault();
-                    this.execute(this.selectedIndex);
-                }
-            }
+    highlightText(text, keyword) {
+        if (!text || !keyword) return this.escapeHtml(text || '');
+        const escapedText = this.escapeHtml(text);
+        const escapedKeyword = this.escapeHtml(keyword);
+        const regex = new RegExp(`(${this.escapeRegex(escapedKeyword)})`, 'gi');
+        return escapedText.replace(regex, '<mark class="highlight">$1</mark>');
+    },
+
+    escapeRegex(string) {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    },
+
+    escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    },
+
+    formatTime(dateStr) {
+        if (!dateStr) return '';
+        
+        const date = new Date(dateStr);
+        const now = new Date();
+        const diff = now - date;
+        
+        const minutes = Math.floor(diff / 60000);
+        const hours = Math.floor(diff / 3600000);
+        const days = Math.floor(diff / 86400000);
+        
+        if (minutes < 1) return '刚刚';
+        if (minutes < 60) return `${minutes}分钟前`;
+        if (hours < 24) return `${hours}小时前`;
+        if (days < 7) return `${days}天前`;
+        
+        return date.toLocaleDateString('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
         });
+    },
 
-        // 输入过滤
-        this.input.addEventListener('input', (e) => {
-            this.filter(e.target.value);
-        });
+    loadSearchHistory() {
+        this.searchHistory = JSON.parse(localStorage.getItem('globalSearchHistory') || '[]');
+    },
 
-        // 点击背景关闭
-        this.element.addEventListener('click', (e) => {
-            if (e.target === this.element) {
-                this.close();
-            }
-        });
+    getSearchHistory() {
+        return this.searchHistory || [];
+    },
+
+    saveSearchHistory(keyword) {
+        if (!keyword || keyword.length < 2) return;
+        
+        let history = this.searchHistory.filter(h => h !== keyword);
+        history.unshift(keyword);
+        history = history.slice(0, this.config.maxHistoryItems);
+        
+        this.searchHistory = history;
+        localStorage.setItem('globalSearchHistory', JSON.stringify(history));
+    },
+
+    clearSearchHistory() {
+        this.searchHistory = [];
+        localStorage.removeItem('globalSearchHistory');
     }
 };
 
@@ -1233,7 +2002,7 @@ function showSuccessMessage(message) {
         toast.style.display = 'block';
         toast.classList.remove('fade-out');
 
-        // 1秒后开始淡出
+        // 2秒后开始淡出（批量操作等重要提示需要更长时间）
         setTimeout(() => {
             toast.classList.add('fade-out');
 
@@ -1241,7 +2010,7 @@ function showSuccessMessage(message) {
             setTimeout(() => {
                 toast.style.display = 'none';
             }, 300);
-        }, 1000);
+        }, 2000);
     } else {
         console.log('成功:', message);
     }
@@ -1384,7 +2153,7 @@ async function refreshToken() {
 
 // 发送API请求（支持缓存和自动刷新token）
 async function apiRequest(endpoint, options = {}) {
-    const { useCache = true, cacheTtl, method = 'GET', skipRetry = false } = options;
+    const { useCache = true, cacheTtl, method = 'GET', skipRetry = false, signal } = options;
 
     // 对于GET请求，检查缓存
     if (method === 'GET' && useCache) {
@@ -1410,7 +2179,8 @@ async function apiRequest(endpoint, options = {}) {
     try {
         const response = await fetch(url, {
             ...options,
-            headers
+            headers,
+            ...(signal && { signal })
         });
 
         // 检查响应状态
@@ -2127,8 +2897,8 @@ function calculatePlanStatus(plan) {
     const endDate = plan.end_date ? new Date(plan.end_date) : null;
     const progressPercent = plan.totalCases > 0 ? Math.round((plan.testedCases / plan.totalCases) * 100) : 0;
 
-    // 如果已完成（进度100%或通过率100%）
-    if (progressPercent >= 100 || plan.passRate >= 100) {
+    // 如果已完成（进度100%）
+    if (progressPercent >= 100) {
         return 'completed';
     }
 
@@ -2220,6 +2990,72 @@ async function pauseTestPlan(planId) {
     } catch (error) {
         hideLoading();
         showErrorMessage('暂停失败: ' + error.message);
+    }
+}
+
+// 继续执行测试计划（从暂停状态恢复）
+async function resumeTestPlan(planId) {
+    try {
+        showLoading('恢复测试计划...');
+
+        const updateResponse = await apiRequest(`/testplans/${planId}/status`, {
+            method: 'POST',
+            body: JSON.stringify({ status: 'running' })
+        });
+
+        hideLoading();
+
+        if (updateResponse.success) {
+            showSuccessMessage('测试计划已恢复执行');
+            await loadTestPlans();
+            if (currentDrawerPlanId === planId) {
+                await loadTestPlanDrawerData(planId);
+            }
+        } else {
+            showErrorMessage('恢复失败: ' + (updateResponse.message || '未知错误'));
+        }
+    } catch (error) {
+        hideLoading();
+        showErrorMessage('恢复失败: ' + error.message);
+    }
+}
+
+// 重新执行测试计划（重置所有用例状态）
+async function restartTestPlan(planId) {
+    try {
+        const plan = testPlans.find(p => p.id === planId);
+        if (!plan) {
+            showErrorMessage('测试计划不存在');
+            return;
+        }
+
+        showConfirmModal(
+            `确定要重新执行测试计划「${plan.name}」吗？\n\n这将重置所有用例状态为"未执行"，此操作不可撤销。`,
+            async (confirmed) => {
+                if (confirmed) {
+                    showLoading('重置测试计划...');
+
+                    const response = await apiRequest(`/testplans/${planId}/reset`, {
+                        method: 'POST'
+                    });
+
+                    hideLoading();
+
+                    if (response.success) {
+                        showSuccessMessage('测试计划已重置，可以重新执行');
+                        await loadTestPlans();
+                        if (currentDrawerPlanId === planId) {
+                            await loadTestPlanDrawerData(planId);
+                        }
+                    } else {
+                        showErrorMessage('重置失败: ' + (response.message || '未知错误'));
+                    }
+                }
+            }
+        );
+    } catch (error) {
+        hideLoading();
+        showErrorMessage('重置失败: ' + error.message);
     }
 }
 
@@ -5643,7 +6479,7 @@ function updateFloatingPanelContent(testItems) {
     if (testItems.length === 0) {
         testPointsBody.innerHTML = `
             <tr>
-                <td colspan="7" class="no-data">
+                <td colspan="8" class="no-data">
                     <div style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px;">
                         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5">
                             <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
@@ -5659,9 +6495,27 @@ function updateFloatingPanelContent(testItems) {
             const typeClass = testType.includes('性能') ? 'performance' :
                 testType.includes('兼容') ? 'compatibility' :
                     testType.includes('安全') ? 'security' : 'functional';
+            
+            const reviewStatus = item.review_status || 'draft';
+            const canSubmit = reviewStatus === 'draft' || reviewStatus === 'rejected';
+            const statusText = {
+                'draft': '草稿',
+                'pending': '待评审',
+                'approved': '已通过',
+                'rejected': '被驳回'
+            }[reviewStatus] || '草稿';
 
             return `
                 <tr class="test-case-row" data-case-id="${item.id}" style="cursor: pointer;">
+                    <td style="text-align: center;" onclick="event.stopPropagation();">
+                        <input type="checkbox" 
+                               class="case-checkbox" 
+                               data-case-id="${item.id}" 
+                               data-review-status="${reviewStatus}"
+                               ${!canSubmit ? 'disabled' : ''}
+                               onchange="updateBatchSelection()"
+                               style="width: 16px; height: 16px; cursor: ${canSubmit ? 'pointer' : 'not-allowed'}; opacity: ${canSubmit ? '1' : '0.4'};">
+                    </td>
                     <td style="font-weight: 500; color: #64748b;">${index + 1}</td>
                     <td style="font-weight: 500; color: #1e293b;">${item.name || '-'}</td>
                     <td style="color: #64748b; font-size: 12px;">${item.purpose || '-'}</td>
@@ -5679,15 +6533,18 @@ function updateFloatingPanelContent(testItems) {
 
         const testCaseRows = testPointsBody.querySelectorAll('.test-case-row');
         testCaseRows.forEach(row => {
-            row.addEventListener('click', () => {
+            row.addEventListener('click', async (e) => {
+                if (e.target.type === 'checkbox') return;
                 const caseId = parseInt(row.dataset.caseId);
                 const testCase = testItems.find(item => item.id === caseId);
                 if (testCase) {
-                    openTestCaseDetailModal(testCase);
+                    await openTestCaseDetailModal(testCase);
                 }
             });
         });
     }
+    
+    clearCaseSelection();
 }
 
 // 清空一级测试点显示
@@ -5880,123 +6737,196 @@ const TagSelector = {
 };
 
 // 标签页切换功能
+let caseDetailTabsInitialized = false;
+
 function initCaseDetailTabs() {
     const tabs = document.querySelectorAll('.case-tab');
     const contents = document.querySelectorAll('.case-tab-content');
 
+    // 初始化时设置第一个标签页的显示状态
+    // 根据标签按钮的顺序，第一个是"基本信息"
+    const firstTab = tabs[0];
+    const firstTabId = firstTab ? firstTab.dataset.tab : 'basic';
+    
+    // 重置标签按钮状态
     tabs.forEach(tab => {
-        tab.addEventListener('click', () => {
-            const targetTab = tab.dataset.tab;
-
-            // 更新标签状态
-            tabs.forEach(t => t.classList.remove('active'));
-            tab.classList.add('active');
-
-            // 更新内容显示
-            contents.forEach(content => {
-                content.classList.remove('active');
-                if (content.id === `tab-${targetTab}`) {
-                    content.classList.add('active');
-                }
-            });
-        });
-    });
-}
-
-// 打开测试用例详情编辑模态框
-async function openTestCaseDetailModal(testCase) {
-    // 保存当前测试用例数据，用于取消操作时恢复
-    window.currentEditingTestCase = testCase;
-    currentEditingTestCaseId = testCase.id;
-
-    // 更新头部信息
-    document.getElementById('detail-case-id-display').textContent = testCase.caseId || testCase.case_id || 'CASE-0000';
-    document.getElementById('detail-case-title').textContent = testCase.name || '测试用例名称';
-    document.getElementById('detail-creator-display').textContent = testCase.creator || 'admin';
-    document.getElementById('detail-created-at-display').textContent = formatDateTime(testCase.createdAt || testCase.created_at || '');
-    document.getElementById('detail-owner-display').textContent = testCase.owner || testCase.creator || 'admin';
-
-    // 更新优先级徽章
-    const priorityBadge = document.getElementById('detail-priority-badge');
-    priorityBadge.className = 'case-priority-badge';
-    const priority = testCase.priority || '中';
-    if (priority === '高' || priority === 'high' || priority === 'P0' || priority === 'P1') {
-        priorityBadge.classList.add('priority-high');
-        priorityBadge.textContent = priority === 'P0' ? 'P0 阻塞级' : priority === 'P1' ? 'P1 严重级' : '高优先级';
-    } else if (priority === '低' || priority === 'low' || priority === 'P3' || priority === 'P4') {
-        priorityBadge.classList.add('priority-low');
-        priorityBadge.textContent = priority === 'P3' ? 'P3 一般级' : priority === 'P4' ? 'P4 建议级' : '低优先级';
-    } else {
-        priorityBadge.classList.add('priority-medium');
-        priorityBadge.textContent = priority === 'P2' ? 'P2 次要级' : '中优先级';
-    }
-
-    // 填充表单数据
-    document.getElementById('detail-case-name').value = testCase.name || '';
-    document.getElementById('detail-case-id').value = testCase.caseId || testCase.case_id || '';
-    document.getElementById('detail-case-priority').value = priority;
-    document.getElementById('detail-case-owner').value = testCase.owner || testCase.creator || '';
-    document.getElementById('detail-case-precondition').value = testCase.precondition || '';
-    document.getElementById('detail-case-purpose').value = testCase.purpose || '';
-    document.getElementById('detail-case-steps').value = testCase.test_steps || testCase.steps || '';
-    document.getElementById('detail-case-expected').value = testCase.expected_behavior || testCase.expected || '';
-    document.getElementById('detail-case-key-config').value = testCase.key_config || '';
-    document.getElementById('detail-case-remark').value = testCase.remark || '';
-    document.getElementById('detail-case-creator').value = testCase.creator || '';
-    document.getElementById('detail-case-created-at').value = formatDateTime(testCase.createdAt || testCase.created_at || '');
-    document.getElementById('detail-case-updated-at').value = formatDateTime(testCase.updatedAt || testCase.updated_at || '');
-
-    // 设置模块ID和一级测试点ID（用于保存时使用）
-    selectedModuleId = testCase.module_id || testCase.moduleId || null;
-    selectedLevel1PointId = testCase.level1_id || testCase.level1Id || null;
-    currentCaseLibraryId = testCase.library_id || testCase.libraryId || null;
-
-    // 加载优先级
-    await loadPrioritiesForDetail(testCase.priority);
-
-    // 加载测试类型
-    await loadTestTypesForDetail(testCase.type || '');
-
-    // 加载测试阶段
-    await loadPhasesForDetail(testCase.test_phase || '');
-
-    // 加载测试环境
-    await loadEnvironmentsForDetail(testCase.test_environment || '');
-
-    // 加载测试方式
-    await loadMethodsForDetail(testCase.test_method || testCase.type);
-
-    // 加载测试点来源
-    await loadSourcesForDetail(testCase.test_source || '');
-
-    // 加载关联项目
-    await loadTestCaseProjects(testCase.id);
-
-    // 初始化标签页
-    initCaseDetailTabs();
-
-    // 重置到第一个标签页
-    document.querySelectorAll('.case-tab').forEach((tab, index) => {
-        if (index === 0) {
+        if (tab.dataset.tab === firstTabId) {
             tab.classList.add('active');
         } else {
             tab.classList.remove('active');
         }
     });
-    document.querySelectorAll('.case-tab-content').forEach((content, index) => {
-        if (index === 0) {
+    
+    // 重置标签内容状态
+    contents.forEach(content => {
+        if (content.id === `tab-${firstTabId}`) {
             content.classList.add('active');
+            content.style.display = 'block';
         } else {
             content.classList.remove('active');
+            content.style.display = 'none';
         }
     });
 
-    // 初始化执行记录
-    initExecutionRecords(testCase.id);
+    // 使用事件委托，避免重复绑定事件监听器
+    if (!caseDetailTabsInitialized) {
+        const tabsContainer = document.querySelector('.case-detail-tabs');
+        if (tabsContainer) {
+            tabsContainer.addEventListener('click', (e) => {
+                const tab = e.target.closest('.case-tab');
+                if (!tab) return;
+                
+                const targetTab = tab.dataset.tab;
+                const allTabs = document.querySelectorAll('.case-tab');
+                const allContents = document.querySelectorAll('.case-tab-content');
 
-    // 显示模态框
-    const modal = document.getElementById('test-case-detail-modal');
-    modal.style.display = 'block';
+                // 更新标签状态
+                allTabs.forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+
+                // 更新内容显示
+                allContents.forEach(content => {
+                    content.classList.remove('active');
+                    content.style.display = 'none';
+                    if (content.id === `tab-${targetTab}`) {
+                        content.classList.add('active');
+                        content.style.display = 'block';
+                    }
+                });
+            });
+        }
+        caseDetailTabsInitialized = true;
+    }
+}
+
+// 打开测试用例详情编辑模态框
+async function openTestCaseDetailModal(testCase) {
+    try {
+        // 保存当前测试用例数据，用于取消操作时恢复
+        window.currentEditingTestCase = testCase;
+        currentEditingTestCaseId = testCase.id;
+
+        // 更新头部信息
+        document.getElementById('detail-case-id-display').textContent = testCase.caseId || testCase.case_id || 'CASE-0000';
+        document.getElementById('detail-case-title').textContent = testCase.name || '测试用例名称';
+        document.getElementById('detail-creator-display').textContent = testCase.creator || 'admin';
+        document.getElementById('detail-created-at-display').textContent = formatDateTime(testCase.createdAt || testCase.created_at || '');
+        document.getElementById('detail-owner-display').textContent = testCase.owner || testCase.creator || 'admin';
+
+        // 更新优先级徽章
+        const priorityBadge = document.getElementById('detail-priority-badge');
+        priorityBadge.className = 'case-priority-badge';
+        const priority = testCase.priority || '中';
+        if (priority === '高' || priority === 'high' || priority === 'P0' || priority === 'P1') {
+            priorityBadge.classList.add('priority-high');
+            priorityBadge.textContent = priority === 'P0' ? 'P0 阻塞级' : priority === 'P1' ? 'P1 严重级' : '高优先级';
+        } else if (priority === '低' || priority === 'low' || priority === 'P3' || priority === 'P4') {
+            priorityBadge.classList.add('priority-low');
+            priorityBadge.textContent = priority === 'P3' ? 'P3 一般级' : priority === 'P4' ? 'P4 建议级' : '低优先级';
+        } else {
+            priorityBadge.classList.add('priority-medium');
+            priorityBadge.textContent = priority === 'P2' ? 'P2 次要级' : '中优先级';
+        }
+
+        // 设置模块ID和一级测试点ID（用于保存时使用）
+        selectedModuleId = testCase.module_id || testCase.moduleId || null;
+        selectedLevel1PointId = testCase.level1_id || testCase.level1Id || null;
+        currentCaseLibraryId = testCase.library_id || testCase.libraryId || null;
+
+        console.log('开始加载下拉框选项...');
+        
+        // 先加载下拉框选项，再填充表单数据
+        // 加载优先级
+        await loadPrioritiesForDetail(testCase.priority);
+
+        // 加载测试类型
+        await loadTestTypesForDetail(testCase.type || '');
+
+        const phasesStr = Array.isArray(testCase.phases) ? testCase.phases.join(',') : (testCase.test_phase || testCase.phase || '');
+        await loadPhasesForDetail(phasesStr);
+
+        const envStr = Array.isArray(testCase.environments) ? testCase.environments.join(',') : (testCase.test_environment || '');
+        await loadEnvironmentsForDetail(envStr);
+
+        const methodsStr = Array.isArray(testCase.methods) ? testCase.methods.join(',') : (testCase.test_method || testCase.method || '');
+        await loadMethodsForDetail(methodsStr);
+
+        const sourcesStr = Array.isArray(testCase.sources) ? testCase.sources.join(',') : (testCase.test_source || '');
+        await loadSourcesForDetail(sourcesStr);
+
+        console.log('下拉框选项加载完成，开始填充表单数据...');
+        
+        // 填充表单数据（在下拉框加载完成后）
+        document.getElementById('detail-case-name').value = testCase.name || '';
+        document.getElementById('detail-case-id').value = testCase.caseId || testCase.case_id || '';
+        document.getElementById('detail-case-priority').value = priority;
+        document.getElementById('detail-case-type').value = testCase.type || '';
+        document.getElementById('detail-case-owner').value = testCase.owner || testCase.creator || '';
+        document.getElementById('detail-case-precondition').value = testCase.precondition || '';
+        document.getElementById('detail-case-purpose').value = testCase.purpose || '';
+        document.getElementById('detail-case-steps').value = testCase.test_steps || testCase.steps || '';
+        document.getElementById('detail-case-expected').value = testCase.expected_behavior || testCase.expected || '';
+        document.getElementById('detail-case-key-config').value = testCase.key_config || '';
+        document.getElementById('detail-case-remark').value = testCase.remark || '';
+        document.getElementById('detail-case-creator').value = testCase.creator || '';
+        document.getElementById('detail-case-created-at').value = formatDateTime(testCase.createdAt || testCase.created_at || '');
+        document.getElementById('detail-case-updated-at').value = formatDateTime(testCase.updatedAt || testCase.updated_at || '');
+        
+        console.log('表单数据填充完成');
+        
+        // 鷻加更详细的调试日志
+        const nameInput = document.getElementById('detail-case-name');
+        const priorityInput = document.getElementById('detail-case-priority');
+        const typeInput = document.getElementById('detail-case-type');
+        const preconditionInput = document.getElementById('detail-case-precondition');
+        const purposeInput = document.getElementById('detail-case-purpose');
+        
+        console.log('=== 表单元素值检查 ===');
+        console.log('name元素:', nameInput, '值:', nameInput ? nameInput.value : 'null');
+        console.log('priority元素:', priorityInput, '值:', priorityInput ? priorityInput.value : 'null');
+        console.log('type元素:', typeInput, '值:', typeInput ? typeInput.value : 'null');
+        console.log('precondition元素:', preconditionInput, '值:', preconditionInput ? preconditionInput.value : 'null');
+        console.log('purpose元素:', purposeInput, '值:', purposeInput ? purposeInput.value : 'null');
+        
+        // 检查标签页是否正确显示
+        const basicTab = document.getElementById('tab-basic');
+        console.log('基本信息标签页:', basicTab);
+        console.log('标签页display:', basicTab ? basicTab.style.display : 'null');
+        console.log('标签页class:', basicTab ? basicTab.className : 'null');
+
+        // 初始化标签页
+        initCaseDetailTabs();
+
+        // 初始化执行记录
+        initExecutionRecords(testCase.id);
+
+        // 加载评审历史
+        loadReviewHistory(testCase.id);
+
+        // 显示模态框
+        const modal = document.getElementById('test-case-detail-modal');
+        modal.style.display = 'block';
+        
+        console.log('=== 模态框打开完成 ===');
+        console.log('模态框元素:', modal);
+        console.log('模态框display:', modal.style.display);
+        console.log('模态框可见性:', window.getComputedStyle(modal).display);
+        console.log('模态框宽度:', window.getComputedStyle(modal).width);
+        console.log('模态框高度:', window.getComputedStyle(modal).height);
+        
+        // 检查基本信息标签页的可见性
+        const basicTabContent = document.getElementById('tab-basic');
+        console.log('基本信息标签页display:', window.getComputedStyle(basicTabContent).display);
+        console.log('基本信息标签页可见性:', window.getComputedStyle(basicTabContent).visibility);
+        console.log('基本信息标签页opacity:', window.getComputedStyle(basicTabContent).opacity);
+
+        TestCaseEditState.setupAutoSave(testCase);
+        
+    } catch (error) {
+        console.error('打开测试用例详情模态框失败:', error);
+        console.error('错误堆栈:', error.stack);
+        showErrorMessage('打开测试用例详情失败: ' + error.message);
+    }
 }
 
 // 加载测试环境用于测试用例详情
@@ -6485,6 +7415,8 @@ function closeTestCaseDetailModal() {
         caseIdInput.value = '';
         console.log('已清空detail-case-id输入框的值');
     }
+
+    TestCaseEditState.clear();
 }
 
 // ==================== 执行记录功能 ====================
@@ -7656,21 +8588,28 @@ async function saveTestCaseDetail() {
         }
 
         if (saveData.success) {
+            TestCaseEditState.clear();
+
             // 关闭模态框
             closeTestCaseDetailModal();
 
             // 刷新一级测试点列表以更新名称显示
             if (moduleId) {
                 await loadLevel1Points(moduleId);
+                
+                // 恢复之前选中的一级测试点的active状态
+                if (level1Id) {
+                    const level1ItemToRestore = document.querySelector(`.level1-list-item[data-point-id="${level1Id}"]`);
+                    if (level1ItemToRestore) {
+                        level1ItemToRestore.classList.add('active');
+                    }
+                }
             }
 
-            // 刷新悬浮面板（Drawer）数据
-            const activeModuleEl = document.querySelector('.case-nav-item.active');
-            if (activeModuleEl && activeModuleEl !== document.querySelector('.case-nav-item:first-child')) {
-                if (level1Id) {
-                    const level1Points = await getLevel2TestPoints(level1Id);
-                    updateFloatingPanelContent(level1Points);
-                }
+            // 刷新悬浮面板（Drawer）数据 - 直接基于level1Id刷新，不需要检查模块
+            if (level1Id) {
+                const level1Points = await getLevel2TestPoints(level1Id);
+                updateFloatingPanelContent(level1Points);
             }
 
             // 使用之前定义的testCaseId变量，对于新建用例，使用返回的testCaseId
@@ -8739,7 +9678,6 @@ function updateRecentLoginsTable(logins) {
                 <tr>
                     <td>${login.rank}</td>
                     <td>${login.username}</td>
-                    <td>${login.role}</td>
                     <td>${formattedTime}</td>
                     <td>${login.lastAction}</td>
                     <td>${login.status}</td>
@@ -8748,7 +9686,7 @@ function updateRecentLoginsTable(logins) {
         } else {
             loginsBody.innerHTML = `
                 <tr>
-                    <td colspan="6" class="no-data">暂无操作记录</td>
+                    <td colspan="5" class="no-data">暂无操作记录</td>
                 </tr>
             `;
         }
@@ -8987,6 +9925,10 @@ function showStep(stepNumber) {
 
 // 添加用例
 function addTestCase() {
+    if (!selectedModuleId) {
+        openAddTestCaseSelectModal();
+        return;
+    }
     openAddTestCaseModal();
 }
 
@@ -9014,6 +9956,286 @@ function batchCreateTestCases() {
     }
     
     // 在新浏览器页签中打开批量创建页面
+    window.open(url, '_blank');
+}
+
+function batchViewTestCases() {
+    if (!selectedModuleId) {
+        openBatchViewSelectModal();
+        return;
+    }
+    
+    const currentLibraryIdVal = currentCaseLibraryId || '';
+    let currentLibraryNameVal = '';
+    const currentModuleNameVal = window.currentModule ? window.currentModule.name : '';
+    
+    if (caseLibraries && currentCaseLibraryId) {
+        const currentLib = caseLibraries.find(lib => lib.id == currentCaseLibraryId);
+        if (currentLib) {
+            currentLibraryNameVal = currentLib.name || '';
+        }
+    }
+    
+    let url = `/batch-view-cases.html?moduleId=${selectedModuleId}&libraryId=${currentLibraryIdVal}&moduleName=${encodeURIComponent(currentModuleNameVal)}&libraryName=${encodeURIComponent(currentLibraryNameVal)}&returnUrl=${encodeURIComponent(window.location.href)}`;
+    
+    if (selectedLevel1PointId) {
+        url += `&level1Id=${selectedLevel1PointId}&level1Name=${encodeURIComponent(selectedLevel1PointName || '')}`;
+    }
+    
+    window.open(url, '_blank');
+}
+
+let batchViewSelectedLibrary = null;
+let batchViewSelectedModule = null;
+let batchViewSelectedLevel1 = null;
+
+async function openBatchViewSelectModal() {
+    let modal = document.getElementById('batch-view-select-modal');
+    
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'batch-view-select-modal';
+        modal.className = 'modal';
+        modal.style.cssText = 'display: none; z-index: 99999;';
+        modal.innerHTML = `
+            <div class="modal-overlay" onclick="closeBatchViewSelectModal()"></div>
+            <div class="modal-content" style="max-width: 480px; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.15);">
+                <div class="modal-header" style="padding: 20px 24px; border-bottom: 1px solid #f0f0f0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                        <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: white;">选择查看位置</h3>
+                    </div>
+                    <button onclick="closeBatchViewSelectModal()" style="background: rgba(255,255,255,0.2); border: none; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-body" style="padding: 24px; background: #fafbfc;">
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                            </svg>
+                            用例库 <span style="color: #ef4444;">*</span>
+                        </label>
+                        <select id="batch-view-library-select" onchange="onBatchViewLibraryChange()" style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
+                            <option value="">请选择用例库</option>
+                        </select>
+                    </div>
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                            模块 <span style="color: #ef4444;">*</span>
+                        </label>
+                        <select id="batch-view-module-select" onchange="onBatchViewModuleChange()" disabled style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
+                            <option value="">请先选择用例库</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M12 16v-4"></path>
+                                <path d="M12 8h.01"></path>
+                            </svg>
+                            一级测试点 <span style="color: #9ca3af; font-weight: 400; font-size: 12px;">(可选)</span>
+                        </label>
+                        <select id="batch-view-level1-select" disabled style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
+                            <option value="">全部测试点</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer" style="padding: 16px 24px; border-top: 1px solid #f0f0f0; background: white; display: flex; justify-content: flex-end; gap: 12px;">
+                    <button onclick="closeBatchViewSelectModal()" style="padding: 10px 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: white; color: #374151; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='white'">取消</button>
+                    <button onclick="confirmBatchViewSelection()" style="padding: 10px 20px; border: none; border-radius: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 16px rgba(102, 126, 234, 0.4)'" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 12px rgba(102, 126, 234, 0.3)'">确定</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+    
+    batchViewSelectedLibrary = null;
+    batchViewSelectedModule = null;
+    batchViewSelectedLevel1 = null;
+    
+    const librarySelect = document.getElementById('batch-view-library-select');
+    const moduleSelect = document.getElementById('batch-view-module-select');
+    const level1Select = document.getElementById('batch-view-level1-select');
+    
+    if (librarySelect) {
+        librarySelect.innerHTML = '<option value="">请选择用例库</option>';
+        if (caseLibraries && caseLibraries.length > 0) {
+            caseLibraries.forEach(lib => {
+                const option = document.createElement('option');
+                option.value = lib.id;
+                option.textContent = lib.name;
+                if (currentCaseLibraryId && lib.id == currentCaseLibraryId) {
+                    option.selected = true;
+                }
+                librarySelect.appendChild(option);
+            });
+        }
+    }
+    
+    if (moduleSelect) {
+        moduleSelect.innerHTML = '<option value="">请先选择用例库</option>';
+        moduleSelect.disabled = true;
+    }
+    
+    if (level1Select) {
+        level1Select.innerHTML = '<option value="">全部测试点</option>';
+        level1Select.disabled = true;
+    }
+    
+    modal.style.display = 'flex';
+    
+    if (currentCaseLibraryId) {
+        await onBatchViewLibraryChange();
+    }
+}
+
+function closeBatchViewSelectModal() {
+    const modal = document.getElementById('batch-view-select-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+async function onBatchViewLibraryChange() {
+    const librarySelect = document.getElementById('batch-view-library-select');
+    const moduleSelect = document.getElementById('batch-view-module-select');
+    const level1Select = document.getElementById('batch-view-level1-select');
+    
+    const libraryId = librarySelect ? librarySelect.value : '';
+    batchViewSelectedLibrary = libraryId;
+    batchViewSelectedModule = null;
+    batchViewSelectedLevel1 = null;
+    
+    if (moduleSelect) {
+        if (!libraryId) {
+            moduleSelect.innerHTML = '<option value="">请先选择用例库</option>';
+            moduleSelect.disabled = true;
+        } else {
+            moduleSelect.innerHTML = '<option value="">加载中...</option>';
+            moduleSelect.disabled = true;
+            
+            try {
+                const result = await apiRequest('/modules/list', {
+                    method: 'POST',
+                    body: JSON.stringify({ libraryId })
+                });
+                console.log('批量查看-加载模块列表结果:', result);
+                if (result.success && result.modules) {
+                    moduleSelect.innerHTML = '<option value="">请选择模块</option>';
+                    result.modules.forEach(mod => {
+                        console.log('添加模块选项:', mod);
+                        const option = document.createElement('option');
+                        option.value = mod.id;
+                        option.textContent = mod.name;
+                        option.dataset.name = mod.name;
+                        moduleSelect.appendChild(option);
+                    });
+                    moduleSelect.disabled = false;
+                } else {
+                    moduleSelect.innerHTML = '<option value="">暂无模块</option>';
+                }
+            } catch (error) {
+                console.error('加载模块列表失败:', error);
+                moduleSelect.innerHTML = '<option value="">加载失败</option>';
+            }
+        }
+    }
+    
+    if (level1Select) {
+        level1Select.innerHTML = '<option value="">全部测试点</option>';
+        level1Select.disabled = true;
+    }
+}
+
+async function onBatchViewModuleChange() {
+    const moduleSelect = document.getElementById('batch-view-module-select');
+    const level1Select = document.getElementById('batch-view-level1-select');
+    
+    const moduleId = moduleSelect ? moduleSelect.value : '';
+    batchViewSelectedModule = moduleId;
+    batchViewSelectedLevel1 = null;
+    
+    if (level1Select) {
+        if (!moduleId) {
+            level1Select.innerHTML = '<option value="">全部测试点</option>';
+            level1Select.disabled = true;
+        } else {
+            level1Select.innerHTML = '<option value="">加载中...</option>';
+            level1Select.disabled = true;
+            
+            try {
+                const result = await apiRequest('/testpoints/level1/all', {
+                    method: 'POST',
+                    body: JSON.stringify({ libraryId: batchViewSelectedLibrary })
+                });
+                
+                if (result.success && result.level1Points) {
+                    const filteredPoints = result.level1Points.filter(p => p.module_id == moduleId);
+                    level1Select.innerHTML = '<option value="">全部测试点</option>';
+                    filteredPoints.forEach(point => {
+                        const option = document.createElement('option');
+                        option.value = point.id;
+                        option.textContent = point.name;
+                        level1Select.appendChild(option);
+                    });
+                    level1Select.disabled = false;
+                } else {
+                    level1Select.innerHTML = '<option value="">暂无测试点</option>';
+                }
+            } catch (error) {
+                console.error('加载测试点列表失败:', error);
+                level1Select.innerHTML = '<option value="">加载失败</option>';
+            }
+        }
+    }
+}
+
+function confirmBatchViewSelection() {
+    const librarySelect = document.getElementById('batch-view-library-select');
+    const moduleSelect = document.getElementById('batch-view-module-select');
+    const level1Select = document.getElementById('batch-view-level1-select');
+    
+    const libraryId = librarySelect ? librarySelect.value : '';
+    const moduleId = moduleSelect ? moduleSelect.value : '';
+    const level1Id = level1Select ? level1Select.value : '';
+    
+    if (!libraryId) {
+        showErrorMessage('请选择用例库');
+        return;
+    }
+    
+    if (!moduleId) {
+        showErrorMessage('请选择模块');
+        return;
+    }
+    
+    const libraryName = librarySelect.options[librarySelect.selectedIndex].text;
+    const selectedOption = moduleSelect.options[moduleSelect.selectedIndex];
+    let moduleName = selectedOption ? (selectedOption.dataset.name || selectedOption.textContent || selectedOption.text || '') : '';
+    const level1Name = level1Id ? level1Select.options[level1Select.selectedIndex].text : '';
+    
+    console.log('确认批量查看选择:', { libraryId, moduleId, level1Id, libraryName, moduleName, level1Name });
+    
+    let url = `/batch-view-cases.html?moduleId=${moduleId}&libraryId=${libraryId}&moduleName=${encodeURIComponent(moduleName)}&libraryName=${encodeURIComponent(libraryName)}&returnUrl=${encodeURIComponent(window.location.href)}`;
+    
+    if (level1Id) {
+        url += `&level1Id=${level1Id}&level1Name=${encodeURIComponent(level1Name)}`;
+    }
+    
+    closeBatchViewSelectModal();
     window.open(url, '_blank');
 }
 
@@ -9247,6 +10469,233 @@ async function confirmBatchCreate() {
     }
     
     window.location.href = url;
+}
+
+let addCaseSelectedLibrary = null;
+let addCaseSelectedModule = null;
+let addCaseSelectedLevel1 = null;
+
+async function openAddTestCaseSelectModal() {
+    let modal = document.getElementById('add-case-select-modal');
+    
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'add-case-select-modal';
+        modal.className = 'modal';
+        modal.style.cssText = 'display: none; z-index: 99999;';
+        modal.innerHTML = `
+            <div class="modal-overlay" onclick="closeAddCaseSelectModal()"></div>
+            <div class="modal-content" style="max-width: 500px;">
+                <div class="modal-header">
+                    <h3>选择创建位置</h3>
+                    <span class="close" onclick="closeAddCaseSelectModal()">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #333;">用例库 <span style="color: #ff4d4f;">*</span></label>
+                        <select id="add-case-select-library" class="form-control" style="width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;" onchange="onAddCaseSelectLibrary(this.value)">
+                            <option value="">请选择用例库</option>
+                        </select>
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #333;">模块 <span style="color: #ff4d4f;">*</span></label>
+                        <select id="add-case-select-module" class="form-control" style="width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;" onchange="onAddCaseSelectModule(this.value)" disabled>
+                            <option value="">请先选择用例库</option>
+                        </select>
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #333;">一级测试点 <span style="color: #999;">(可选)</span></label>
+                        <select id="add-case-select-level1" class="form-control" style="width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;" onchange="onAddCaseSelectLevel1(this.value)" disabled>
+                            <option value="">请先选择模块</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 12px; padding: 12px 24px; border-top: 1px solid #f0f0f0; background: #fafafa;">
+                    <button class="btn btn-secondary" onclick="closeAddCaseSelectModal()">取消</button>
+                    <button class="btn btn-primary" id="add-case-confirm-btn" onclick="confirmAddCaseSelect()">确定</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+    
+    addCaseSelectedLibrary = null;
+    addCaseSelectedModule = null;
+    addCaseSelectedLevel1 = null;
+    
+    const librarySelect = document.getElementById('add-case-select-library');
+    const moduleSelect = document.getElementById('add-case-select-module');
+    const level1Select = document.getElementById('add-case-select-level1');
+    
+    librarySelect.innerHTML = '<option value="">请选择用例库</option>';
+    moduleSelect.innerHTML = '<option value="">请先选择用例库</option>';
+    moduleSelect.disabled = true;
+    level1Select.innerHTML = '<option value="">请先选择模块</option>';
+    level1Select.disabled = true;
+    
+    try {
+        const result = await apiRequest('/libraries/list', { useCache: false });
+        if (result.success && result.libraries) {
+            result.libraries.forEach(lib => {
+                const option = document.createElement('option');
+                option.value = lib.id;
+                option.textContent = lib.name;
+                option.dataset.name = lib.name;
+                if (currentCaseLibraryId && lib.id == currentCaseLibraryId) {
+                    option.selected = true;
+                }
+                librarySelect.appendChild(option);
+            });
+            
+            if (currentCaseLibraryId) {
+                await onAddCaseSelectLibrary(currentCaseLibraryId);
+            }
+        }
+    } catch (error) {
+        console.error('加载用例库列表失败:', error);
+    }
+    
+    modal.style.display = 'flex';
+}
+
+function closeAddCaseSelectModal() {
+    const modal = document.getElementById('add-case-select-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+async function onAddCaseSelectLibrary(libraryId) {
+    const moduleSelect = document.getElementById('add-case-select-module');
+    const level1Select = document.getElementById('add-case-select-level1');
+    
+    addCaseSelectedLibrary = null;
+    addCaseSelectedModule = null;
+    addCaseSelectedLevel1 = null;
+    
+    level1Select.innerHTML = '<option value="">请先选择模块</option>';
+    level1Select.disabled = true;
+    
+    if (!libraryId) {
+        moduleSelect.innerHTML = '<option value="">请先选择用例库</option>';
+        moduleSelect.disabled = true;
+        return;
+    }
+    
+    const librarySelect = document.getElementById('add-case-select-library');
+    const selectedOption = librarySelect.options[librarySelect.selectedIndex];
+    addCaseSelectedLibrary = {
+        id: libraryId,
+        name: selectedOption.dataset.name || selectedOption.textContent
+    };
+    
+    moduleSelect.innerHTML = '<option value="">加载中...</option>';
+    moduleSelect.disabled = true;
+    
+    try {
+        const result = await apiRequest('/modules/list', {
+            method: 'POST',
+            body: JSON.stringify({ libraryId: libraryId, page: 1, pageSize: 1000 })
+        });
+        
+        moduleSelect.innerHTML = '<option value="">请选择模块</option>';
+        
+        if (result.success && result.modules && result.modules.length > 0) {
+            result.modules.forEach(mod => {
+                const option = document.createElement('option');
+                option.value = mod.id;
+                option.textContent = mod.name;
+                option.dataset.name = mod.name;
+                moduleSelect.appendChild(option);
+            });
+            moduleSelect.disabled = false;
+        } else {
+            moduleSelect.innerHTML = '<option value="">该用例库下暂无模块</option>';
+        }
+    } catch (error) {
+        console.error('加载模块列表失败:', error);
+        moduleSelect.innerHTML = '<option value="">加载失败</option>';
+    }
+}
+
+async function onAddCaseSelectModule(moduleId) {
+    const level1Select = document.getElementById('add-case-select-level1');
+    
+    addCaseSelectedModule = null;
+    addCaseSelectedLevel1 = null;
+    
+    if (!moduleId) {
+        level1Select.innerHTML = '<option value="">请先选择模块</option>';
+        level1Select.disabled = true;
+        return;
+    }
+    
+    const moduleSelect = document.getElementById('add-case-select-module');
+    const selectedOption = moduleSelect.options[moduleSelect.selectedIndex];
+    addCaseSelectedModule = {
+        id: moduleId,
+        name: selectedOption.dataset.name || selectedOption.textContent
+    };
+    
+    level1Select.innerHTML = '<option value="">加载中...</option>';
+    level1Select.disabled = true;
+    
+    try {
+        const result = await apiRequest(`/testpoints/level1/${moduleId}`, { useCache: false });
+        
+        level1Select.innerHTML = '<option value="">不指定（可选）</option>';
+        
+        if (result.success && result.level1Points && result.level1Points.length > 0) {
+            result.level1Points.forEach(l1 => {
+                const option = document.createElement('option');
+                option.value = l1.id;
+                option.textContent = l1.name;
+                option.dataset.name = l1.name;
+                level1Select.appendChild(option);
+            });
+            level1Select.disabled = false;
+        } else {
+            level1Select.innerHTML = '<option value="">该模块下暂无一级测试点</option>';
+            level1Select.disabled = false;
+        }
+    } catch (error) {
+        console.error('加载一级测试点列表失败:', error);
+        level1Select.innerHTML = '<option value="">加载失败</option>';
+        level1Select.disabled = false;
+    }
+}
+
+function onAddCaseSelectLevel1(level1Id) {
+    if (!level1Id) {
+        addCaseSelectedLevel1 = null;
+        return;
+    }
+    
+    const level1Select = document.getElementById('add-case-select-level1');
+    const selectedOption = level1Select.options[level1Select.selectedIndex];
+    addCaseSelectedLevel1 = {
+        id: level1Id,
+        name: selectedOption.dataset.name || selectedOption.textContent
+    };
+}
+
+async function confirmAddCaseSelect() {
+    if (!addCaseSelectedLibrary || !addCaseSelectedModule) {
+        showErrorMessage('请选择用例库和模块');
+        return;
+    }
+    
+    const libraryId = addCaseSelectedLibrary.id;
+    const moduleId = addCaseSelectedModule.id;
+    const level1Id = addCaseSelectedLevel1 ? addCaseSelectedLevel1.id : null;
+    
+    selectedModuleId = moduleId;
+    currentCaseLibraryId = libraryId;
+    selectedLevel1PointId = level1Id;
+    
+    closeAddCaseSelectModal();
+    
+    await openAddTestCaseModal();
 }
 
 // 加载测试阶段列表用于测试用例创建
@@ -10228,8 +11677,8 @@ async function loadProjectsForEditModal() {
                             <select class="pa-table-select" name="owner-${project.id}" ${!isAssociated ? 'disabled' : ''}>
                                 <option value="">请选择</option>
                                 ${users.map(user => {
-                    const isSelected = (user.id || user.user_id || user.username).toString() === selectedOwner.toString();
-                    return `<option value="${user.id || user.user_id || user.username}" ${isSelected ? 'selected' : ''}>${user.username}</option>`;
+                    const isSelected = user.username === selectedOwner;
+                    return `<option value="${user.username}" ${isSelected ? 'selected' : ''}>${user.username}</option>`;
                 }).join('')}
                             </select>
                         </td>
@@ -15507,6 +16956,27 @@ function showSection(sectionId) {
         }
     }
 
+    // 检查URL hash中是否包含libraryId参数，用于恢复用例库详情页
+    const hash = window.location.hash;
+    const libraryIdMatch = hash.match(/libraryId=(\d+)/);
+    if (sectionId === 'cases' && libraryIdMatch) {
+        const urlLibraryId = parseInt(libraryIdMatch[1]);
+        const library = caseLibraries.find(lib => lib.id == urlLibraryId);
+        if (library) {
+            console.log('[showSection] 从URL恢复用例库详情:', library.name, 'ID:', urlLibraryId);
+            currentCaseLibraryId = urlLibraryId;
+
+            // 更新当前用例库名称显示
+            const currentCaseLibraryElement = document.getElementById('current-case-library');
+            if (currentCaseLibraryElement) {
+                currentCaseLibraryElement.textContent = library.name;
+            }
+
+            // 切换到用例管理详情页
+            sectionId = 'case-management';
+        }
+    }
+
     // 隐藏所有部分
     document.querySelectorAll('section').forEach(section => {
         section.style.display = 'none';
@@ -15533,6 +17003,13 @@ function showSection(sectionId) {
             // 加载当前用例库下的所有一级测试用例
             loadAllLevel1Points();
         });
+    }
+
+    // 当显示用例管理详情页时，初始化数据
+    if (sectionId === 'case-management') {
+        clearLevel1PointsDisplay();
+        currentModulePage = 1;
+        initModuleData();
     }
 }
 
@@ -15611,6 +17088,34 @@ document.addEventListener('DOMContentLoaded', async function () {
 
     // 初始化 Hash 路由系统
     Router.init();
+
+    // 恢复测试用例编辑状态
+    const savedEditState = TestCaseEditState.load();
+    if (savedEditState && savedEditState.testCase) {
+        console.log('检测到未保存的编辑状态，准备恢复...');
+        
+        setTimeout(async () => {
+            try {
+                await openTestCaseDetailModal(savedEditState.testCase);
+                
+                if (savedEditState.formData) {
+                    const selectorData = TestCaseEditState.restoreFormData(savedEditState.formData);
+                    
+                    requestAnimationFrame(() => {
+                        TagSelector.setValues('detail-case-phases-selector', selectorData.phases || []);
+                        TagSelector.setValues('detail-case-environments-selector', selectorData.environments || []);
+                        TagSelector.setValues('detail-case-methods-selector', selectorData.methods || []);
+                        TagSelector.setValues('detail-case-sources-selector', selectorData.sources || []);
+                    });
+                }
+                
+                showSuccessMessage('已恢复之前的编辑内容');
+            } catch (error) {
+                console.error('恢复编辑状态失败:', error);
+                TestCaseEditState.clear();
+            }
+        }, 100);
+    }
 
     // 绑定主题切换按钮事件
     const themeToggle = document.getElementById('theme-toggle');
@@ -15858,17 +17363,9 @@ document.addEventListener('DOMContentLoaded', async function () {
                 currentCaseLibraryId = library.id;
                 console.log('设置当前用例库ID:', currentCaseLibraryId);
 
-                showSection('case-management');
-
-                const currentCaseLibraryElement = document.getElementById('current-case-library');
-                if (currentCaseLibraryElement) {
-                    currentCaseLibraryElement.textContent = caseLibraryName;
-                }
-
-                // 清空一级测试点显示
-                clearLevel1PointsDisplay();
-                currentModulePage = 1;
-                initModuleData();
+                // 更新URL hash，保存当前用例库ID，以便刷新后能恢复
+                // 通过设置hash触发Router处理页面切换，避免重复调用showSection
+                window.location.hash = '#/cases?libraryId=' + library.id;
             }
         }
     });
@@ -24130,7 +25627,63 @@ function renderDrawerInfo(plan) {
     `;
 }
 
+// 更新滑屉底部操作按钮
+function updateDrawerActionButtons(plan) {
+    const container = document.getElementById('testplan-drawer-action-btn');
+    if (!container) return;
+
+    const actualStatus = calculatePlanStatus(plan);
+    const progressPercent = plan.totalCases > 0 ? Math.round((plan.testedCases / plan.totalCases) * 100) : 0;
+
+    let btnHtml = '';
+
+    if (actualStatus === 'completed') {
+        btnHtml = `
+            <button class="primary-btn" onclick="restartTestPlan(currentDrawerPlanId)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;margin-right:6px;">
+                    <polyline points="1 4 1 10 7 10"></polyline>
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                </svg>
+                重新执行
+            </button>
+        `;
+    } else if (actualStatus === 'running' || actualStatus === 'delayed') {
+        btnHtml = `
+            <button class="warning-btn" onclick="pauseTestPlan(currentDrawerPlanId)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;margin-right:6px;">
+                    <rect x="6" y="4" width="4" height="16"></rect>
+                    <rect x="14" y="4" width="4" height="16"></rect>
+                </svg>
+                暂停计划
+            </button>
+        `;
+    } else if (actualStatus === 'paused') {
+        btnHtml = `
+            <button class="primary-btn" onclick="resumeTestPlan(currentDrawerPlanId)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;margin-right:6px;">
+                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+                继续执行
+            </button>
+        `;
+    } else {
+        btnHtml = `
+            <button class="primary-btn" onclick="executeTestPlan(currentDrawerPlanId)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;margin-right:6px;">
+                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+                执行测试
+            </button>
+        `;
+    }
+
+    container.innerHTML = btnHtml;
+}
+
 // 重新计算测试计划统计数据
+// 注意: 与后端 updatePlanStatisticsWithTx 保持一致
+// - testedCases (tested_progress): 非 pending 状态 (含 pass, fail, blocked, paused, asic_hang, core_dump, traffic_drop)
+// - passRate 计算分母 (valid_tested): 仅含 pass, fail, asic_hang, core_dump, traffic_drop (不含 blocked 和 paused)
 function recalculatePlanStats(plan, cases) {
     if (!cases || !Array.isArray(cases)) return;
 
@@ -24140,33 +25693,36 @@ function recalculatePlanStats(plan, cases) {
     let failedCases = 0;
     let blockedCases = 0;
     let pendingCases = 0;
+    let pausedCases = 0;
 
     cases.forEach(tc => {
         const status = tc.status || 'pending';
         if (status === 'pass') {
             testedCases++;
             passedCases++;
-        } else if (status === 'fail') {
+        } else if (status === 'fail' || status === 'asic_hang' || status === 'core_dump' || status === 'traffic_drop') {
             testedCases++;
             failedCases++;
         } else if (status === 'blocked') {
             testedCases++;
             blockedCases++;
-        } else if (status === 'asic_hang' || status === 'core_dump' || status === 'traffic_drop') {
+        } else if (status === 'paused') {
             testedCases++;
-            failedCases++;
+            pausedCases++;
         } else {
             pendingCases++;
         }
     });
 
+    const validTestedForPassRate = passedCases + failedCases;
     plan.totalCases = totalCases;
     plan.testedCases = testedCases;
     plan.passedCases = passedCases;
     plan.failedCases = failedCases;
     plan.blockedCases = blockedCases;
+    plan.pausedCases = pausedCases;
     plan.pendingCases = pendingCases;
-    plan.passRate = testedCases > 0 ? Math.round((passedCases / testedCases) * 100) : 0;
+    plan.passRate = validTestedForPassRate > 0 ? Math.round((passedCases / validTestedForPassRate) * 100) : 0;
 }
 
 // 渲染进度统计
@@ -24241,6 +25797,7 @@ async function loadDrawerCases(planId) {
             recalculatePlanStats(plan, drawerCasesData);
             console.log('loadDrawerCases stats calculated:', { passedCases: plan.passedCases, failedCases: plan.failedCases, blockedCases: plan.blockedCases, pendingCases: plan.pendingCases });
             renderDrawerProgress(plan);
+            updateDrawerActionButtons(plan);
         } else {
             console.log('loadDrawerCases testPlans:', testPlans.map(p => p.id));
         }
@@ -25730,3 +27287,2318 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 });
+
+// ==================== 评审功能 ====================
+
+// 全局变量
+let selectedReviewerIds = [];
+let selectedReviewerNames = [];
+let allReviewersList = [];
+let filteredReviewersList = [];
+let currentUserPage = 1;
+const usersPerPage = 10;
+let currentReviewHistoryExpanded = false;
+
+// 提交评审
+async function submitForReview() {
+    const caseId = currentEditingTestCaseId;
+    if (!caseId) {
+        showErrorMessage('用例ID不存在');
+        return;
+    }
+    
+    openSubmitReviewModal(caseId);
+}
+
+// 打开提交评审对话框
+async function openSubmitReviewModal(caseId) {
+    try {
+        selectedReviewerIds = [];
+        selectedReviewerNames = [];
+        
+        const response = await apiRequest('/users/list');
+        if (response.success) {
+            allReviewersList = response.users || [];
+            renderUserList(allReviewersList);
+            renderFrequentReviewers();
+            document.getElementById('users-count').textContent = allReviewersList.length;
+        }
+        
+        updateSelectedReviewersDisplay();
+        document.getElementById('submit-review-modal').style.display = 'block';
+    } catch (error) {
+        console.error('加载用户列表失败:', error);
+        showErrorMessage('加载用户列表失败');
+    }
+}
+
+// 渲染用户列表
+function renderUserList(users) {
+    filteredReviewersList = users.filter(user => {
+        const username = user.username.toLowerCase();
+        return !['admin', 'administrator', 'root', 'system', 'sys'].includes(username);
+    });
+    
+    allReviewersList = filteredReviewersList;
+    currentUserPage = 1;
+    
+    renderUserPage();
+    document.getElementById('users-count').textContent = filteredReviewersList.length;
+    
+    const pagination = document.getElementById('user-pagination');
+    if (filteredReviewersList.length > usersPerPage) {
+        pagination.style.display = 'flex';
+    } else {
+        pagination.style.display = 'none';
+    }
+}
+
+// 渲染当前页的用户
+function renderUserPage() {
+    const startIndex = (currentUserPage - 1) * usersPerPage;
+    const endIndex = startIndex + usersPerPage;
+    const pageUsers = filteredReviewersList.slice(startIndex, endIndex);
+    
+    const userListHtml = pageUsers.map(user => {
+        const isSelected = selectedReviewerIds.includes(user.id);
+        return `
+        <div class="user-item ${isSelected ? 'selected' : ''}" data-user-id="${user.id}" data-username="${escapeHtml(user.username)}" onclick="toggleReviewer(${user.id}, '${escapeHtml(user.username)}')">
+            <input type="checkbox" name="reviewer" value="${user.id}" id="reviewer-${user.id}" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation()">
+            <label for="reviewer-${user.id}" onclick="event.stopPropagation(); toggleReviewer(${user.id}, '${escapeHtml(user.username)}')">
+                <span class="user-avatar">${escapeHtml(user.username.charAt(0).toUpperCase())}</span>
+                <div class="user-info">
+                    <div class="user-name">${escapeHtml(user.username)}</div>
+                </div>
+            </label>
+        </div>
+    `}).join('');
+    
+    document.getElementById('all-users-list').innerHTML = userListHtml;
+    
+    const totalPages = Math.ceil(filteredReviewersList.length / usersPerPage);
+    document.getElementById('current-page').textContent = currentUserPage;
+    document.getElementById('total-pages').textContent = totalPages;
+    
+    document.getElementById('prev-page-btn').disabled = currentUserPage === 1;
+    document.getElementById('next-page-btn').disabled = currentUserPage === totalPages;
+}
+
+// 上一页
+function prevUserPage() {
+    if (currentUserPage > 1) {
+        currentUserPage--;
+        renderUserPage();
+    }
+}
+
+// 下一页
+function nextUserPage() {
+    const totalPages = Math.ceil(filteredReviewersList.length / usersPerPage);
+    if (currentUserPage < totalPages) {
+        currentUserPage++;
+        renderUserPage();
+    }
+}
+
+// 渲染常用评审人
+function renderFrequentReviewers() {
+    const frequentReviewers = JSON.parse(localStorage.getItem('frequentReviewers') || '[]');
+    
+    const section = document.getElementById('frequent-reviewers-section');
+    const chipsContainer = document.getElementById('frequent-reviewers-chips');
+    
+    if (frequentReviewers.length === 0) {
+        section.style.display = 'none';
+        return;
+    }
+    
+    section.style.display = 'block';
+    
+    const chipsHtml = frequentReviewers.slice(0, 5).filter(user => user && user.id && user.name).map(user => {
+        const isSelected = selectedReviewerIds.includes(user.id);
+        const displayName = user.name || '未知用户';
+        return `
+        <div class="user-chip ${isSelected ? 'selected' : ''}" data-user-id="${user.id}" onclick="toggleReviewer(${user.id}, '${escapeHtml(displayName)}')">
+            <span class="user-avatar">${escapeHtml(displayName.charAt(0).toUpperCase())}</span>
+            <span class="user-name">${escapeHtml(displayName)}</span>
+            ${isSelected ? '<span class="check-icon">✓</span>' : '<span class="star-icon">⭐</span>'}
+        </div>
+    `}).join('');
+    
+    chipsContainer.innerHTML = chipsHtml;
+}
+
+// 切换评审人选择（多选）
+function toggleReviewer(userId, userName) {
+    const index = selectedReviewerIds.indexOf(userId);
+    
+    if (index === -1) {
+        selectedReviewerIds.push(userId);
+        selectedReviewerNames.push(userName);
+    } else {
+        selectedReviewerIds.splice(index, 1);
+        selectedReviewerNames.splice(index, 1);
+    }
+    
+    renderUserPage();
+    renderFrequentReviewers();
+    updateSelectedReviewersDisplay();
+}
+
+// 更新已选评审人显示
+function updateSelectedReviewersDisplay() {
+    const container = document.getElementById('selected-reviewers-display');
+    const countSpan = document.getElementById('selected-reviewers-count');
+    
+    if (!container) return;
+    
+    countSpan.textContent = selectedReviewerIds.length;
+    
+    if (selectedReviewerIds.length === 0) {
+        container.innerHTML = '<span class="no-selection">请选择评审人（可多选）</span>';
+    } else {
+        container.innerHTML = selectedReviewerNames.map((name, index) => `
+            <span class="selected-reviewer-tag">
+                ${escapeHtml(name)}
+                <span class="remove-btn" onclick="event.stopPropagation(); toggleReviewer(${selectedReviewerIds[index]}, '${escapeHtml(name)}')">×</span>
+            </span>
+        `).join('');
+    }
+}
+
+// 选择评审人（单选兼容）
+function selectReviewer(userId, userName) {
+    toggleReviewer(userId, userName);
+}
+
+// 过滤评审人
+function filterReviewers(keyword) {
+    const filteredUsers = allReviewersList.filter(user => 
+        user.username.toLowerCase().includes(keyword.toLowerCase()) ||
+        (user.role && user.role.toLowerCase().includes(keyword.toLowerCase()))
+    );
+    renderUserList(filteredUsers);
+    document.getElementById('users-count').textContent = filteredUsers.length;
+}
+
+// 更新评审说明字符计数
+function updateReviewCommentCount() {
+    const textarea = document.getElementById('review-comment');
+    const countSpan = document.getElementById('review-comment-count');
+    if (textarea && countSpan) {
+        countSpan.textContent = textarea.value.length;
+    }
+}
+
+// 确认提交评审
+async function confirmSubmitReview() {
+    if (selectedReviewerIds.length === 0) {
+        showErrorMessage('请选择至少一位评审人');
+        return;
+    }
+    
+    const caseId = currentEditingTestCaseId;
+    const comment = document.getElementById('review-comment').value;
+    
+    try {
+        const response = await apiRequest(`/testcases/${caseId}/submit-review`, {
+            method: 'POST',
+            body: JSON.stringify({
+                reviewer_ids: selectedReviewerIds,
+                comment: comment
+            })
+        });
+        
+        if (response.success) {
+            showSuccessMessage(response.message || '提交成功');
+            closeSubmitReviewModal();
+            
+            for (let i = 0; i < selectedReviewerIds.length; i++) {
+                saveFrequentReviewer(selectedReviewerIds[i], selectedReviewerNames[i]);
+            }
+            
+            if (typeof loadCaseDetail === 'function') {
+                loadCaseDetail(caseId);
+            }
+        } else {
+            showErrorMessage(response.message || '提交失败');
+        }
+    } catch (error) {
+        console.error('提交评审失败:', error);
+        showErrorMessage('提交失败: ' + error.message);
+    }
+}
+
+// 保存常用评审人
+function saveFrequentReviewer(userId, userName) {
+    let frequentReviewers = JSON.parse(localStorage.getItem('frequentReviewers') || '[]');
+    
+    frequentReviewers = frequentReviewers.filter(r => r.id !== userId);
+    
+    frequentReviewers.unshift({ id: userId, name: userName });
+    
+    frequentReviewers = frequentReviewers.slice(0, 5);
+    
+    localStorage.setItem('frequentReviewers', JSON.stringify(frequentReviewers));
+}
+
+// 关闭提交评审对话框
+function closeSubmitReviewModal() {
+    document.getElementById('submit-review-modal').style.display = 'none';
+    selectedReviewerIds = [];
+    selectedReviewerNames = [];
+    document.getElementById('review-comment').value = '';
+    document.getElementById('review-comment-count').textContent = '0';
+    document.getElementById('reviewer-search').value = '';
+}
+
+// 通过评审
+function approveReview() {
+    const caseId = currentEditingTestCaseId;
+    openApproveReviewModal(caseId);
+}
+
+// 打开通过评审对话框
+function openApproveReviewModal(caseId) {
+    // 填充用例信息
+    const caseName = document.getElementById('detail-case-name')?.value || '-';
+    const casePriority = document.getElementById('detail-case-priority')?.selectedOptions[0]?.text || '-';
+    const caseModule = document.getElementById('detail-case-module')?.selectedOptions[0]?.text || '-';
+    
+    document.getElementById('approve-case-name').textContent = caseName;
+    document.getElementById('approve-case-priority').textContent = casePriority;
+    document.getElementById('approve-case-module').textContent = caseModule || '-';
+    
+    document.getElementById('approve-review-modal').style.display = 'block';
+}
+
+// 插入快捷评语
+function insertQuickComment(comment) {
+    const textarea = document.getElementById('approve-comment');
+    const currentValue = textarea.value;
+    textarea.value = currentValue ? currentValue + '，' + comment : comment;
+    updateApproveCommentCount();
+}
+
+// 更新通过评审字符计数
+function updateApproveCommentCount() {
+    const textarea = document.getElementById('approve-comment');
+    const countSpan = document.getElementById('approve-char-count');
+    if (textarea && countSpan) {
+        countSpan.textContent = textarea.value.length;
+    }
+}
+
+// 确认通过评审
+async function confirmApproveReview() {
+    const caseId = currentEditingTestCaseId;
+    const comment = document.getElementById('approve-comment').value;
+    
+    try {
+        const response = await apiRequest(`/testcases/${caseId}/review`, {
+            method: 'POST',
+            body: JSON.stringify({
+                action: 'approve',
+                comment: comment
+            })
+        });
+        
+        if (response.success) {
+            showSuccessMessage('评审完成');
+            closeApproveReviewModal();
+            closeTestCaseDetailModal();
+            
+            // 导航到工作台并刷新数据
+            Router.navigateTo('workspace');
+        } else {
+            showErrorMessage(response.message || '评审失败');
+        }
+    } catch (error) {
+        console.error('通过评审失败:', error);
+        showErrorMessage('评审失败: ' + error.message);
+    }
+}
+
+// 关闭通过评审对话框
+function closeApproveReviewModal() {
+    document.getElementById('approve-review-modal').style.display = 'none';
+    document.getElementById('approve-comment').value = '';
+    document.getElementById('approve-char-count').textContent = '0';
+}
+
+// 驳回评审
+function rejectReview() {
+    const caseId = currentEditingTestCaseId;
+    openRejectReviewModal(caseId);
+}
+
+// 打开驳回评审对话框
+function openRejectReviewModal(caseId) {
+    document.getElementById('reject-review-modal').style.display = 'block';
+}
+
+// 选择驳回原因
+function selectRejectReason(reason) {
+    document.getElementById('reject-reason').value = reason;
+    updateRejectReasonCount();
+}
+
+// 更新驳回原因字符计数
+function updateRejectReasonCount() {
+    const textarea = document.getElementById('reject-reason');
+    const countSpan = document.getElementById('reject-char-count');
+    if (textarea && countSpan) {
+        const length = textarea.value.length;
+        countSpan.textContent = length;
+        
+        // 如果少于20字，显示警告颜色
+        if (length > 0 && length < 20) {
+            countSpan.style.color = '#ff4d4f';
+        } else {
+            countSpan.style.color = '#8c8c8c';
+        }
+    }
+}
+
+// 更新修改建议字符计数
+function updateRejectSuggestionCount() {
+    const textarea = document.getElementById('reject-suggestion');
+    const countSpan = document.getElementById('reject-suggestion-count');
+    if (textarea && countSpan) {
+        countSpan.textContent = textarea.value.length;
+    }
+}
+
+// 确认驳回评审
+async function confirmRejectReview() {
+    const caseId = currentEditingTestCaseId;
+    const reason = document.getElementById('reject-reason').value;
+    const suggestion = document.getElementById('reject-suggestion').value;
+    
+    // 验证驳回原因
+    if (!reason || reason.length < 20) {
+        showErrorMessage('驳回原因至少需要20个字符');
+        return;
+    }
+    
+    try {
+        const response = await apiRequest(`/testcases/${caseId}/review`, {
+            method: 'POST',
+            body: JSON.stringify({
+                action: 'reject',
+                comment: reason,
+                suggestion: suggestion
+            })
+        });
+        
+        if (response.success) {
+            showSuccessMessage('评审完成');
+            closeRejectReviewModal();
+            closeTestCaseDetailModal();
+            
+            // 导航到工作台并刷新数据
+            Router.navigateTo('workspace');
+        } else {
+            showErrorMessage(response.message || '评审失败');
+        }
+    } catch (error) {
+        console.error('驳回评审失败:', error);
+        showErrorMessage('评审失败: ' + error.message);
+    }
+}
+
+// 关闭驳回评审对话框
+function closeRejectReviewModal() {
+    document.getElementById('reject-review-modal').style.display = 'none';
+    document.getElementById('reject-reason').value = '';
+    document.getElementById('reject-char-count').textContent = '0';
+    document.getElementById('reject-suggestion').value = '';
+    document.getElementById('reject-suggestion-count').textContent = '0';
+    
+    // 清除选中的常见驳回原因
+    document.querySelectorAll('input[name="reject-reason-option"]').forEach(radio => {
+        radio.checked = false;
+    });
+}
+
+// 加载评审历史
+async function loadReviewHistory(caseId) {
+    try {
+        const response = await apiRequest(`/testcases/${caseId}/review-history`);
+        
+        if (response.success) {
+            renderReviewHistory(response.data.review_records);
+            updateReviewStatus(response.data);
+        }
+    } catch (error) {
+        console.error('加载评审历史失败:', error);
+    }
+}
+
+// 更新评审状态显示
+function updateReviewStatus(data) {
+    const statusBadge = document.getElementById('review-status-badge');
+    const reviewerName = document.getElementById('reviewer-name');
+    const submittedTime = document.getElementById('review-submitted-time');
+    const waitingTime = document.getElementById('review-waiting-time');
+    const reviewActions = document.getElementById('review-actions');
+    const submitReviewBtn = document.getElementById('submit-review-btn');
+    
+    if (!statusBadge) return;
+    
+    // 更新状态徽章
+    const statusMap = {
+        'draft': { icon: '📝', text: '草稿', class: 'draft' },
+        'pending': { icon: '⏳', text: '待评审', class: 'pending' },
+        'approved': { icon: '✓', text: '已通过', class: 'approved' },
+        'rejected': { icon: '✗', text: '被驳回', class: 'rejected' }
+    };
+    
+    const status = statusMap[data.current_status] || statusMap['draft'];
+    statusBadge.className = `review-status-badge ${status.class}`;
+    statusBadge.innerHTML = `
+        <span class="status-icon">${status.icon}</span>
+        <span class="status-text">${status.text}</span>
+    `;
+    
+    // 更新评审人
+    if (reviewerName) {
+        reviewerName.textContent = data.reviewer_name || '-';
+    }
+    
+    // 更新提交时间
+    if (submittedTime) {
+        submittedTime.textContent = data.review_submitted_at ? formatDateTime(data.review_submitted_at) : '-';
+    }
+    
+    // 更新等待时间
+    if (waitingTime) {
+        if (data.review_submitted_at && data.current_status === 'pending') {
+            const submitted = new Date(data.review_submitted_at);
+            const now = new Date();
+            const diff = now - submitted;
+            const hours = Math.floor(diff / (1000 * 60 * 60));
+            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+            
+            if (hours > 0) {
+                waitingTime.textContent = `${hours}小时${minutes}分`;
+            } else {
+                waitingTime.textContent = `${minutes}分钟`;
+            }
+        } else {
+            waitingTime.textContent = '-';
+        }
+    }
+    
+    // 显示/隐藏评审操作按钮
+    if (reviewActions) {
+        const currentUser = window.currentUser;
+        const isReviewer = currentUser && data.reviewer_id === currentUser.id;
+        
+        if (isReviewer && data.current_status === 'pending') {
+            reviewActions.style.display = 'flex';
+        } else {
+            reviewActions.style.display = 'none';
+        }
+    }
+    
+    // 更新提交评审按钮状态
+    if (submitReviewBtn) {
+        if (data.current_status === 'pending') {
+            submitReviewBtn.disabled = true;
+            submitReviewBtn.title = '用例已提交评审';
+        } else if (data.current_status === 'approved') {
+            submitReviewBtn.disabled = true;
+            submitReviewBtn.title = '用例已通过评审';
+        } else {
+            submitReviewBtn.disabled = false;
+            submitReviewBtn.title = '';
+        }
+    }
+}
+
+// 渲染评审历史
+function renderReviewHistory(records) {
+    const container = document.getElementById('review-history-timeline');
+    
+    if (!container) {
+        console.error('renderReviewHistory: 找不到 review-history-timeline 元素');
+        return;
+    }
+    
+    if (!records || records.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+                <p>暂无评审历史</p>
+            </div>
+        `;
+        return;
+    }
+    
+    // 按日期分组
+    const groupedRecords = {};
+    records.forEach(record => {
+        const date = new Date(record.created_at);
+        const dateStr = formatDate(date);
+        if (!groupedRecords[dateStr]) {
+            groupedRecords[dateStr] = [];
+        }
+        groupedRecords[dateStr].push(record);
+    });
+    
+    // 渲染时间轴
+    let timelineHtml = '';
+    Object.keys(groupedRecords).forEach(dateStr => {
+        timelineHtml += `<div class="timeline-date-group">`;
+        timelineHtml += `<div class="date-label">${dateStr}</div>`;
+        
+        groupedRecords[dateStr].forEach(record => {
+            const date = new Date(record.created_at);
+            const timeStr = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+            const actionText = getActionText(record.action);
+            const actionDesc = getActionDesc(record.action);
+            
+            let userInfoHtml = '';
+            if (record.action === 'submit' || record.action === 'resubmit') {
+                userInfoHtml = `
+                    <div class="user-info">
+                        <span class="user-avatar">👤</span>
+                        <span class="user-name">${escapeHtml(record.submitter_name || '未知')}</span>
+                        <span class="action-text">${actionDesc}，评审人：<strong>${escapeHtml(record.reviewer_name || '未指定')}</strong></span>
+                        ${record.comment ? `<span class="comment-inline">"${escapeHtml(record.comment)}"</span>` : ''}
+                    </div>
+                `;
+            } else {
+                userInfoHtml = `
+                    <div class="user-info">
+                        <span class="user-avatar">👤</span>
+                        <span class="user-name">${escapeHtml(record.reviewer_name || '未知')}</span>
+                        <span class="action-text">${actionDesc}</span>
+                        ${record.comment ? `<span class="comment-inline">"${escapeHtml(record.comment)}"</span>` : ''}
+                    </div>
+                `;
+            }
+            
+            timelineHtml += `
+                <div class="timeline-item">
+                    <div class="timeline-dot ${record.action}"></div>
+                    <div class="timeline-content">
+                        <div class="timeline-header">
+                            <span class="timeline-time">${timeStr}</span>
+                            <span class="timeline-action ${record.action}">${actionText}</span>
+                        </div>
+                        ${userInfoHtml}
+                    </div>
+                </div>
+            `;
+        });
+        
+        timelineHtml += `</div>`;
+    });
+    
+    container.innerHTML = timelineHtml;
+}
+
+// 获取操作文本
+function getActionText(action) {
+    const actionMap = {
+        'submit': '提交评审',
+        'approve': '通过评审',
+        'reject': '驳回评审',
+        'resubmit': '重新提审'
+    };
+    return actionMap[action] || action;
+}
+
+// 获取操作描述
+function getActionDesc(action) {
+    const descMap = {
+        'submit': '提交了评审',
+        'approve': '通过了评审',
+        'reject': '驳回了评审',
+        'resubmit': '重新提交了评审'
+    };
+    return descMap[action] || '';
+}
+
+// 切换评审历史展开/收起
+function toggleReviewHistory(btn) {
+    const container = document.getElementById('review-history-timeline');
+    
+    if (!container || !btn) {
+        console.error('toggleReviewHistory: 找不到必要的DOM元素');
+        return;
+    }
+    
+    if (currentReviewHistoryExpanded) {
+        container.style.maxHeight = '300px';
+        container.style.overflow = 'hidden';
+        btn.textContent = '展开全部';
+    } else {
+        container.style.maxHeight = 'none';
+        container.style.overflow = 'visible';
+        btn.textContent = '收起';
+    }
+    
+    currentReviewHistoryExpanded = !currentReviewHistoryExpanded;
+}
+
+function initReviewSocketListeners() {
+    const socket = io();
+
+    if (!socket) {
+        console.error('WebSocket not connected');
+        return;
+    }
+
+    socket.on('review:submitted', (data) => {
+        console.log('收到评审提交通知:', data);
+        if (data.reviewerId === currentUser.id) {
+            showSuccessMessage(`${data.submitterName} 提交了一个测试用例待您评审`);
+        }
+        updatePendingReviewCount();
+    });
+
+    socket.on('review:completed', (data) => {
+        console.log('收到评审完成通知:', data);
+        showSuccessMessage(`${data.reviewerName} ${data.action === 'approve' ? '通过了' : '驳回了'}您的用例评审`);
+        updatePendingReviewCount();
+    });
+}
+
+function updatePendingReviewCount() {
+    console.log('更新待评审数量');
+    const summaryCard = document.querySelector('.workspace-summary-card .pending-reviews');
+    if (!summaryCard) return;
+
+    const countSpan = summaryCard.querySelector('.pending-reviews-count');
+    if (!countSpan) return;
+
+    const currentCount = parseInt(countSpan.textContent) || 0;
+    countSpan.textContent = currentCount;
+    countSpan.style.animation = 'pulse 0.5s';
+    countSpan.style.color = '#fa8c16';
+}
+
+initReviewSocketListeners();
+
+// ==================== 我的工作台功能 ====================
+
+let workspaceData = {
+    summary: null,
+    pendingReviews: [],
+    pendingExecutions: [],
+    myPlans: [],
+    recentActivities: []
+};
+
+async function initWorkspace() {
+    console.log('[Workspace] 初始化工作台');
+    
+    updateWorkspaceDate();
+    updateWorkspaceUsername();
+    initWorkspaceTabs();
+    await loadWorkspaceData();
+}
+
+function updateWorkspaceDate() {
+    const dateEl = document.getElementById('workspace-current-date');
+    if (dateEl) {
+        const now = new Date();
+        const options = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' };
+        dateEl.textContent = now.toLocaleDateString('zh-CN', options);
+    }
+}
+
+function updateWorkspaceUsername() {
+    const usernameEl = document.getElementById('workspace-username');
+    if (usernameEl && currentUser) {
+        usernameEl.textContent = currentUser.username || '用户';
+    }
+}
+
+function initWorkspaceTabs() {
+    const tabs = document.querySelectorAll('.workspace-tab');
+    tabs.forEach(tab => {
+        tab.addEventListener('click', function() {
+            const tabName = this.dataset.tab;
+            switchWorkspaceTab(tabName);
+        });
+    });
+}
+
+function switchWorkspaceTab(tabName) {
+    document.querySelectorAll('.workspace-tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    document.querySelector(`.workspace-tab[data-tab="${tabName}"]`).classList.add('active');
+    
+    document.querySelectorAll('.workspace-panel').forEach(panel => {
+        panel.classList.remove('active');
+    });
+    document.getElementById(`workspace-${tabName}-panel`).classList.add('active');
+}
+
+async function loadWorkspaceData() {
+    try {
+        await Promise.all([
+            loadWorkspaceSummary(),
+            loadPendingReviews(),
+            loadPendingExecutions(),
+            loadMyPlans(),
+            loadRecentActivities()
+        ]);
+        updateWorkspaceBadges();
+    } catch (error) {
+        console.error('[Workspace] 加载数据失败:', error);
+    }
+}
+
+async function loadWorkspaceSummary() {
+    try {
+        const response = await apiRequest('/workspace/summary');
+        if (response.success) {
+            workspaceData.summary = response.data;
+            renderWorkspaceSummary(response.data);
+        }
+    } catch (error) {
+        console.error('[Workspace] 加载概览数据失败:', error);
+    }
+}
+
+function renderWorkspaceSummary(data) {
+    document.getElementById('pending-executions-count').textContent = data.pending_executions || 0;
+    document.getElementById('pending-reviews-count').textContent = data.pending_reviews || 0;
+    document.getElementById('expiring-count').textContent = data.expiring_plans || 0;
+    document.getElementById('weekly-completed-count').textContent = data.weekly_completed || 0;
+}
+
+async function loadPendingReviews() {
+    try {
+        const response = await apiRequest('/workspace/pending-reviews?pageSize=5');
+        if (response.success) {
+            workspaceData.pendingReviews = response.data.cases;
+            renderPendingReviewsList(response.data.cases);
+            document.getElementById('pending-reviews-list-count').textContent = `(${response.data.pagination.total})`;
+        }
+    } catch (error) {
+        console.error('[Workspace] 加载待评审列表失败:', error);
+    }
+}
+
+function renderPendingReviewsList(cases) {
+    const container = document.getElementById('pending-reviews-list');
+    if (!container) return;
+    
+    if (!cases || cases.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <span class="empty-icon">🎉</span>
+                <p>暂无待评审用例</p>
+            </div>
+        `;
+        const batchActions = document.getElementById('review-batch-actions');
+        if (batchActions) {
+            batchActions.style.display = 'none';
+        }
+        return;
+    }
+    
+    container.innerHTML = cases.map(c => `
+        <div class="workspace-list-item" data-case-id="${c.id}">
+            <div class="list-item-checkbox">
+                <input type="checkbox" 
+                       class="review-case-checkbox" 
+                       data-case-id="${c.id}"
+                       onchange="updateReviewBatchSelection()">
+            </div>
+            <div class="list-item-left">
+                <div class="list-item-title">
+                    <span>📋</span>
+                    <span>${escapeHtml(c.name)}</span>
+                </div>
+                <div class="list-item-meta">
+                    <span>${escapeHtml(c.module_name || '未分类')}</span>
+                    <span>|</span>
+                    <span>${escapeHtml(c.submitter_name || '未知')} 提交</span>
+                    <span>|</span>
+                    <span>${c.time_ago || ''}</span>
+                    <span class="priority-badge ${getPriorityClass(c.priority)}">${escapeHtml(c.priority || '中')}</span>
+                </div>
+            </div>
+            <div class="list-item-right">
+                <button class="list-item-btn" onclick="viewCaseDetail(${c.id})">查看</button>
+                <button class="list-item-btn warning" onclick="quickReviewCase(${c.id})">快速评审</button>
+            </div>
+        </div>
+    `).join('');
+    
+    let batchActions = document.getElementById('review-batch-actions');
+    if (!batchActions) {
+        const parentContainer = container.parentElement;
+        if (parentContainer) {
+            batchActions = document.createElement('div');
+            batchActions.id = 'review-batch-actions';
+            batchActions.className = 'batch-action-toolbar';
+            batchActions.style.cssText = 'display: none; margin-top: 12px;';
+            batchActions.innerHTML = `
+                <div class="selection-info">
+                    <span class="selected-count">已选择 <strong id="selected-review-count">0</strong> 项</span>
+                    <button class="clear-selection-btn" onclick="clearReviewSelection()">清除选择</button>
+                </div>
+                <div class="batch-actions">
+                    <button class="btn btn-success" onclick="batchApproveReview()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        批量通过
+                    </button>
+                    <button class="btn btn-danger" onclick="batchRejectReview()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="15" y1="9" x2="9" y2="15"></line>
+                            <line x1="9" y1="9" x2="15" y2="15"></line>
+                        </svg>
+                        批量驳回
+                    </button>
+                </div>
+            `;
+            parentContainer.appendChild(batchActions);
+        }
+    }
+}
+
+async function loadPendingExecutions() {
+    try {
+        const response = await apiRequest('/workspace/pending-executions?pageSize=5');
+        if (response.success) {
+            workspaceData.pendingExecutions = response.data.cases;
+            renderPendingExecutionsList(response.data.cases);
+            document.getElementById('pending-executions-list-count').textContent = `(${response.data.pagination.total})`;
+        }
+    } catch (error) {
+        console.error('[Workspace] 加载待执行列表失败:', error);
+    }
+}
+
+function renderPendingExecutionsList(cases) {
+    const container = document.getElementById('pending-executions-list');
+    if (!container) return;
+    
+    if (!cases || cases.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <span class="empty-icon">🎉</span>
+                <p>暂无待执行用例</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = cases.map(c => `
+        <div class="workspace-list-item" data-case-id="${c.id}" data-plan-id="${c.plan_id || ''}">
+            <div class="list-item-left">
+                <div class="list-item-title">
+                    <span>📋</span>
+                    <span>${escapeHtml(c.name)}</span>
+                </div>
+                <div class="list-item-meta">
+                    <span>${escapeHtml(c.plan_name || '未分配计划')}</span>
+                    <span>|</span>
+                    <span class="priority-badge ${getPriorityClass(c.priority)}">${escapeHtml(c.priority || '中')}</span>
+                    <span>|</span>
+                    <span>${c.days_remaining !== null ? (c.days_remaining > 0 ? `剩余${c.days_remaining}天` : '已到期') : ''}</span>
+                </div>
+            </div>
+            <div class="list-item-right">
+                <button class="list-item-btn" onclick="viewPendingExecutionPlan(${c.plan_id})">查看</button>
+                <button class="list-item-btn primary" onclick="executeCase(${c.id}, ${c.plan_id || 'null'})">执行</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function loadMyPlans() {
+    try {
+        const response = await apiRequest('/workspace/my-plans?pageSize=5');
+        if (response.success) {
+            workspaceData.myPlans = response.data.plans;
+            renderMyPlansList(response.data.plans);
+            document.getElementById('my-plans-count').textContent = `(${response.data.pagination.total})`;
+        }
+    } catch (error) {
+        console.error('[Workspace] 加载我的计划失败:', error);
+    }
+}
+
+function renderMyPlansList(plans) {
+    const container = document.getElementById('my-plans-list');
+    if (!container) return;
+    
+    if (!plans || plans.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <span class="empty-icon">🎉</span>
+                <p>暂无参与的测试计划</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = plans.map(p => `
+        <div class="workspace-plan-card" data-plan-id="${p.id}">
+            <div class="plan-card-header">
+                <span class="plan-name">${escapeHtml(p.name)}</span>
+                <span class="plan-status ${getPlanStatusClass(p.status)}">${escapeHtml(p.status)}</span>
+            </div>
+            <div class="plan-card-body">
+                <div class="plan-meta">
+                    <span>📅 ${p.start_date || ''} 至 ${p.end_date || ''}</span>
+                    <span>${p.days_remaining !== null ? (p.days_remaining > 0 ? `剩余${p.days_remaining}天` : '已到期') : ''}</span>
+                </div>
+                <div class="plan-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill ${getProgressClass(p.pass_rate)}" style="width: ${p.progress_percentage || 0}%"></div>
+                    </div>
+                    <div class="progress-text">
+                        <span>执行进度: ${p.progress_percentage || 0}% (${p.tested_cases || 0}/${p.total_cases || 0})</span>
+                        <span>通过率: ${p.pass_rate || 0}%</span>
+                    </div>
+                </div>
+            </div>
+            <div class="plan-card-footer">
+                <button class="list-item-btn" onclick="viewPlanDetail(${p.id})">查看详情</button>
+                <button class="list-item-btn primary" onclick="executePlan(${p.id})">执行用例</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function loadRecentActivities() {
+    try {
+        const response = await apiRequest('/workspace/recent-activities?days=7&limit=10');
+        if (response.success) {
+            workspaceData.recentActivities = response.data.activities;
+            renderRecentActivitiesList(response.data.activities);
+            document.getElementById('recent-activities-count').textContent = `(${response.data.activities.length})`;
+        }
+    } catch (error) {
+        console.error('[Workspace] 加载最近活动失败:', error);
+    }
+}
+
+function renderRecentActivitiesList(activities) {
+    const container = document.getElementById('recent-activities-list');
+    if (!container) return;
+    
+    if (!activities || activities.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <span class="empty-icon">🎉</span>
+                <p>暂无最近活动</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const groupedActivities = groupActivitiesByDate(activities);
+    
+    let html = '';
+    for (const [date, items] of Object.entries(groupedActivities)) {
+        html += `
+            <div class="activity-date-group">
+                <div class="activity-date-label">${date}</div>
+                ${items.map(a => `
+                    <div class="activity-timeline-item">
+                        <div class="activity-dot ${getActivityDotClass(a.action)}"></div>
+                        <div class="activity-content">
+                            <div class="activity-header">
+                                <span class="activity-action">${escapeHtml(a.action)}</span>
+                                <span class="activity-time">${a.time_ago || ''}</span>
+                            </div>
+                            <div class="activity-desc">${escapeHtml(a.description || '')}</div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+    
+    container.innerHTML = html;
+}
+
+function groupActivitiesByDate(activities) {
+    const groups = {};
+    const today = new Date().toLocaleDateString('zh-CN');
+    const yesterday = new Date(Date.now() - 86400000).toLocaleDateString('zh-CN');
+    
+    activities.forEach(a => {
+        const date = new Date(a.created_at).toLocaleDateString('zh-CN');
+        let label = date;
+        if (date === today) label = '今天';
+        else if (date === yesterday) label = '昨天';
+        
+        if (!groups[label]) groups[label] = [];
+        groups[label].push(a);
+    });
+    
+    return groups;
+}
+
+function updateWorkspaceBadges() {
+    const todoCount = (workspaceData.pendingReviews?.length || 0) + (workspaceData.pendingExecutions?.length || 0);
+    const plansCount = workspaceData.myPlans?.length || 0;
+    const activitiesCount = workspaceData.recentActivities?.length || 0;
+    
+    document.getElementById('todo-badge').textContent = todoCount;
+    document.getElementById('plans-badge').textContent = plansCount;
+    document.getElementById('activities-badge').textContent = activitiesCount;
+}
+
+// 辅助函数
+function getPriorityClass(priority) {
+    if (!priority) return 'medium';
+    const p = priority.toLowerCase();
+    if (p === '高' || p === 'high' || p === 'p0') return 'high';
+    if (p === '低' || p === 'low' || p === 'p2') return 'low';
+    return 'medium';
+}
+
+function getPlanStatusClass(status) {
+    if (!status) return 'active';
+    const s = status.toLowerCase();
+    if (s === '已完成' || s === 'completed') return 'completed';
+    if (s === '已延期' || s === 'delayed') return 'delayed';
+    return 'active';
+}
+
+function getProgressClass(passRate) {
+    if (passRate >= 80) return 'green';
+    if (passRate >= 60) return 'yellow';
+    return 'red';
+}
+
+function getActivityDotClass(action) {
+    if (!action) return 'execution';
+    const a = action.toLowerCase();
+    if (a.includes('评审') || a.includes('review')) return 'review';
+    if (a.includes('创建') || a.includes('create')) return 'create';
+    if (a.includes('提交') || a.includes('submit')) return 'submit';
+    return 'execution';
+}
+
+// 导航函数
+function navigateToPendingExecutions() {
+    Router.navigateTo('testplans');
+}
+
+function navigateToPendingReviews() {
+    viewAllPendingReviews();
+}
+
+function navigateToExpiringPlans() {
+    Router.navigateTo('testplans');
+}
+
+function navigateToWeeklyCompleted() {
+    Router.navigateTo('reports');
+}
+
+let allPendingReviewsData = [];
+let allPendingReviewsCurrentPage = 1;
+let allPendingReviewsPageSize = 20;
+let allPendingReviewsTotal = 0;
+let allPendingReviewsSearchKeyword = '';
+let selectedAllPendingReviews = new Set();
+
+function viewAllPendingReviews() {
+    const modal = document.getElementById('all-pending-reviews-modal');
+    if (modal) {
+        modal.style.display = 'block';
+        allPendingReviewsCurrentPage = 1;
+        allPendingReviewsSearchKeyword = '';
+        document.getElementById('all-pending-reviews-search').value = '';
+        selectedAllPendingReviews.clear();
+        loadAllPendingReviews();
+    }
+}
+
+function closeAllPendingReviewsModal() {
+    const modal = document.getElementById('all-pending-reviews-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+async function loadAllPendingReviews() {
+    try {
+        showLoading('加载待评审用例...');
+        
+        const params = new URLSearchParams({
+            page: allPendingReviewsCurrentPage,
+            pageSize: allPendingReviewsPageSize,
+            keyword: allPendingReviewsSearchKeyword
+        });
+        
+        const response = await apiRequest(`/testcases/review/pending?${params.toString()}`);
+        
+        hideLoading();
+        
+        if (response.success) {
+            allPendingReviewsData = response.data.cases || [];
+            allPendingReviewsTotal = response.data.pagination?.total || 0;
+            
+            if (allPendingReviewsData.length === 0 && allPendingReviewsCurrentPage > 1 && allPendingReviewsTotal > 0) {
+                allPendingReviewsCurrentPage = 1;
+                await loadAllPendingReviews();
+                return;
+            }
+            
+            renderAllPendingReviewsList();
+            updateAllPendingReviewsPagination();
+        } else {
+            showErrorMessage('加载待评审用例失败: ' + (response.message || '未知错误'));
+        }
+    } catch (error) {
+        hideLoading();
+        console.error('加载待评审用例失败:', error);
+        showErrorMessage('加载待评审用例失败: ' + error.message);
+    }
+}
+
+function renderAllPendingReviewsList() {
+    const container = document.getElementById('all-pending-reviews-list');
+    const countElement = document.getElementById('all-pending-reviews-count');
+    const batchActionsDiv = document.getElementById('all-pending-reviews-batch-actions');
+    
+    if (!container) return;
+    
+    if (countElement) {
+        countElement.textContent = `(${allPendingReviewsTotal})`;
+    }
+    
+    if (allPendingReviewsData.length === 0) {
+        container.innerHTML = `
+            <div style="text-align: center; padding: 60px 20px; color: #94a3b8;">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5" style="margin-bottom: 12px;">
+                    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+                </svg>
+                <p>暂无待评审用例</p>
+            </div>
+        `;
+        if (batchActionsDiv) batchActionsDiv.style.display = 'none';
+        return;
+    }
+    
+    container.innerHTML = `
+        <table class="data-table" style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0;">
+                    <th style="width: 40px; padding: 12px 8px; text-align: center;">
+                        <input type="checkbox" id="select-all-pending-reviews" onchange="toggleSelectAllPendingReviews()" style="cursor: pointer;">
+                    </th>
+                    <th style="padding: 12px 16px; text-align: left; font-size: 13px; font-weight: 600; color: #64748b;">用例名称</th>
+                    <th style="width: 120px; padding: 12px 16px; text-align: left; font-size: 13px; font-weight: 600; color: #64748b;">用例库</th>
+                    <th style="width: 120px; padding: 12px 16px; text-align: left; font-size: 13px; font-weight: 600; color: #64748b;">模块</th>
+                    <th style="width: 80px; padding: 12px 16px; text-align: center; font-size: 13px; font-weight: 600; color: #64748b;">优先级</th>
+                    <th style="width: 100px; padding: 12px 16px; text-align: center; font-size: 13px; font-weight: 600; color: #64748b;">提交人</th>
+                    <th style="width: 140px; padding: 12px 16px; text-align: center; font-size: 13px; font-weight: 600; color: #64748b;">提交时间</th>
+                    <th style="width: 160px; padding: 12px 16px; text-align: center; font-size: 13px; font-weight: 600; color: #64748b;">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${allPendingReviewsData.map(item => {
+                    const priority = item.priority || '-';
+                    const priorityClass = priority === '高' || priority === 'P0' || priority === 'P1' ? 'high' : 
+                                         priority === '中' || priority === 'P2' ? 'medium' : 'low';
+                    const submitTime = item.review_submitted_at ? formatDateTime(item.review_submitted_at) : '-';
+                    const isSelected = selectedAllPendingReviews.has(item.id);
+                    
+                    return `
+                        <tr style="border-bottom: 1px solid #f1f5f9; ${isSelected ? 'background: #f0f9ff;' : ''}" 
+                            onmouseover="this.style.background='#f8fafc'" 
+                            onmouseout="this.style.background='${isSelected ? '#f0f9ff' : 'transparent'}'">
+                            <td style="padding: 12px 8px; text-align: center;">
+                                <input type="checkbox" 
+                                    class="pending-review-checkbox" 
+                                    data-id="${item.id}" 
+                                    ${isSelected ? 'checked' : ''} 
+                                    onchange="togglePendingReviewSelection(${item.id})"
+                                    style="cursor: pointer;">
+                            </td>
+                            <td style="padding: 12px 16px;">
+                                <div style="font-size: 14px; font-weight: 500; color: #1e293b; margin-bottom: 4px;">
+                                    ${escapeHtml(item.name || '-')}
+                                </div>
+                                <div style="font-size: 12px; color: #64748b;">
+                                    ID: ${item.case_id || '-'}
+                                </div>
+                            </td>
+                            <td style="padding: 12px 16px; font-size: 13px; color: #475569;">
+                                ${escapeHtml(item.library_name || 'NetRx')}
+                            </td>
+                            <td style="padding: 12px 16px; font-size: 13px; color: #475569;">
+                                ${escapeHtml(item.module_name || '未分类')}
+                            </td>
+                            <td style="padding: 12px 16px; text-align: center;">
+                                <span class="priority-tag ${priorityClass}">${priority}</span>
+                            </td>
+                            <td style="padding: 12px 16px; text-align: center; font-size: 13px; color: #475569;">
+                                ${escapeHtml(item.submitter_name || item.creator || '-')}
+                            </td>
+                            <td style="padding: 12px 16px; text-align: center; font-size: 13px; color: #64748b;">
+                                ${submitTime}
+                            </td>
+                            <td style="padding: 12px 16px; text-align: center;">
+                                <div style="display: flex; gap: 8px; justify-content: center;">
+                                    <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;" 
+                                        onclick="viewCaseDetail(${item.id})">
+                                        查看
+                                    </button>
+                                    <button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px;" 
+                                        onclick="quickReviewCase(${item.id})">
+                                        快速评审
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                }).join('')}
+            </tbody>
+        </table>
+    `;
+    
+    updateBatchActionsVisibility();
+}
+
+function toggleSelectAllPendingReviews() {
+    const selectAllCheckbox = document.getElementById('select-all-pending-reviews');
+    const checkboxes = document.querySelectorAll('.pending-review-checkbox');
+    
+    if (selectAllCheckbox.checked) {
+        allPendingReviewsData.forEach(item => {
+            selectedAllPendingReviews.add(item.id);
+        });
+        checkboxes.forEach(cb => cb.checked = true);
+    } else {
+        selectedAllPendingReviews.clear();
+        checkboxes.forEach(cb => cb.checked = false);
+    }
+    
+    updateBatchActionsVisibility();
+    renderAllPendingReviewsList();
+}
+
+function togglePendingReviewSelection(id) {
+    if (selectedAllPendingReviews.has(id)) {
+        selectedAllPendingReviews.delete(id);
+    } else {
+        selectedAllPendingReviews.add(id);
+    }
+    
+    updateBatchActionsVisibility();
+    
+    const selectAllCheckbox = document.getElementById('select-all-pending-reviews');
+    if (selectAllCheckbox) {
+        selectAllCheckbox.checked = selectedAllPendingReviews.size === allPendingReviewsData.length;
+    }
+}
+
+function updateBatchActionsVisibility() {
+    const batchActionsDiv = document.getElementById('all-pending-reviews-batch-actions');
+    if (batchActionsDiv) {
+        batchActionsDiv.style.display = selectedAllPendingReviews.size > 0 ? 'flex' : 'none';
+    }
+}
+
+function updateAllPendingReviewsPagination() {
+    const paginationDiv = document.getElementById('all-pending-reviews-pagination');
+    const currentPageSpan = document.getElementById('all-pending-reviews-current-page');
+    const totalPagesSpan = document.getElementById('all-pending-reviews-total-pages');
+    const totalSpan = document.getElementById('all-pending-reviews-total');
+    const prevBtn = document.getElementById('all-pending-reviews-prev-btn');
+    const nextBtn = document.getElementById('all-pending-reviews-next-btn');
+    
+    if (!paginationDiv) return;
+    
+    const totalPages = Math.ceil(allPendingReviewsTotal / allPendingReviewsPageSize);
+    
+    if (totalPages > 1) {
+        paginationDiv.style.display = 'block';
+        
+        if (currentPageSpan) currentPageSpan.textContent = allPendingReviewsCurrentPage;
+        if (totalPagesSpan) totalPagesSpan.textContent = totalPages;
+        if (totalSpan) totalSpan.textContent = allPendingReviewsTotal;
+        if (prevBtn) prevBtn.disabled = allPendingReviewsCurrentPage <= 1;
+        if (nextBtn) nextBtn.disabled = allPendingReviewsCurrentPage >= totalPages;
+    } else {
+        paginationDiv.style.display = 'none';
+    }
+}
+
+function prevAllPendingReviewsPage() {
+    if (allPendingReviewsCurrentPage > 1) {
+        allPendingReviewsCurrentPage--;
+        loadAllPendingReviews();
+    }
+}
+
+function nextAllPendingReviewsPage() {
+    const totalPages = Math.ceil(allPendingReviewsTotal / allPendingReviewsPageSize);
+    if (allPendingReviewsCurrentPage < totalPages) {
+        allPendingReviewsCurrentPage++;
+        loadAllPendingReviews();
+    }
+}
+
+function changeAllPendingReviewsPageSize() {
+    const select = document.getElementById('all-pending-reviews-page-size');
+    if (select) {
+        allPendingReviewsPageSize = parseInt(select.value);
+        allPendingReviewsCurrentPage = 1;
+        loadAllPendingReviews();
+    }
+}
+
+function searchAllPendingReviews() {
+    const searchInput = document.getElementById('all-pending-reviews-search');
+    if (searchInput) {
+        allPendingReviewsSearchKeyword = searchInput.value.trim();
+        allPendingReviewsCurrentPage = 1;
+        loadAllPendingReviews();
+    }
+}
+
+async function batchApproveAllPendingReviews() {
+    if (selectedAllPendingReviews.size === 0) {
+        showErrorMessage('请先选择要评审的用例');
+        return;
+    }
+    
+    if (!confirm(`确定要批量通过 ${selectedAllPendingReviews.size} 个用例吗？`)) {
+        return;
+    }
+    
+    try {
+        showLoading('批量评审中...');
+        
+        const cases = allPendingReviewsData.filter(item => selectedAllPendingReviews.has(item.id));
+        
+        const response = await apiRequest('/testcases/batch-review', {
+            method: 'POST',
+            body: JSON.stringify({
+                cases: cases.map(c => ({ id: c.id, case_id: c.case_id, name: c.name, review_status: c.review_status })),
+                action: 'approve',
+                comment: ''
+            })
+        });
+        
+        hideLoading();
+        
+        if (response.success) {
+            showSuccessMessage(`批量评审完成：成功 ${response.data.successCount} 个，失败 ${response.data.failCount} 个`);
+            selectedAllPendingReviews.clear();
+            loadAllPendingReviews();
+            
+            if (typeof loadWorkspaceData === 'function') {
+                await loadWorkspaceData();
+            }
+        } else {
+            showErrorMessage('批量评审失败: ' + (response.message || '未知错误'));
+        }
+    } catch (error) {
+        hideLoading();
+        console.error('批量评审失败:', error);
+        showErrorMessage('批量评审失败: ' + error.message);
+    }
+}
+
+async function batchRejectAllPendingReviews() {
+    if (selectedAllPendingReviews.size === 0) {
+        showErrorMessage('请先选择要评审的用例');
+        return;
+    }
+    
+    const comment = prompt('请输入驳回原因（至少20字）：');
+    if (!comment || comment.trim().length < 20) {
+        showErrorMessage('驳回原因至少需要20个字');
+        return;
+    }
+    
+    if (!confirm(`确定要批量驳回 ${selectedAllPendingReviews.size} 个用例吗？`)) {
+        return;
+    }
+    
+    try {
+        showLoading('批量评审中...');
+        
+        const cases = allPendingReviewsData.filter(item => selectedAllPendingReviews.has(item.id));
+        
+        const response = await apiRequest('/testcases/batch-review', {
+            method: 'POST',
+            body: JSON.stringify({
+                cases: cases.map(c => ({ id: c.id, case_id: c.case_id, name: c.name, review_status: c.review_status })),
+                action: 'reject',
+                comment: comment.trim()
+            })
+        });
+        
+        hideLoading();
+        
+        if (response.success) {
+            showSuccessMessage(`批量评审完成：成功 ${response.data.successCount} 个，失败 ${response.data.failCount} 个`);
+            selectedAllPendingReviews.clear();
+            loadAllPendingReviews();
+            
+            if (typeof loadWorkspaceData === 'function') {
+                await loadWorkspaceData();
+            }
+        } else {
+            showErrorMessage('批量评审失败: ' + (response.message || '未知错误'));
+        }
+    } catch (error) {
+        hideLoading();
+        console.error('批量评审失败:', error);
+        showErrorMessage('批量评审失败: ' + error.message);
+    }
+}
+
+function viewAllPendingExecutions() {
+    Router.navigateTo('testplans');
+}
+
+function viewAllMyPlans() {
+    Router.navigateTo('testplans');
+}
+
+function viewAllActivities() {
+    switchWorkspaceTab('activities');
+}
+
+async function viewCaseDetail(caseId) {
+    try {
+        showLoading('加载用例详情...');
+        const result = await apiRequest(`/testpoints/detail/${caseId}`);
+        if (result.success && result.data) {
+            hideLoading();
+            if (typeof openTestCaseDetailModal === 'function') {
+                await openTestCaseDetailModal(result.data);
+            } else {
+                Router.navigateTo('cases');
+            }
+        } else {
+            hideLoading();
+            showErrorMessage('获取用例详情失败');
+        }
+    } catch (error) {
+        hideLoading();
+        console.error('加载用例详情失败:', error);
+        showErrorMessage('加载用例详情失败');
+    }
+}
+
+function quickReviewCase(caseId) {
+    openQuickReviewModal(caseId);
+}
+
+let quickReviewCaseData = null;
+
+async function openQuickReviewModal(caseId) {
+    currentEditingTestCaseId = caseId;
+    
+    try {
+        const response = await apiRequest(`/testcases/${caseId}`);
+        if (response.success) {
+            quickReviewCaseData = response.data;
+            
+            document.getElementById('quick-review-case-name').textContent = response.data.name || '-';
+            
+            const priorityEl = document.getElementById('quick-review-case-priority');
+            const priority = response.data.priority || '-';
+            priorityEl.textContent = priority;
+            priorityEl.className = 'priority-tag ' + (priority === '高' || priority === 'P0' || priority === 'P1' ? 'high' : priority === '中' || priority === 'P2' ? 'medium' : 'low');
+            
+            document.getElementById('quick-review-case-module').textContent = response.data.module_name || '未分类';
+            
+            document.getElementById('quick-review-comment').value = '';
+            document.getElementById('quick-review-char-count').textContent = '0';
+            
+            document.querySelectorAll('.quick-comment-btn').forEach(btn => {
+                btn.classList.remove('active');
+                btn.onclick = function() {
+                    document.getElementById('quick-review-comment').value = this.dataset.comment;
+                    document.getElementById('quick-review-char-count').textContent = this.dataset.comment.length;
+                    document.querySelectorAll('.quick-comment-btn').forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                };
+            });
+            
+            document.getElementById('quick-review-modal').style.display = 'block';
+        } else {
+            showErrorMessage('获取用例信息失败');
+        }
+    } catch (error) {
+        console.error('获取用例信息失败:', error);
+        showErrorMessage('获取用例信息失败');
+    }
+}
+
+function updateQuickReviewCommentCount() {
+    const textarea = document.getElementById('quick-review-comment');
+    const countSpan = document.getElementById('quick-review-char-count');
+    if (textarea && countSpan) {
+        countSpan.textContent = textarea.value.length;
+    }
+}
+
+function closeQuickReviewModal() {
+    document.getElementById('quick-review-modal').style.display = 'none';
+    quickReviewCaseData = null;
+}
+
+function updateQuickReviewCharCount() {
+    const textarea = document.getElementById('quick-review-comment');
+    const countSpan = document.getElementById('quick-review-char-count');
+    if (textarea && countSpan) {
+        countSpan.textContent = textarea.value.length;
+    }
+}
+
+async function quickApproveReview() {
+    const caseId = currentEditingTestCaseId;
+    const comment = document.getElementById('quick-review-comment').value;
+    
+    try {
+        const response = await apiRequest(`/testcases/${caseId}/review`, {
+            method: 'POST',
+            body: JSON.stringify({
+                action: 'approve',
+                comment: comment
+            })
+        });
+        
+        if (response.success) {
+            showSuccessMessage(response.message || '评审通过');
+            closeQuickReviewModal();
+            selectedAllPendingReviews.delete(caseId);
+            await loadWorkspaceData();
+            if (typeof loadAllPendingReviews === 'function') {
+                await loadAllPendingReviews();
+            }
+        } else {
+            showErrorMessage(response.message || '评审失败');
+        }
+    } catch (error) {
+        console.error('评审失败:', error);
+        showErrorMessage('评审失败: ' + error.message);
+    }
+}
+
+async function quickRejectReview() {
+    const caseId = currentEditingTestCaseId;
+    const comment = document.getElementById('quick-review-comment').value;
+    
+    if (!comment || comment.trim().length < 20) {
+        showErrorMessage('驳回原因至少需要20个字符');
+        return;
+    }
+    
+    try {
+        const response = await apiRequest(`/testcases/${caseId}/review`, {
+            method: 'POST',
+            body: JSON.stringify({
+                action: 'reject',
+                comment: comment
+            })
+        });
+        
+        if (response.success) {
+            showSuccessMessage(response.message || '已驳回');
+            closeQuickReviewModal();
+            selectedAllPendingReviews.delete(caseId);
+            await loadWorkspaceData();
+            if (typeof loadAllPendingReviews === 'function') {
+                await loadAllPendingReviews();
+            }
+        } else {
+            showErrorMessage(response.message || '评审失败');
+        }
+    } catch (error) {
+        console.error('评审失败:', error);
+        showErrorMessage('评审失败: ' + error.message);
+    }
+}
+
+function executeCase(caseId, planId) {
+    if (planId && planId !== 'null') {
+        window.location.hash = `#/testplans`;
+        setTimeout(() => {
+            if (typeof openTestExecutionModal === 'function') {
+                openTestExecutionModal(planId);
+            }
+        }, 300);
+    } else {
+        showErrorMessage('该用例未分配到测试计划');
+    }
+}
+
+function viewPlanDetail(planId) {
+    window.location.hash = `#/testplans`;
+}
+
+function executePlan(planId) {
+    window.location.hash = `#/testplans`;
+    setTimeout(() => {
+        if (typeof openTestExecutionModal === 'function') {
+            openTestExecutionModal(planId);
+        }
+    }, 300);
+}
+
+async function viewPendingExecutionPlan(planId) {
+    if (!planId) {
+        showErrorMessage('测试计划ID不存在');
+        return;
+    }
+    
+    window.location.hash = `#/testplans`;
+    
+    setTimeout(async () => {
+        if (typeof openTestPlanDrawer === 'function') {
+            await openTestPlanDrawer(planId);
+        } else {
+            console.warn('openTestPlanDrawer function not found');
+        }
+    }, 500);
+}
+
+// ==================== 结束我的工作台功能 ====================
+
+// ==================== 批量评审功能 ====================
+
+function updateBatchSelection() {
+    const checkboxes = document.querySelectorAll('.case-checkbox:checked');
+    selectedCaseIds = Array.from(checkboxes).map(cb => parseInt(cb.dataset.caseId));
+    
+    const count = selectedCaseIds.length;
+    const countElement = document.getElementById('selected-case-count');
+    if (countElement) {
+        countElement.textContent = count;
+    }
+    
+    const toolbar = document.getElementById('batch-action-toolbar');
+    if (toolbar) {
+        toolbar.style.display = count > 0 ? 'flex' : 'none';
+    }
+}
+
+function toggleSelectAllCases(checked) {
+    const checkboxes = document.querySelectorAll('.case-checkbox:not(:disabled)');
+    checkboxes.forEach(cb => cb.checked = checked);
+    updateBatchSelection();
+}
+
+function clearCaseSelection() {
+    document.querySelectorAll('.case-checkbox').forEach(cb => cb.checked = false);
+    const selectAllCheckbox = document.getElementById('select-all-cases');
+    if (selectAllCheckbox) {
+        selectAllCheckbox.checked = false;
+    }
+    updateBatchSelection();
+}
+
+function updateReviewBatchSelection() {
+    const checkboxes = document.querySelectorAll('.review-case-checkbox:checked');
+    selectedReviewCaseIds = Array.from(checkboxes).map(cb => parseInt(cb.dataset.caseId));
+    
+    const count = selectedReviewCaseIds.length;
+    const countElement = document.getElementById('selected-review-count');
+    if (countElement) {
+        countElement.textContent = count;
+    }
+    
+    const batchActions = document.getElementById('review-batch-actions');
+    if (batchActions) {
+        batchActions.style.display = count > 0 ? 'flex' : 'none';
+    }
+}
+
+function clearReviewSelection() {
+    document.querySelectorAll('.review-case-checkbox').forEach(cb => cb.checked = false);
+    selectedReviewCaseIds = [];
+    updateReviewBatchSelection();
+}
+
+async function batchSubmitReview() {
+    console.log('[批量提交评审] 开始执行，已选用例:', selectedCaseIds);
+    
+    if (selectedCaseIds.length === 0) {
+        showErrorMessage('请选择要提交评审的用例');
+        return;
+    }
+    
+    if (selectedCaseIds.length > 50) {
+        showErrorMessage('单次最多提交50个用例');
+        return;
+    }
+    
+    console.log('[批量提交评审] 准备打开对话框...');
+    await openBatchSubmitReviewModal(selectedCaseIds);
+    console.log('[批量提交评审] openBatchSubmitReviewModal 执行完成');
+}
+
+async function openBatchSubmitReviewModal(caseIds) {
+    console.log('[批量提交评审] 打开对话框，已选择用例:', caseIds);
+    
+    const existingModal = document.getElementById('batch-submit-review-modal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    selectedReviewerIds = [];
+    selectedReviewerNames = [];
+
+    try {
+        console.log('[批量提交评审] 正在获取用户列表...');
+        const usersResult = await apiRequest('/users/list');
+        console.log('[批量提交评审] 用户列表结果:', usersResult);
+        
+        let users = [];
+        if (usersResult.success && usersResult.users) {
+            users = usersResult.users.filter(user => {
+                const username = user.username.toLowerCase();
+                return !['admin', 'administrator', 'root', 'system', 'sys'].includes(username);
+            });
+        }
+        
+        console.log('[批量提交评审] 用户数量:', users.length);
+
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.id = 'batch-submit-review-modal';
+        modal.style.cssText = 'display: flex !important; position: fixed !important; z-index: 999999 !important; top: 0 !important; left: 0 !important; width: 100% !important; height: 100% !important; background-color: rgba(0, 0, 0, 0.7) !important; align-items: center !important; justify-content: center !important; opacity: 1 !important; visibility: visible !important;';
+        
+        modal.innerHTML = `
+            <div class="modal-content" style="width: 700px; max-height: 80vh; overflow-y: auto; background: white !important; border-radius: 8px !important; box-shadow: 0 8px 32px rgba(0,0,0,0.3) !important; position: relative !important; z-index: 1000000 !important; opacity: 1 !important; visibility: visible !important;">
+                <div class="modal-header">
+                    <h3>批量提交评审</h3>
+                    <button class="modal-close" onclick="closeBatchSubmitReviewModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="batch-selected-cases" style="background: #fafafa; border: 1px solid #f0f0f0; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+                        <div style="font-size: 13px; color: #64748b;">
+                            已选择 <strong style="color: #1890ff;">${caseIds.length}</strong> 个测试用例
+                        </div>
+                    </div>
+                    
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #1e293b;">
+                            选择评审人 <span style="color: #ef4444;">*</span>（可多选）
+                        </label>
+                        <div id="batch-selected-reviewers" style="min-height: 40px; padding: 8px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fafafa; margin-bottom: 12px;">
+                            <span style="color: #94a3b8; font-size: 14px;">请选择评审人</span>
+                        </div>
+                        <div style="display: flex; flex-wrap: wrap; gap: 8px; max-height: 300px; overflow-y: auto; padding: 8px; border: 1px solid #f0f0f0; border-radius: 6px;">
+                            ${users.map(user => `
+                                <div class="batch-reviewer-item" data-user-id="${user.id}" data-username="${escapeHtml(user.username)}" 
+                                     onclick="toggleBatchReviewer(${user.id}, '${escapeHtml(user.username)}')"
+                                     style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: white; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer; transition: all 0.2s;">
+                                    <input type="checkbox" 
+                                           id="batch-reviewer-${user.id}" 
+                                           onclick="event.stopPropagation()"
+                                           style="width: 16px; height: 16px; cursor: pointer; accent-color: #1890ff;">
+                                    <span style="font-size: 14px; color: #1e293b;">${escapeHtml(user.username)}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #1e293b;">
+                            评审说明（选填）
+                        </label>
+                        <textarea id="batch-review-comment" 
+                                  class="form-control" 
+                                  placeholder="请输入评审说明..." 
+                                  maxlength="500"
+                                  style="width: 100%; min-height: 80px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 14px; resize: vertical;"></textarea>
+                        <div style="text-align: right; font-size: 12px; color: #94a3b8; margin-top: 4px;">
+                            <span id="batch-comment-count">0</span>/500 字符
+                        </div>
+                    </div>
+                    
+                    <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 12px; margin-bottom: 16px;">
+                        <div style="display: flex; align-items: start; gap: 8px;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M12 16v-4M12 8h.01"></path>
+                            </svg>
+                            <span style="font-size: 13px; color: #1e40af;">提交后将通知评审人，所有用例状态将变为"待评审"</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeBatchSubmitReviewModal()">取消</button>
+                    <button class="btn btn-primary" onclick="confirmBatchSubmitReview()" id="confirm-batch-submit-btn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"></path>
+                        </svg>
+                        确认提交
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        console.log('[批量提交评审] 对话框已添加到页面');
+        
+        const commentTextarea = document.getElementById('batch-review-comment');
+        const commentCount = document.getElementById('batch-comment-count');
+        if (commentTextarea && commentCount) {
+            commentTextarea.addEventListener('input', function() {
+                commentCount.textContent = this.value.length;
+            });
+        }
+        
+    } catch (error) {
+        console.error('[批量提交评审] 打开对话框失败:', error);
+        showErrorMessage('打开对话框失败: ' + error.message);
+    }
+}
+
+function toggleBatchReviewer(userId, userName) {
+    const index = selectedReviewerIds.indexOf(userId);
+    
+    if (index === -1) {
+        selectedReviewerIds.push(userId);
+        selectedReviewerNames.push(userName);
+    } else {
+        selectedReviewerIds.splice(index, 1);
+        selectedReviewerNames.splice(index, 1);
+    }
+    
+    // 更新复选框状态
+    const checkbox = document.getElementById(`batch-reviewer-${userId}`);
+    if (checkbox) {
+        checkbox.checked = selectedReviewerIds.includes(userId);
+    }
+    
+    // 更新选中项的样式
+    const item = document.querySelector(`.batch-reviewer-item[data-user-id="${userId}"]`);
+    if (item) {
+        if (selectedReviewerIds.includes(userId)) {
+            item.style.background = '#e6f7ff';
+            item.style.borderColor = '#1890ff';
+        } else {
+            item.style.background = 'white';
+            item.style.borderColor = '#e2e8f0';
+        }
+    }
+    
+    // 更新已选评审人显示
+    updateBatchSelectedReviewers();
+}
+
+function updateBatchSelectedReviewers() {
+    const container = document.getElementById('batch-selected-reviewers');
+    if (!container) return;
+    
+    if (selectedReviewerIds.length === 0) {
+        container.innerHTML = '<span style="color: #94a3b8; font-size: 14px;">请选择评审人</span>';
+    } else {
+        container.innerHTML = selectedReviewerNames.map((name, index) => `
+            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; background: #e6f7ff; border: 1px solid #91d5ff; border-radius: 4px; margin-right: 8px; margin-bottom: 4px; font-size: 13px; color: #0050b3;">
+                ${escapeHtml(name)}
+                <span onclick="event.stopPropagation(); toggleBatchReviewer(${selectedReviewerIds[index]}, '${escapeHtml(name)}')" 
+                      style="cursor: pointer; font-size: 16px; color: #1890ff; font-weight: bold; margin-left: 4px;">×</span>
+            </span>
+        `).join('');
+    }
+}
+
+function closeBatchSubmitReviewModal() {
+    const modal = document.getElementById('batch-submit-review-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+async function confirmBatchSubmitReview() {
+    if (selectedReviewerIds.length === 0) {
+        showErrorMessage('请选择至少一位评审人');
+        return;
+    }
+    
+    const commentTextarea = document.getElementById('batch-review-comment');
+    const comment = commentTextarea ? commentTextarea.value : '';
+    
+    const confirmBtn = document.getElementById('confirm-batch-submit-btn');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<span class="loading-spinner-small"></span> 提交中...';
+    }
+    
+    try {
+        const response = await apiRequest('/testcases/batch-submit-review', {
+            method: 'POST',
+            body: JSON.stringify({
+                case_ids: selectedCaseIds,
+                reviewer_ids: selectedReviewerIds,
+                comment: comment
+            })
+        });
+        
+        if (response.success) {
+            const data = response.data;
+            
+            closeBatchSubmitReviewModal();
+            clearCaseSelection();
+            
+            if (data.fail_count > 0) {
+                let failMessages = data.fail_cases.map(c => `• ${c.name}: ${c.reason}`).join('\n');
+                showErrorMessage(`批量提交完成\n成功: ${data.success_count} 个\n失败: ${data.fail_count} 个\n\n失败原因:\n${failMessages}`);
+            } else {
+                showSuccessMessage(`✓ 成功提交 ${data.success_count} 个用例给 ${selectedReviewerNames.join('、')} 进行评审`);
+            }
+            
+            if (selectedLevel1PointId) {
+                await refreshTestCasesList();
+            }
+        } else {
+            showErrorMessage(response.message || '批量提交失败');
+        }
+    } catch (error) {
+        console.error('批量提交评审失败:', error);
+        showErrorMessage('批量提交失败: ' + error.message);
+    } finally {
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = `
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"></path>
+                </svg>
+                确认提交
+            `;
+        }
+    }
+}
+
+async function batchApproveReview() {
+    if (selectedReviewCaseIds.length === 0) {
+        showErrorMessage('请选择要评审的用例');
+        return;
+    }
+    
+    await openBatchApproveReviewModal(selectedReviewCaseIds);
+}
+
+async function openBatchApproveReviewModal(caseIds) {
+    const existingModal = document.getElementById('batch-approve-review-modal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'batch-approve-review-modal';
+    modal.style.cssText = 'display: flex; z-index: 99999;';
+    
+    modal.innerHTML = `
+        <div class="modal-content" style="width: 600px; max-height: 80vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3>批量通过评审</h3>
+                <button class="modal-close" onclick="closeBatchApproveReviewModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="batch-selected-cases" style="background: #fafafa; border: 1px solid #f0f0f0; border-radius: 8px; padding: 12px; margin-bottom: 16px; max-height: 200px; overflow-y: auto;">
+                    <div style="font-size: 13px; color: #64748b; margin-bottom: 8px;">
+                        已选择 <strong style="color: #10b981;">${caseIds.length}</strong> 个测试用例待通过
+                    </div>
+                </div>
+                
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #1e293b;">
+                        评审意见（选填）
+                    </label>
+                    <textarea id="batch-approve-comment" 
+                              class="form-control" 
+                              placeholder="用例设计合理，测试覆盖全面..." 
+                              maxlength="500"
+                              style="width: 100%; min-height: 80px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 14px; resize: vertical;"></textarea>
+                    <div style="text-align: right; font-size: 12px; color: #94a3b8; margin-top: 4px;">
+                        <span id="batch-approve-comment-count">0</span>/500 字符
+                    </div>
+                </div>
+                
+                <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 12px; margin-bottom: 16px;">
+                    <div style="display: flex; align-items: start; gap: 8px;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                        </svg>
+                        <span style="font-size: 13px; color: #065f46;">通过后所有用例将变为"已通过"状态，可被执行</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeBatchApproveReviewModal()">取消</button>
+                <button class="btn btn-success" onclick="confirmBatchApproveReview()" id="confirm-batch-approve-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    确认通过
+                </button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    const commentTextarea = document.getElementById('batch-approve-comment');
+    const commentCount = document.getElementById('batch-approve-comment-count');
+    if (commentTextarea && commentCount) {
+        commentTextarea.addEventListener('input', function() {
+            commentCount.textContent = this.value.length;
+        });
+    }
+}
+
+function closeBatchApproveReviewModal() {
+    const modal = document.getElementById('batch-approve-review-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+async function confirmBatchApproveReview() {
+    const commentTextarea = document.getElementById('batch-approve-comment');
+    const comment = commentTextarea ? commentTextarea.value : '';
+    
+    const confirmBtn = document.getElementById('confirm-batch-approve-btn');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<span class="loading-spinner-small"></span> 处理中...';
+    }
+    
+    try {
+        const response = await apiRequest('/testcases/batch-review', {
+            method: 'POST',
+            body: JSON.stringify({
+                case_ids: selectedReviewCaseIds,
+                action: 'approve',
+                comment: comment
+            })
+        });
+        
+        if (response.success) {
+            const data = response.data;
+            
+            closeBatchApproveReviewModal();
+            clearReviewSelection();
+            
+            if (data.fail_count > 0) {
+                let failMessages = data.fail_cases.map(c => `• ${c.name}: ${c.reason}`).join('\n');
+                showErrorMessage(`批量评审完成\n成功: ${data.success_count} 个\n失败: ${data.fail_count} 个\n\n失败原因:\n${failMessages}`);
+            } else {
+                showSuccessMessage(`✓ 成功通过 ${data.success_count} 个用例的评审`);
+            }
+            
+            if (typeof loadWorkspaceData === 'function') {
+                await loadWorkspaceData();
+            }
+        } else {
+            showErrorMessage(response.message || '批量评审失败');
+        }
+    } catch (error) {
+        console.error('批量通过评审失败:', error);
+        showErrorMessage('批量通过失败: ' + error.message);
+    } finally {
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = `
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                确认通过
+            `;
+        }
+    }
+}
+
+async function batchRejectReview() {
+    if (selectedReviewCaseIds.length === 0) {
+        showErrorMessage('请选择要驳回的用例');
+        return;
+    }
+    
+    await openBatchRejectReviewModal(selectedReviewCaseIds);
+}
+
+async function openBatchRejectReviewModal(caseIds) {
+    const existingModal = document.getElementById('batch-reject-review-modal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'batch-reject-review-modal';
+    modal.style.cssText = 'display: flex; z-index: 99999;';
+    
+    modal.innerHTML = `
+        <div class="modal-content" style="width: 600px; max-height: 80vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3>批量驳回评审</h3>
+                <button class="modal-close" onclick="closeBatchRejectReviewModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="batch-selected-cases" style="background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 12px; margin-bottom: 16px; max-height: 200px; overflow-y: auto;">
+                    <div style="font-size: 13px; color: #9a3412; margin-bottom: 8px;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="display: inline-block; vertical-align: middle; margin-right: 4px;">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                            <line x1="12" y1="9" x2="12" y2="13"></line>
+                            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                        </svg>
+                        已选择 <strong style="color: #f59e0b;">${caseIds.length}</strong> 个测试用例待驳回
+                    </div>
+                </div>
+                
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #1e293b;">
+                        驳回原因 <span style="color: #ef4444;">*</span>（至少20字）
+                    </label>
+                    <textarea id="batch-reject-reason" 
+                              class="form-control" 
+                              placeholder="请详细说明驳回原因..." 
+                              maxlength="500"
+                              style="width: 100%; min-height: 100px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 14px; resize: vertical;"></textarea>
+                    <div style="display: flex; justify-content: space-between; font-size: 12px; color: #94a3b8; margin-top: 4px;">
+                        <span id="batch-reject-reason-hint" style="color: #ef4444;">至少需要20个字符</span>
+                        <span><span id="batch-reject-reason-count">0</span>/500 字符</span>
+                    </div>
+                </div>
+                
+                <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 12px; margin-bottom: 16px;">
+                    <div style="display: flex; align-items: start; gap: 8px;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="15" y1="9" x2="9" y2="15"></line>
+                            <line x1="9" y1="9" x2="15" y2="15"></line>
+                        </svg>
+                        <span style="font-size: 13px; color: #991b1b;">驳回后创建者需修改用例并重新提交评审</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeBatchRejectReviewModal()">取消</button>
+                <button class="btn btn-danger" onclick="confirmBatchRejectReview()" id="confirm-batch-reject-btn" disabled>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="15" y1="9" x2="9" y2="15"></line>
+                        <line x1="9" y1="9" x2="15" y2="15"></line>
+                    </svg>
+                    确认驳回
+                </button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    const reasonTextarea = document.getElementById('batch-reject-reason');
+    const reasonCount = document.getElementById('batch-reject-reason-count');
+    const reasonHint = document.getElementById('batch-reject-reason-hint');
+    const confirmBtn = document.getElementById('confirm-batch-reject-btn');
+    
+    if (reasonTextarea && reasonCount && reasonHint && confirmBtn) {
+        reasonTextarea.addEventListener('input', function() {
+            const length = this.value.trim().length;
+            reasonCount.textContent = this.value.length;
+            
+            if (length >= 20) {
+                reasonHint.textContent = '✓ 字数符合要求';
+                reasonHint.style.color = '#10b981';
+                confirmBtn.disabled = false;
+            } else {
+                reasonHint.textContent = `至少需要20个字符，还差 ${20 - length} 个字符`;
+                reasonHint.style.color = '#ef4444';
+                confirmBtn.disabled = true;
+            }
+        });
+    }
+}
+
+function closeBatchRejectReviewModal() {
+    const modal = document.getElementById('batch-reject-review-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+async function confirmBatchRejectReview() {
+    const reasonTextarea = document.getElementById('batch-reject-reason');
+    const reason = reasonTextarea ? reasonTextarea.value.trim() : '';
+    
+    if (reason.length < 20) {
+        showErrorMessage('驳回原因至少需要20个字符');
+        return;
+    }
+    
+    const confirmBtn = document.getElementById('confirm-batch-reject-btn');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<span class="loading-spinner-small"></span> 处理中...';
+    }
+    
+    try {
+        const response = await apiRequest('/testcases/batch-review', {
+            method: 'POST',
+            body: JSON.stringify({
+                case_ids: selectedReviewCaseIds,
+                action: 'reject',
+                comment: reason
+            })
+        });
+        
+        if (response.success) {
+            const data = response.data;
+            
+            closeBatchRejectReviewModal();
+            clearReviewSelection();
+            
+            if (data.fail_count > 0) {
+                let failMessages = data.fail_cases.map(c => `• ${c.name}: ${c.reason}`).join('\n');
+                showErrorMessage(`批量驳回完成\n成功: ${data.success_count} 个\n失败: ${data.fail_count} 个\n\n失败原因:\n${failMessages}`);
+            } else {
+                showSuccessMessage(`✓ 成功驳回 ${data.success_count} 个用例`);
+            }
+            
+            if (typeof loadWorkspaceData === 'function') {
+                await loadWorkspaceData();
+            }
+        } else {
+            showErrorMessage(response.message || '批量驳回失败');
+        }
+    } catch (error) {
+        console.error('批量驳回评审失败:', error);
+        showErrorMessage('批量驳回失败: ' + error.message);
+    } finally {
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = `
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="15" y1="9" x2="9" y2="15"></line>
+                    <line x1="9" y1="9" x2="15" y2="15"></line>
+                </svg>
+                确认驳回
+            `;
+        }
+    }
+}
+
+// ==================== 结束批量评审功能 ====================

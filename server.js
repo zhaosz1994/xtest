@@ -95,6 +95,8 @@ app.use('/api/templates', require('./routes/reportTemplates'));
 app.use('/api/forum', forumRouter);
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/testcases', require('./routes/testcases'));
+app.use('/api/workspace', require('./routes/workspace'));
+app.use('/api', require('./routes/search'));
 
 // 配置数据 API 端点（不带认证，供前端下拉框使用）
 app.get('/priorities/list', async (req, res) => {
@@ -3937,6 +3939,45 @@ app.get('/api/testtypes/list', async (req, res) => {
   } catch (error) {
     console.error('获取测试类型列表错误:', error);
     console.error('错误堆栈:', error.stack);
+    res.json({ success: false, message: '服务器错误', error: error.message });
+  }
+});
+
+// 获取测试用例详情
+app.get('/api/testcases/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log('接收到获取测试用例详情请求:', { id });
+    
+    let testCaseId = id;
+    if (isNaN(Number(id))) {
+      const [testCases] = await pool.execute(
+        'SELECT id FROM test_cases WHERE case_id = ?', [id]
+      );
+      if (testCases.length === 0) {
+        return res.status(404).json({ success: false, message: '测试用例不存在' });
+      }
+      testCaseId = testCases[0].id;
+    }
+    
+    const [cases] = await pool.execute(
+      `SELECT tc.*, m.name as module_name, p.name as project_name,
+              tc.review_status, tc.review_submitted_at, tc.review_completed_at
+       FROM test_cases tc
+       LEFT JOIN modules m ON tc.module_id = m.id
+       LEFT JOIN test_case_projects tcp ON tc.id = tcp.test_case_id
+       LEFT JOIN projects p ON tcp.project_id = p.id
+       WHERE tc.id = ?`,
+      [testCaseId]
+    );
+    
+    if (cases.length === 0) {
+      return res.status(404).json({ success: false, message: '测试用例不存在' });
+    }
+    
+    res.json({ success: true, data: cases[0] });
+  } catch (error) {
+    console.error('获取测试用例详情错误:', error);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });

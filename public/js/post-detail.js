@@ -77,7 +77,8 @@ async function loadPostDetail() {
             ? post.tags.map(tag => `<span class="post-tag" style="background-color: ${tag.color}20; color: ${tag.color};">${escapeHtml(tag.name)}</span>`).join('') 
             : '';
         
-        // 渲染帖子内容
+        const renderedContent = markdownToHtml(post.content || '');
+        
         postContentEl.innerHTML = `
             <article class="post-detail-article">
                 <h1 class="post-detail-title">${escapeHtml(post.title)}</h1>
@@ -93,7 +94,7 @@ async function loadPostDetail() {
                 </div>
                 ${tagsHtml ? `<div class="post-detail-tags">${tagsHtml}</div>` : ''}
                 <div class="post-detail-body">
-                    ${markdownToHtml(post.content || '')}
+                    ${renderedContent}
                 </div>
                 <div class="post-detail-actions">
                     <button class="action-btn like-btn ${post.liked ? 'liked' : ''}" onclick="toggleLike()">
@@ -397,27 +398,48 @@ function formatTime(dateStr) {
 function markdownToHtml(text) {
     if (!text) return '';
     
+    let processedText = text;
+    const codeBlockCount = (text.match(/```/g) || []).length;
+    if (codeBlockCount % 2 !== 0) {
+        processedText = text + '\n```';
+    }
+    
+    if (typeof marked !== 'undefined') {
+        try {
+            const markedInstance = marked || window.marked;
+            if (markedInstance && typeof markedInstance.parse === 'function') {
+                const html = markedInstance.parse(processedText, {
+                    breaks: true,
+                    gfm: true,
+                    headerIds: false,
+                    mangle: false
+                });
+                
+                if (window.NotificationManager) {
+                    return window.NotificationManager.parseMentions(html);
+                }
+                
+                return html;
+            }
+        } catch (e) {
+            console.error('Markdown解析失败:', e);
+        }
+    }
+    
     let html = escapeHtml(text);
     
-    // 代码块
     html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>');
     
-    // 行内代码
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
     
-    // 粗体
     html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     
-    // 斜体
     html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
     
-    // 链接
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
     
-    // 换行
     html = html.replace(/\n/g, '<br>');
     
-    // @提及
     if (window.NotificationManager) {
         html = window.NotificationManager.parseMentions(html);
     }
