@@ -8641,7 +8641,6 @@ body.floating-panel-resizing * {
     flex-direction: column;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
     overflow: auto;
-    resize: both;
 }
 
 .ai-modal-header {
@@ -8821,8 +8820,8 @@ body.floating-panel-resizing * {
     border-radius: 12px;
     font-size: 14px;
     resize: vertical;
-    min-height: 48px;
-    max-height: 200px;
+    min-height: 80px;
+    max-height: 300px;
     font-family: inherit;
     background: var(--color-bg-primary, #ffffff);
     color: var(--color-text-primary, #1f2937);
@@ -8867,6 +8866,69 @@ body.floating-panel-resizing * {
 .ai-config-hint span {
     font-size: 12px;
     color: var(--color-text-tertiary, #9ca3af);
+}
+
+.ai-resize-handle {
+    position: absolute;
+    z-index: 100;
+}
+
+.ai-resize-handle-right {
+    top: 0;
+    right: 0;
+    width: 6px;
+    height: 100%;
+    cursor: ew-resize;
+    background: transparent;
+    transition: background 0.2s;
+}
+
+.ai-resize-handle-right:hover {
+    background: rgba(99, 102, 241, 0.3);
+}
+
+.ai-resize-handle-bottom {
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 6px;
+    cursor: ns-resize;
+    background: transparent;
+    transition: background 0.2s;
+}
+
+.ai-resize-handle-bottom:hover {
+    background: rgba(99, 102, 241, 0.3);
+}
+
+.ai-resize-handle-corner {
+    right: 0;
+    bottom: 0;
+    width: 16px;
+    height: 16px;
+    cursor: nwse-resize;
+    background: transparent;
+    transition: background 0.2s;
+}
+
+.ai-resize-handle-corner:hover {
+    background: rgba(99, 102, 241, 0.3);
+}
+
+.ai-resize-handle-corner::after {
+    content: '';
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid rgba(99, 102, 241, 0.5);
+    border-bottom: 2px solid rgba(99, 102, 241, 0.5);
+}
+
+.ai-resize-handle-corner:hover::after {
+    border-right-color: rgba(99, 102, 241, 0.8);
+    border-bottom-color: rgba(99, 102, 241, 0.8);
 }
 
 /* AI 消息样式 */

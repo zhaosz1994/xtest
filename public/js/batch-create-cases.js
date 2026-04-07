@@ -3400,10 +3400,12 @@
     }
     
     function removeDrawerScript(index) {
-        if (confirm('确定要删除此脚本吗？')) {
-            currentDrawerScripts.splice(index, 1);
-            renderDrawerScriptsSummary();
-        }
+        showConfirmMessage('确定要删除此脚本吗？').then(confirmed => {
+            if (confirmed) {
+                currentDrawerScripts.splice(index, 1);
+                renderDrawerScriptsSummary();
+            }
+        });
     }
     
     function removeDrawerScriptFile() {

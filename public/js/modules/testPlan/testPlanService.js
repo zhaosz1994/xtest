@@ -357,7 +357,7 @@ async function resumeTestPlan(planId) {
 }
 
 async function deleteTestPlan(planId) {
-    if (!confirm('确定要删除这个测试计划吗？')) return;
+    if (!(await showConfirmMessage('确定要删除这个测试计划吗？'))) return;
     
     const result = await TestPlanService.delete(planId);
     if (result.success) {

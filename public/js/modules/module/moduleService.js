@@ -231,7 +231,13 @@ async function editModule(moduleId) {
         return;
     }
 
-    const newName = prompt('请输入新的模块名称:', module.name);
+    const newName = await showPromptModal({
+        title: '编辑模块',
+        message: '请输入新的模块名称：',
+        defaultValue: module.name,
+        placeholder: '请输入模块名称'
+    });
+    
     if (newName && newName.trim() !== module.name) {
         const result = await ModuleService.update(moduleId, { name: newName.trim() });
         if (result.success) {
@@ -241,7 +247,7 @@ async function editModule(moduleId) {
 }
 
 async function deleteModule(moduleId) {
-    if (!confirm('确定要删除这个模块吗？相关的测试点也会被删除。')) return;
+    if (!(await showConfirmMessage('确定要删除这个模块吗？相关的测试点也会被删除。'))) return;
     
     const result = await ModuleService.delete(moduleId);
     if (result.success) {

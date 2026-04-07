@@ -2634,6 +2634,7 @@
                                 
                                 <div class="config-actions" style="margin-top: 16px; margin-bottom: 16px;">
                                     <button class="primary-btn" id="add-ai-model-btn">+ 添加AI模型</button>
+                                    <button class="secondary-btn" id="view-ai-logs-btn" onclick="window.location.href='/ai-operation-logs.html'">📊 查看AI操作日志</button>
                                 </div>
                                 
                                 <table class="config-table">
@@ -2683,6 +2684,7 @@
                                             <select id="ai-model-provider-select">
                                                 <option value="deepseek">DeepSeek</option>
                                                 <option value="openai">OpenAI</option>
+                                                <option value="openai-compatible">OpenAI兼容API</option>
                                                 <option value="zhipu">智谱AI</option>
                                                 <option value="anthropic">Anthropic</option>
                                                 <option value="custom">自定义</option>
@@ -5746,7 +5748,7 @@ return rows[0];'></textarea>
                 <div class="form-group">
                     <label class="form-label required">驳回原因</label>
                     <textarea id="reject-reason" class="form-textarea" rows="3" placeholder="请详细说明驳回原因..." maxlength="500" oninput="updateRejectReasonCount()"></textarea>
-                    <div class="char-count"><span id="reject-char-count">0</span>/500 (最少20字)</div>
+                    <div class="char-count"><span id="reject-char-count">0</span>/500</div>
                 </div>
                 
                 <!-- 常见驳回原因 -->
@@ -6367,6 +6369,25 @@ return rows[0];'></textarea>
         </div>
     </div>
     
+    <!-- 输入提示模态框 -->
+    <div id="prompt-modal" class="modal" style="z-index: 100001; display: none; align-items: center; justify-content: center;">
+        <div class="modal-content" style="width: 450px; max-width: 90%; margin: 0;">
+            <div class="modal-header">
+                <h3 id="prompt-title">输入提示</h3>
+                <button class="close-btn" onclick="closePromptModal(false)">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="prompt-message" style="font-size: 14px; margin-bottom: 12px;"></div>
+                <textarea id="prompt-input" style="width: 100%; min-height: 80px; padding: 10px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; resize: vertical; box-sizing: border-box;" placeholder="请输入内容..."></textarea>
+                <div id="prompt-hint" style="font-size: 12px; color: #6b7280; margin-top: 6px;"></div>
+            </div>
+            <div class="modal-footer" style="justify-content: center; gap: 16px;">
+                <button class="secondary-btn" onclick="closePromptModal(false)">取消</button>
+                <button class="primary-btn" onclick="closePromptModal(true)">确认</button>
+            </div>
+        </div>
+    </div>
+    
     <!-- 超链接配置模态框 -->
     <div id="hyperlink-config-modal" class="modal" style="z-index: 100000; display: none; align-items: center; justify-content: center;">
         <div class="modal-content" style="max-width: 500px;">
@@ -6575,6 +6596,9 @@ return rows[0];'></textarea>
                     <span>💡 AI配置由管理员在配置中心统一管理</span>
                 </div>
             </div>
+            <div class="ai-resize-handle ai-resize-handle-right"></div>
+            <div class="ai-resize-handle ai-resize-handle-bottom"></div>
+            <div class="ai-resize-handle ai-resize-handle-corner"></div>
         </div>
     </div>
     

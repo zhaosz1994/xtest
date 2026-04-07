@@ -3070,7 +3070,7 @@ async function editTestPlan(planId) {
         showLoading('加载测试计划...');
 
         // 获取测试计划详情
-        const response = await apiRequest(`/testplans/detail/${planId}`);
+        const response = await apiRequest(`/testplans/detail/${planId}`, { useCache: false });
 
         hideLoading();
 
@@ -3570,6 +3570,7 @@ async function deleteTestPlan(planId) {
 
                 if (response.success) {
                     showSuccessMessage('测试计划删除成功');
+                    apiCache.delete(`/testplans/detail/${planId}`);
                     await loadTestPlans();
                 } else {
                     showErrorMessage(response.message || '删除失败');
@@ -8081,7 +8082,7 @@ async function editExecutionRecord(recordId) {
     // 加载超链接配置
     let bugTypeOptions = '<option value="">选择类型</option>';
     try {
-        const response = await apiRequest('/hyperlink-configs/list');
+        const response = await apiRequest('/hyperlink-configs/list', { useCache: false });
         if (response.success && response.configs) {
             response.configs.forEach(config => {
                 const selected = record.bugType === config.name ? 'selected' : '';
@@ -12536,6 +12537,30 @@ async function loadReportDrawerData(reportId) {
             }
 
             let summaryHtml = '';
+            
+            // 检查AI分析是否失败
+            const aiAnalysisFailed = report.aiAnalysisFailed || report.ai_analysis_failed;
+            if (aiAnalysisFailed) {
+                summaryHtml = `
+                    <div class="drawer-section">
+                        <div class="ai-analysis-warning" style="background: #fef3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 12px 16px; margin-bottom: 12px;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="#856404" stroke-width="2" style="width: 20px; height: 20px;">
+                                    <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                                </svg>
+                                <span style="color: #856404; font-weight: 500;">AI分析生成失败</span>
+                            </div>
+                            <p style="color: #856404; font-size: 13px; margin: 8px 0 0 28px;">
+                                报告已生成，但AI智能分析未能完成。您可以重新生成报告以获取AI分析内容。
+                            </p>
+                            <button onclick="regenerateReportWithAI(${reportId})" style="margin-top: 8px; margin-left: 28px; padding: 6px 12px; background: #ffc107; border: none; border-radius: 4px; color: #856404; cursor: pointer; font-size: 13px;">
+                                重新生成AI分析
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+            
             if (summaryContent) {
                 // 使用 marked.js 将 Markdown 转换为 HTML
                 let renderedSummary = summaryContent;
@@ -12547,7 +12572,7 @@ async function loadReportDrawerData(reportId) {
                     }
                 }
                 
-                summaryHtml = `
+                summaryHtml += `
                     <div class="drawer-section">
                         <h4 class="section-title">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
@@ -12880,6 +12905,8 @@ async function generateReportFromTestPlan(testPlanId) {
                 renderMarkdownContent();
             }
 
+            await loadTestReports();
+
             return result;
         } else {
             showToast(result.message || '报告生成失败', 'error');
@@ -12949,6 +12976,61 @@ async function regenerateReport() {
     } catch (error) {
         console.error('重新生成报告错误:', error);
         showToast('重新生成失败', 'error');
+    }
+}
+
+// 重新生成AI分析（仅针对AI分析失败的报告）
+async function regenerateReportWithAI(reportId) {
+    if (!reportId) {
+        showToast('报告ID无效', 'warning');
+        return;
+    }
+
+    try {
+        showLoading('正在重新生成AI分析...');
+        
+        // 获取报告详情
+        const reportData = await apiRequest(`/reports/detail/${reportId}`);
+        if (!reportData.success || !reportData.report) {
+            showToast('获取报告信息失败', 'error');
+            return;
+        }
+
+        const report = reportData.report;
+        const testPlanId = report.testPlanId || report.test_plan_id;
+        
+        if (!testPlanId) {
+            showToast('该报告未关联测试计划，无法重新生成', 'error');
+            return;
+        }
+
+        // 重新生成报告（启用AI分析）
+        const result = await apiRequest(`/reports/generate/${testPlanId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ useAI: true })
+        });
+
+        if (result.success) {
+            showToast('AI分析重新生成成功', 'success');
+            // 刷新报告详情
+            if (typeof loadReportDrawerData === 'function') {
+                loadReportDrawerData(reportId);
+            }
+            // 刷新报告列表
+            if (typeof loadReportsData === 'function') {
+                loadReportsData();
+            }
+        } else {
+            showToast(result.message || 'AI分析生成失败', 'error');
+        }
+    } catch (error) {
+        console.error('重新生成AI分析错误:', error);
+        showToast('重新生成失败: ' + error.message, 'error');
+    } finally {
+        hideLoading();
     }
 }
 
@@ -13772,7 +13854,7 @@ function applyMenuVisibilityByRole() {
 // 从 URL hash 恢复配置面板
 function restoreConfigPanelFromHash() {
     const hash = window.location.hash;
-    const configMatch = hash.match(/#config=(.+)/);
+    const configMatch = hash.match(/[#&?]config=([^&]+)/);
 
     if (configMatch) {
         const configName = configMatch[1];
@@ -13930,6 +14012,7 @@ async function submitPasswordChange() {
         if (result.success) {
             showSuccessMessage('密码修改成功');
             closeEditPasswordModal();
+            await loadUsers();
         } else {
             showErrorMessage(result.message || '修改失败');
         }
@@ -13977,6 +14060,7 @@ async function saveNotificationPrefs() {
         
         if (result.success) {
             showSuccessMessage('消息提醒配置已保存');
+            await loadNotificationPrefs();
         } else {
             showErrorMessage(result.message || '保存失败');
         }
@@ -14101,7 +14185,7 @@ function openAddEmailConfigModal() {
 // 编辑邮件配置
 async function editEmailConfig(id) {
     try {
-        const result = await apiRequest(`/email/configs/${id}`);
+        const result = await apiRequest(`/email/configs/${id}`, { useCache: false });
         if (result.success) {
             const config = result.config;
             document.getElementById('email-modal-title').textContent = '编辑邮件配置';
@@ -14186,6 +14270,9 @@ async function saveEmailConfig() {
         if (result.success) {
             showToast(id ? '邮件配置更新成功' : '邮件配置创建成功', 'success');
             closeEmailConfigModal();
+            if (id) {
+                apiCache.delete(`/email/configs/${id}`);
+            }
             loadEmailConfigs();
         } else {
             showToast(result.message || '保存失败', 'error');
@@ -14204,6 +14291,7 @@ async function deleteEmailConfig(id) {
         const result = await apiRequest(`/email/configs/${id}`, { method: 'DELETE' });
         if (result.success) {
             showToast('邮件配置删除成功', 'success');
+            apiCache.delete(`/email/configs/${id}`);
             loadEmailConfigs();
         } else {
             showToast(result.message || '删除失败', 'error');
@@ -14239,7 +14327,7 @@ async function loadHyperlinkConfigs() {
     if (!tbody) return;
 
     try {
-        const result = await apiRequest('/hyperlink-configs/list');
+        const result = await apiRequest('/hyperlink-configs/list', { useCache: false });
         
         if (result.success && result.configs) {
             if (result.configs.length === 0) {
@@ -14336,6 +14424,7 @@ async function saveHyperlinkConfig() {
         if (result.success) {
             showSuccessMessage(id ? '更新成功' : '添加成功');
             closeHyperlinkConfigModal();
+            apiCache.delete('/hyperlink-configs/list');
             loadHyperlinkConfigs();
         } else {
             showErrorMessage(result.message || '操作失败');
@@ -14372,6 +14461,7 @@ async function deleteHyperlinkConfig(id) {
         const result = await apiRequest(`/hyperlink-configs/${id}`, { method: 'DELETE' });
         if (result.success) {
             showSuccessMessage('删除成功');
+            apiCache.delete('/hyperlink-configs/list');
             loadHyperlinkConfigs();
         } else {
             showErrorMessage(result.message || '删除失败');
@@ -15022,7 +15112,7 @@ async function editEnvironment(environmentId) {
     try {
         showLoading('加载环境信息中...');
 
-        const response = await apiRequest(`/environments/get?id=${environmentId}`);
+        const response = await apiRequest(`/environments/get?id=${environmentId}`, { useCache: false });
 
         if (response.success) {
             const environment = response.environment;
@@ -18578,7 +18668,7 @@ async function editTestMethod(methodId) {
     try {
         showLoading('加载测试方式信息中...');
 
-        const response = await apiRequest(`/test-methods/get?id=${methodId}`);
+        const response = await apiRequest(`/test-methods/get?id=${methodId}`, { useCache: false });
 
         if (response.success) {
             const testMethod = response.testMethod;
@@ -18758,7 +18848,7 @@ async function editTestType(typeId) {
     try {
         showLoading('加载测试类型信息中...');
 
-        const response = await apiRequest(`/test-types/get?id=${typeId}`);
+        const response = await apiRequest(`/test-types/get?id=${typeId}`, { useCache: false });
 
         if (response.success) {
             const testType = response.testType;
@@ -18938,7 +19028,7 @@ async function editTestSoftware(softwareId) {
     try {
         showLoading('加载测试软件信息中...');
 
-        const response = await apiRequest(`/test-softwares/get?id=${softwareId}`);
+        const response = await apiRequest(`/test-softwares/get?id=${softwareId}`, { useCache: false });
 
         if (response.success) {
             const testSoftware = response.software;
@@ -19298,7 +19388,7 @@ async function editTestProgress(progressId) {
     try {
         showLoading('加载测试进度信息中...');
 
-        const response = await apiRequest(`/test-progresses/get?id=${progressId}`);
+        const response = await apiRequest(`/test-progresses/get?id=${progressId}`, { useCache: false });
 
         if (response.success) {
             const testProgress = response.testProgress;
@@ -19645,7 +19735,7 @@ async function editPriority(priorityId) {
     try {
         showLoading('加载优先级信息中...');
 
-        const response = await apiRequest(`/priorities/get?id=${priorityId}`);
+        const response = await apiRequest(`/priorities/get?id=${priorityId}`, { useCache: false });
 
         if (response.success) {
             const priority = response.priority;
@@ -20075,7 +20165,7 @@ async function openEditLevel1PointModal(pointId) {
     try {
         showLoading('加载测试点数据中...');
 
-        const response = await apiRequest(`/testpoints/level1/detail/${pointId}`);
+        const response = await apiRequest(`/testpoints/level1/detail/${pointId}`, { useCache: false });
 
         if (response.success && response.testpoint) {
             const point = response.testpoint;
@@ -20465,7 +20555,7 @@ function closeAISkillModal() {
 // 编辑AI技能
 async function editAISkill(skillId) {
     try {
-        const response = await apiRequest(`/ai-skills/detail/${skillId}`);
+        const response = await apiRequest(`/ai-skills/detail/${skillId}`, { useCache: false });
         if (response.success && response.skill) {
             openAISkillModal(response.skill);
         } else {
@@ -20544,6 +20634,9 @@ async function saveAISkill() {
         if (response.success) {
             showSuccessMessage(currentEditingSkillId ? '技能更新成功' : '技能创建成功');
             closeAISkillModal();
+            if (currentEditingSkillId) {
+                apiCache.delete(`/ai-skills/detail/${currentEditingSkillId}`);
+            }
             await loadAISkills();
         } else {
             showErrorMessage(response.message || '保存失败');
@@ -20567,6 +20660,7 @@ async function deleteAISkill(skillId) {
 
         if (response.success) {
             showSuccessMessage('技能删除成功');
+            apiCache.delete(`/ai-skills/detail/${skillId}`);
             await loadAISkills();
         } else {
             showErrorMessage(response.message || '删除失败');
@@ -21080,6 +21174,7 @@ function getProviderName(provider) {
     const providerNames = {
         'deepseek': 'DeepSeek',
         'openai': 'OpenAI',
+        'openai-compatible': 'OpenAI兼容API',
         'zhipu': '智谱AI',
         'anthropic': 'Anthropic',
         'custom': '自定义'
@@ -21131,7 +21226,7 @@ function closeAIModelModal() {
 async function editAIModel(modelId) {
     try {
         showLoading();
-        const response = await apiRequest(`/ai-models/get?modelId=${modelId}`);
+        const response = await apiRequest(`/ai-models/get?modelId=${modelId}`, { useCache: false });
 
         if (response.success && response.model) {
             const model = response.model;
@@ -21214,7 +21309,10 @@ async function saveAIModel() {
         if (response.success) {
             showSuccessMessage(editingAIModelId ? 'AI模型更新成功' : 'AI模型添加成功');
             closeAIModelModal();
+            apiCache.delete(`/ai-models/get?modelId=${modelId}`);
             await renderAIModelsList();
+            aiModelsCache = [];
+            await loadAvailableModels(true);
         } else {
             showErrorMessage(response.message || '保存失败');
         }
@@ -21242,7 +21340,10 @@ async function deleteAIModel(modelId) {
 
         if (response.success) {
             showSuccessMessage('AI模型删除成功');
+            apiCache.delete(`/ai-models/get?modelId=${modelId}`);
             await renderAIModelsList();
+            aiModelsCache = [];
+            await loadAvailableModels(true);
         } else {
             showErrorMessage(response.message || '删除失败');
         }
@@ -21266,7 +21367,10 @@ async function setDefaultAIModel(modelId) {
 
         if (response.success) {
             showSuccessMessage('默认AI模型设置成功');
+            apiCache.deleteByPrefix('/ai-models/');
             await renderAIModelsList();
+            aiModelsCache = [];
+            await loadAvailableModels(true);
         } else {
             showErrorMessage(response.message || '设置失败');
         }
@@ -21430,6 +21534,10 @@ document.addEventListener('DOMContentLoaded', function () {
                 case 'openai':
                     endpointInput.value = 'https://api.openai.com/v1/chat/completions';
                     break;
+                case 'openai-compatible':
+                    endpointInput.value = '';
+                    endpointInput.placeholder = '请输入兼容OpenAI格式的API端点URL';
+                    break;
                 case 'zhipu':
                     endpointInput.value = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
                     break;
@@ -21513,21 +21621,23 @@ async function preloadAIModels() {
 }
 
 // 加载可用的AI模型列表
-async function loadAvailableModels() {
+async function loadAvailableModels(forceRefresh = false) {
     const modelSelect = document.getElementById('ai-model-select');
     if (!modelSelect) return;
 
     try {
-        // 优先使用缓存的模型列表
-        let models = aiModelsCache;
+        let models;
         
-        // 如果缓存为空，则从服务器加载
-        if (!models || models.length === 0) {
+        // 如果强制刷新或缓存为空，则从服务器加载
+        if (forceRefresh || !aiModelsCache || aiModelsCache.length === 0) {
             const response = await apiRequest('/ai-models/list');
             if (response.success && response.models) {
                 models = response.models;
                 aiModelsCache = models;
             }
+        } else {
+            // 使用缓存
+            models = aiModelsCache;
         }
 
         if (models && models.length > 0) {
@@ -21630,6 +21740,88 @@ function initAIModalDrag() {
     // 设置header初始样式
     header.style.cursor = 'grab';
     header.style.userSelect = 'none';
+    
+    initAIModalResize();
+}
+
+function initAIModalResize() {
+    const modal = document.getElementById('ai-assistant-modal');
+    const content = modal?.querySelector('.ai-modal-content');
+    
+    if (!modal || !content) return;
+    
+    const rightHandle = content.querySelector('.ai-resize-handle-right');
+    const bottomHandle = content.querySelector('.ai-resize-handle-bottom');
+    const cornerHandle = content.querySelector('.ai-resize-handle-corner');
+    
+    let isResizing = false;
+    let resizeType = '';
+    let startX, startY, startWidth, startHeight;
+    
+    function startResize(e, type) {
+        isResizing = true;
+        resizeType = type;
+        
+        startX = e.clientX;
+        startY = e.clientY;
+        startWidth = content.offsetWidth;
+        startHeight = content.offsetHeight;
+        
+        document.body.style.cursor = type === 'right' ? 'ew-resize' : 
+                                      type === 'bottom' ? 'ns-resize' : 'nwse-resize';
+        document.body.style.userSelect = 'none';
+        
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    
+    function doResize(e) {
+        if (!isResizing) return;
+        
+        const deltaX = e.clientX - startX;
+        const deltaY = e.clientY - startY;
+        
+        if (resizeType === 'right' || resizeType === 'corner') {
+            const newWidth = Math.max(600, Math.min(startWidth + deltaX, window.innerWidth * 0.95));
+            content.style.width = newWidth + 'px';
+            content.style.maxWidth = newWidth + 'px';
+        }
+        
+        if (resizeType === 'bottom' || resizeType === 'corner') {
+            const newHeight = Math.max(400, Math.min(startHeight + deltaY, window.innerHeight * 0.95));
+            content.style.height = newHeight + 'px';
+        }
+        
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    
+    function stopResize(e) {
+        if (isResizing) {
+            isResizing = false;
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        }
+    }
+    
+    if (rightHandle) {
+        rightHandle.addEventListener('mousedown', (e) => startResize(e, 'right'));
+    }
+    
+    if (bottomHandle) {
+        bottomHandle.addEventListener('mousedown', (e) => startResize(e, 'bottom'));
+    }
+    
+    if (cornerHandle) {
+        cornerHandle.addEventListener('mousedown', (e) => startResize(e, 'corner'));
+    }
+    
+    document.addEventListener('mousemove', doResize);
+    document.addEventListener('mouseup', stopResize);
 }
 
 // 发送AI查询
@@ -25183,16 +25375,27 @@ function renderAsyncTasks() {
         taskCountBadge.textContent = `${runningTasks.length} 个任务`;
     }
 
-    tasksList.innerHTML = asyncTasks.map(task => `
-        <div class="task-item" data-task-id="${task.id}">
+    tasksList.innerHTML = asyncTasks.map(task => {
+        // 获取进度阶段描述
+        const progressStage = getProgressStage(task.progress, task.status);
+        const estimatedTime = calculateEstimatedTime(task);
+        
+        return `
+        <div class="task-item ${task.status === 'failed' ? 'task-failed' : ''}" data-task-id="${task.id}">
             <div class="task-info">
                 <div class="task-name">${task.name}</div>
                 <div class="task-progress">
                     ${renderProgressBar(task.progress, 'progress')}
                 </div>
+                <div class="task-stage">
+                    <span class="stage-icon">${progressStage.icon}</span>
+                    <span class="stage-text">${progressStage.text}</span>
+                    ${estimatedTime ? `<span class="estimated-time">预计剩余: ${estimatedTime}</span>` : ''}
+                </div>
+                ${task.error ? `<div class="task-error" style="color: #ef4444; font-size: 12px; margin-top: 4px;">${task.error}</div>` : ''}
             </div>
-            <span class="task-status">${task.status}</span>
-            ${task.progress < 100 ? `
+            <span class="task-status status-${task.status}">${getTaskStatusText(task.status)}</span>
+            ${task.progress < 100 && task.status !== 'failed' ? `
                 <div class="task-actions">
                     <button class="task-cancel-btn" onclick="cancelAsyncTask('${task.id}')" title="取消任务">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
@@ -25202,8 +25405,76 @@ function renderAsyncTasks() {
                     </button>
                 </div>
             ` : ''}
+            ${task.status === 'completed' && task.reportId ? `
+                <div class="task-actions">
+                    <button class="task-view-btn" onclick="viewReportDetail(${task.reportId})" title="查看报告">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                    </button>
+                </div>
+            ` : ''}
         </div>
-    `).join('');
+    `}).join('');
+}
+
+// 获取进度阶段描述
+function getProgressStage(progress, status) {
+    if (status === 'failed') {
+        return { icon: '❌', text: '任务失败' };
+    }
+    if (status === 'completed') {
+        return { icon: '✅', text: '已完成' };
+    }
+    if (status === 'cancelled') {
+        return { icon: '⏹️', text: '已取消' };
+    }
+    
+    if (progress < 10) {
+        return { icon: '📋', text: '正在创建报告记录...' };
+    } else if (progress < 40) {
+        return { icon: '📊', text: '正在组装测试数据...' };
+    } else if (progress < 50) {
+        return { icon: '📝', text: '数据组装完成，准备生成报告...' };
+    } else if (progress < 70) {
+        return { icon: '🤖', text: '正在进行AI智能分析...' };
+    } else if (progress < 85) {
+        return { icon: '📄', text: '正在生成Markdown报告...' };
+    } else if (progress < 100) {
+        return { icon: '💾', text: '正在保存报告文件...' };
+    } else {
+        return { icon: '✅', text: '报告生成完成' };
+    }
+}
+
+// 计算预计剩余时间
+function calculateEstimatedTime(task) {
+    if (!task.startTime || task.progress < 10 || task.progress >= 100) {
+        return null;
+    }
+    
+    const elapsed = Date.now() - task.startTime;
+    const progressPerMs = task.progress / elapsed;
+    const remainingProgress = 100 - task.progress;
+    const estimatedMs = remainingProgress / progressPerMs;
+    
+    if (estimatedMs < 1000) return '即将完成';
+    if (estimatedMs < 60000) return `${Math.ceil(estimatedMs / 1000)} 秒`;
+    if (estimatedMs < 3600000) return `${Math.ceil(estimatedMs / 60000)} 分钟`;
+    return `${Math.ceil(estimatedMs / 3600000)} 小时`;
+}
+
+// 获取任务状态文本
+function getTaskStatusText(status) {
+    const statusMap = {
+        'pending': '等待中',
+        'processing': '处理中',
+        'completed': '已完成',
+        'failed': '失败',
+        'cancelled': '已取消'
+    };
+    return statusMap[status] || status;
 }
 
 // 显示异步任务面板
@@ -25283,21 +25554,6 @@ function cancelAsyncTask(taskId) {
     }
 
     showToast('任务已取消', 'info');
-}
-
-// 加载报告数据
-async function loadReportsData() {
-    try {
-        const result = await apiRequest('/reports/list');
-
-        if (result.success) {
-            allReportsData = result.reports || [];
-            renderReportsTable(allReportsData);
-            updateReportsStats(allReportsData);
-        }
-    } catch (error) {
-        console.error('加载报告数据失败:', error);
-    }
 }
 
 // 渲染报告表格
@@ -25501,10 +25757,72 @@ function filterReports() {
 
 // 存储所有报告数据用于筛选
 let allReportsData = [];
+let reportsCurrentPage = 1;
+let reportsPageSize = 20;
+let reportsTotalCount = 0;
+
+// 加载报告数据（支持分页）
+async function loadReportsData(page = 1) {
+    try {
+        reportsCurrentPage = page;
+        const result = await apiRequest(`/reports/list?page=${page}&pageSize=${reportsPageSize}`);
+
+        if (result.success) {
+            allReportsData = result.reports || [];
+            reportsTotalCount = result.pagination?.total || 0;
+            renderReportsTable(allReportsData);
+            renderReportsPagination();
+            updateReportsStats(allReportsData);
+        }
+    } catch (error) {
+        console.error('加载报告数据失败:', error);
+    }
+}
+
+// 渲染报告分页
+function renderReportsPagination() {
+    const totalPages = Math.ceil(reportsTotalCount / reportsPageSize);
+    
+    // 更新总记录数
+    const totalReportsEl = document.getElementById('total-reports');
+    if (totalReportsEl) {
+        totalReportsEl.textContent = reportsTotalCount;
+    }
+    
+    // 更新当前页
+    const currentPageEl = document.getElementById('current-page');
+    if (currentPageEl) {
+        currentPageEl.textContent = reportsCurrentPage;
+    }
+    
+    // 更新分页按钮状态
+    const prevBtn = document.querySelector('#reports-pagination .page-btn:first-of-type');
+    const nextBtn = document.querySelector('#reports-pagination .page-btn:last-of-type');
+    
+    if (prevBtn) {
+        prevBtn.disabled = reportsCurrentPage <= 1;
+    }
+    if (nextBtn) {
+        nextBtn.disabled = reportsCurrentPage >= totalPages;
+    }
+}
 
 // 分页
 function changeReportPage(direction) {
-    // TODO: 实现分页逻辑
+    const totalPages = Math.ceil(reportsTotalCount / reportsPageSize);
+    let newPage = reportsCurrentPage;
+    
+    if (direction === 'prev') {
+        newPage = Math.max(1, reportsCurrentPage - 1);
+    } else if (direction === 'next') {
+        newPage = Math.min(totalPages, reportsCurrentPage + 1);
+    } else if (typeof direction === 'number') {
+        newPage = direction;
+    }
+    
+    if (newPage !== reportsCurrentPage && newPage >= 1 && newPage <= totalPages) {
+        loadReportsData(newPage);
+    }
 }
 
 // 下载报告
@@ -25621,6 +25939,76 @@ function closeConfirmModal(confirmed) {
     if (window.confirmCallback) {
         window.confirmCallback(confirmed);
         window.confirmCallback = null;
+    }
+}
+
+// 显示输入弹窗（Promise版本）
+function showPromptModal(options) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('prompt-modal');
+        const titleEl = document.getElementById('prompt-title');
+        const messageEl = document.getElementById('prompt-message');
+        const inputEl = document.getElementById('prompt-input');
+        const hintEl = document.getElementById('prompt-hint');
+
+        if (!modal) {
+            const result = prompt(options.message || '请输入内容:', options.defaultValue || '');
+            resolve(result);
+            return;
+        }
+
+        if (titleEl) titleEl.textContent = options.title || '输入提示';
+        if (messageEl) messageEl.textContent = options.message || '';
+        if (inputEl) {
+            inputEl.value = options.defaultValue || '';
+            if (options.placeholder) {
+                inputEl.placeholder = options.placeholder;
+            }
+            if (options.minLength) {
+                inputEl.minLength = options.minLength;
+            }
+        }
+        if (hintEl) {
+            hintEl.textContent = options.hint || '';
+        }
+
+        modal.style.display = 'flex';
+
+        if (inputEl) {
+            setTimeout(() => inputEl.focus(), 100);
+        }
+
+        window.promptCallback = resolve;
+        window.promptOptions = options;
+    });
+}
+
+// 关闭输入弹窗
+function closePromptModal(confirmed) {
+    const modal = document.getElementById('prompt-modal');
+    const inputEl = document.getElementById('prompt-input');
+
+    if (modal) {
+        modal.style.display = 'none';
+    }
+
+    if (window.promptCallback) {
+        if (confirmed && inputEl) {
+            const value = inputEl.value.trim();
+            const options = window.promptOptions || {};
+            
+            if (options.minLength && value.length < options.minLength) {
+                showErrorMessage(options.hint || `输入内容至少需要 ${options.minLength} 个字`);
+                if (modal) modal.style.display = 'flex';
+                return;
+            }
+            
+            window.promptCallback(value);
+        } else {
+            window.promptCallback(null);
+        }
+        window.promptCallback = null;
+        window.promptOptions = null;
     }
 }
 
@@ -27795,9 +28183,8 @@ function updateRejectReasonCount() {
         const length = textarea.value.length;
         countSpan.textContent = length;
         
-        // 如果少于20字，显示警告颜色
-        if (length > 0 && length < 20) {
-            countSpan.style.color = '#ff4d4f';
+        if (length > 0) {
+            countSpan.style.color = '#8c8c8c';
         } else {
             countSpan.style.color = '#8c8c8c';
         }
@@ -27820,8 +28207,8 @@ async function confirmRejectReview() {
     const suggestion = document.getElementById('reject-suggestion').value;
     
     // 验证驳回原因
-    if (!reason || reason.length < 20) {
-        showErrorMessage('驳回原因至少需要20个字符');
+    if (!reason || reason.length < 1) {
+        showErrorMessage('驳回原因不能为空');
         return;
     }
     
@@ -28832,7 +29219,7 @@ async function batchApproveAllPendingReviews() {
         return;
     }
     
-    if (!confirm(`确定要批量通过 ${selectedAllPendingReviews.size} 个用例吗？`)) {
+    if (!(await showConfirmMessage(`确定要批量通过 ${selectedAllPendingReviews.size} 个用例吗？`))) {
         return;
     }
     
@@ -28876,13 +29263,15 @@ async function batchRejectAllPendingReviews() {
         return;
     }
     
-    const comment = prompt('请输入驳回原因（至少20字）：');
-    if (!comment || comment.trim().length < 20) {
-        showErrorMessage('驳回原因至少需要20个字');
-        return;
-    }
+    const comment = await showPromptModal({
+        title: '批量驳回用例',
+        message: `确定要批量驳回 ${selectedAllPendingReviews.size} 个用例吗？请输入驳回原因：`,
+        placeholder: '请输入驳回原因...',
+        minLength: 1,
+        hint: '驳回原因不能为空'
+    });
     
-    if (!confirm(`确定要批量驳回 ${selectedAllPendingReviews.size} 个用例吗？`)) {
+    if (!comment) {
         return;
     }
     
@@ -29055,8 +29444,8 @@ async function quickRejectReview() {
     const caseId = currentEditingTestCaseId;
     const comment = document.getElementById('quick-review-comment').value;
     
-    if (!comment || comment.trim().length < 20) {
-        showErrorMessage('驳回原因至少需要20个字符');
+    if (!comment || comment.trim().length < 1) {
+        showErrorMessage('驳回原因不能为空');
         return;
     }
     
@@ -29626,7 +30015,7 @@ async function openBatchRejectReviewModal(caseIds) {
                 
                 <div class="form-group" style="margin-bottom: 16px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #1e293b;">
-                        驳回原因 <span style="color: #ef4444;">*</span>（至少20字）
+                        驳回原因 <span style="color: #ef4444;">*</span>
                     </label>
                     <textarea id="batch-reject-reason" 
                               class="form-control" 
@@ -29634,7 +30023,7 @@ async function openBatchRejectReviewModal(caseIds) {
                               maxlength="500"
                               style="width: 100%; min-height: 100px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 14px; resize: vertical;"></textarea>
                     <div style="display: flex; justify-content: space-between; font-size: 12px; color: #94a3b8; margin-top: 4px;">
-                        <span id="batch-reject-reason-hint" style="color: #ef4444;">至少需要20个字符</span>
+                        <span id="batch-reject-reason-hint" style="color: #94a3b8;">请输入驳回原因</span>
                         <span><span id="batch-reject-reason-count">0</span>/500 字符</span>
                     </div>
                 </div>
@@ -29676,13 +30065,13 @@ async function openBatchRejectReviewModal(caseIds) {
             const length = this.value.trim().length;
             reasonCount.textContent = this.value.length;
             
-            if (length >= 20) {
-                reasonHint.textContent = '✓ 字数符合要求';
+            if (length >= 1) {
+                reasonHint.textContent = '✓ 已输入驳回原因';
                 reasonHint.style.color = '#10b981';
                 confirmBtn.disabled = false;
             } else {
-                reasonHint.textContent = `至少需要20个字符，还差 ${20 - length} 个字符`;
-                reasonHint.style.color = '#ef4444';
+                reasonHint.textContent = '请输入驳回原因';
+                reasonHint.style.color = '#94a3b8';
                 confirmBtn.disabled = true;
             }
         });
@@ -29700,8 +30089,8 @@ async function confirmBatchRejectReview() {
     const reasonTextarea = document.getElementById('batch-reject-reason');
     const reason = reasonTextarea ? reasonTextarea.value.trim() : '';
     
-    if (reason.length < 20) {
-        showErrorMessage('驳回原因至少需要20个字符');
+    if (reason.length < 1) {
+        showErrorMessage('驳回原因不能为空');
         return;
     }
     

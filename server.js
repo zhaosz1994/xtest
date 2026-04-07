@@ -20,6 +20,7 @@ const reportsRouter = require('./routes/reports');
 const projectsRouter = require('./routes/projects');
 const librariesRouter = require('./routes/libraries');
 const aiSkillsRouter = require('./routes/aiSkills');
+const aiOperationLogsRouter = require('./routes/aiOperationLogs');
 const forumRouter = require('./routes/forum');
 const http = require('http');
 const socketIO = require('socket.io');
@@ -32,6 +33,29 @@ function parseIntField(value) {
     }
     const parsed = parseInt(value, 10);
     return isNaN(parsed) ? null : parsed;
+}
+
+// 辅助函数：从SQL中提取表名
+function extractTablesFromSQL(sql) {
+    const tables = [];
+    const sqlUpper = sql.toUpperCase();
+    
+    // 提取FROM后面的表名
+    const fromMatch = sqlUpper.match(/FROM\s+([a-zA-Z_][a-zA-Z0-9_]*)/i);
+    if (fromMatch) {
+        tables.push(fromMatch[1].toLowerCase());
+    }
+    
+    // 提取JOIN后面的表名
+    const joinMatches = sqlUpper.match(/JOIN\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi);
+    if (joinMatches) {
+        joinMatches.forEach(match => {
+            const tableName = match.replace(/JOIN\s+/i, '').toLowerCase();
+            tables.push(tableName);
+        });
+    }
+    
+    return [...new Set(tables)];
 }
 
 const app = express();
@@ -92,6 +116,7 @@ app.use('/api/reports', reportsRouter);
 app.use('/api/projects', projectsRouter);
 app.use('/api/libraries', librariesRouter);
 app.use('/api/ai-skills', aiSkillsRouter.router);
+app.use('/api/ai-operation-logs', aiOperationLogsRouter);
 app.use('/api/email', require('./routes/email'));
 app.use('/api/templates', require('./routes/reportTemplates'));
 app.use('/api/forum', forumRouter);
@@ -2846,6 +2871,7 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
   try {
     const { query, modelId, conversationHistory } = req.body;
     const currentUserId = req.user.id;
+    const currentUsername = req.user.username;
     
     if (!query || query.trim() === '') {
       return res.json({ success: false, message: '请输入您的问题' });
@@ -2933,7 +2959,7 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
     const { getEnabledSkillsAsTools } = require('./routes/aiSkills');
     let dynamicTools = [];
     try {
-      dynamicTools = await getEnabledSkillsAsTools();
+      dynamicTools = await getEnabledSkillsAsTools(currentUserId);
       console.log(`加载了 ${dynamicTools.length} 个动态AI技能`);
     } catch (error) {
       logger.error('加载动态技能失败:', { error: error.message });
@@ -2983,6 +3009,18 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
     const aiResult = await response.json();
     const assistantMessage = aiResult.choices?.[0]?.message;
     
+    // 打印完整的AI响应结构（用于调试）
+    console.log('AI API完整响应:', JSON.stringify(aiResult, null, 2));
+    
+    // 提取token使用量
+    const tokenUsage = {
+      promptTokens: aiResult.usage?.prompt_tokens || 0,
+      completionTokens: aiResult.usage?.completion_tokens || 0,
+      totalTokens: aiResult.usage?.total_tokens || 0
+    };
+    
+    console.log('Token使用量:', tokenUsage);
+    
     // 检查是否需要调用工具
     const toolCalls = assistantMessage?.tool_calls;
     
@@ -3026,8 +3064,31 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
           
           try {
             // 执行数据库查询
+            const startTime = Date.now();
             const [rows] = await pool.execute(sql);
+            const executionTimeMs = Date.now() - startTime;
+            
             console.log('查询结果行数:', rows.length);
+            
+            // 记录AI操作日志
+            const aiAuditLogger = require('./services/aiAuditLogger');
+            await aiAuditLogger.logSuccess({
+              userId: currentUserId,
+              username: currentUsername,
+              skillName: 'AI问答',
+              skillId: null,
+              operationType: 'SELECT',
+              sqlQuery: sql,
+              sqlParams: null,
+              tablesAccessed: extractTablesFromSQL(sql),
+              resultCount: rows.length,
+              executionTimeMs: executionTimeMs,
+              promptTokens: tokenUsage.promptTokens,
+              completionTokens: tokenUsage.completionTokens,
+              totalTokens: tokenUsage.totalTokens,
+              modelName: aiModel.model_name,
+              status: 'success'
+            });
             
             toolResults.push({
               tool_call_id: toolCall.id,
@@ -3035,6 +3096,28 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
             });
           } catch (dbError) {
             console.error('数据库查询错误:', dbError.message);
+            
+            // 记录失败的AI操作日志
+            const aiAuditLogger = require('./services/aiAuditLogger');
+            await aiAuditLogger.logFailure({
+              userId: currentUserId,
+              username: currentUsername,
+              skillName: 'AI问答',
+              skillId: null,
+              operationType: 'SELECT',
+              sqlQuery: sql,
+              sqlParams: null,
+              tablesAccessed: [],
+              resultCount: 0,
+              executionTimeMs: 0,
+              promptTokens: tokenUsage.promptTokens,
+              completionTokens: tokenUsage.completionTokens,
+              totalTokens: tokenUsage.totalTokens,
+              modelName: aiModel.model_name,
+              errorMessage: dbError.message,
+              status: 'failed'
+            });
+            
             toolResults.push({
               tool_call_id: toolCall.id,
               content: JSON.stringify({ error: '数据库查询错误: ' + dbError.message })
@@ -8083,6 +8166,14 @@ async function startServer() {
     logger.info('开始启动服务器...');
     await initDatabase();
     logger.info('数据库初始化完成，开始监听端口...');
+    
+    // 自动检查并修复数据库结构
+    try {
+      const databaseMigrator = require('./services/databaseMigrator');
+      await databaseMigrator.init();
+    } catch (migrationError) {
+      console.warn('⚠️ 数据库自动迁移失败（不影响启动）:', migrationError.message);
+    }
     
     // 创建HTTP服务器
     const server = http.createServer(app);

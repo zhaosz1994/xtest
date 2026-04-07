@@ -263,7 +263,7 @@ function renderProjectReports(reports, page = 1, pageSize = 50) {
 }
 
 async function deleteReport(reportId) {
-    if (!confirm('确定要删除这个测试报告吗？')) return;
+    if (!(await showConfirmMessage('确定要删除这个测试报告吗？'))) return;
     
     const result = await TestReportService.delete(reportId);
     if (result.success) {

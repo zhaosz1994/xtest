@@ -498,8 +498,8 @@ router.post('/:id/review', authenticateToken, async (req, res) => {
         }
 
         if (action === 'reject') {
-            if (!comment || comment.trim().length < 20) {
-                return res.json({ success: false, message: '驳回原因至少需要20个字符' });
+            if (!comment || comment.trim().length < 1) {
+                return res.json({ success: false, message: '驳回原因不能为空' });
             }
             if (comment.length > 500) {
                 return res.json({ success: false, message: '评审意见不能超过500个字符' });
@@ -1029,8 +1029,8 @@ router.post('/batch-review', authenticateToken, async (req, res) => {
             return res.json({ success: false, message: '无效的评审操作' });
         }
         
-        if (action === 'reject' && (!comment || comment.trim().length < 20)) {
-            return res.json({ success: false, message: '驳回原因至少需要20个字符' });
+        if (action === 'reject' && (!comment || comment.trim().length < 1)) {
+            return res.json({ success: false, message: '驳回原因不能为空' });
         }
         
         if (comment && comment.length > 500) {

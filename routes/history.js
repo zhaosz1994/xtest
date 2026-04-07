@@ -37,6 +37,10 @@ ensureActivityLogTable();
 
 // 记录操作日志的辅助函数
 async function logActivity(userId, username, role, action, description, entityType = null, entityId = null, ipAddress = null, userAgent = null) {
+  if (userId === undefined || userId === null) {
+    logger.error('logActivity: userId 不能为空');
+    return false;
+  }
   try {
     await pool.execute(
       `INSERT INTO activity_logs (user_id, username, role, action, description, entity_type, entity_id, ip_address, user_agent) 
