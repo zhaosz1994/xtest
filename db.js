@@ -7,11 +7,11 @@ const dbConfig = {
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   waitForConnections: true,
-  connectionLimit: 200,
-  queueLimit: 500,
+  connectionLimit: 1000,
+  queueLimit: 5000,
   enableKeepAlive: true,
   keepAliveInitialDelay: 30000,
-  connectTimeout: 10000,
+  connectTimeout: 30000,
   timezone: '+08:00'
 };
 
@@ -23,6 +23,23 @@ if (process.env.DB_SOCKET) {
 }
 
 const pool = mysql.createPool(dbConfig);
+
+// 添加连接池事件监听器
+pool.on('acquire', (connection) => {
+  //console.log(`数据库连接已获取: ${connection.threadId}`);
+});
+
+pool.on('enqueue', () => {
+  //console.log('数据库连接排队中');
+});
+
+pool.on('release', (connection) => {
+  //console.log(`数据库连接已释放: ${connection.threadId}`);
+});
+
+pool.on('error', (error) => {
+  console.error('数据库连接池错误:', error);
+});
 
 // 添加连接池状态监控
 setInterval(() => {

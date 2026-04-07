@@ -12,8 +12,15 @@ const Router = {
 
     defaultRoute: 'workspace',
     loginRoute: 'login',
+    initialized: false,
 
     init() {
+        if (this.initialized) {
+            console.log('[Router] 已经初始化，跳过重复初始化');
+            return;
+        }
+        this.initialized = true;
+        console.log('[Router] 初始化路由系统');
         window.addEventListener('hashchange', () => this.handleRouteChange());
         this.handleRouteChange();
     },

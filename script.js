@@ -6905,6 +6905,9 @@ async function openTestCaseDetailModal(testCase) {
         // 加载评审历史
         loadReviewHistory(testCase.id);
 
+        // 加载关联脚本
+        loadScripts(testCase.id);
+
         // 显示模态框
         const modal = document.getElementById('test-case-detail-modal');
         modal.style.display = 'block';
@@ -10565,7 +10568,7 @@ async function openAddTestCaseSelectModal() {
                                 <path d="M12 16v-4"></path>
                                 <path d="M12 8h.01"></path>
                             </svg>
-                            一级测试点 <span style="color: #9ca3af; font-weight: 400; font-size: 12px;">(可选)</span>
+                            一级测试点 <span style="color: #ef4444;">*</span>
                         </label>
                         <select id="add-case-select-level1" onchange="onAddCaseSelectLevel1(this.value)" disabled style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
                             <option value="">请先选择模块</option>
@@ -10747,6 +10750,11 @@ async function confirmAddCaseSelect() {
         return;
     }
     
+    if (!addCaseSelectedLevel1) {
+        showErrorMessage('请选择一级测试点');
+        return;
+    }
+    
     const libraryId = addCaseSelectedLibrary.id;
     const moduleId = addCaseSelectedModule.id;
     const level1Id = addCaseSelectedLevel1 ? addCaseSelectedLevel1.id : null;
@@ -10799,9 +10807,8 @@ const totalAddCaseSteps = 3;
 // 打开测试用例创建模态框（支持关联到选中模块）
 async function openAddTestCaseModal() {
     try {
-        // 检查是否已选择模块
         if (!selectedModuleId) {
-            showErrorMessage('请先选择一个模块，然后再创建测试用例');
+            openAddTestCaseSelectModal();
             return;
         }
 
@@ -24449,55 +24456,81 @@ function renderDrawerStep1Content() {
     
     stepContent.innerHTML = `
         <h3>选择数据维度</h3>
-        <p class="step-desc">请选择报告的数据来源维度</p>
+        <p class="step-desc">请选择报告数据的来源维度，不同维度将影响后续的分析目标选择</p>
         
         <div class="dimension-cards">
             <div class="dimension-card" data-dimension="testplan" onclick="selectDimension('testplan')">
-                <div class="dimension-icon">
+                <div class="card-icon">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
                     </svg>
                 </div>
-                <div class="dimension-info">
-                    <h4>测试计划</h4>
-                    <p>基于测试计划生成报告</p>
+                <div class="card-content">
+                    <h4>按测试计划</h4>
+                    <p>基于指定的测试计划生成报告，包含该计划下所有用例执行情况</p>
+                </div>
+                <div class="card-check">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
                 </div>
             </div>
             
             <div class="dimension-card" data-dimension="project" onclick="selectDimension('project')">
-                <div class="dimension-icon">
+                <div class="card-icon">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                     </svg>
                 </div>
-                <div class="dimension-info">
-                    <h4>所属项目</h4>
-                    <p>基于项目维度生成报告</p>
+                <div class="card-content">
+                    <h4>按所属项目</h4>
+                    <p>基于项目维度汇总报告，包含项目下所有测试计划的执行情况</p>
+                </div>
+                <div class="card-check">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
                 </div>
             </div>
             
             <div class="dimension-card" data-dimension="module" onclick="selectDimension('module')">
-                <div class="dimension-icon">
+                <div class="card-icon">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M4 6h16M4 12h16M4 18h16"></path>
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
                     </svg>
                 </div>
-                <div class="dimension-info">
-                    <h4>指定模块</h4>
-                    <p>选择特定模块生成报告</p>
+                <div class="card-content">
+                    <h4>按指定模块</h4>
+                    <p>基于特定功能模块生成专项报告，适合深度分析特定功能域</p>
+                </div>
+                <div class="card-check">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
                 </div>
             </div>
             
             <div class="dimension-card" data-dimension="library" onclick="selectDimension('library')">
-                <div class="dimension-icon">
+                <div class="card-icon">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M4 19.5A2.5 2.5 0 016.5 17H20"></path>
-                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"></path>
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
                     </svg>
                 </div>
-                <div class="dimension-info">
-                    <h4>用例库</h4>
-                    <p>基于整个用例库生成报告</p>
+                <div class="card-content">
+                    <h4>按用例库</h4>
+                    <p>基于用例库生成报告，适合回归测试和用例库维护分析</p>
+                </div>
+                <div class="card-check">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
                 </div>
             </div>
         </div>
@@ -27126,6 +27159,7 @@ async function executeImport() {
             }
             
             await loadTestCases();
+            await initModuleData();
         } else {
             document.getElementById('import-next-btn').disabled = false;
             progressText.textContent = '导入失败';
@@ -28763,7 +28797,7 @@ async function batchApproveAllPendingReviews() {
         const response = await apiRequest('/testcases/batch-review', {
             method: 'POST',
             body: JSON.stringify({
-                cases: cases.map(c => ({ id: c.id, case_id: c.case_id, name: c.name, review_status: c.review_status })),
+                case_ids: cases.map(c => c.id),
                 action: 'approve',
                 comment: ''
             })
@@ -28813,7 +28847,7 @@ async function batchRejectAllPendingReviews() {
         const response = await apiRequest('/testcases/batch-review', {
             method: 'POST',
             body: JSON.stringify({
-                cases: cases.map(c => ({ id: c.id, case_id: c.case_id, name: c.name, review_status: c.review_status })),
+                case_ids: cases.map(c => c.id),
                 action: 'reject',
                 comment: comment.trim()
             })
@@ -29181,7 +29215,7 @@ async function openBatchSubmitReviewModal(caseIds) {
                                      style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: white; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer; transition: all 0.2s;">
                                     <input type="checkbox" 
                                            id="batch-reviewer-${user.id}" 
-                                           onclick="event.stopPropagation()"
+                                           onclick="event.stopPropagation(); toggleBatchReviewer(${user.id}, '${escapeHtml(user.username)}')"
                                            style="width: 16px; height: 16px; cursor: pointer; accent-color: #1890ff;">
                                     <span style="font-size: 14px; color: #1e293b;">${escapeHtml(user.username)}</span>
                                 </div>
@@ -29482,6 +29516,10 @@ async function confirmBatchApproveReview() {
             if (typeof loadWorkspaceData === 'function') {
                 await loadWorkspaceData();
             }
+            
+            if (typeof loadAllPendingReviews === 'function') {
+                await loadAllPendingReviews();
+            }
         } else {
             showErrorMessage(response.message || '批量评审失败');
         }
@@ -29652,6 +29690,10 @@ async function confirmBatchRejectReview() {
             if (typeof loadWorkspaceData === 'function') {
                 await loadWorkspaceData();
             }
+            
+            if (typeof loadAllPendingReviews === 'function') {
+                await loadAllPendingReviews();
+            }
         } else {
             showErrorMessage(response.message || '批量驳回失败');
         }
@@ -29674,3 +29716,347 @@ async function confirmBatchRejectReview() {
 }
 
 // ==================== 结束批量评审功能 ====================
+
+// ==================== 关联脚本管理功能 ====================
+
+let currentScripts = [];
+let editingScriptId = null;
+
+async function loadScripts(testCaseId) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/testcases/${testCaseId}/scripts`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            }
+        });
+        const data = await response.json();
+        
+        if (data.success && data.scripts) {
+            currentScripts = data.scripts;
+        } else {
+            currentScripts = [];
+        }
+        renderScripts();
+    } catch (error) {
+        console.error('加载关联脚本失败:', error);
+        currentScripts = [];
+        renderScripts();
+    }
+}
+
+function renderScripts() {
+    const tableBody = document.getElementById('scripts-table-body');
+    const emptyState = document.getElementById('scripts-empty');
+    const tableContainer = document.getElementById('scripts-table-container');
+    
+    if (!tableBody) return;
+    
+    if (currentScripts.length === 0) {
+        tableContainer.style.display = 'none';
+        emptyState.style.display = 'block';
+        return;
+    }
+    
+    tableContainer.style.display = 'block';
+    emptyState.style.display = 'none';
+    
+    tableBody.innerHTML = currentScripts.map((script, index) => `
+        <tr>
+            <td>${index + 1}</td>
+            <td>
+                <span class="script-name">${escapeHtml(script.script_name || '')}</span>
+            </td>
+            <td>
+                <span class="script-type-badge script-type-${script.script_type || 'other'}">${getScriptTypeLabel(script.script_type)}</span>
+            </td>
+            <td>${escapeHtml(script.description || '-')}</td>
+            <td>
+                ${script.file_path ? `<span class="script-file-badge" title="${escapeHtml(script.original_filename || script.script_name)}">${escapeHtml(script.original_filename || script.script_name)}</span>` : '-'}
+            </td>
+            <td>
+                ${script.link_url ? `<a href="${escapeHtml(script.link_url)}" target="_blank" class="script-link">${escapeHtml(script.link_title || '链接')}</a>` : '-'}
+            </td>
+            <td>
+                <div class="action-buttons">
+                    <button type="button" class="btn-icon" onclick="editScript(${script.id})" title="编辑">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                    </button>
+                    <button type="button" class="btn-icon btn-danger" onclick="deleteScript(${script.id})" title="删除">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function getScriptTypeLabel(type) {
+    const labels = {
+        'tcl': 'TCL',
+        'py': 'Python',
+        'sh': 'Shell',
+        'other': '其他'
+    };
+    return labels[type] || '其他';
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function openAddScriptModal() {
+    editingScriptId = null;
+    document.getElementById('script-modal-title').textContent = '添加关联脚本';
+    document.getElementById('script-form').reset();
+    document.getElementById('script-id').value = '';
+    document.getElementById('script-file-path').value = '';
+    document.getElementById('script-file-size').value = '';
+    document.getElementById('script-original-filename').value = '';
+    document.querySelector('input[name="link-type"][value="external"]').checked = true;
+    
+    const filePreview = document.getElementById('script-file-preview');
+    const uploadContent = document.getElementById('script-upload-content');
+    if (filePreview) filePreview.style.display = 'none';
+    if (uploadContent) uploadContent.style.display = 'block';
+    
+    document.getElementById('script-modal').style.display = 'block';
+    
+    initScriptFileUpload();
+}
+
+function closeScriptModal() {
+    document.getElementById('script-modal').style.display = 'none';
+    editingScriptId = null;
+}
+
+async function editScript(scriptId) {
+    const script = currentScripts.find(s => s.id === scriptId);
+    if (!script) return;
+    
+    editingScriptId = scriptId;
+    document.getElementById('script-modal-title').textContent = '编辑关联脚本';
+    document.getElementById('script-name').value = script.script_name || '';
+    document.getElementById('script-type').value = script.script_type || 'tcl';
+    document.getElementById('script-description').value = script.description || '';
+    document.getElementById('script-link-url').value = script.link_url || '';
+    document.getElementById('script-link-title').value = script.link_title || '';
+    document.getElementById('script-file-path').value = script.file_path || '';
+    document.getElementById('script-file-size').value = script.file_size || '';
+    document.getElementById('script-original-filename').value = script.original_filename || '';
+    
+    const linkType = script.link_type || 'external';
+    const linkTypeRadio = document.querySelector(`input[name="link-type"][value="${linkType}"]`);
+    if (linkTypeRadio) linkTypeRadio.checked = true;
+    
+    const filePreview = document.getElementById('script-file-preview');
+    const uploadContent = document.getElementById('script-upload-content');
+    
+    if (script.file_path) {
+        document.getElementById('script-file-name').textContent = script.original_filename || script.script_name;
+        if (filePreview) filePreview.style.display = 'flex';
+        if (uploadContent) uploadContent.style.display = 'none';
+    } else {
+        if (filePreview) filePreview.style.display = 'none';
+        if (uploadContent) uploadContent.style.display = 'block';
+    }
+    
+    document.getElementById('script-modal').style.display = 'block';
+    
+    initScriptFileUpload();
+}
+
+function initScriptFileUpload() {
+    const uploadArea = document.getElementById('script-upload-area');
+    const fileInput = document.getElementById('script-file-input');
+    const uploadContent = document.getElementById('script-upload-content');
+    const filePreview = document.getElementById('script-file-preview');
+    
+    if (!uploadArea || !fileInput) return;
+    
+    uploadArea.onclick = () => fileInput.click();
+    
+    uploadArea.ondragover = (e) => {
+        e.preventDefault();
+        uploadArea.classList.add('dragover');
+    };
+    
+    uploadArea.ondragleave = () => {
+        uploadArea.classList.remove('dragover');
+    };
+    
+    uploadArea.ondrop = (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            handleScriptFileUpload(files[0]);
+        }
+    };
+    
+    fileInput.onchange = (e) => {
+        if (e.target.files.length > 0) {
+            handleScriptFileUpload(e.target.files[0]);
+        }
+    };
+}
+
+async function handleScriptFileUpload(file) {
+    const maxSize = 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+        showErrorMessage('文件大小不能超过 10MB');
+        return;
+    }
+    
+    const allowedExtensions = ['.tcl', '.py', '.sh', '.txt', '.json', '.pl', '.rb', '.js', '.yaml', '.yml', '.xml', '.cfg', '.conf', '.ini'];
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+    if (!allowedExtensions.includes(ext)) {
+        showErrorMessage('不支持的文件格式');
+        return;
+    }
+    
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('testCaseId', currentEditingTestCaseId);
+        
+        const response = await fetch(`${API_BASE_URL}/testcases/scripts/upload`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            },
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            document.getElementById('script-file-path').value = data.filePath;
+            document.getElementById('script-file-size').value = file.size;
+            document.getElementById('script-original-filename').value = file.name;
+            
+            document.getElementById('script-file-name').textContent = file.name;
+            document.getElementById('script-upload-content').style.display = 'none';
+            document.getElementById('script-file-preview').style.display = 'flex';
+            
+            showSuccessMessage('文件上传成功');
+        } else {
+            showErrorMessage(data.message || '文件上传失败');
+        }
+    } catch (error) {
+        console.error('文件上传失败:', error);
+        showErrorMessage('文件上传失败: ' + error.message);
+    }
+}
+
+function removeScriptFile() {
+    document.getElementById('script-file-path').value = '';
+    document.getElementById('script-file-size').value = '';
+    document.getElementById('script-original-filename').value = '';
+    document.getElementById('script-file-input').value = '';
+    
+    document.getElementById('script-upload-content').style.display = 'block';
+    document.getElementById('script-file-preview').style.display = 'none';
+}
+
+async function saveScript() {
+    const name = document.getElementById('script-name').value.trim();
+    const type = document.getElementById('script-type').value;
+    const description = document.getElementById('script-description').value.trim();
+    const linkUrl = document.getElementById('script-link-url').value.trim();
+    const linkTitle = document.getElementById('script-link-title').value.trim();
+    const linkType = document.querySelector('input[name="link-type"]:checked').value;
+    const filePath = document.getElementById('script-file-path').value;
+    const fileSize = document.getElementById('script-file-size').value;
+    const originalFilename = document.getElementById('script-original-filename').value;
+    
+    if (!name) {
+        showErrorMessage('请输入脚本名称');
+        return;
+    }
+    
+    try {
+        const scriptData = {
+            script_name: name,
+            script_type: type,
+            description: description,
+            link_url: linkUrl,
+            link_title: linkTitle,
+            link_type: linkType,
+            file_path: filePath,
+            file_size: fileSize ? parseInt(fileSize) : null,
+            original_filename: originalFilename
+        };
+        
+        let response;
+        if (editingScriptId) {
+            response = await fetch(`${API_BASE_URL}/testcases/scripts/${editingScriptId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify(scriptData)
+            });
+        } else {
+            response = await fetch(`${API_BASE_URL}/testcases/${currentEditingTestCaseId}/scripts`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify(scriptData)
+            });
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            closeScriptModal();
+            await loadScripts(currentEditingTestCaseId);
+            showSuccessMessage(editingScriptId ? '脚本更新成功' : '脚本添加成功');
+        } else {
+            showErrorMessage(data.message || '保存失败');
+        }
+    } catch (error) {
+        console.error('保存脚本失败:', error);
+        showErrorMessage('保存脚本失败: ' + error.message);
+    }
+}
+
+async function deleteScript(scriptId) {
+    if (!(await showConfirmMessage('确定要删除这个关联脚本吗？'))) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/testcases/scripts/${scriptId}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            await loadScripts(currentEditingTestCaseId);
+            showSuccessMessage('脚本删除成功');
+        } else {
+            showErrorMessage(data.message || '删除失败');
+        }
+    } catch (error) {
+        console.error('删除脚本失败:', error);
+        showErrorMessage('删除脚本失败: ' + error.message);
+    }
+}
+
+// ==================== 结束关联脚本管理功能 ====================

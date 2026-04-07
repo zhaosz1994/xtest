@@ -3582,26 +3582,86 @@ app.post('/api/test-statuses/update', async (req, res) => {
 
 // 删除测试状态
 app.delete('/api/test-statuses/delete', async (req, res) => {
+  const { id } = req.query;
+  console.log('接收到删除测试状态请求:', { id });
+  
+  // 验证必填字段
+  if (!id) {
+    return res.json({ success: false, message: '测试状态ID不能为空' });
+  }
+  
+  const connection = await pool.getConnection();
+  
   try {
-    const { id } = req.query;
-    console.log('接收到删除测试状态请求:', { id });
+    await connection.beginTransaction();
     
-    // 验证必填字段
-    if (!id) {
-      return res.json({ success: false, message: '测试状态ID不能为空' });
-    }
+    // 1. 删除 test_case_statuses 中的关联记录（CASCADE会自动处理，但显式删除更安全）
+    const [deleteStatusesResult] = await connection.execute(
+      'DELETE FROM test_case_statuses WHERE status_id = ?',
+      [id]
+    );
+    console.log('删除 test_case_statuses 关联记录:', deleteStatusesResult.affectedRows, '条');
     
-    // 删除测试状态记录
-    await pool.execute(
-      `DELETE FROM test_statuses WHERE id = ?`,
+    // 2. 将 test_case_projects 中的 status_id 设置为 NULL
+    const [updateProjectsResult] = await connection.execute(
+      'UPDATE test_case_projects SET status_id = NULL WHERE status_id = ?',
+      [id]
+    );
+    console.log('更新 test_case_projects 关联记录:', updateProjectsResult.affectedRows, '条');
+    
+    // 3. 删除测试状态记录
+    const [deleteResult] = await connection.execute(
+      'DELETE FROM test_statuses WHERE id = ?',
       [id]
     );
     
-    res.json({ success: true, message: '测试状态删除成功' });
+    if (deleteResult.affectedRows === 0) {
+      await connection.rollback();
+      return res.json({ success: false, message: '测试状态不存在或已被删除' });
+    }
+    
+    await connection.commit();
+    console.log('测试状态删除成功, ID:', id);
+    
+    res.json({ 
+      success: true, 
+      message: '测试状态删除成功',
+      data: {
+        deletedStatuses: deleteStatusesResult.affectedRows,
+        updatedProjects: updateProjectsResult.affectedRows
+      }
+    });
   } catch (error) {
+    await connection.rollback();
     console.error('删除测试状态错误:', error);
     console.error('错误堆栈:', error.stack);
-    res.json({ success: false, message: '服务器错误', error: error.message });
+    console.error('错误详情:', {
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState,
+      sqlMessage: error.sqlMessage
+    });
+    
+    // 根据错误类型返回更具体的错误信息
+    let errorMessage = '服务器错误';
+    if (error.code === 'ER_ROW_IS_REFERENCED_2') {
+      errorMessage = '该测试状态正在被其他记录使用，无法删除';
+    } else if (error.code === 'ER_NO_REFERENCED_ROW_2') {
+      errorMessage = '引用的测试状态不存在';
+    } else if (error.code === 'ER_ACCESS_DENIED_ERROR') {
+      errorMessage = '数据库访问权限不足';
+    } else if (error.code === 'ECONNREFUSED') {
+      errorMessage = '数据库连接失败';
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      message: errorMessage, 
+      error: error.message,
+      code: error.code 
+    });
+  } finally {
+    connection.release();
   }
 });
 

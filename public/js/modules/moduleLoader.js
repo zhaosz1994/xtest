@@ -35,7 +35,7 @@ const ModuleLoader = {
         this.modules.forEach(module => {
             try {
                 const script = document.createElement('script');
-                script.src = `public/js/modules/${module.name}.js`;
+                script.src = `/js/modules/${module.name}.js`;
                 script.async = false;
                 
                 script.onload = () => {
@@ -169,7 +169,7 @@ const ModuleLoader = {
         this.loadedCount = this.modules.filter(m => m.loaded).length;
 
         const script = document.createElement('script');
-        script.src = `public/js/modules/${moduleName}.js`;
+        script.src = `/js/modules/${moduleName}.js`;
         
         script.onload = () => {
             module.loaded = true;

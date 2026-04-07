@@ -285,6 +285,8 @@ router.get('/recent-activities', authenticateToken, async (req, res) => {
     try {
         const { days = 7, limit = 20 } = req.query;
         const currentUser = req.user;
+        const daysNum = parseInt(days) || 7;
+        const limitNum = parseInt(limit) || 20;
 
         const [activities] = await pool.execute(
             `SELECT 
@@ -299,7 +301,7 @@ router.get('/recent-activities', authenticateToken, async (req, res) => {
              AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
              ORDER BY created_at DESC
              LIMIT ?`,
-            [currentUser.id, parseInt(days), parseInt(limit)]
+            [currentUser.id, daysNum, limitNum]
         );
 
         const activitiesWithTimeAgo = activities.map(a => ({

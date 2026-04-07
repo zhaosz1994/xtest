@@ -2,7 +2,7 @@
 -- 论坛附件表 - 支持多种文件格式
 -- =====================================================
 
-USE ctcsdk_testplan;
+USE xtest_db;
 
 -- 论坛附件表
 CREATE TABLE IF NOT EXISTS forum_attachments (

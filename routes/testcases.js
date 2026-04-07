@@ -368,7 +368,7 @@ router.post('/:id/submit-review', authenticateToken, async (req, res) => {
         await connection.beginTransaction();
 
         const [caseRows] = await connection.execute(
-            'SELECT id, case_id, name, review_status, creator FROM test_cases WHERE id = ?',
+            'SELECT id, case_id, name, review_status, creator, owner FROM test_cases WHERE id = ?',
             [id]
         );
 
@@ -382,6 +382,15 @@ router.post('/:id/submit-review', authenticateToken, async (req, res) => {
         if (caseData.review_status !== 'draft' && caseData.review_status !== 'rejected') {
             await connection.rollback();
             return res.json({ success: false, message: '当前用例状态不允许提交评审' });
+        }
+
+        const isAdmin = currentUser.role === '管理员' || currentUser.role === 'admin' || currentUser.role === 'Administrator';
+        const isCreator = caseData.creator === currentUser.username;
+        const isOwner = caseData.owner === currentUser.username;
+        
+        if (!isAdmin && !isCreator && !isOwner) {
+            await connection.rollback();
+            return res.json({ success: false, message: '只有用例创建者、负责人或管理员才能提交评审' });
         }
 
         const placeholders = reviewerIdList.map(() => '?').join(',');
@@ -873,7 +882,7 @@ router.post('/batch-submit-review', authenticateToken, async (req, res) => {
         
         const casePlaceholders = case_ids.map(() => '?').join(',');
         const [cases] = await connection.execute(
-            `SELECT id, case_id, name, review_status, creator 
+            `SELECT id, case_id, name, review_status, creator, owner 
              FROM test_cases 
              WHERE id IN (${casePlaceholders})`,
             case_ids
@@ -893,12 +902,16 @@ router.post('/batch-submit-review', authenticateToken, async (req, res) => {
                 continue;
             }
             
-            if (caseItem.creator !== currentUser.username) {
+            const isAdmin = currentUser.role === '管理员' || currentUser.role === 'admin' || currentUser.role === 'Administrator';
+            const isCreator = caseItem.creator === currentUser.username;
+            const isOwner = caseItem.owner === currentUser.username;
+            
+            if (!isAdmin && !isCreator && !isOwner) {
                 failCases.push({
                     id: caseItem.id,
                     case_id: caseItem.case_id,
                     name: caseItem.name,
-                    reason: '只有用例创建者才能提交评审'
+                    reason: '只有用例创建者、负责人或管理员才能提交评审'
                 });
                 continue;
             }
@@ -1180,7 +1193,8 @@ router.get('/pending-submit', authenticateToken, async (req, res) => {
     try {
         const { page = 1, pageSize = 20 } = req.query;
         const currentUser = req.user;
-        const offset = (page - 1) * pageSize;
+        const limit = parseInt(pageSize);
+        const offset = (parseInt(page) - 1) * limit;
         
         const [cases] = await pool.execute(
             `SELECT tc.id, tc.case_id, tc.name, tc.priority, tc.review_status,
@@ -1189,8 +1203,8 @@ router.get('/pending-submit', authenticateToken, async (req, res) => {
              LEFT JOIN modules m ON tc.module_id = m.id
              WHERE tc.creator = ? AND tc.review_status IN ('draft', 'rejected')
              ORDER BY tc.created_at DESC
-             LIMIT ? OFFSET ?`,
-            [currentUser.username, parseInt(pageSize), offset]
+             LIMIT ${limit} OFFSET ${offset}`,
+            [currentUser.username]
         );
         
         const [countResult] = await pool.execute(
