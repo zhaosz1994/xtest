@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
-const { authenticateToken } = require('../middleware');
+const { authenticateToken, requireAdmin } = require('../middleware');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -234,6 +234,124 @@ router.post('/level1/add', authenticateToken, async (req, res) => {
   }
 });
 
+// 批量创建一级测试点和测试用例
+router.post('/level1/batch-create', authenticateToken, async (req, res) => {
+  const { moduleId, libraryId, level1Points } = req.body;
+  const userId = req.user?.id || req.user?.userId;
+
+  if (!moduleId || !libraryId) {
+    return res.json({ success: false, message: '模块ID和用例库ID不能为空' });
+  }
+
+  if (!level1Points || !Array.isArray(level1Points) || level1Points.length === 0) {
+    return res.json({ success: false, message: '测试点数据不能为空' });
+  }
+
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+
+    let totalCaseCount = 0;
+    const createdLevel1Points = [];
+
+    for (const level1Point of level1Points) {
+      const { name, priority, owner, cases } = level1Point;
+
+      if (!name || !name.trim()) {
+        await connection.rollback();
+        return res.json({ success: false, message: '测试点名称不能为空' });
+      }
+
+      // 检查同一模块下测试点名称是否重复
+      const [existing] = await connection.execute(
+        'SELECT id FROM level1_points WHERE name = ? AND module_id = ?',
+        [name, moduleId]
+      );
+      if (existing.length > 0) {
+        await connection.rollback();
+        return res.json({ 
+          success: false, 
+          message: `测试点「${name}」已存在，请使用其他名称` 
+        });
+      }
+
+      // 获取当前模块下的最大order_index
+      const [maxOrderResult] = await connection.execute(
+        'SELECT IFNULL(MAX(order_index), -1) as max_order FROM level1_points WHERE module_id = ?',
+        [moduleId]
+      );
+      const orderIndex = maxOrderResult[0].max_order + 1 + createdLevel1Points.length;
+
+      // 插入一级测试点
+      const [level1Result] = await connection.execute(
+        'INSERT INTO level1_points (module_id, name, test_type, order_index, priority, owner) VALUES (?, ?, ?, ?, ?, ?)',
+        [moduleId, name, '功能测试', orderIndex, priority || '中', owner || '']
+      );
+      
+      const level1Id = level1Result.insertId;
+      createdLevel1Points.push({ id: level1Id, name });
+
+      // 插入测试用例
+      if (cases && Array.isArray(cases) && cases.length > 0) {
+        for (const caseItem of cases) {
+          const { name: caseName, priority: casePriority, type, owner: caseOwner, phase, env, 
+                  precondition, purpose, steps, expected, key_config, remark, 
+                  projects, environments, methods, sources } = caseItem;
+
+          if (!caseName || !caseName.trim()) {
+            await connection.rollback();
+            return res.json({ success: false, message: `测试点「${name}」下的用例名称不能为空` });
+          }
+
+          // 生成用例ID
+          const date = new Date();
+          const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+          const randomStr = crypto.randomBytes(4).toString('hex');
+          const caseId = `CASE-${dateStr}-${randomStr}-0`;
+
+          await connection.execute(
+            `INSERT INTO test_cases (
+              case_id, name, module_id, level1_id, library_id, priority, type, owner, 
+              phase, env, precondition, purpose, steps, expected, key_config, remark,
+              projects, environments, methods, sources, creator, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+            [
+              caseId, caseName, moduleId, level1Id, libraryId, 
+              casePriority || '中', type || '功能测试', caseOwner || owner || '',
+              phase || '集成测试', env || '测试环境',
+              precondition || '', purpose || '', steps || '', expected || '', 
+              key_config || '', remark || '',
+              projects || '', environments || '', methods || '', sources || '',
+              userId
+            ]
+          );
+          
+          totalCaseCount++;
+        }
+      }
+    }
+
+    await connection.commit();
+
+    res.json({ 
+      success: true,
+      message: '批量创建成功',
+      data: {
+        level1Count: createdLevel1Points.length,
+        caseCount: totalCaseCount,
+        level1Points: createdLevel1Points
+      }
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('批量创建一级测试点错误:', error);
+    res.status(500).json({ success: false, message: '服务器错误: ' + error.message });
+  } finally {
+    connection.release();
+  }
+});
+
 // 编辑一级测试点
 router.put('/level1/edit/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
@@ -274,7 +392,7 @@ router.get('/level1/detail/:id', authenticateToken, async (req, res) => {
 });
 
 // 删除一级测试点
-router.delete('/level1/delete/:id', authenticateToken, async (req, res) => {
+router.delete('/level1/delete/:id', authenticateToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
 
   try {

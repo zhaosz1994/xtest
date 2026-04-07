@@ -344,7 +344,8 @@ body.table-resizing * {
 
 .col-index {
     width: 50px;
-    text-align: center !important;
+    text-align: right !important;
+    padding-right: 12px !important;
 }
 
 .col-name {
@@ -433,13 +434,18 @@ body.table-resizing * {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%231890ff' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
 }
 
+.col-actions {
+    padding: 8px 12px;
+    vertical-align: middle;
+    text-align: center;
+}
+
 .actions-cell {
     display: flex;
     justify-content: center;
     align-items: center;
     gap: 4px;
-    height: 44px;
-    padding: 0 8px;
+    min-height: 44px;
 }
 
 /* ─────────────────────────────────────────────────────────────────
@@ -2044,4 +2050,333 @@ body.level1-panel-resizing * {
 .location-select option {
     padding: 8px;
     color: var(--color-text-primary, #303133);
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   二级嵌套表格样式 - 全部测试点模式
+   ───────────────────────────────────────────────────────────────── */
+
+.batch-table.level1-mode thead tr:first-child {
+    background-color: var(--color-bg-tertiary, #fafafa);
+}
+
+/* 一级测试点行 - 展开/折叠图标区域 */
+.level1-expand-cell {
+    width: 40px;
+    text-align: center;
+    vertical-align: middle;
+}
+
+/* 一级测试点编号列 */
+.level1-index-cell {
+    width: 50px;
+    text-align: center;
+    vertical-align: middle;
+}
+
+.level1-expand-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    color: #1890ff;
+    background: rgba(24, 144, 255, 0.1);
+}
+
+.level1-expand-icon:hover {
+    background: rgba(24, 144, 255, 0.2);
+    transform: scale(1.1);
+}
+
+.level1-expand-icon svg {
+    width: 14px;
+    height: 14px;
+    transition: transform 0.2s ease;
+}
+
+.level1-expand-icon.expanded svg {
+    transform: rotate(180deg);
+}
+
+.level1-expand-icon.empty {
+    color: #d9d9d9;
+    background: transparent;
+    cursor: default;
+}
+
+.level1-expand-icon.empty:hover {
+    transform: none;
+    background: transparent;
+}
+
+/* 一级测试点行整体样式 */
+.level1-row {
+    background: #EAF0F6 !important;
+    font-weight: 600;
+    border-left: 4px solid #1890ff;
+}
+
+.level1-row:hover {
+    background: #E8EEF4 !important;
+}
+
+.level1-row td {
+    border-bottom: 2px solid #d9e8f6;
+    padding: 8px 12px;
+}
+
+/* 一级测试点名称单元格 */
+.level1-name-cell {
+    display: flex;
+    align-items: center;
+    font-weight: 600;
+    color: #1a1a1a;
+    gap: 8px;
+}
+
+.level1-name-cell .folder-icon {
+    color: #f59e0b;
+    font-size: 16px;
+    flex-shrink: 0;
+}
+
+/* 测试用例表头行 */
+.case-header-row {
+    background: #F4F7FB !important;
+    border-left: 4px solid #1890ff;
+}
+
+.case-header-row th {
+    font-size: 13px;
+    font-weight: 600;
+    color: #262626;
+    padding: 8px 12px;
+    border-bottom: 2px solid #d9e8f6;
+    background: transparent !important;
+}
+
+/* 测试用例行样式 */
+.case-row {
+    background-color: #FFFFFF;
+    border-left: 4px solid #d9d9d9;
+    transition: all 0.2s ease;
+}
+
+.case-row td:first-child {
+    padding-left: 16px;
+}
+
+.case-row td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.case-row:hover {
+    background: #F4F7FB;
+}
+
+.case-row.collapsed {
+    display: none;
+}
+
+/* 测试用例编号样式 */
+.case-row .col-index-cell {
+    color: #595959;
+    font-weight: 600;
+    text-align: right !important;
+    padding-right: 12px !important;
+}
+
+/* 测试用例操作按钮区域 */
+.case-row .actions-cell {
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
+}
+
+.case-row:hover .actions-cell {
+    opacity: 1;
+}
+
+.col-level1-actions {
+    width: 140px;
+    padding: 8px 12px;
+    vertical-align: middle;
+    text-align: center;
+    border-bottom: 2px solid #d9e8f6;
+}
+
+.level1-actions {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 4px;
+}
+
+.add-case-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: #1890ff;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.add-case-btn:hover {
+    background-color: rgba(24, 144, 255, 0.1);
+    color: #1890ff;
+}
+
+.add-case-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+.add-buttons-group {
+    display: flex;
+    gap: 12px;
+}
+
+.add-level1-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    background: transparent;
+    border: 1px dashed var(--color-brand-primary, #1890ff);
+    border-radius: 6px;
+    color: var(--color-brand-primary, #1890ff);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.add-level1-btn:hover {
+    background-color: rgba(24, 144, 255, 0.04);
+    border-style: solid;
+}
+
+.add-case-row-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    background: transparent;
+    border: 1px dashed var(--color-border-primary, #d9d9d9);
+    border-radius: 6px;
+    color: var(--color-text-secondary, #666);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.add-case-row-btn:hover {
+    border-color: var(--color-brand-primary, #1890ff);
+    color: var(--color-brand-primary, #1890ff);
+    background-color: rgba(24, 144, 255, 0.04);
+}
+
+.add-case-row-btn:disabled {
+    border-color: #d9d9d9;
+    color: #d9d9d9;
+    cursor: not-allowed;
+    background: transparent;
+}
+
+.empty-state-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    color: var(--color-text-tertiary, #999);
+}
+
+.empty-state-icon {
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+.empty-state-text {
+    font-size: 14px;
+    margin-bottom: 20px;
+}
+
+.select-level1-dropdown {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    margin-bottom: 8px;
+    background: #fff;
+    border: 1px solid #e4e7ed;
+    border-radius: 8px;
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.12);
+    min-width: 240px;
+    max-height: 280px;
+    overflow-y: auto;
+    z-index: 100;
+}
+
+.select-level1-item {
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.select-level1-item:last-child {
+    border-bottom: none;
+}
+
+.select-level1-item:hover {
+    background-color: #f5f7fa;
+}
+
+.select-level1-item-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: #303133;
+}
+
+.select-level1-item-count {
+    font-size: 12px;
+    color: #909399;
+    margin-top: 2px;
+}
+
+.add-case-btn-wrapper {
+    position: relative;
+}
+
+.col-expand {
+    width: 30px;
+    text-align: center !important;
+    padding: 0 4px !important;
+}
+
+.col-level1-name {
+    width: 25%;
+}
+
+.col-level1-priority {
+    width: 8%;
+}
+
+.col-level1-owner {
+    width: 10%;
+}
+
+.col-level1-count {
+    width: 60px;
+    text-align: center !important;
 }

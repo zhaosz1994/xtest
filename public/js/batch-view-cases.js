@@ -47,9 +47,13 @@
     let originalData = [];
     let isSaving = false;
     let currentEditingIndex = null;
+    let isNavigatingBack = false;
+
+    let isAllLevel1Mode = false;
+    let level1BatchData = [];
 
     const DrawerTagSelector = {
-        init: function(containerId, options, selectedValues, onChange) {
+        init: function(containerId, options, selectedValues, onChange, triggerInitChange = false) {
             const container = document.getElementById(containerId);
             if (!container) return;
 
@@ -329,7 +333,8 @@
             datalist.id = 'owner-datalist';
             document.body.appendChild(datalist);
         }
-        datalist.innerHTML = allUsers.map(u => `<option value="${escapeHtml(u)}">`).join('');
+        const filteredUsers = allUsers.filter(u => u.toLowerCase() !== 'admin');
+        datalist.innerHTML = filteredUsers.map(u => `<option value="${escapeHtml(u)}">`).join('');
     }
 
     async function loadAllLevel1Points() {
@@ -348,6 +353,16 @@
     }
 
     async function loadExistingTestCases() {
+        isAllLevel1Mode = !level1Id || level1Id === '';
+        
+        if (isAllLevel1Mode) {
+            await loadAllLevel1TestCases();
+        } else {
+            await loadSpecificLevel1TestCases();
+        }
+    }
+
+    async function loadSpecificLevel1TestCases() {
         try {
             const result = await apiRequest('/api/cases/list', {
                 method: 'POST',
@@ -378,10 +393,89 @@
                     environments: Array.isArray(tc.environments) ? tc.environments.join(',') : '',
                     methods: Array.isArray(tc.methods) ? tc.methods.join(',') : (tc.method || ''),
                     sources: Array.isArray(tc.sources) ? tc.sources.join(',') : '',
-                    projects: tc.projects || ''
+                    // 统一处理 projects 字段：确保转换为 JSON 字符串
+                    projects: Array.isArray(tc.projects) ? JSON.stringify(tc.projects) : (tc.projects || '')
                 }));
                 
                 originalData = JSON.parse(JSON.stringify(batchData));
+            }
+        } catch (error) {
+            console.error('加载测试用例失败:', error);
+            showErrorMessage('加载测试用例失败，请重试');
+        }
+    }
+
+    async function loadAllLevel1TestCases() {
+        try {
+            const moduleLevel1Points = allLevel1Points.filter(p => String(p.module_id) === String(moduleId));
+            
+            const result = await apiRequest('/api/cases/list', {
+                method: 'POST',
+                body: JSON.stringify({
+                    moduleId: moduleId,
+                    level1Id: null,
+                    page: 1,
+                    pageSize: MAX_ROWS
+                })
+            });
+
+            if (result.success) {
+                const level1Map = new Map();
+                
+                moduleLevel1Points.forEach(point => {
+                    level1Map.set(String(point.id), {
+                        type: 'level1',
+                        id: String(point.id),
+                        dbId: parseInt(point.id),
+                        name: point.name,
+                        type_field: point.test_type || '功能测试',
+                        expanded: true,
+                        cases: []
+                    });
+                });
+                
+                level1Map.set('uncategorized', {
+                    type: 'level1',
+                    id: 'uncategorized',
+                    dbId: null,
+                    name: '未分类测试点',
+                    type_field: '功能测试',
+                    expanded: true,
+                    cases: []
+                });
+                
+                if (result.testCases && result.testCases.length > 0) {
+                    result.testCases.forEach(tc => {
+                        const level1IdKey = tc.level1Id ? String(tc.level1Id) : 'uncategorized';
+                        
+                        if (level1Map.has(level1IdKey)) {
+                            level1Map.get(level1IdKey).cases.push({
+                                id: tc.id,
+                                dbId: tc.id,
+                                name: tc.name || '',
+                                priority: tc.priority || '中',
+                                type: tc.type || '功能测试',
+                                owner: tc.owner || '',
+                                phase: tc.phase || '集成测试',
+                                env: Array.isArray(tc.environments) ? tc.environments.join(',') : (tc.env || ''),
+                                precondition: tc.precondition || '',
+                                purpose: tc.purpose || '',
+                                steps: tc.steps || '',
+                                expected: tc.expected || '',
+                                key_config: tc.key_config || '',
+                                remark: tc.remark || '',
+                                environments: Array.isArray(tc.environments) ? tc.environments.join(',') : '',
+                                methods: Array.isArray(tc.methods) ? tc.methods.join(',') : (tc.method || ''),
+                                sources: Array.isArray(tc.sources) ? tc.sources.join(',') : '',
+                                // 统一处理 projects 字段：确保转换为 JSON 字符串
+                                projects: Array.isArray(tc.projects) ? JSON.stringify(tc.projects) : (tc.projects || '')
+                            });
+                        }
+                    });
+                }
+                
+                level1BatchData = Array.from(level1Map.values()).filter(item => item.id !== 'uncategorized' || item.cases.length > 0);
+                originalData = JSON.parse(JSON.stringify(level1BatchData));
             }
         } catch (error) {
             console.error('加载测试用例失败:', error);
@@ -406,6 +500,10 @@
     }
     function getTestSources() {
         return configData.sources.length > 0 ? configData.sources.map(s => s.name) : TEST_SOURCES;
+    }
+    function getUsers() {
+        const users = allUsers.length > 0 ? allUsers : (currentUser ? [currentUser.username] : []);
+        return users.filter(u => u.toLowerCase() !== 'admin');
     }
 
     function createEmptyRow(defaults = {}) {
@@ -436,6 +534,7 @@
         const testTypes  = getTestTypes();
         const testPhases = getTestPhases();
         const testEnvs   = getTestEnvs();
+        const users      = getUsers();
         return `
                 <td class="col-index-cell">${index + 1}</td>
                 <td>
@@ -458,14 +557,9 @@
                     </select>
                 </td>
                 <td>
-                    <input type="text"
-                           class="cell-input"
-                           data-field="owner"
-                           data-index="${index}"
-                           value="${escapeHtml(row.owner)}"
-                           placeholder="负责人"
-                           maxlength="50"
-                           list="owner-datalist">
+                    <select class="cell-select" data-field="owner" data-index="${index}">
+                        ${users.map(u => `<option value="${u}" ${row.owner === u ? 'selected' : ''}>${u}</option>`).join('')}
+                    </select>
                 </td>
                 <td>
                     <select class="cell-select" data-field="phase" data-index="${index}">
@@ -477,7 +571,8 @@
                         ${testEnvs.map(e => `<option value="${e}" ${row.env === e ? 'selected' : ''}>${e}</option>`).join('')}
                     </select>
                 </td>
-                <td class="actions-cell">
+                <td class="col-actions">
+                    <div class="actions-cell">
                     <button class="action-btn detail-btn ${hasDetailData(row) ? 'has-detail' : ''}" data-action="detail" data-index="${index}" data-tooltip="${hasDetailData(row) ? '已完善详情' : '详细信息'}">
                         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -492,21 +587,38 @@
                             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                         </svg>
                     </button>
-                    ${!row.dbId ? `
                     <button class="action-btn delete-btn" data-action="delete" data-index="${index}" data-tooltip="删除">
                         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="3 6 5 6 21 6"></polyline>
                             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                         </svg>
                     </button>
-                    ` : ''}
+                    </div>
                 </td>
         `;
     }
 
     function renderTable() {
+        if (isAllLevel1Mode) {
+            renderLevel1Table();
+        } else {
+            renderNormalTable();
+        }
+    }
+
+    function renderNormalTable() {
         const tbody = document.getElementById('table-body');
         if (!tbody) return;
+
+        const tableHeadNormal = document.getElementById('table-head-normal');
+        const tableHeadLevel1 = document.getElementById('table-head-level1');
+        const addRowSection = document.getElementById('add-row-section');
+        const addLevel1Section = document.getElementById('add-level1-section');
+
+        if (tableHeadNormal) tableHeadNormal.style.display = '';
+        if (tableHeadLevel1) tableHeadLevel1.style.display = 'none';
+        if (addRowSection) addRowSection.style.display = '';
+        if (addLevel1Section) addLevel1Section.style.display = 'none';
 
         updateRowCountHint();
 
@@ -514,6 +626,224 @@
             return `<tr data-row-index="${index}">${getRowHTML(row, index)}</tr>`;
         });
         tbody.innerHTML = htmls.join('');
+    }
+
+    function getLevel1RowHTML(item, level1Index) {
+        const testTypes = getTestTypes();
+        const caseCount = item.cases ? item.cases.length : 0;
+        const hasCases = caseCount > 0;
+        const expandIconClass = item.expanded ? 'expanded' : (hasCases ? '' : 'empty');
+        
+        return `
+            <tr class="level1-row" data-level1-index="${level1Index}" data-type="level1">
+                <td class="level1-expand-cell">
+                    <span class="level1-expand-icon ${expandIconClass}" data-action="toggle-expand" data-level1-index="${level1Index}">
+                        ${hasCases ? `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>` : ''}
+                    </span>
+                </td>
+                <td class="level1-index-cell">
+                    <span style="font-weight: 600; color: #1890ff;">${level1Index + 1}</span>
+                </td>
+                <td>
+                    <div class="level1-name-cell">
+                        <span class="folder-icon">📁</span>
+                        <input type="text"
+                               class="cell-input"
+                               data-field="name"
+                               data-level1-index="${level1Index}"
+                               data-type="level1"
+                               value="${escapeHtml(item.name)}"
+                               placeholder="请输入测试点名称"
+                               maxlength="100"
+                               style="font-weight: 600;">
+                    </div>
+                </td>
+                <td>
+                    <select class="cell-select" data-field="type_field" data-level1-index="${level1Index}" data-type="level1">
+                        ${testTypes.map(t => `<option value="${t}" ${item.type_field === t ? 'selected' : ''}>${t}</option>`).join('')}
+                    </select>
+                </td>
+                <td class="col-level1-actions" colspan="4">
+                    <div class="level1-actions">
+                    <button class="action-btn add-case-btn" data-action="add-case" data-level1-index="${level1Index}" data-tooltip="添加测试用例">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                    </button>
+                    <button class="action-btn delete-btn" data-action="delete-level1" data-level1-index="${level1Index}" data-tooltip="删除测试点">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+
+    function getCaseTableHeaderHTML() {
+        return `
+            <tr class="case-header-row">
+                <th class="col-expand" style="width: 40px;"></th>
+                <th class="col-index">#</th>
+                <th class="col-name">测试用例名称</th>
+                <th class="col-priority">优先级</th>
+                <th class="col-type">测试类型</th>
+                <th class="col-owner">负责人</th>
+                <th class="col-phase">测试阶段</th>
+                <th class="col-env">测试环境</th>
+                <th class="col-actions">操作</th>
+            </tr>
+        `;
+    }
+
+    function getCaseRowHTMLForLevel1(caseItem, level1Index, caseIndex, globalCaseIndex) {
+        const priorities = getPriorities();
+        const testTypes = getTestTypes();
+        const testPhases = getTestPhases();
+        const testEnvs = getTestEnvs();
+        const users = getUsers();
+        const collapsed = !level1BatchData[level1Index]?.expanded;
+        
+        return `
+            <tr class="case-row ${collapsed ? 'collapsed' : ''}" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-type="case">
+                <td class="level1-expand-cell"></td>
+                <td class="col-index-cell">
+                    <span style="color: #52c41a; font-weight: 600;">${globalCaseIndex}</span>
+                </td>
+                <td>
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="color: #52c41a; font-size: 14px;">📄</span>
+                        <input type="text"
+                               class="cell-input"
+                               data-field="name"
+                               data-level1-index="${level1Index}"
+                               data-case-index="${caseIndex}"
+                               data-type="case"
+                               value="${escapeHtml(caseItem.name)}"
+                               placeholder="请输入用例名称"
+                               maxlength="100">
+                    </div>
+                </td>
+                <td>
+                    <select class="cell-select" data-field="priority" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-type="case">
+                        ${priorities.map(p => `<option value="${p}" ${caseItem.priority === p ? 'selected' : ''}>${p}</option>`).join('')}
+                    </select>
+                </td>
+                <td>
+                    <select class="cell-select" data-field="type" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-type="case">
+                        ${testTypes.map(t => `<option value="${t}" ${caseItem.type === t ? 'selected' : ''}>${t}</option>`).join('')}
+                    </select>
+                </td>
+                <td>
+                    <select class="cell-select" data-field="owner" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-type="case">
+                        ${users.map(u => `<option value="${u}" ${caseItem.owner === u ? 'selected' : ''}>${u}</option>`).join('')}
+                    </select>
+                </td>
+                <td>
+                    <select class="cell-select" data-field="phase" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-type="case">
+                        ${testPhases.map(p => `<option value="${p}" ${caseItem.phase === p ? 'selected' : ''}>${p}</option>`).join('')}
+                    </select>
+                </td>
+                <td>
+                    <select class="cell-select" data-field="env" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-type="case">
+                        ${testEnvs.map(e => `<option value="${e}" ${caseItem.env === e ? 'selected' : ''}>${e}</option>`).join('')}
+                    </select>
+                </td>
+                <td class="col-actions">
+                    <div class="actions-cell">
+                    <button class="action-btn detail-btn ${hasDetailData(caseItem) ? 'has-detail' : ''}" data-action="detail" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-tooltip="${hasDetailData(caseItem) ? '已完善详情' : '详细信息'}">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="16" y1="13" x2="8" y2="13"></line>
+                            <line x1="16" y1="17" x2="8" y2="17"></line>
+                        </svg>
+                    </button>
+                    <button class="action-btn copy-btn" data-action="copy" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-tooltip="复制">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                    </button>
+                    <button class="action-btn delete-btn" data-action="delete-case" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-tooltip="删除">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+
+    function renderLevel1Table() {
+        const tbody = document.getElementById('table-body');
+        if (!tbody) return;
+
+        const table = document.getElementById('batch-table');
+        if (table) {
+            table.classList.add('level1-mode');
+        }
+
+        const tableHeadNormal = document.getElementById('table-head-normal');
+        const tableHeadLevel1 = document.getElementById('table-head-level1');
+        const addRowSection = document.getElementById('add-row-section');
+        const addLevel1Section = document.getElementById('add-level1-section');
+
+        if (tableHeadNormal) tableHeadNormal.style.display = 'none';
+        if (tableHeadLevel1) tableHeadLevel1.style.display = '';
+        if (addRowSection) addRowSection.style.display = 'none';
+        if (addLevel1Section) addLevel1Section.style.display = '';
+
+        updateLevel1CountHint();
+
+        let html = '';
+        let globalCaseIndex = 0;
+
+        level1BatchData.forEach((item, level1Index) => {
+            html += getLevel1RowHTML(item, level1Index);
+            
+            if (item.expanded && item.cases && item.cases.length > 0) {
+                html += getCaseTableHeaderHTML();
+                item.cases.forEach((caseItem, caseIndex) => {
+                    globalCaseIndex++;
+                    html += getCaseRowHTMLForLevel1(caseItem, level1Index, caseIndex, globalCaseIndex);
+                });
+            }
+        });
+
+        tbody.innerHTML = html;
+        updateAddCaseButtonState();
+    }
+
+    function updateLevel1CountHint() {
+        const hint = document.getElementById('level1-count-hint');
+        if (hint) {
+            const level1Count = level1BatchData.length;
+            let totalCases = 0;
+            level1BatchData.forEach(item => {
+                totalCases += (item.cases ? item.cases.length : 0);
+            });
+            hint.textContent = `共 ${level1Count} 个测试点，${totalCases} 条用例`;
+        }
+    }
+
+    function updateAddCaseButtonState() {
+        const btn = document.getElementById('add-case-to-level1-btn');
+        if (btn) {
+            btn.disabled = level1BatchData.length === 0;
+        }
+    }
+
+    function toggleLevel1Expand(level1Index) {
+        if (level1Index < 0 || level1Index >= level1BatchData.length) return;
+        
+        level1BatchData[level1Index].expanded = !level1BatchData[level1Index].expanded;
+        renderLevel1Table();
     }
 
     function updateIndicesFrom(startIndex) {
@@ -543,6 +873,15 @@
         const target = event.target;
         if (!target.matches('.cell-input, .cell-select')) return;
 
+        if (isAllLevel1Mode) {
+            handleLevel1TableInput(event);
+        } else {
+            handleNormalTableInput(event);
+        }
+    }
+
+    function handleNormalTableInput(event) {
+        const target = event.target;
         const index = parseInt(target.dataset.index, 10);
         const field = target.dataset.field;
         const value = target.value;
@@ -552,7 +891,36 @@
         }
     }
 
+    function handleLevel1TableInput(event) {
+        const target = event.target;
+        const rowType = target.dataset.type;
+        const level1Index = parseInt(target.dataset.level1Index, 10);
+        const field = target.dataset.field;
+        const value = target.value;
+
+        if (isNaN(level1Index) || !field) return;
+
+        if (rowType === 'level1') {
+            if (level1BatchData[level1Index]) {
+                level1BatchData[level1Index][field] = value;
+            }
+        } else if (rowType === 'case') {
+            const caseIndex = parseInt(target.dataset.caseIndex, 10);
+            if (!isNaN(caseIndex) && level1BatchData[level1Index] && level1BatchData[level1Index].cases[caseIndex]) {
+                level1BatchData[level1Index].cases[caseIndex][field] = value;
+            }
+        }
+    }
+
     function handleTableAction(event) {
+        if (isAllLevel1Mode) {
+            handleLevel1TableAction(event);
+        } else {
+            handleNormalTableAction(event);
+        }
+    }
+
+    function handleNormalTableAction(event) {
         const target = event.target.closest('.action-btn');
         if (!target) return;
 
@@ -568,6 +936,202 @@
         } else if (action === 'detail') {
             openDrawer(index);
         }
+    }
+
+    function handleLevel1TableAction(event) {
+        const target = event.target.closest('.action-btn, .level1-expand-icon');
+        if (!target) return;
+
+        const action = target.dataset.action;
+        const level1Index = parseInt(target.dataset.level1Index, 10);
+        const caseIndex = parseInt(target.dataset.caseIndex, 10);
+
+        if (action === 'toggle-expand') {
+            event.preventDefault();
+            event.stopPropagation();
+            toggleLevel1Expand(level1Index);
+        } else if (action === 'add-case') {
+            addCaseToLevel1(level1Index);
+        } else if (action === 'detail') {
+            openDrawerForLevel1Case(level1Index, caseIndex);
+        } else if (action === 'copy') {
+            copyCaseInLevel1(level1Index, caseIndex);
+        } else if (action === 'delete-level1') {
+            deleteLevel1(level1Index);
+        } else if (action === 'delete-case') {
+            deleteCaseInLevel1(level1Index, caseIndex);
+        }
+    }
+
+    function addCaseToLevel1(level1Index) {
+        if (level1Index === undefined || level1Index === null) {
+            if (level1BatchData.length === 0) {
+                showErrorMessage('请先添加一级测试点');
+                return;
+            }
+            level1Index = level1BatchData.length - 1;
+        }
+        
+        if (level1Index < 0 || level1Index >= level1BatchData.length) return;
+        
+        let totalCases = 0;
+        level1BatchData.forEach(item => {
+            totalCases += (item.cases ? item.cases.length : 0);
+        });
+        if (totalCases >= MAX_ROWS) {
+            showErrorMessage(`已达到最大行数限制（${MAX_ROWS}条）`);
+            return;
+        }
+        
+        level1BatchData[level1Index].cases.push(createEmptyRow());
+        level1BatchData[level1Index].expanded = true;
+        renderLevel1Table();
+        
+        const tbody = document.getElementById('table-body');
+        if (tbody) {
+            const caseRows = tbody.querySelectorAll(`tr.case-row[data-level1-index="${level1Index}"]`);
+            if (caseRows.length > 0) {
+                const lastCaseRow = caseRows[caseRows.length - 1];
+                const nameInput = lastCaseRow.querySelector('.cell-input[data-field="name"]');
+                if (nameInput) nameInput.focus();
+            }
+        }
+    }
+
+    function copyCaseInLevel1(level1Index, caseIndex) {
+        if (level1Index < 0 || level1Index >= level1BatchData.length) return;
+        const cases = level1BatchData[level1Index].cases;
+        if (caseIndex < 0 || caseIndex >= cases.length) return;
+        
+        let totalCases = 0;
+        level1BatchData.forEach(item => {
+            totalCases += (item.cases ? item.cases.length : 0);
+        });
+        if (totalCases >= MAX_ROWS) {
+            showErrorMessage(`已达到最大行数限制（${MAX_ROWS}条）`);
+            return;
+        }
+        
+        const original = cases[caseIndex];
+        const copy = {
+            ...original,
+            id: Date.now() + Math.random(),
+            dbId: null,
+            name: original.name ? `${original.name}-Copy` : ''
+        };
+        
+        cases.splice(caseIndex + 1, 0, copy);
+        level1BatchData[level1Index].expanded = true;
+        renderLevel1Table();
+        showSuccessMessage('已复制用例');
+    }
+
+    async function deleteLevel1(level1Index) {
+        if (level1Index < 0 || level1Index >= level1BatchData.length) return;
+
+        const level1Item = level1BatchData[level1Index];
+        const caseCount = level1Item.cases ? level1Item.cases.length : 0;
+        
+        const message = caseCount > 0 
+            ? `该测试点下有 ${caseCount} 个测试用例，删除测试点将同时删除这些用例，确定要删除吗？`
+            : '确定要删除该测试点吗？';
+        
+        const confirmed = await showConfirmMessage(message);
+        if (!confirmed) return;
+
+        if (level1Item.dbId) {
+            try {
+                const result = await apiRequest(`/api/testpoints/level1/delete/${level1Item.dbId}`, {
+                    method: 'DELETE'
+                });
+
+                if (!result.success) {
+                    showErrorMessage(result.message || '删除失败');
+                    return;
+                }
+            } catch (error) {
+                console.error('删除一级测试点失败:', error);
+                showErrorMessage('删除失败: ' + error.message);
+                return;
+            }
+        }
+
+        level1BatchData.splice(level1Index, 1);
+        originalData = JSON.parse(JSON.stringify(level1BatchData));
+        renderLevel1Table();
+        showSuccessMessage('删除成功');
+    }
+
+    async function deleteCaseInLevel1(level1Index, caseIndex) {
+        if (level1Index < 0 || level1Index >= level1BatchData.length) return;
+        
+        const cases = level1BatchData[level1Index].cases;
+        if (!cases || caseIndex < 0 || caseIndex >= cases.length) return;
+
+        const caseItem = cases[caseIndex];
+        
+        const confirmed = await showConfirmMessage('确定要删除该测试用例吗？');
+        if (!confirmed) return;
+
+        if (caseItem.dbId) {
+            try {
+                const result = await apiRequest(`/api/cases/delete?id=${caseItem.dbId}`, {
+                    method: 'DELETE'
+                });
+
+                if (!result.success) {
+                    showErrorMessage(result.message || '删除失败');
+                    return;
+                }
+            } catch (error) {
+                console.error('删除测试用例失败:', error);
+                showErrorMessage('删除失败: ' + error.message);
+                return;
+            }
+        }
+
+        cases.splice(caseIndex, 1);
+        originalData = JSON.parse(JSON.stringify(level1BatchData));
+        renderLevel1Table();
+        showSuccessMessage('删除成功');
+    }
+
+    function openDrawerForLevel1Case(level1Index, caseIndex) {
+        if (level1Index < 0 || level1Index >= level1BatchData.length) return;
+        const cases = level1BatchData[level1Index].cases;
+        if (caseIndex < 0 || caseIndex >= cases.length) return;
+
+        currentEditingIndex = { level1Index, caseIndex };
+        const row = cases[caseIndex];
+
+        const drawerTitle = document.querySelector('.drawer-title');
+        if (drawerTitle) {
+            const caseName = row.name && row.name.trim() ? row.name.trim() : '（未命名）';
+            drawerTitle.textContent = `编辑第 ${level1Index + 1}.${caseIndex + 1} 行详情 — ${caseName}`;
+        }
+
+        const preconditionEl = document.getElementById('drawer-precondition');
+        const purposeEl = document.getElementById('drawer-purpose');
+        const stepsEl = document.getElementById('drawer-steps');
+        const expectedEl = document.getElementById('drawer-expected');
+        const keyConfigEl = document.getElementById('drawer-key-config');
+        const remarkEl = document.getElementById('drawer-remark');
+
+        if (preconditionEl) preconditionEl.value = row.precondition || '';
+        if (purposeEl) purposeEl.value = row.purpose || '';
+        if (stepsEl) stepsEl.value = row.steps || '';
+        if (expectedEl) expectedEl.value = row.expected || '';
+        if (keyConfigEl) keyConfigEl.value = row.key_config || '';
+        if (remarkEl) remarkEl.value = row.remark || '';
+
+        initDrawerTagSelectors(row);
+        initDrawerProjects(row);
+
+        const drawerOverlay = document.getElementById('drawer-overlay');
+        const drawer = document.getElementById('detail-drawer');
+
+        if (drawerOverlay) drawerOverlay.classList.add('active');
+        if (drawer) drawer.classList.add('active');
     }
 
     function copyRow(index) {
@@ -612,10 +1176,30 @@
 
         if (index < 0 || index >= batchData.length) return;
 
+        const row = batchData[index];
+        
         const confirmed = await showConfirmMessage('确定要删除该行数据吗？');
         if (!confirmed) return;
 
+        if (row.dbId) {
+            try {
+                const result = await apiRequest(`/api/cases/delete?id=${row.dbId}`, {
+                    method: 'DELETE'
+                });
+
+                if (!result.success) {
+                    showErrorMessage(result.message || '删除失败');
+                    return;
+                }
+            } catch (error) {
+                console.error('删除测试用例失败:', error);
+                showErrorMessage('删除失败: ' + error.message);
+                return;
+            }
+        }
+
         batchData.splice(index, 1);
+        originalData = JSON.parse(JSON.stringify(batchData));
         
         const tbody = document.getElementById('table-body');
         if (tbody && tbody.children[index]) {
@@ -991,6 +1575,15 @@
 
     function syncDrawerToData() {
         if (currentEditingIndex === null) return;
+
+        if (isAllLevel1Mode && typeof currentEditingIndex === 'object' && currentEditingIndex.level1Index !== undefined) {
+            syncDrawerToLevel1Data();
+        } else {
+            syncDrawerToNormalData();
+        }
+    }
+
+    function syncDrawerToNormalData() {
         const rowIndex = currentEditingIndex;
         if (rowIndex < 0 || rowIndex >= batchData.length) return;
 
@@ -1008,9 +1601,36 @@
         batchData[rowIndex].projects = document.getElementById('drawer-projects')?.value || '';
     }
 
+    function syncDrawerToLevel1Data() {
+        if (!currentEditingIndex || currentEditingIndex.level1Index === undefined) return;
+        const { level1Index, caseIndex } = currentEditingIndex;
+        if (level1Index < 0 || level1Index >= level1BatchData.length) return;
+        const cases = level1BatchData[level1Index].cases;
+        if (caseIndex < 0 || caseIndex >= cases.length) return;
+
+        cases[caseIndex].precondition = document.getElementById('drawer-precondition')?.value || '';
+        cases[caseIndex].purpose = document.getElementById('drawer-purpose')?.value || '';
+        cases[caseIndex].steps = document.getElementById('drawer-steps')?.value || '';
+        cases[caseIndex].expected = document.getElementById('drawer-expected')?.value || '';
+        cases[caseIndex].key_config = document.getElementById('drawer-key-config')?.value || '';
+        cases[caseIndex].remark = document.getElementById('drawer-remark')?.value || '';
+        cases[caseIndex].environments = DrawerTagSelector.getValues('drawer-environments-selector').join(',');
+        cases[caseIndex].methods = DrawerTagSelector.getValues('drawer-methods-selector').join(',');
+        cases[caseIndex].sources = DrawerTagSelector.getValues('drawer-sources-selector').join(',');
+        cases[caseIndex].projects = document.getElementById('drawer-projects')?.value || '';
+    }
+
     function saveDrawerData() {
         if (currentEditingIndex === null) return;
 
+        if (isAllLevel1Mode && typeof currentEditingIndex === 'object' && currentEditingIndex.level1Index !== undefined) {
+            saveDrawerDataForLevel1();
+        } else {
+            saveDrawerDataNormal();
+        }
+    }
+
+    function saveDrawerDataNormal() {
         const rowIndex = currentEditingIndex;
         if (rowIndex < 0 || rowIndex >= batchData.length) {
             showErrorMessage('数据不存在');
@@ -1033,6 +1653,40 @@
                 } else {
                     btn.classList.remove('has-detail');
                     btn.setAttribute('data-tooltip', '详细信息');
+                }
+            }
+        }
+        
+        showSuccessMessage('详情保存成功');
+    }
+
+    function saveDrawerDataForLevel1() {
+        if (!currentEditingIndex || currentEditingIndex.level1Index === undefined) return;
+        
+        const { level1Index, caseIndex } = currentEditingIndex;
+        if (level1Index < 0 || level1Index >= level1BatchData.length) {
+            showErrorMessage('数据不存在');
+            closeDrawer();
+            return;
+        }
+        
+        syncDrawerToLevel1Data();
+        closeDrawer();
+        
+        const tbody = document.getElementById('table-body');
+        if (tbody) {
+            const caseRow = tbody.querySelector(`tr.case-row[data-level1-index="${level1Index}"][data-case-index="${caseIndex}"]`);
+            if (caseRow) {
+                const btn = caseRow.querySelector('.detail-btn');
+                if (btn) {
+                    const hasDetail = hasDetailData(level1BatchData[level1Index].cases[caseIndex]);
+                    if (hasDetail) {
+                        btn.classList.add('has-detail');
+                        btn.setAttribute('data-tooltip', '已完善详情');
+                    } else {
+                        btn.classList.remove('has-detail');
+                        btn.setAttribute('data-tooltip', '详细信息');
+                    }
                 }
             }
         }
@@ -1069,16 +1723,24 @@
     }
 
     async function saveBatch() {
-        if (isSaving) return;
+        if (isSaving) return false;
 
         if (currentEditingIndex !== null) {
             syncDrawerToData();
         }
 
+        if (isAllLevel1Mode) {
+            return await saveBatchForLevel1();
+        } else {
+            return await saveBatchNormal();
+        }
+    }
+
+    async function saveBatchNormal() {
         const errors = validateData();
         if (errors.length > 0) {
             showErrorMessage(errors[0]);
-            return;
+            return false;
         }
 
         isSaving = true;
@@ -1118,11 +1780,19 @@
 
                 if (row.dbId) {
                     caseData.id = row.dbId;
-                    updatedCases.push(caseData);
+                    const original = originalData.find(o => o.dbId === row.dbId);
+                    if (!original || isCaseModified(row, original)) {
+                        updatedCases.push(caseData);
+                    }
                 } else {
                     newCases.push(caseData);
                 }
             });
+
+            if (updatedCases.length === 0 && newCases.length === 0) {
+                showSuccessMessage('没有需要保存的修改');
+                return true;
+            }
 
             const payload = {
                 moduleId: moduleId,
@@ -1139,12 +1809,16 @@
 
             if (result.success) {
                 showSaveSuccessBanner(result.data?.updatedCount || 0, result.data?.createdCount || 0);
+                originalData = JSON.parse(JSON.stringify(batchData));
+                return true;
             } else {
                 showErrorMessage(result.message || '保存失败');
+                return false;
             }
         } catch (error) {
             console.error('保存错误:', error);
             showErrorMessage('保存失败，请重试');
+            return false;
         } finally {
             isSaving = false;
             if (saveBtn) {
@@ -1153,6 +1827,137 @@
                 if (btnLoading) btnLoading.style.display = 'none';
             }
         }
+    }
+
+    async function saveBatchForLevel1() {
+        const errors = validateLevel1Data();
+        if (errors.length > 0) {
+            showErrorMessage(errors[0]);
+            return false;
+        }
+
+        isSaving = true;
+        const saveBtn = document.getElementById('save-btn');
+        const btnText = saveBtn?.querySelector('.btn-text');
+        const btnLoading = saveBtn?.querySelector('.btn-loading');
+
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            if (btnText) btnText.style.display = 'none';
+            if (btnLoading) btnLoading.style.display = 'flex';
+        }
+
+        try {
+            const updatedCases = [];
+            const newCases = [];
+
+            level1BatchData.forEach((item, level1Index) => {
+                if (item.cases && item.cases.length > 0) {
+                    item.cases.forEach((caseItem, caseIndex) => {
+                        const caseData = {
+                            tempId: caseItem.id,
+                            name: caseItem.name.trim(),
+                            priority: caseItem.priority,
+                            type: caseItem.type,
+                            owner: caseItem.owner || currentUser?.username || '',
+                            phase: caseItem.phase,
+                            env: caseItem.env,
+                            precondition: caseItem.precondition || '',
+                            purpose: caseItem.purpose || '',
+                            steps: caseItem.steps || '',
+                            expected: caseItem.expected || '',
+                            key_config: caseItem.key_config || '',
+                            remark: caseItem.remark || '',
+                            projects: caseItem.projects || '',
+                            environments: caseItem.environments || '',
+                            methods: caseItem.methods || '',
+                            sources: caseItem.sources || '',
+                            level1_id: item.dbId || null
+                        };
+
+                        if (caseItem.dbId) {
+                            caseData.id = caseItem.dbId;
+                            const originalLevel1 = originalData.find(o => o.id === item.id);
+                            if (originalLevel1 && originalLevel1.cases) {
+                                const originalCase = originalLevel1.cases.find(c => c.dbId === caseItem.dbId);
+                                if (!originalCase || isCaseModified(caseItem, originalCase)) {
+                                    updatedCases.push(caseData);
+                                }
+                            } else {
+                                updatedCases.push(caseData);
+                            }
+                        } else {
+                            newCases.push(caseData);
+                        }
+                    });
+                }
+            });
+
+            if (updatedCases.length === 0 && newCases.length === 0) {
+                showSuccessMessage('没有需要保存的修改');
+                return true;
+            }
+
+            const payload = {
+                moduleId: moduleId,
+                level1Id: null,
+                libraryId: libraryId,
+                updatedCases: updatedCases,
+                newCases: newCases
+            };
+
+            const result = await apiRequest('/api/testcases/batch-update', {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+
+            if (result.success) {
+                if (result.data?.createdCaseIds && result.data.createdCaseIds.length > 0) {
+                    result.data.createdCaseIds.forEach(created => {
+                        level1BatchData.forEach(item => {
+                            if (item.cases) {
+                                const caseItem = item.cases.find(c => c.id === created.tempId);
+                                if (caseItem) {
+                                    caseItem.dbId = created.dbId;
+                                }
+                            }
+                        });
+                    });
+                }
+                
+                showSaveSuccessBanner(result.data?.updatedCount || 0, result.data?.createdCount || 0);
+                originalData = JSON.parse(JSON.stringify(level1BatchData));
+                return true;
+            } else {
+                showErrorMessage(result.message || '保存失败');
+                return false;
+            }
+        } catch (error) {
+            console.error('保存错误:', error);
+            showErrorMessage('保存失败，请重试');
+            return false;
+        } finally {
+            isSaving = false;
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                if (btnText) btnText.style.display = 'inline';
+                if (btnLoading) btnLoading.style.display = 'none';
+            }
+        }
+    }
+
+    function validateLevel1Data() {
+        const errors = [];
+        level1BatchData.forEach((item, level1Index) => {
+            if (item.cases && item.cases.length > 0) {
+                item.cases.forEach((caseItem, caseIndex) => {
+                    if (!caseItem.name || caseItem.name.trim() === '') {
+                        errors.push(`测试点 ${level1Index + 1} 的用例 ${caseIndex + 1}：用例名称不能为空`);
+                    }
+                });
+            }
+        });
+        return errors;
     }
 
     function showSaveSuccessBanner(updatedCount, createdCount) {
@@ -1206,11 +2011,152 @@
         return errors;
     }
 
-    function goBack() {
+    function hasUnsavedChanges() {
+        if (isAllLevel1Mode) {
+            return hasLevel1UnsavedChanges();
+        } else {
+            return hasNormalUnsavedChanges();
+        }
+    }
+
+    function hasNormalUnsavedChanges() {
+        if (batchData.length !== originalData.length) return true;
+        
+        for (let i = 0; i < batchData.length; i++) {
+            const current = batchData[i];
+            const original = originalData[i];
+            
+            if (!original) return true;
+            
+            if (isCaseModified(current, original)) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    function hasLevel1UnsavedChanges() {
+        if (level1BatchData.length !== originalData.length) {
+            return true;
+        }
+        
+        for (let i = 0; i < level1BatchData.length; i++) {
+            const current = level1BatchData[i];
+            const original = originalData[i];
+            
+            if (!original) return true;
+            
+            if (current.name !== original.name || current.type_field !== original.type_field) {
+                return true;
+            }
+            
+            if (!current.cases || !original.cases) {
+                if (current.cases || original.cases) return true;
+                continue;
+            }
+            
+            if (current.cases.length !== original.cases.length) return true;
+            
+            for (let j = 0; j < current.cases.length; j++) {
+                if (isCaseModified(current.cases[j], original.cases[j])) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    }
+
+    function isCaseModified(current, original) {
+        const fieldsToCompare = ['name', 'priority', 'type', 'owner', 'phase', 'env', 
+                                 'precondition', 'purpose', 'steps', 'expected', 
+                                 'key_config', 'remark', 'environments', 
+                                 'methods', 'sources', 'level1_id'];
+        
+        for (const field of fieldsToCompare) {
+            const currentValue = current[field] || '';
+            const originalValue = original[field] || '';
+            
+            if (currentValue !== originalValue) {
+                return true;
+            }
+        }
+        
+        const currentProjects = current.projects || '';
+        const originalProjects = original.projects || '';
+        
+        if (typeof currentProjects === 'string' && typeof originalProjects === 'string') {
+            if (currentProjects !== originalProjects) {
+                return true;
+            }
+        } else {
+            const currentJson = JSON.stringify(currentProjects);
+            const originalJson = JSON.stringify(originalProjects);
+            if (currentJson !== originalJson) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    function showUnsavedModal() {
+        return new Promise((resolve) => {
+            const modal = document.getElementById('unsaved-modal');
+            const btnCancel = document.getElementById('unsaved-cancel');
+            const btnSaveAndBack = document.getElementById('unsaved-save-and-back');
+            const btnBackOnly = document.getElementById('unsaved-back-only');
+
+            if (!modal) {
+                resolve('back');
+                return;
+            }
+
+            modal.style.display = 'flex';
+
+            const cleanup = () => {
+                btnCancel.removeEventListener('click', handleCancel);
+                btnSaveAndBack.removeEventListener('click', handleSaveAndBack);
+                btnBackOnly.removeEventListener('click', handleBackOnly);
+                modal.style.display = 'none';
+            };
+
+            const handleCancel = () => { cleanup(); resolve('cancel'); };
+            const handleSaveAndBack = () => { cleanup(); resolve('save_and_back'); };
+            const handleBackOnly = () => { cleanup(); resolve('back'); };
+
+            btnCancel.addEventListener('click', handleCancel);
+            btnSaveAndBack.addEventListener('click', handleSaveAndBack);
+            btnBackOnly.addEventListener('click', handleBackOnly);
+        });
+    }
+
+    async function goBack() {
+        if (hasUnsavedChanges()) {
+            const result = await showUnsavedModal();
+            if (result === 'cancel') {
+                return;
+            } else if (result === 'save_and_back') {
+                const errors = validateData();
+                if (errors.length > 0) {
+                    showErrorMessage(errors[0]);
+                    return;
+                }
+                const success = await saveBatchAndReturn();
+                if (!success) return;
+            }
+        }
         navigateBack();
     }
 
+    async function saveBatchAndReturn() {
+        const success = await saveBatch();
+        return success;
+    }
+
     function navigateBack() {
+        isNavigatingBack = true;
         if (returnUrl) {
             window.location.href = returnUrl;
         } else if (document.referrer && document.referrer.includes(window.location.host)) {
@@ -1243,7 +2189,23 @@
             );
         }
 
-        listEl.innerHTML = filteredPoints.map(point => `
+        let html = '';
+        
+        if (!keyword || keyword.trim() === '') {
+            const isAllSelected = !level1Id || level1Id === '';
+            html += `
+                <div class="level1-dropdown-item ${isAllSelected ? 'selected' : ''}"
+                     data-id=""
+                     data-module-id=""
+                     data-name="全部测试点"
+                     data-module-name="">
+                    <div class="level1-dropdown-item-name">全部测试点</div>
+                    <div class="level1-dropdown-item-module">查看所有测试点</div>
+                </div>
+            `;
+        }
+
+        html += filteredPoints.map(point => `
             <div class="level1-dropdown-item ${point.id == level1Id ? 'selected' : ''}"
                  data-id="${point.id}"
                  data-module-id="${point.module_id}"
@@ -1254,7 +2216,9 @@
             </div>
         `).join('');
 
-        if (filteredPoints.length === 0) {
+        listEl.innerHTML = html;
+
+        if (filteredPoints.length === 0 && (keyword && keyword.trim() !== '')) {
             listEl.innerHTML = '<div class="level1-dropdown-empty">暂无匹配的一级测试点</div>';
         }
     }
@@ -1285,8 +2249,14 @@
 
     async function selectLevel1Point(pointId, pointName, newModuleId, newModuleName) {
         const currentUrl = new URL(window.location.href);
-        currentUrl.searchParams.set('level1Id', pointId);
-        currentUrl.searchParams.set('level1Name', pointName);
+        
+        if (pointId && pointId !== '') {
+            currentUrl.searchParams.set('level1Id', pointId);
+            currentUrl.searchParams.set('level1Name', pointName);
+        } else {
+            currentUrl.searchParams.delete('level1Id');
+            currentUrl.searchParams.delete('level1Name');
+        }
 
         if (newModuleId && newModuleId != moduleId) {
             currentUrl.searchParams.set('moduleId', newModuleId);
@@ -1418,6 +2388,8 @@
         const cancelBtn       = document.getElementById('cancel-btn');
         const saveBtn         = document.getElementById('save-btn');
         const addRowBtn       = document.getElementById('add-row-btn');
+        const addLevel1Btn    = document.getElementById('add-level1-btn');
+        const addCaseToLevel1Btn = document.getElementById('add-case-to-level1-btn');
         const tableBody       = document.getElementById('table-body');
         const errorModalClose = document.getElementById('error-modal-close');
         const breadcrumbLevel1    = document.getElementById('breadcrumb-level1');
@@ -1433,6 +2405,12 @@
         if (cancelBtn) cancelBtn.addEventListener('click', goBack);
         if (saveBtn) saveBtn.addEventListener('click', saveBatch);
         if (addRowBtn) addRowBtn.addEventListener('click', addRow);
+        if (addLevel1Btn) addLevel1Btn.addEventListener('click', () => {
+            showSuccessMessage('批量查看模式下暂不支持添加一级测试点');
+        });
+        if (addCaseToLevel1Btn) addCaseToLevel1Btn.addEventListener('click', () => {
+            addCaseToLevel1();
+        });
 
         if (tableBody) {
             tableBody.addEventListener('input', handleTableInput);
@@ -1500,6 +2478,14 @@
                 closeDrawer();
             }
         });
+
+        window.addEventListener('beforeunload', (e) => {
+            if (hasUnsavedChanges() && !isNavigatingBack) {
+                e.preventDefault();
+                e.returnValue = '';
+                return '';
+            }
+        });
     }
 
     function checkAuth() {
@@ -1530,6 +2516,7 @@
         initDrawerResizer();
         initTableResizer();
         initLevel1PanelResizer();
+        initDrawerScriptFileUpload();
 
         hideLoadingState();
     }
@@ -1712,6 +2699,327 @@
             tableWrapper.style.maxWidth = '';
         });
     }
+
+    // ========================================
+    // 关联脚本管理功能
+    // ========================================
+    
+    let currentDrawerScripts = [];
+    let editingDrawerScriptIndex = -1;
+    
+    async function loadDrawerScripts(testCaseId) {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/testcases/${testCaseId}/scripts`, {
+                headers: {
+                    'Authorization': `Bearer ${authToken}`
+                }
+            });
+            const data = await response.json();
+            
+            if (data.success && data.scripts) {
+                currentDrawerScripts = data.scripts;
+            } else {
+                currentDrawerScripts = [];
+            }
+            renderDrawerScriptsSummary();
+        } catch (error) {
+            console.error('加载关联脚本失败:', error);
+            currentDrawerScripts = [];
+            renderDrawerScriptsSummary();
+        }
+    }
+    
+    function openDrawerScriptModal() {
+        editingDrawerScriptIndex = -1;
+        document.getElementById('drawer-script-modal-title').textContent = '添加关联脚本';
+        document.getElementById('drawer-script-form').reset();
+        document.getElementById('drawer-script-id').value = '';
+        document.getElementById('drawer-script-file-path').value = '';
+        document.getElementById('drawer-script-file-size').value = '';
+        document.getElementById('drawer-script-original-filename').value = '';
+        document.querySelector('input[name="drawer-link-type"][value="external"]').checked = true;
+        
+        const filePreview = document.getElementById('drawer-script-file-preview');
+        const uploadContent = document.getElementById('drawer-script-upload-content');
+        if (filePreview) filePreview.style.display = 'none';
+        if (uploadContent) uploadContent.style.display = 'block';
+        
+        document.getElementById('drawer-script-modal').style.display = 'block';
+    }
+    
+    function closeDrawerScriptModal() {
+        document.getElementById('drawer-script-modal').style.display = 'none';
+        editingDrawerScriptIndex = -1;
+    }
+    
+    function editDrawerScript(index) {
+        const script = currentDrawerScripts[index];
+        if (!script) return;
+        
+        editingDrawerScriptIndex = index;
+        document.getElementById('drawer-script-modal-title').textContent = '编辑关联脚本';
+        document.getElementById('drawer-script-name-input').value = script.script_name || '';
+        document.getElementById('drawer-script-type-input').value = script.script_type || 'tcl';
+        document.getElementById('drawer-script-desc-input').value = script.description || '';
+        document.getElementById('drawer-script-link-input').value = script.link_url || '';
+        document.getElementById('drawer-script-link-title-input').value = script.link_title || '';
+        document.getElementById('drawer-script-file-path').value = script.file_path || '';
+        document.getElementById('drawer-script-file-size').value = script.file_size || '';
+        document.getElementById('drawer-script-original-filename').value = script.original_filename || '';
+        
+        const linkType = script.link_type || 'external';
+        const linkTypeRadio = document.querySelector(`input[name="drawer-link-type"][value="${linkType}"]`);
+        if (linkTypeRadio) linkTypeRadio.checked = true;
+        
+        const filePreview = document.getElementById('drawer-script-file-preview');
+        const uploadContent = document.getElementById('drawer-script-upload-content');
+        
+        if (script.file_path) {
+            document.getElementById('drawer-script-file-name').textContent = script.original_filename || script.script_name;
+            if (filePreview) filePreview.style.display = 'flex';
+            if (uploadContent) uploadContent.style.display = 'none';
+        } else {
+            if (filePreview) filePreview.style.display = 'none';
+            if (uploadContent) uploadContent.style.display = 'block';
+        }
+        
+        document.getElementById('drawer-script-modal').style.display = 'block';
+    }
+    
+    function saveDrawerScript() {
+        const name = document.getElementById('drawer-script-name-input').value.trim();
+        const type = document.getElementById('drawer-script-type-input').value;
+        const desc = document.getElementById('drawer-script-desc-input').value.trim();
+        const linkUrl = document.getElementById('drawer-script-link-input').value.trim();
+        const linkTitle = document.getElementById('drawer-script-link-title-input').value.trim();
+        const linkType = document.querySelector('input[name="drawer-link-type"]:checked').value;
+        const filePath = document.getElementById('drawer-script-file-path').value;
+        const fileSize = document.getElementById('drawer-script-file-size').value;
+        const originalFilename = document.getElementById('drawer-script-original-filename').value;
+        
+        if (!name) {
+            showErrorMessage('请输入脚本名称');
+            return;
+        }
+        
+        const scriptData = {
+            script_name: name,
+            script_type: type,
+            description: desc,
+            link_url: linkUrl || null,
+            link_title: linkTitle || null,
+            link_type: linkType,
+            file_path: filePath || null,
+            file_size: fileSize ? parseInt(fileSize) : null,
+            original_filename: originalFilename || null
+        };
+        
+        if (editingDrawerScriptIndex >= 0) {
+            currentDrawerScripts[editingDrawerScriptIndex] = scriptData;
+        } else {
+            currentDrawerScripts.push(scriptData);
+        }
+        
+        renderDrawerScriptsSummary();
+        closeDrawerScriptModal();
+    }
+    
+    function removeDrawerScript(index) {
+        if (confirm('确定要删除此脚本吗？')) {
+            currentDrawerScripts.splice(index, 1);
+            renderDrawerScriptsSummary();
+        }
+    }
+    
+    function removeDrawerScriptFile() {
+        document.getElementById('drawer-script-file-path').value = '';
+        document.getElementById('drawer-script-file-size').value = '';
+        document.getElementById('drawer-script-original-filename').value = '';
+        
+        const filePreview = document.getElementById('drawer-script-file-preview');
+        const uploadContent = document.getElementById('drawer-script-upload-content');
+        if (filePreview) filePreview.style.display = 'none';
+        if (uploadContent) uploadContent.style.display = 'block';
+        
+        document.getElementById('drawer-script-file-input').value = '';
+    }
+    
+    function initDrawerScriptFileUpload() {
+        const fileInput = document.getElementById('drawer-script-file-input');
+        const uploadArea = document.getElementById('drawer-script-upload-area');
+        
+        if (!fileInput || !uploadArea) return;
+        
+        uploadArea.addEventListener('click', (e) => {
+            if (e.target.closest('.btn-remove-file')) return;
+            fileInput.click();
+        });
+        
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleDrawerScriptFileUpload(files[0]);
+            }
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleDrawerScriptFileUpload(e.target.files[0]);
+            }
+        });
+    }
+    
+    async function handleDrawerScriptFileUpload(file) {
+        const maxSize = 10 * 1024 * 1024;
+        if (file.size > maxSize) {
+            showErrorMessage('文件大小不能超过10MB');
+            return;
+        }
+        
+        const allowedExts = ['.tcl', '.py', '.sh', '.txt', '.json', '.pl', '.rb', '.js', '.yaml', '.yml', '.xml', '.cfg', '.conf', '.ini'];
+        const ext = '.' + file.name.split('.').pop().toLowerCase();
+        if (!allowedExts.includes(ext)) {
+            showErrorMessage('不支持的文件类型: ' + ext);
+            return;
+        }
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        try {
+            const response = await fetch('/api/testcases/scripts/upload', {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'Authorization': `Bearer ${authToken}`
+                }
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                document.getElementById('drawer-script-file-path').value = data.file.path;
+                document.getElementById('drawer-script-file-size').value = data.file.size;
+                document.getElementById('drawer-script-original-filename').value = data.file.originalName;
+                
+                document.getElementById('drawer-script-file-name').textContent = data.file.originalName;
+                document.getElementById('drawer-script-file-preview').style.display = 'flex';
+                document.getElementById('drawer-script-upload-content').style.display = 'none';
+                
+                const nameInput = document.getElementById('drawer-script-name-input');
+                if (!nameInput.value) {
+                    nameInput.value = data.file.originalName;
+                }
+                
+                showSuccessMessage('文件上传成功');
+            } else {
+                showErrorMessage(data.message || '上传失败');
+            }
+        } catch (error) {
+            console.error('上传文件失败:', error);
+            showErrorMessage('上传文件失败');
+        }
+    }
+    
+    function renderDrawerScriptsSummary() {
+        const listContainer = document.getElementById('drawer-scripts-list');
+        const emptyState = document.getElementById('drawer-scripts-empty');
+        const editBtn = document.getElementById('drawer-edit-scripts-btn');
+        
+        if (!listContainer || !emptyState) return;
+        
+        if (currentDrawerScripts.length > 0) {
+            emptyState.style.display = 'none';
+            listContainer.style.display = 'block';
+            if (editBtn) editBtn.style.display = 'inline-flex';
+            
+            listContainer.innerHTML = currentDrawerScripts.map((script, index) => `
+                <div class="drawer-script-item">
+                    <span class="script-type-badge ${script.script_type}">${script.script_type.toUpperCase()}</span>
+                    <span class="script-name">${escapeHtml(script.script_name)}</span>
+                    ${script.file_path ? `<span class="script-file-indicator" title="已上传文件">📎</span>` : ''}
+                    ${script.link_url ? `<a href="${escapeHtml(script.link_url)}" target="_blank" class="script-link">查看</a>` : ''}
+                    <button type="button" class="btn-icon" onclick="editDrawerScript(${index})" title="编辑">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4-9.5-9.5z"></path>
+                        </svg>
+                    </button>
+                    <button type="button" class="btn-icon btn-danger" onclick="removeDrawerScript(${index})" title="删除">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </div>
+            `).join('');
+            
+            const hiddenInput = document.getElementById('drawer-scripts');
+            if (hiddenInput) hiddenInput.value = JSON.stringify(currentDrawerScripts);
+        } else {
+            emptyState.style.display = 'block';
+            listContainer.style.display = 'none';
+            if (editBtn) editBtn.style.display = 'none';
+            const hiddenInput = document.getElementById('drawer-scripts');
+            if (hiddenInput) hiddenInput.value = '';
+        }
+    }
+    
+    function getDrawerScripts() {
+        return currentDrawerScripts;
+    }
+    
+    function clearDrawerScripts() {
+        currentDrawerScripts = [];
+        renderDrawerScriptsSummary();
+    }
+    
+    async function saveDrawerScripts(testCaseId) {
+        if (!testCaseId || currentDrawerScripts.length === 0) return;
+        
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/testcases/scripts/batch`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify({
+                    test_case_id: testCaseId,
+                    scripts: currentDrawerScripts
+                })
+            });
+            
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error('保存关联脚本失败:', error);
+            return { success: false, message: '保存关联脚本失败' };
+        }
+    }
+    
+    window.openDrawerScriptModal = openDrawerScriptModal;
+    window.closeDrawerScriptModal = closeDrawerScriptModal;
+    window.editDrawerScript = editDrawerScript;
+    window.saveDrawerScript = saveDrawerScript;
+    window.removeDrawerScript = removeDrawerScript;
+    window.removeDrawerScriptFile = removeDrawerScriptFile;
+    window.loadDrawerScripts = loadDrawerScripts;
+    window.getDrawerScripts = getDrawerScripts;
+    window.clearDrawerScripts = clearDrawerScripts;
+    window.saveDrawerScripts = saveDrawerScripts;
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);

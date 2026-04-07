@@ -27,7 +27,7 @@ function validateSearchParams({ keyword, types, limit, offset }) {
     }
     
     if (types && types !== 'all') {
-        const validTypes = ['testplan', 'case', 'post', 'comment'];
+        const validTypes = ['testplan', 'case', 'post', 'comment', 'script'];
         const inputTypes = types.split(',').map(t => t.trim());
         const invalidTypes = inputTypes.filter(t => !validTypes.includes(t));
         if (invalidTypes.length > 0) {
@@ -302,6 +302,64 @@ async function searchComments(keyword, limit, offset) {
     }
 }
 
+async function searchScripts(keyword, limit, offset) {
+    const searchPattern = `%${keyword}%`;
+    
+    try {
+        const [countResult] = await pool.execute(`
+            SELECT COUNT(*) as total
+            FROM test_case_scripts
+            WHERE script_name LIKE ? 
+               OR description LIKE ?
+        `, [searchPattern, searchPattern]);
+        
+        const total = countResult[0].total;
+        
+        const [rows] = await pool.execute(`
+            SELECT 
+                s.id,
+                s.script_name,
+                s.script_type,
+                s.description,
+                s.test_case_id,
+                s.link_url,
+                s.link_title,
+                s.created_at,
+                tc.name as case_name,
+                tc.case_id,
+                m.name as module_name
+            FROM test_case_scripts s
+            LEFT JOIN test_cases tc ON s.test_case_id = tc.id
+            LEFT JOIN modules m ON tc.module_id = m.id
+            WHERE s.script_name LIKE ? 
+               OR s.description LIKE ?
+            ORDER BY s.created_at DESC
+            LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
+        `, [searchPattern, searchPattern]);
+        
+        return {
+            total,
+            hasMore: total > offset + limit,
+            items: rows.map(row => ({
+                id: row.id,
+                scriptName: row.script_name,
+                scriptType: row.script_type,
+                description: row.description ? row.description.substring(0, 100) : '',
+                testCaseId: row.test_case_id,
+                caseName: row.case_name,
+                caseId: row.case_id,
+                moduleName: row.module_name || '未分类',
+                linkUrl: row.link_url,
+                linkTitle: row.link_title,
+                createdAt: row.created_at
+            }))
+        };
+    } catch (error) {
+        console.error('搜索脚本错误:', error);
+        return { total: 0, hasMore: false, items: [], error: error.message };
+    }
+}
+
 router.get('/search', authenticateToken, async (req, res) => {
     const startTime = Date.now();
     
@@ -329,9 +387,9 @@ router.get('/search', authenticateToken, async (req, res) => {
         console.log('[搜索请求] 转换后:', { limitNum, offsetNum, limitNumType: typeof limitNum, offsetNumType: typeof offsetNum });
         
         const typeList = types === 'all' 
-            ? ['testplan', 'case', 'post', 'comment'] 
+            ? ['testplan', 'case', 'post', 'comment', 'script'] 
             : types.split(',').map(t => t.trim()).filter(t => 
-                ['testplan', 'case', 'post', 'comment'].includes(t)
+                ['testplan', 'case', 'post', 'comment', 'script'].includes(t)
               );
         
         const results = {};
@@ -366,6 +424,14 @@ router.get('/search', authenticateToken, async (req, res) => {
                 searchComments(searchTerm, limitNum, offsetNum)
                     .then(r => { results.comments = r; })
                     .catch(e => { results.comments = { total: 0, items: [], error: e.message }; })
+            );
+        }
+        
+        if (typeList.includes('script')) {
+            searchPromises.push(
+                searchScripts(searchTerm, limitNum, offsetNum)
+                    .then(r => { results.scripts = r; })
+                    .catch(e => { results.scripts = { total: 0, items: [], error: e.message }; })
             );
         }
         

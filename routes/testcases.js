@@ -1405,8 +1405,15 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
         }
 
         // 处理新增的用例（复用批量创建的逻辑）
+        const createdCaseIds = [];
+        
         if (Array.isArray(newCases) && newCases.length > 0) {
+            console.log('=== 后端批量更新调试 ===');
+            console.log('收到newCases数量:', newCases.length);
+            console.log('newCases详情:', JSON.stringify(newCases, null, 2));
+            
             const validNewCases = newCases.filter(c => c.name && c.name.trim() !== '');
+            console.log('有效newCases数量:', validNewCases.length);
             
             if (validNewCases.length > 0) {
                 // 预加载关联数据映射表
@@ -1453,6 +1460,14 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
                 }
 
                 for (const caseData of validNewCases) {
+                    console.log('创建新用例:', {
+                        name: caseData.name,
+                        level1_id: caseData.level1_id,
+                        level1Id: caseData.level1Id,
+                        moduleId: moduleId,
+                        requestLevel1Id: level1Id
+                    });
+                    
                     // 生成用例编号
                     const [countResult] = await connection.execute('SELECT COUNT(*) as cnt FROM test_cases');
                     const caseNum = (countResult[0].cnt || 0) + 1;
@@ -1471,7 +1486,7 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
                             caseData.owner || currentUser.username,
                             libraryId || null,
                             moduleId,
-                            level1Id || null,
+                            caseData.level1_id || caseData.level1Id || level1Id || null,
                             caseData.key_config || '',
                             caseData.precondition || '',
                             caseData.purpose || '',
@@ -1531,6 +1546,11 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
                         });
                     }
 
+                    createdCaseIds.push({
+                        tempId: caseData.tempId || null,
+                        dbId: dbId,
+                        name: caseData.name.trim()
+                    });
                     createdCount++;
                 }
             }
@@ -1543,7 +1563,8 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
             message: '批量更新成功',
             data: {
                 updatedCount: updatedCount,
-                createdCount: createdCount
+                createdCount: createdCount,
+                createdCaseIds: createdCaseIds
             }
         });
 

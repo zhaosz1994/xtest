@@ -8,6 +8,11 @@
 
 set -e
 
+# 加载 .env 文件
+if [ -f ".env" ]; then
+    export $(cat .env | grep -v '^#' | xargs)
+fi
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -43,13 +48,26 @@ if [ "$DEPLOY_ENV" == "production" ]; then
     DB_PORT=${DB_PORT:-"3306"}
     DB_NAME=${DB_NAME:-"xtest_db"}
     DB_USER=${DB_USER:-"root"}
+    DB_PASS=${DB_PASSWORD:-""}
+    DB_SOCKET=${DB_SOCKET:-""}
     MIGRATION_TABLE="schema_migrations"
 else
     DB_HOST=${DB_HOST:-"localhost"}
     DB_PORT=${DB_PORT:-"3306"}
-    DB_NAME=${DB_NAME:-"xtest_db_staging"}
+    DB_NAME=${DB_NAME:-"xtest_db"}
     DB_USER=${DB_USER:-"root"}
+    DB_PASS=${DB_PASSWORD:-""}
+    DB_SOCKET=${DB_SOCKET:-""}
     MIGRATION_TABLE="schema_migrations"
+fi
+
+# 构建 MySQL 连接参数
+if [ -n "$DB_SOCKET" ]; then
+    MYSQL_CONN="-S$DB_SOCKET -u$DB_USER -p$DB_PASS"
+    MYSQLDUMP_CONN="-S$DB_SOCKET -u$DB_USER -p$DB_PASS"
+else
+    MYSQL_CONN="-h$DB_HOST -P$DB_PORT -u$DB_USER -p$DB_PASS"
+    MYSQLDUMP_CONN="-h$DB_HOST -P$DB_PORT -u$DB_USER -p$DB_PASS"
 fi
 
 log_info "=========================================="
@@ -68,7 +86,7 @@ fi
 # 创建迁移记录表
 create_migration_table() {
     log_info "创建迁移记录表..."
-    mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" <<EOF
+    mysql $MYSQL_CONN "$DB_NAME" <<EOF
 CREATE TABLE IF NOT EXISTS $MIGRATION_TABLE (
     id INT PRIMARY KEY AUTO_INCREMENT,
     migration_name VARCHAR(255) NOT NULL UNIQUE,
@@ -82,7 +100,7 @@ EOF
 # 检查迁移是否已执行
 is_migration_executed() {
     local migration_name=$1
-    local count=$(mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" -N -B \
+    local count=$(mysql $MYSQL_CONN "$DB_NAME" -N -B \
         -e "SELECT COUNT(*) FROM $MIGRATION_TABLE WHERE migration_name = '$migration_name'")
     return $count
 }
@@ -91,7 +109,7 @@ is_migration_executed() {
 record_migration() {
     local migration_name=$1
     local rollback_script=$2
-    mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" <<EOF
+    mysql $MYSQL_CONN "$DB_NAME" <<EOF
 INSERT INTO $MIGRATION_TABLE (migration_name, rollback_script) 
 VALUES ('$migration_name', '$rollback_script');
 EOF
@@ -100,7 +118,7 @@ EOF
 # 删除迁移记录
 remove_migration_record() {
     local migration_name=$1
-    mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" <<EOF
+    mysql $MYSQL_CONN "$DB_NAME" <<EOF
 DELETE FROM $MIGRATION_TABLE WHERE migration_name = '$migration_name';
 EOF
 }
@@ -112,7 +130,7 @@ backup_database() {
     mkdir -p $BACKUP_DIR
     BACKUP_FILE="$BACKUP_DIR/${DB_NAME}_backup_${TIMESTAMP}.sql"
     
-    mysqldump -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" \
+    mysqldump $MYSQLDUMP_CONN \
         --single-transaction \
         --routines \
         --triggers \
@@ -122,8 +140,10 @@ backup_database() {
     log_success "数据库已备份到: $BACKUP_FILE"
     
     # 保留最近10个备份
+    local CURRENT_DIR=$(pwd)
     cd $BACKUP_DIR
     ls -dt ${DB_NAME}_backup_*.sql | tail -n +11 | xargs -r rm -f
+    cd "$CURRENT_DIR"
     log_info "已清理旧备份，保留最近10个"
 }
 
@@ -137,6 +157,8 @@ execute_migrations() {
     declare -a migrations=(
         "add_review_feature.sql"
         "add_multi_reviewer.sql"
+        "add_anonymous_field.sql"
+        "add_test_case_scripts.sql"
     )
     
     for migration in "${migrations[@]}"; do
@@ -153,7 +175,7 @@ execute_migrations() {
         log_info "执行迁移: $migration"
         
         # 执行迁移脚本
-        if mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" < "migrations/$migration"; then
+        if mysql $MYSQL_CONN "$DB_NAME" < "migrations/$migration"; then
             # 提取回滚脚本
             rollback_script=$(sed -n '/^\/\*/,/\*\//p' "migrations/$migration" | sed '1d;$d' | sed "s/'/\\\'/g" | tr '\n' ' ')
             
@@ -175,7 +197,7 @@ rollback_migrations() {
     log_warning "开始回滚数据库迁移..."
     
     # 获取已执行的迁移（倒序）
-    executed_migrations=$(mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" -N -B \
+    executed_migrations=$(mysql $MYSQL_CONN "$DB_NAME" -N -B \
         -e "SELECT migration_name, rollback_script FROM $MIGRATION_TABLE ORDER BY id DESC")
     
     if [ -z "$executed_migrations" ]; then
@@ -187,7 +209,7 @@ rollback_migrations() {
         log_warning "回滚迁移: $migration_name"
         
         # 执行回滚脚本
-        if echo "$rollback_script" | mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME"; then
+        if echo "$rollback_script" | mysql $MYSQL_CONN "$DB_NAME"; then
             # 删除迁移记录
             remove_migration_record "$migration_name"
             log_success "已回滚: $migration_name"
@@ -203,7 +225,7 @@ rollback_migrations() {
 # 查看迁移状态
 show_migration_status() {
     log_info "迁移状态:"
-    mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" -e \
+    mysql $MYSQL_CONN "$DB_NAME" -e \
         "SELECT migration_name, executed_at FROM $MIGRATION_TABLE ORDER BY id"
 }
 

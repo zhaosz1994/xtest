@@ -957,7 +957,7 @@
                         </div>
                         <div class="header-right">
                             <div class="search-box">
-                                <input type="text" placeholder="搜索用例" class="search-input">
+                                <input type="text" id="case-management-search-input" placeholder="搜索用例" class="search-input" style="width: 500px; height: 48px;">
                             </div>
                             <div class="case-actions">
                                 <button class="secondary-btn" onclick="openImportExcelModal()">
@@ -1239,6 +1239,12 @@
                                 }
                                 
                                 /* 操作按钮样式 */
+                                .col-actions {
+                                    padding: 8px 12px;
+                                    vertical-align: middle;
+                                    text-align: center;
+                                }
+                                
                                 .actions-cell {
                                     display: flex;
                                     gap: 8px;
@@ -1466,7 +1472,7 @@
                                                 <input type="checkbox" id="select-all-cases" onchange="toggleSelectAllCases(this.checked)" style="width: 16px; height: 16px; cursor: pointer;">
                                             </th>
                                             <th style="width: 60px;">编号</th>
-                                            <th>测试项</th>
+                                            <th style="min-width: 150px;">测试项</th>
                                             <th style="width: 400px;">测试目的</th>
                                             <th style="width: 90px;">负责人</th>
                                             <th style="width: 120px;">测试环境</th>
@@ -4861,6 +4867,13 @@ return rows[0];'></textarea>
                     </svg>
                     测试内容
                 </button>
+                <button class="case-tab" data-tab="scripts">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="16 18 22 12 16 6"></polyline>
+                        <polyline points="8 6 2 12 8 18"></polyline>
+                    </svg>
+                    关联脚本
+                </button>
                 <button class="case-tab" data-tab="projects">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
@@ -5067,6 +5080,50 @@ return rows[0];'></textarea>
                         </div>
                     </div>
                     
+                    <!-- 关联脚本标签页 -->
+                    <div class="case-tab-content" id="tab-scripts">
+                        <div class="form-card">
+                            <div class="form-card-header">
+                                <span class="form-card-icon">📜</span>
+                                <span>关联脚本</span>
+                                <button type="button" onclick="openAddScriptModal()" class="btn btn-sm btn-primary" style="margin-left: auto;">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                                    </svg>
+                                    添加脚本
+                                </button>
+                            </div>
+                            <div class="form-card-body">
+                                <div class="scripts-table-container" id="scripts-table-container">
+                                    <table class="scripts-table" id="scripts-table">
+                                        <thead>
+                                            <tr>
+                                                <th style="width: 40px;">#</th>
+                                                <th style="width: 250px;">脚本名称</th>
+                                                <th style="width: 80px;">类型</th>
+                                                <th>描述</th>
+                                                <th style="width: 120px;">源文件</th>
+                                                <th style="width: 150px;">链接</th>
+                                                <th style="width: 100px;">操作</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="scripts-table-body">
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="scripts-empty" id="scripts-empty" style="display: none;">
+                                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <polyline points="16 18 22 12 16 6"></polyline>
+                                        <polyline points="8 6 2 12 8 18"></polyline>
+                                    </svg>
+                                    <p>暂无关联脚本</p>
+                                    <button type="button" onclick="openAddScriptModal()" class="btn btn-sm btn-primary">添加脚本</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
                     <!-- 关联项目标签页 -->
                     <div class="case-tab-content" id="tab-projects">
                         <div class="form-card">
@@ -5225,13 +5282,13 @@ return rows[0];'></textarea>
                                 
                                 <!-- 评审操作按钮 -->
                                 <div class="review-actions" id="review-actions" style="display: none;">
-                                    <button class="btn btn-success" onclick="approveReview()">
+                                    <button type="button" class="btn btn-success" onclick="approveReview()">
                                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <polyline points="20 6 9 17 4 12"></polyline>
                                         </svg>
                                         通过
                                     </button>
-                                    <button class="btn btn-danger" onclick="rejectReview()">
+                                    <button type="button" class="btn btn-danger" onclick="rejectReview()">
                                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <line x1="18" y1="6" x2="6" y2="18"></line>
                                             <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -5249,7 +5306,7 @@ return rows[0];'></textarea>
                                     <span class="title-icon">📜</span>
                                     评审历史
                                 </h3>
-                                <button class="expand-btn" onclick="toggleReviewHistory(this)">展开全部</button>
+                                <button type="button" class="expand-btn" onclick="toggleReviewHistory(this)">展开全部</button>
                             </div>
                             
                             <div class="history-timeline" id="review-history-timeline">
@@ -5288,6 +5345,95 @@ return rows[0];'></textarea>
                         保存
                     </button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加/编辑关联脚本弹窗 -->
+    <div id="script-modal" class="modal" style="display: none; z-index: 99998;">
+        <div class="modal-content" style="width: 600px; max-width: 95%;">
+            <div class="modal-header">
+                <h3 id="script-modal-title">添加关联脚本</h3>
+                <button class="close-modal" onclick="closeScriptModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="script-form">
+                    <input type="hidden" id="script-id">
+                    <input type="hidden" id="script-file-path">
+                    <input type="hidden" id="script-file-size">
+                    <input type="hidden" id="script-original-filename">
+                    
+                    <div class="form-group">
+                        <label class="form-label required">脚本名称</label>
+                        <input type="text" id="script-name" class="form-input" placeholder="如：sdk_fdb_func_xxx_xxx.tcl" required>
+                        <p class="form-hint">支持 .tcl, .py, .sh 等脚本文件名称</p>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">脚本类型</label>
+                            <select id="script-type" class="form-select">
+                                <option value="tcl">TCL</option>
+                                <option value="py">Python</option>
+                                <option value="sh">Shell</option>
+                                <option value="other">其他</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">脚本描述</label>
+                        <textarea id="script-description" class="form-textarea" rows="2" placeholder="脚本功能描述"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">源文件上传</label>
+                        <div class="file-upload-area" id="script-upload-area">
+                            <input type="file" id="script-file-input" style="display: none;" accept=".tcl,.py,.sh,.txt,.json,.pl,.rb,.js,.yaml,.yml,.xml,.cfg,.conf,.ini">
+                            <div class="file-upload-content" id="script-upload-content">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="17 8 12 3 7 8"></polyline>
+                                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                                </svg>
+                                <p>点击上传或拖拽文件到此处</p>
+                                <span class="file-upload-hint">支持 .tcl, .py, .sh 等格式，最大 10MB</span>
+                            </div>
+                            <div class="file-upload-preview" id="script-file-preview" style="display: none;">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                    <polyline points="14 2 14 8 20 8"></polyline>
+                                </svg>
+                                <span id="script-file-name"></span>
+                                <button type="button" class="btn-remove-file" onclick="removeScriptFile()">×</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">外部链接</label>
+                        <input type="url" id="script-link-url" class="form-input" placeholder="https://gitlab.xxx.com/xxx.tcl">
+                        <input type="text" id="script-link-title" class="form-input" placeholder="链接标题（如：GitLab源码）" style="margin-top: 8px;">
+                        <div class="link-type-selector" style="margin-top: 8px;">
+                            <label class="radio-item">
+                                <input type="radio" name="link-type" value="external" checked>
+                                <span>外部链接</span>
+                            </label>
+                            <label class="radio-item">
+                                <input type="radio" name="link-type" value="gitlab">
+                                <span>GitLab</span>
+                            </label>
+                            <label class="radio-item">
+                                <input type="radio" name="link-type" value="other">
+                                <span>其他</span>
+                            </label>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeScriptModal()">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveScript()">保存</button>
             </div>
         </div>
     </div>
@@ -6350,6 +6496,11 @@ return rows[0];'></textarea>
     <!-- Socket.io -->
     <script src="/js/socket.io.min.js"></script>
     <script src="/js/chart.umd.min.js"></script>
+    
+    <!-- 模块化代码 - 在原有 script.js 之前加载 -->
+    <script src="public/js/modules/moduleLoader.js"></script>
+    
+    <!-- 原有的 script.js -->
     <script src="script.js"></script>
     <script src="js/notification.js"></script>
     

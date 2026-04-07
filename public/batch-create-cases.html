@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>批量新建测试用例 - xTest</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧪</text></svg>">
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/styles-theme.css">
     <link rel="stylesheet" href="/css/batch-create-cases.css">
@@ -54,7 +55,7 @@
             <div class="table-container">
                 <div class="table-wrapper" id="table-wrapper">
                     <table class="batch-table" id="batch-table">
-                        <thead>
+                        <thead id="table-head-normal">
                             <tr>
                                 <th class="col-index">#</th>
                                 <th class="col-name">用例名称 <span class="required">*</span></th>
@@ -66,6 +67,15 @@
                                 <th class="col-actions">操作</th>
                             </tr>
                         </thead>
+                        <thead id="table-head-level1" style="display: none;">
+                            <tr>
+                                <th class="col-expand" style="width: 40px;"></th>
+                                <th class="col-index" style="width: 50px;">编号</th>
+                                <th class="col-name">一级测试点名称 <span class="required">*</span></th>
+                                <th class="col-type">测试类型</th>
+                                <th class="col-actions">操作</th>
+                            </tr>
+                        </thead>
                         <tbody id="table-body">
                         </tbody>
                     </table>
@@ -73,7 +83,7 @@
                 <div class="table-resizer" id="table-resizer"></div>
             </div>
 
-            <div class="add-row-section">
+            <div class="add-row-section" id="add-row-section">
                 <button class="add-row-btn" id="add-row-btn">
                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -82,6 +92,26 @@
                     <span>添加一行</span>
                 </button>
                 <span id="row-count-hint" class="row-count-hint">共 1 条</span>
+            </div>
+            
+            <div class="add-row-section" id="add-level1-section" style="display: none;">
+                <div class="add-buttons-group">
+                    <button class="add-level1-btn" id="add-level1-btn">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        <span>添加一级测试点</span>
+                    </button>
+                    <button class="add-case-row-btn" id="add-case-to-level1-btn" disabled>
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        <span>添加测试用例</span>
+                    </button>
+                </div>
+                <span id="level1-count-hint" class="row-count-hint">共 0 个测试点</span>
             </div>
         </main>
     </div>
@@ -277,6 +307,24 @@
                 </button>
                 <input type="hidden" id="drawer-projects" value="">
             </div>
+            <div class="drawer-form-group">
+                <label class="drawer-form-label">📜 关联脚本</label>
+                <div class="drawer-scripts-summary" id="drawer-scripts-summary">
+                    <div class="drawer-scripts-empty" id="drawer-scripts-empty">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <polyline points="16 18 22 12 16 6"></polyline>
+                            <polyline points="8 6 2 12 8 18"></polyline>
+                        </svg>
+                        <p>暂无关联脚本</p>
+                        <button type="button" class="btn btn-sm btn-primary" onclick="openDrawerScriptModal()">添加脚本</button>
+                    </div>
+                    <div class="drawer-scripts-list" id="drawer-scripts-list" style="display: none;"></div>
+                </div>
+                <button type="button" onclick="openDrawerScriptModal()" class="btn btn-sm btn-secondary" style="margin-top: 8px; display: none;" id="drawer-edit-scripts-btn">
+                    编辑脚本
+                </button>
+                <input type="hidden" id="drawer-scripts" value="">
+            </div>
         </div>
         <div class="drawer-footer">
             <button class="btn btn-secondary" id="drawer-cancel">取消</button>
@@ -370,6 +418,95 @@
                     <button type="button" class="btn btn-secondary" onclick="closeDrawerProjectSelector()">取消</button>
                     <button type="button" class="btn btn-primary" onclick="confirmDrawerProjectSelection()">保存关联</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 关联脚本编辑弹窗 -->
+    <div id="drawer-script-modal" class="modal" style="display: none; z-index: 10020;">
+        <div class="modal-content" style="width: 600px; max-width: 95%;">
+            <div class="modal-header">
+                <h3 id="drawer-script-modal-title">添加关联脚本</h3>
+                <button class="close-modal" onclick="closeDrawerScriptModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="drawer-script-form">
+                    <input type="hidden" id="drawer-script-id">
+                    <input type="hidden" id="drawer-script-file-path">
+                    <input type="hidden" id="drawer-script-file-size">
+                    <input type="hidden" id="drawer-script-original-filename">
+                    
+                    <div class="form-group">
+                        <label class="form-label required">脚本名称</label>
+                        <input type="text" id="drawer-script-name-input" class="form-input" placeholder="如：sdk_fdb_func_xxx_xxx.tcl" required>
+                        <p class="form-hint">支持 .tcl, .py, .sh 等脚本文件名称</p>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">脚本类型</label>
+                            <select id="drawer-script-type-input" class="form-select">
+                                <option value="tcl">TCL</option>
+                                <option value="py">Python</option>
+                                <option value="sh">Shell</option>
+                                <option value="other">其他</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">脚本描述</label>
+                        <textarea id="drawer-script-desc-input" class="form-textarea" rows="2" placeholder="脚本功能描述"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">源文件上传</label>
+                        <div class="file-upload-area" id="drawer-script-upload-area">
+                            <input type="file" id="drawer-script-file-input" style="display: none;" accept=".tcl,.py,.sh,.txt,.json,.pl,.rb,.js,.yaml,.yml,.xml,.cfg,.conf,.ini">
+                            <div class="file-upload-content" id="drawer-script-upload-content">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="17 8 12 3 7 8"></polyline>
+                                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                                </svg>
+                                <p>点击上传或拖拽文件到此处</p>
+                                <span class="file-upload-hint">支持 .tcl, .py, .sh 等格式，最大 10MB</span>
+                            </div>
+                            <div class="file-upload-preview" id="drawer-script-file-preview" style="display: none;">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                    <polyline points="14 2 14 8 20 8"></polyline>
+                                </svg>
+                                <span id="drawer-script-file-name"></span>
+                                <button type="button" class="btn-remove-file" onclick="removeDrawerScriptFile()">×</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">外部链接</label>
+                        <input type="url" id="drawer-script-link-input" class="form-input" placeholder="https://gitlab.xxx.com/xxx.tcl">
+                        <input type="text" id="drawer-script-link-title-input" class="form-input" placeholder="链接标题（如：GitLab源码）" style="margin-top: 8px;">
+                        <div class="link-type-selector" style="margin-top: 8px;">
+                            <label class="radio-item">
+                                <input type="radio" name="drawer-link-type" value="external" checked>
+                                <span>外部链接</span>
+                            </label>
+                            <label class="radio-item">
+                                <input type="radio" name="drawer-link-type" value="gitlab">
+                                <span>GitLab</span>
+                            </label>
+                            <label class="radio-item">
+                                <input type="radio" name="drawer-link-type" value="other">
+                                <span>其他</span>
+                            </label>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeDrawerScriptModal()">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveDrawerScript()">保存</button>
             </div>
         </div>
     </div>

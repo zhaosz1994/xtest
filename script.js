@@ -2832,7 +2832,8 @@ function renderTestPlansTable(filteredPlans = null) {
                 </td>
                 <td>${plan.projectName || plan.project || '-'}</td>
                 <td>${plan.iteration || '-'}</td>
-                <td class="actions-cell">
+                <td class="col-actions">
+                    <div class="actions-cell">
                     ${executeBtnHtml}
                     <button class="action-btn report-btn" onclick="generateReportFromTestPlan(${plan.id})" title="生成报告">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2862,6 +2863,7 @@ function renderTestPlansTable(filteredPlans = null) {
                             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                         </svg>
                     </button>
+                    </div>
                 </td>
             </tr>
         `;
@@ -7417,6 +7419,8 @@ function closeTestCaseDetailModal() {
     }
 
     TestCaseEditState.clear();
+
+    currentReviewCaseId = null;
 }
 
 // ==================== 执行记录功能 ====================
@@ -10253,34 +10257,64 @@ async function openBatchCreateSelectModal() {
         modal.style.cssText = 'display: none; z-index: 99999;';
         modal.innerHTML = `
             <div class="modal-overlay" onclick="closeBatchCreateSelectModal()"></div>
-            <div class="modal-content" style="max-width: 500px;">
-                <div class="modal-header">
-                    <h3>选择创建位置</h3>
-                    <span class="close" onclick="closeBatchCreateSelectModal()">&times;</span>
+            <div class="modal-content" style="max-width: 480px; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.15);">
+                <div class="modal-header" style="padding: 20px 24px; border-bottom: 1px solid #f0f0f0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="12" y1="8" x2="12" y2="16"></line>
+                            <line x1="8" y1="12" x2="16" y2="12"></line>
+                        </svg>
+                        <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: white;">选择创建位置</h3>
+                    </div>
+                    <button onclick="closeBatchCreateSelectModal()" style="background: rgba(255,255,255,0.2); border: none; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
                 </div>
-                <div class="modal-body">
-                    <div style="margin-bottom: 16px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #333;">用例库 <span style="color: #ff4d4f;">*</span></label>
-                        <select id="batch-select-library" class="form-control" style="width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;" onchange="onBatchSelectLibrary(this.value)">
+                <div class="modal-body" style="padding: 24px; background: #fafbfc;">
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                            </svg>
+                            用例库 <span style="color: #ef4444;">*</span>
+                        </label>
+                        <select id="batch-select-library" onchange="onBatchSelectLibrary(this.value)" style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
                             <option value="">请选择用例库</option>
                         </select>
                     </div>
-                    <div style="margin-bottom: 16px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #333;">模块 <span style="color: #ff4d4f;">*</span></label>
-                        <select id="batch-select-module" class="form-control" style="width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;" onchange="onBatchSelectModule(this.value)" disabled>
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                            模块 <span style="color: #ef4444;">*</span>
+                        </label>
+                        <select id="batch-select-module" onchange="onBatchSelectModule(this.value)" disabled style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
                             <option value="">请先选择用例库</option>
                         </select>
                     </div>
-                    <div style="margin-bottom: 16px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #333;">一级测试点 <span style="color: #999;">(可选)</span></label>
-                        <select id="batch-select-level1" class="form-control" style="width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;" onchange="onBatchSelectLevel1(this.value)" disabled>
+                    <div>
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M12 16v-4"></path>
+                                <path d="M12 8h.01"></path>
+                            </svg>
+                            一级测试点 <span style="color: #9ca3af; font-weight: 400; font-size: 12px;">(可选)</span>
+                        </label>
+                        <select id="batch-select-level1" onchange="onBatchSelectLevel1(this.value)" disabled style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
                             <option value="">请先选择模块</option>
                         </select>
                     </div>
                 </div>
-                <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 12px; padding: 12px 24px; border-top: 1px solid #f0f0f0; background: #fafafa;">
-                    <button class="btn btn-secondary" onclick="closeBatchCreateSelectModal()">取消</button>
-                    <button class="btn btn-primary" id="batch-create-confirm-btn" onclick="confirmBatchCreate()">确定</button>
+                <div class="modal-footer" style="padding: 16px 24px; border-top: 1px solid #f0f0f0; background: white; display: flex; justify-content: flex-end; gap: 12px;">
+                    <button onclick="closeBatchCreateSelectModal()" style="padding: 10px 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: white; color: #374151; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='white'">取消</button>
+                    <button id="batch-create-confirm-btn" onclick="confirmBatchCreate()" style="padding: 10px 20px; border: none; border-radius: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 16px rgba(102, 126, 234, 0.4)'" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 12px rgba(102, 126, 234, 0.3)'">确定</button>
                 </div>
             </div>
         `;
@@ -10485,34 +10519,62 @@ async function openAddTestCaseSelectModal() {
         modal.style.cssText = 'display: none; z-index: 99999;';
         modal.innerHTML = `
             <div class="modal-overlay" onclick="closeAddCaseSelectModal()"></div>
-            <div class="modal-content" style="max-width: 500px;">
-                <div class="modal-header">
-                    <h3>选择创建位置</h3>
-                    <span class="close" onclick="closeAddCaseSelectModal()">&times;</span>
+            <div class="modal-content" style="max-width: 480px; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.15);">
+                <div class="modal-header" style="padding: 20px 24px; border-bottom: 1px solid #f0f0f0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                            <path d="M12 5v14M5 12h14"></path>
+                        </svg>
+                        <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: white;">选择创建位置</h3>
+                    </div>
+                    <button onclick="closeAddCaseSelectModal()" style="background: rgba(255,255,255,0.2); border: none; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
                 </div>
-                <div class="modal-body">
-                    <div style="margin-bottom: 16px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #333;">用例库 <span style="color: #ff4d4f;">*</span></label>
-                        <select id="add-case-select-library" class="form-control" style="width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;" onchange="onAddCaseSelectLibrary(this.value)">
+                <div class="modal-body" style="padding: 24px; background: #fafbfc;">
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                            </svg>
+                            用例库 <span style="color: #ef4444;">*</span>
+                        </label>
+                        <select id="add-case-select-library" onchange="onAddCaseSelectLibrary(this.value)" style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
                             <option value="">请选择用例库</option>
                         </select>
                     </div>
-                    <div style="margin-bottom: 16px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #333;">模块 <span style="color: #ff4d4f;">*</span></label>
-                        <select id="add-case-select-module" class="form-control" style="width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;" onchange="onAddCaseSelectModule(this.value)" disabled>
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                            模块 <span style="color: #ef4444;">*</span>
+                        </label>
+                        <select id="add-case-select-module" onchange="onAddCaseSelectModule(this.value)" disabled style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
                             <option value="">请先选择用例库</option>
                         </select>
                     </div>
-                    <div style="margin-bottom: 16px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #333;">一级测试点 <span style="color: #999;">(可选)</span></label>
-                        <select id="add-case-select-level1" class="form-control" style="width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;" onchange="onAddCaseSelectLevel1(this.value)" disabled>
+                    <div>
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M12 16v-4"></path>
+                                <path d="M12 8h.01"></path>
+                            </svg>
+                            一级测试点 <span style="color: #9ca3af; font-weight: 400; font-size: 12px;">(可选)</span>
+                        </label>
+                        <select id="add-case-select-level1" onchange="onAddCaseSelectLevel1(this.value)" disabled style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
                             <option value="">请先选择模块</option>
                         </select>
                     </div>
                 </div>
-                <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 12px; padding: 12px 24px; border-top: 1px solid #f0f0f0; background: #fafafa;">
-                    <button class="btn btn-secondary" onclick="closeAddCaseSelectModal()">取消</button>
-                    <button class="btn btn-primary" id="add-case-confirm-btn" onclick="confirmAddCaseSelect()">确定</button>
+                <div class="modal-footer" style="padding: 16px 24px; border-top: 1px solid #f0f0f0; background: white; display: flex; justify-content: flex-end; gap: 12px;">
+                    <button onclick="closeAddCaseSelectModal()" style="padding: 10px 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: white; color: #374151; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='white'">取消</button>
+                    <button id="add-case-confirm-btn" onclick="confirmAddCaseSelect()" style="padding: 10px 20px; border: none; border-radius: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 16px rgba(102, 126, 234, 0.4)'" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 12px rgba(102, 126, 234, 0.3)'">确定</button>
                 </div>
             </div>
         `;
@@ -27298,6 +27360,7 @@ let filteredReviewersList = [];
 let currentUserPage = 1;
 const usersPerPage = 10;
 let currentReviewHistoryExpanded = false;
+let currentReviewCaseId = null;
 
 // 提交评审
 async function submitForReview() {
@@ -27723,8 +27786,14 @@ function closeRejectReviewModal() {
 
 // 加载评审历史
 async function loadReviewHistory(caseId) {
+    currentReviewCaseId = caseId;
     try {
         const response = await apiRequest(`/testcases/${caseId}/review-history`);
+        
+        if (currentReviewCaseId !== caseId) {
+            console.log('loadReviewHistory: caseId已变更，忽略此响应');
+            return;
+        }
         
         if (response.success) {
             renderReviewHistory(response.data.review_records);
@@ -27819,6 +27888,7 @@ function updateReviewStatus(data) {
 
 // 渲染评审历史
 function renderReviewHistory(records) {
+    console.log('🔍 当前准备渲染的评审历史数量:', records ? records.length : 0, records);
     const container = document.getElementById('review-history-timeline');
     
     if (!container) {
@@ -27867,18 +27937,18 @@ function renderReviewHistory(records) {
                 userInfoHtml = `
                     <div class="user-info">
                         <span class="user-avatar">👤</span>
-                        <span class="user-name">${escapeHtml(record.submitter_name || '未知')}</span>
-                        <span class="action-text">${actionDesc}，评审人：<strong>${escapeHtml(record.reviewer_name || '未指定')}</strong></span>
-                        ${record.comment ? `<span class="comment-inline">"${escapeHtml(record.comment)}"</span>` : ''}
+                        <span class="user-name">${record.submitter_name || '未知'}</span>
+                        <span class="action-text">${actionDesc}，评审人：<strong>${record.reviewer_name || '未指定'}</strong></span>
+                        ${record.comment ? `<span class="comment-inline">"${record.comment}"</span>` : ''}
                     </div>
                 `;
             } else {
                 userInfoHtml = `
                     <div class="user-info">
                         <span class="user-avatar">👤</span>
-                        <span class="user-name">${escapeHtml(record.reviewer_name || '未知')}</span>
+                        <span class="user-name">${record.reviewer_name || '未知'}</span>
                         <span class="action-text">${actionDesc}</span>
-                        ${record.comment ? `<span class="comment-inline">"${escapeHtml(record.comment)}"</span>` : ''}
+                        ${record.comment ? `<span class="comment-inline">"${record.comment}"</span>` : ''}
                     </div>
                 `;
             }
@@ -27935,10 +28005,12 @@ function toggleReviewHistory(btn) {
     }
     
     if (currentReviewHistoryExpanded) {
+        // 收起时，限制高度
         container.style.maxHeight = '300px';
-        container.style.overflow = 'hidden';
+        container.style.overflowY = 'hidden';
         btn.textContent = '展开全部';
     } else {
+        // 展开时，直接去除高度限制
         container.style.maxHeight = 'none';
         container.style.overflow = 'visible';
         btn.textContent = '收起';

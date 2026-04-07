@@ -69,6 +69,8 @@ app.use('/styles-design-system.css', express.static(path.join(__dirname, 'styles
 app.use('/script.js', express.static(path.join(__dirname, 'script.js')));
 app.use('/context-menu.css', express.static(path.join(__dirname, 'context-menu.css')));
 app.use('/js', express.static(path.join(__dirname, 'js')));
+// 暴露uploads目录，用于访问上传的脚本文件
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // 根路径重定向到 index.html
 app.get('/', (req, res) => {
@@ -95,6 +97,7 @@ app.use('/api/templates', require('./routes/reportTemplates'));
 app.use('/api/forum', forumRouter);
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/testcases', require('./routes/testcases'));
+app.use('/api', require('./routes/scripts'));
 app.use('/api/workspace', require('./routes/workspace'));
 app.use('/api', require('./routes/search'));
 
@@ -1728,6 +1731,138 @@ app.post('/api/cases/projects/update', authenticateToken, async (req, res) => {
     console.error('更新项目关联错误:', error);
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
+  }
+});
+
+// 删除单个测试用例
+app.delete('/api/cases/delete', authenticateToken, requireAdmin, async (req, res) => {
+  const connection = await pool.getConnection();
+  
+  try {
+    const { id } = req.query;
+    const currentUser = req.user;
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.get('User-Agent');
+    
+    if (!id) {
+      return res.json({ success: false, message: '缺少测试用例ID' });
+    }
+    
+    const numericId = parseInt(id);
+    
+    await connection.beginTransaction();
+    
+    // 查询测试用例信息
+    const [caseRows] = await connection.execute(
+      'SELECT id, case_id, name, module_id FROM test_cases WHERE id = ?',
+      [numericId]
+    );
+    
+    if (caseRows.length === 0) {
+      await connection.rollback();
+      return res.json({ success: false, message: '测试用例不存在' });
+    }
+    
+    const caseData = caseRows[0];
+    
+    // 删除测试用例（关联数据会通过外键级联删除）
+    await connection.execute('DELETE FROM test_cases WHERE id = ?', [numericId]);
+    
+    // 记录操作日志
+    await logActivity(
+      currentUser.id,
+      currentUser.username,
+      currentUser.role,
+      '删除测试用例',
+      `删除测试用例 [${caseData.name}]`,
+      'test_case',
+      numericId,
+      ipAddress,
+      userAgent
+    );
+    
+    await connection.commit();
+    
+    res.json({ 
+      success: true, 
+      message: '测试用例删除成功',
+      data: { id: numericId, name: caseData.name }
+    });
+    
+  } catch (error) {
+    await connection.rollback();
+    console.error('删除测试用例错误:', error);
+    res.json({ success: false, message: '删除失败: ' + error.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// 批量删除测试用例
+app.post('/api/cases/batch-delete', authenticateToken, requireAdmin, async (req, res) => {
+  const connection = await pool.getConnection();
+  
+  try {
+    const { caseIds } = req.body;
+    const currentUser = req.user;
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.get('User-Agent');
+    
+    if (!caseIds || !Array.isArray(caseIds) || caseIds.length === 0) {
+      return res.json({ success: false, message: '请选择要删除的测试用例' });
+    }
+    
+    if (caseIds.length > 100) {
+      return res.json({ success: false, message: '单次最多删除100个测试用例' });
+    }
+    
+    await connection.beginTransaction();
+    
+    const placeholders = caseIds.map(() => '?').join(',');
+    const [cases] = await connection.execute(
+      `SELECT id, case_id, name FROM test_cases WHERE id IN (${placeholders})`,
+      caseIds
+    );
+    
+    if (cases.length === 0) {
+      await connection.rollback();
+      return res.json({ success: false, message: '未找到要删除的测试用例' });
+    }
+    
+    // 批量删除测试用例（关联数据会通过外键级联删除）
+    await connection.execute(
+      `DELETE FROM test_cases WHERE id IN (${placeholders})`,
+      caseIds
+    );
+    
+    // 记录操作日志
+    await logActivity(
+      currentUser.id,
+      currentUser.username,
+      currentUser.role,
+      '批量删除测试用例',
+      `批量删除 ${cases.length} 个测试用例`,
+      'test_case',
+      null,
+      ipAddress,
+      userAgent
+    );
+    
+    await connection.commit();
+    
+    res.json({ 
+      success: true, 
+      message: `成功删除 ${cases.length} 个测试用例`,
+      count: cases.length,
+      data: { deletedCases: cases }
+    });
+    
+  } catch (error) {
+    await connection.rollback();
+    console.error('批量删除测试用例错误:', error);
+    res.json({ success: false, message: '批量删除失败: ' + error.message });
+  } finally {
+    connection.release();
   }
 });
 
