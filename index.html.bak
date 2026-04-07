@@ -309,7 +309,7 @@
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px; margin-right: 6px;">
                                 <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
                             </svg>
-                            AI知识问答
+                            AI问答
                         </button>
                     </div>
                 </div>
@@ -2574,7 +2574,7 @@
                         <!-- AI配置 -->
                         <div class="config-panel" id="ai-config-config">
                             <div class="config-section">
-                                <h3>🤖 AI知识问答配置</h3>
+                                <h3>🤖 AI问答配置</h3>
                                 <p class="config-description">配置AI大模型的API密钥和模型参数，支持多个模型配置。用户使用AI问答时将使用默认模型。</p>
                                 
                                 <div class="form-row">
@@ -6269,7 +6269,7 @@ return rows[0];'></textarea>
     <script src="script.js"></script>
     <script src="js/notification.js"></script>
     
-    <!-- AI知识问答模态框 -->
+    <!-- AI问答模态框 -->
     <div id="ai-assistant-modal" class="ai-modal">
         <div class="ai-modal-content">
             <div class="ai-modal-header">
@@ -6277,7 +6277,7 @@ return rows[0];'></textarea>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px;">
                         <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
                     </svg>
-                    <h3>AI知识问答助手</h3>
+                    <h3>AI问答助手</h3>
                 </div>
                 <button class="ai-close-btn" onclick="closeAIAssistant()">&times;</button>
             </div>
@@ -6286,7 +6286,7 @@ return rows[0];'></textarea>
                     <div class="ai-welcome-message">
                         <div class="ai-avatar">AI</div>
                         <div class="ai-message-content">
-                            <p>您好！我是AI知识问答助手，可以帮助您：</p>
+                            <p>您好！我是AI问答助手，可以帮助您：</p>
                             <ul>
                                 <li>📊 分析测试数据和统计信息</li>
                                 <li>🔍 查询测试用例、项目和进度</li>

@@ -19,7 +19,7 @@ function safeParseJSON(value) {
         try {
             return JSON.parse(value);
         } catch (e) {
-            console.error('JSON 解析错误:', e);
+            logger.error('JSON 解析错误:', { error: e.message });
             return null;
         }
     }
@@ -83,7 +83,7 @@ router.post('/execution-records/upload-image', authenticateToken, recordImageUpl
             size: req.file.size
         });
     } catch (error) {
-        console.error('图片上传错误:', error);
+        logger.error('图片上传错误:', { error: error.message });
         res.status(500).json({ success: false, message: '图片上传失败' });
     }
 });
@@ -94,7 +94,7 @@ router.get('/list', authenticateToken, async (req, res) => {
     const [testpoints] = await pool.execute('SELECT * FROM level2_points');
     res.json({ success: true, testpoints });
   } catch (error) {
-    console.error('获取测试点列表错误:', error);
+    logger.error('获取测试点列表错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -135,7 +135,7 @@ router.get('/level1/:moduleId', authenticateToken, async (req, res) => {
     const [points] = await pool.execute(query, params);
     res.json({ success: true, level1Points: points });
   } catch (error) {
-    console.error('获取一级测试点列表错误:', error);
+    logger.error('获取一级测试点列表错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -175,7 +175,7 @@ router.post('/level1/all', authenticateToken, async (req, res) => {
     const [points] = await pool.execute(query, params);
     res.json({ success: true, level1Points: points });
   } catch (error) {
-    console.error('获取所有一级测试点错误:', error);
+    logger.error('获取所有一级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -229,7 +229,7 @@ router.post('/level1/add', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('添加一级测试点错误:', error);
+    logger.error('添加一级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -345,7 +345,7 @@ router.post('/level1/batch-create', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     await connection.rollback();
-    console.error('批量创建一级测试点错误:', error);
+    logger.error('批量创建一级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误: ' + error.message });
   } finally {
     connection.release();
@@ -365,7 +365,7 @@ router.put('/level1/edit/:id', authenticateToken, async (req, res) => {
 
     res.json({ success: true, message: '一级测试点编辑成功' });
   } catch (error) {
-    console.error('编辑一级测试点错误:', error);
+    logger.error('编辑一级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -386,7 +386,7 @@ router.get('/level1/detail/:id', authenticateToken, async (req, res) => {
       res.status(404).json({ success: false, message: '测试点不存在' });
     }
   } catch (error) {
-    console.error('获取一级测试点详情错误:', error);
+    logger.error('获取一级测试点详情错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -421,7 +421,7 @@ router.delete('/level1/delete/:id', authenticateToken, requireAdmin, async (req,
       connection.release();
     }
   } catch (error) {
-    console.error('删除一级测试点错误:', error);
+    logger.error('删除一级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -455,7 +455,7 @@ router.post('/level1/reorder', authenticateToken, async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error('重新排序一级测试点错误:', error);
+    logger.error('重新排序一级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -468,7 +468,7 @@ router.get('/level2/:level1Id', authenticateToken, async (req, res) => {
     const [points] = await pool.execute('SELECT * FROM level2_points WHERE level1_id = ?', [level1Id]);
     res.json(points);
   } catch (error) {
-    console.error('获取二级测试点列表错误:', error);
+    logger.error('获取二级测试点列表错误:', { error: error.message });
     res.status(500).json({ message: '服务器错误' });
   }
 });
@@ -515,13 +515,13 @@ router.post('/level2/add', authenticateToken, async (req, res) => {
     } catch (error) {
       // 回滚事务
       await connection.rollback();
-      console.error('添加二级测试点事务错误:', error);
+      logger.error('添加二级测试点事务错误:', { error: error.message });
       throw error;
     } finally {
       connection.release();
     }
   } catch (error) {
-    console.error('添加二级测试点错误:', error);
+    logger.error('添加二级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误: ' + error.message });
   }
 });
@@ -578,7 +578,7 @@ router.put('/level2/edit/:id', authenticateToken, async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error('编辑二级测试点错误:', error);
+    logger.error('编辑二级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -604,7 +604,7 @@ router.get('/level2/:id/chips', authenticateToken, async (req, res) => {
 
     res.json({ success: true, chips });
   } catch (error) {
-    console.error('获取测试点关联芯片错误:', error);
+    logger.error('获取测试点关联芯片错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -622,7 +622,7 @@ router.put('/level2/:id/chip-status', authenticateToken, async (req, res) => {
 
     res.json({ success: true, message: '测试点芯片状态更新成功' });
   } catch (error) {
-    console.error('更新测试点芯片状态错误:', error);
+    logger.error('更新测试点芯片状态错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -688,7 +688,7 @@ router.get('/stats/overall', authenticateToken, async (req, res) => {
 
     res.json({ success: true, stats });
   } catch (error) {
-    console.error('获取总体测试统计数据错误:', error);
+    logger.error('获取总体测试统计数据错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -723,7 +723,7 @@ router.delete('/level2/delete/:id', authenticateToken, async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error('删除二级测试点错误:', error);
+    logger.error('删除二级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -759,7 +759,7 @@ router.get('/execution-records/:caseId', authenticateToken, async (req, res) => 
     
     res.json({ success: true, records: parsedRecords });
   } catch (error) {
-    console.error('获取执行记录错误:', error);
+    logger.error('获取执行记录错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -815,7 +815,7 @@ router.post('/execution-records', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('添加执行记录错误:', error);
+    logger.error('添加执行记录错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -840,7 +840,7 @@ router.delete('/execution-records/:recordId', authenticateToken, async (req, res
     
     res.json({ success: true, message: '执行记录删除成功' });
   } catch (error) {
-    console.error('删除执行记录错误:', error);
+    logger.error('删除执行记录错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -904,7 +904,7 @@ router.put('/execution-records/:recordId', authenticateToken, async (req, res) =
       }
     });
   } catch (error) {
-    console.error('编辑执行记录错误:', error);
+    logger.error('编辑执行记录错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });

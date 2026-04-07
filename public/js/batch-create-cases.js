@@ -3523,7 +3523,7 @@
                     <span class="script-type-badge ${script.script_type}">${script.script_type.toUpperCase()}</span>
                     <span class="script-name">${escapeHtml(script.script_name)}</span>
                     ${script.file_path ? `<span class="script-file-indicator" title="已上传文件">📎</span>` : ''}
-                    ${script.link_url ? `<a href="${escapeHtml(script.link_url)}" target="_blank" class="script-link">查看</a>` : ''}
+                    ${script.link_url ? `<a href="${escapeHtml(script.link_url)}" class="script-link">查看</a>` : ''}
                     <button type="button" class="btn-icon" onclick="editDrawerScript(${index})" title="编辑">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>

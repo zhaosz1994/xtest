@@ -240,8 +240,6 @@ async function loadTestCases() {
 
         if (document.getElementById('cases-table-body')) {
             renderCasesTable();
-        } else {
-            console.log('cases-table-body not found, skipping render');
         }
     } catch (error) {
         console.error('加载用例错误:', error);
@@ -255,7 +253,6 @@ async function loadTestCases() {
 function renderCasesTable(filteredCases = null) {
     const tableBody = document.getElementById('cases-table-body');
     if (!tableBody) {
-        console.log('cases-table-body not found, skipping render');
         return;
     }
 

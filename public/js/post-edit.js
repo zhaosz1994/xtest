@@ -112,7 +112,6 @@ function initVditor() {
                 });
             },
             success: (editor, msg) => {
-                console.log('上传成功:', msg);
             },
             error: (msg) => {
                 console.error('上传失败:', msg);
@@ -419,7 +418,7 @@ function renderExistingAttachments() {
                     <span class="attachment-name">${escapeHtml(att.file_name)}</span>
                     <span class="attachment-size">${formatFileSize(att.file_size)}</span>
                     <div class="attachment-actions">
-                        <a href="/api/forum/attachments/download/${att.id}" class="action-link" target="_blank">下载</a>
+                        <a href="/api/forum/attachments/download/${att.id}" class="action-link">下载</a>
                         <button type="button" class="action-btn delete" onclick="deleteExistingAttachment(${att.id})">删除</button>
                     </div>
                 </div>

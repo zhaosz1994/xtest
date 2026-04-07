@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
+const logger = require('./services/logger');
 
 // JWT认证中间件
 const authenticateToken = (req, res, next) => {
@@ -102,7 +103,7 @@ const canModifyAIModel = async (req, res, next) => {
       message: '您没有权限操作此AI模型' 
     });
   } catch (error) {
-    console.error('检查AI模型权限错误:', error);
+    logger.error('检查AI模型权限错误', { error: error.message, modelId });
     return res.status(500).json({ 
       success: false, 
       message: '服务器错误' 
@@ -149,7 +150,7 @@ const canModifyAISkill = async (req, res, next) => {
       message: '您没有权限操作此技能' 
     });
   } catch (error) {
-    console.error('检查AI技能权限错误:', error);
+    logger.error('检查AI技能权限错误', { error: error.message, skillId });
     return res.status(500).json({ 
       success: false, 
       message: '服务器错误' 

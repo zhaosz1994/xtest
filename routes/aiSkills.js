@@ -200,7 +200,7 @@ router.get('/list', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取AI技能列表错误:', error);
+    logger.error('获取AI技能列表错误:', { error: error.message });
     res.status(500).json({ success: false, message: '获取技能列表失败' });
   }
 });
@@ -259,7 +259,7 @@ router.get('/detail/:id', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取AI技能详情错误:', error);
+    logger.error('获取AI技能详情错误:', { error: error.message });
     res.status(500).json({ success: false, message: '获取技能详情失败' });
   }
 });
@@ -339,7 +339,7 @@ router.post('/create', authenticateToken, async (req, res) => {
       skillId: skillId
     });
   } catch (error) {
-    console.error('创建AI技能错误:', error);
+    logger.error('创建AI技能错误:', { error: error.message });
     if (error.code === 'ER_DUP_ENTRY') {
       return res.json({ success: false, message: '技能名称已存在' });
     }
@@ -425,7 +425,7 @@ router.put('/update/:id', authenticateToken, canModifyAISkill, async (req, res) 
     
     res.json({ success: true, message: '技能更新成功' });
   } catch (error) {
-    console.error('更新AI技能错误:', error);
+    logger.error('更新AI技能错误:', { error: error.message });
     res.status(500).json({ success: false, message: '更新技能失败: ' + error.message });
   }
 });
@@ -448,7 +448,7 @@ router.delete('/:id', authenticateToken, canModifyAISkill, async (req, res) => {
     
     res.json({ success: true, message: '技能删除成功' });
   } catch (error) {
-    console.error('删除AI技能错误:', error);
+    logger.error('删除AI技能错误:', { error: error.message });
     res.status(500).json({ success: false, message: '删除技能失败' });
   }
 });
@@ -486,7 +486,7 @@ router.post('/toggle/:id', authenticateToken, async (req, res) => {
       isEnabled: newStatus
     });
   } catch (error) {
-    console.error('切换技能状态错误:', error);
+    logger.error('切换技能状态错误:', { error: error.message });
     res.status(500).json({ success: false, message: '操作失败' });
   }
 });
@@ -515,7 +515,7 @@ async function getEnabledSkillsAsTools(userId) {
       return definition;
     });
   } catch (error) {
-    console.error('获取启用的技能失败:', error);
+    logger.error('获取启用的技能失败:', { error: error.message });
     return [];
   }
 }

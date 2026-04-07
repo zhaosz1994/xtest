@@ -15,6 +15,9 @@ let selectedCaseIds = [];
 let selectedReviewCaseIds = [];
 let selectedReviewerId = null;
 
+// AI助手相关变量
+let aiModalDragInitialized = false;
+
 // 切换登录和注册页面视图
 function toggleAuthPage(page) {
     const loginSection = document.getElementById('login-section');
@@ -901,7 +904,7 @@ const CommandPalette = {
             },
             {
                 id: 'ai-assistant',
-                title: 'AI知识问答',
+                title: 'AI问答',
                 description: '打开AI助手',
                 icon: '🤖',
                 shortcut: ['A', 'I'],
@@ -17225,6 +17228,11 @@ document.addEventListener('DOMContentLoaded', async function () {
         initModuleData();
     }
 
+    // 预加载AI模型列表（仅已登录用户）
+    if (currentUser) {
+        preloadAIModels();
+    }
+
     // 顶部导航栏搜索功能
     const topSearchInput = document.querySelector('.nav-right .search-input');
     if (topSearchInput) {
@@ -21434,45 +21442,73 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 
 // ========================================
-// AI知识问答功能
+// AI问答功能
 // ========================================
 
 // 打开AI助手模态框
 async function openAIAssistant() {
     const modal = document.getElementById('ai-assistant-modal');
     if (modal) {
-        modal.classList.add('show');
-
-        // 重置位置到屏幕中央
+        // 先重置位置到屏幕中央，再显示模态框
         const content = modal.querySelector('.ai-modal-content');
         if (content) {
             content.style.left = '50%';
             content.style.top = '50%';
             content.style.transform = 'translate(-50%, -50%)';
+            content.style.margin = '0';
         }
 
-        // 初始化拖动功能
-        initAIModalDrag();
+        // 显示模态框
+        modal.classList.add('show');
 
+        // 初始化拖动功能（只初始化一次）
+        if (!aiModalDragInitialized) {
+            initAIModalDrag();
+            aiModalDragInitialized = true;
+        }
+
+        // 异步加载配置和模型，不阻塞UI
+        loadAIConfigAndModels();
+
+        // 聚焦到输入框
+        requestAnimationFrame(() => {
+            const input = document.getElementById('ai-input');
+            if (input) input.focus();
+        });
+    }
+}
+
+// 异步加载AI配置和模型
+async function loadAIConfigAndModels() {
+    try {
         // 从后端加载配置
         const config = await loadAIConfig();
         if (config) {
             // 检查是否启用AI功能
             if (config.ai_enabled && config.ai_enabled.value === 'false') {
                 showErrorMessage('AI功能已禁用，请联系管理员启用');
-                modal.classList.remove('show');
+                closeAIAssistant();
                 return;
             }
         }
 
         // 加载可用的AI模型列表
         await loadAvailableModels();
+    } catch (error) {
+        console.error('加载AI配置失败:', error);
+    }
+}
 
-        // 聚焦到输入框
-        setTimeout(() => {
-            const input = document.getElementById('ai-input');
-            if (input) input.focus();
-        }, 100);
+// 预加载AI模型列表（后台静默加载）
+async function preloadAIModels() {
+    try {
+        const response = await apiRequest('/ai-models/list');
+        if (response.success && response.models) {
+            aiModelsCache = response.models;
+            console.log('[AI模型] 预加载成功，共', response.models.length, '个模型');
+        }
+    } catch (error) {
+        console.error('[AI模型] 预加载失败:', error);
     }
 }
 
@@ -21482,10 +21518,21 @@ async function loadAvailableModels() {
     if (!modelSelect) return;
 
     try {
-        const response = await apiRequest('/ai-models/list');
-        if (response.success && response.models) {
+        // 优先使用缓存的模型列表
+        let models = aiModelsCache;
+        
+        // 如果缓存为空，则从服务器加载
+        if (!models || models.length === 0) {
+            const response = await apiRequest('/ai-models/list');
+            if (response.success && response.models) {
+                models = response.models;
+                aiModelsCache = models;
+            }
+        }
+
+        if (models && models.length > 0) {
             // 只显示启用的模型
-            const enabledModels = response.models.filter(m => m.is_enabled);
+            const enabledModels = models.filter(m => m.is_enabled);
 
             if (enabledModels.length === 0) {
                 modelSelect.innerHTML = '<option value="">暂无可用模型</option>';

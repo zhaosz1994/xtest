@@ -54,7 +54,7 @@ router.post('/login', async (req, res) => {
       expiresIn: tokenExpiresIn
     });
   } catch (error) {
-    console.error('登录错误:', error);
+    logger.error('登录错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -90,7 +90,7 @@ router.post('/refresh-token', authenticateToken, async (req, res) => {
       expiresIn: '24h'
     });
   } catch (error) {
-    console.error('Token刷新错误:', error);
+    logger.error('Token刷新错误:', { error: error.message });
     res.status(500).json({ success: false, message: 'Token刷新失败' });
   }
 });
@@ -131,7 +131,7 @@ router.post('/register', async (req, res) => {
 
     res.json({ message: '注册成功，请等待管理员审核后方可登录' });
   } catch (error) {
-    console.error('注册错误:', error);
+    logger.error('注册错误:', { error: error.message });
     res.status(500).json({ message: '服务器错误' });
   }
 });
@@ -147,7 +147,7 @@ router.get('/usernames', async (req, res) => {
       usernames: users.map(u => u.username)
     });
   } catch (error) {
-    console.error('获取用户名列表失败:', error);
+    logger.error('获取用户名列表失败:', { error: error.message });
     res.json({ success: false, usernames: [], message: '获取失败' });
   }
 });
@@ -205,7 +205,7 @@ router.get('/list', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取用户列表错误:', error);
+    logger.error('获取用户列表错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -241,7 +241,7 @@ router.post('/add', authenticateToken, requireAdmin, async (req, res) => {
 
     res.json({ message: '用户添加成功' });
   } catch (error) {
-    console.error('添加用户错误:', error);
+    logger.error('添加用户错误:', { error: error.message });
     res.status(500).json({ message: '服务器错误' });
   }
 });
@@ -267,7 +267,7 @@ router.get('/profile', authenticateToken, async (req, res) => {
     
     res.json({ success: true, data: users[0] });
   } catch (error) {
-    console.error('获取用户信息错误:', error);
+    logger.error('获取用户信息错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -291,7 +291,7 @@ router.get('/preferences', authenticateToken, async (req, res) => {
     
     res.json({ success: true, data: users[0] });
   } catch (error) {
-    console.error('获取用户偏好设置错误:', error);
+    logger.error('获取用户偏好设置错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -317,7 +317,7 @@ router.put('/preferences', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '偏好设置已更新' });
   } catch (error) {
-    console.error('更新用户偏好设置错误:', error);
+    logger.error('更新用户偏好设置错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -347,7 +347,7 @@ router.put('/edit/:id', authenticateToken, requireAdmin, async (req, res) => {
 
     res.json({ message: '用户编辑成功' });
   } catch (error) {
-    console.error('编辑用户错误:', error);
+    logger.error('编辑用户错误:', { error: error.message });
     res.status(500).json({ message: '服务器错误' });
   }
 });
@@ -404,7 +404,7 @@ router.put('/:id/approve', authenticateToken, requireAdmin, async (req, res) => 
 
     res.json({ success: true, message: `用户已${statusText}` });
   } catch (error) {
-    console.error('审核用户错误:', error);
+    logger.error('审核用户错误:', { error: error.message });
     res.status(500).json({ message: '服务器错误' });
   }
 });
@@ -435,7 +435,7 @@ router.delete('/delete/:id', authenticateToken, requireAdmin, async (req, res) =
 
     res.json({ message: '用户删除成功' });
   } catch (error) {
-    console.error('删除用户错误:', error);
+    logger.error('删除用户错误:', { error: error.message });
     res.status(500).json({ message: '服务器错误' });
   }
 });
@@ -466,7 +466,7 @@ router.post('/update', authenticateToken, requireAdmin, async (req, res) => {
     await pool.execute(updateQuery, updateParams);
     res.json({ message: '用户更新成功' });
   } catch (error) {
-    console.error('更新用户错误:', error);
+    logger.error('更新用户错误:', { error: error.message });
     res.status(500).json({ message: '服务器错误' });
   }
 });
@@ -484,7 +484,7 @@ router.post('/delete', authenticateToken, requireAdmin, async (req, res) => {
     
     res.json({ message: '用户删除成功' });
   } catch (error) {
-    console.error('删除用户错误:', error);
+    logger.error('删除用户错误:', { error: error.message });
     res.status(500).json({ message: '服务器错误' });
   }
 });
@@ -539,7 +539,7 @@ router.put('/email', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '邮箱修改成功' });
   } catch (error) {
-    console.error('修改邮箱错误:', error);
+    logger.error('修改邮箱错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -602,7 +602,7 @@ router.put('/password', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '密码修改成功' });
   } catch (error) {
-    console.error('修改密码错误:', error);
+    logger.error('修改密码错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });

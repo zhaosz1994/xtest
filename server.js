@@ -107,7 +107,7 @@ app.get('/priorities/list', async (req, res) => {
     const [priorities] = await pool.execute('SELECT id, name FROM test_priorities ORDER BY id');
     res.json({ success: true, priorities });
   } catch (error) {
-    console.error('获取优先级列表错误:', error);
+    logger.error('获取优先级列表错误:', { error: error.message });
     res.json({ success: false, priorities: [], message: '获取失败' });
   }
 });
@@ -117,7 +117,7 @@ app.get('/test-types/list', async (req, res) => {
     const [testTypes] = await pool.execute('SELECT id, name FROM test_types ORDER BY id');
     res.json({ success: true, testTypes });
   } catch (error) {
-    console.error('获取测试类型列表错误:', error);
+    logger.error('获取测试类型列表错误:', { error: error.message });
     res.json({ success: false, testTypes: [], message: '获取失败' });
   }
 });
@@ -127,7 +127,7 @@ app.get('/test-phases/list', async (req, res) => {
     const [testPhases] = await pool.execute('SELECT id, name FROM test_phases ORDER BY id');
     res.json({ success: true, testPhases });
   } catch (error) {
-    console.error('获取测试阶段列表错误:', error);
+    logger.error('获取测试阶段列表错误:', { error: error.message });
     res.json({ success: false, testPhases: [], message: '获取失败' });
   }
 });
@@ -137,7 +137,7 @@ app.get('/environments/list', async (req, res) => {
     const [environments] = await pool.execute('SELECT id, name FROM environments ORDER BY id');
     res.json({ success: true, environments });
   } catch (error) {
-    console.error('获取环境列表错误:', error);
+    logger.error('获取环境列表错误:', { error: error.message });
     res.json({ success: false, environments: [], message: '获取失败' });
   }
 });
@@ -148,7 +148,7 @@ app.get('/users/list', async (req, res) => {
     const [users] = await pool.execute('SELECT id, username FROM users ORDER BY username');
     res.json({ success: true, users });
   } catch (error) {
-    console.error('获取用户列表错误:', error);
+    logger.error('获取用户列表错误:', { error: error.message });
     res.json({ success: false, users: [], message: '获取失败' });
   }
 });
@@ -187,7 +187,7 @@ app.post('/testpoints/level1/all', async (req, res) => {
     const [points] = await pool.execute(query, params);
     res.json({ success: true, level1Points: points });
   } catch (error) {
-    console.error('获取所有一级测试点错误:', error);
+    logger.error('获取所有一级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -244,7 +244,7 @@ app.post('/api/modules/list', async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('获取模块列表错误:', error);
+    logger.error('获取模块列表错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -265,7 +265,7 @@ app.post('/api/modules/create', async (req, res) => {
       console.log('唯一性检查结果:', existingModules[0]);
       
       if (existingModules[0].count > 0) {
-        console.log('模块名已存在，拒绝创建');
+        logger.info('模块名已存在，拒绝创建');
         return res.json({ success: false, message: '该用例库下已存在同名模块' });
       }
     }
@@ -294,7 +294,7 @@ app.post('/api/modules/create', async (req, res) => {
     
     res.json({ success: true, message: '模块添加成功' });
   } catch (error) {
-    console.error('添加模块错误:', error);
+    logger.error('添加模块错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -315,7 +315,7 @@ app.post('/api/modules/update', async (req, res) => {
       console.log('唯一性检查结果:', existingModules[0]);
       
       if (existingModules[0].count > 0) {
-        console.log('模块名已存在，拒绝更新');
+        logger.info('模块名已存在，拒绝更新');
         return res.json({ success: false, message: '该用例库下已存在同名模块' });
       }
     }
@@ -329,7 +329,7 @@ app.post('/api/modules/update', async (req, res) => {
     
     res.json({ success: true, message: '模块更新成功' });
   } catch (error) {
-    console.error('更新模块错误:', error);
+    logger.error('更新模块错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -349,7 +349,7 @@ app.post('/api/modules/delete', async (req, res) => {
     
     res.json({ success: true, message: '模块删除成功' });
   } catch (error) {
-    console.error('删除模块错误:', error);
+    logger.error('删除模块错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -408,7 +408,7 @@ app.post('/api/modules/search', async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('搜索模块错误:', error);
+    logger.error('搜索模块错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误' });
   }
@@ -445,7 +445,7 @@ app.post('/api/modules/reorder', async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error('调整模块顺序错误:', error);
+    logger.error('调整模块顺序错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误' });
   }
@@ -470,7 +470,7 @@ app.post('/api/modules/batchCreate', async (req, res) => {
     
     res.json({ success: true, message: '批量创建模块成功' });
   } catch (error) {
-    console.error('批量创建模块错误:', error);
+    logger.error('批量创建模块错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误' });
   }
@@ -501,7 +501,7 @@ app.get('/api/modules/by-project/:projectId', async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('获取项目模块列表错误:', error);
+    logger.error('获取项目模块列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
@@ -794,7 +794,7 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
     
   } catch (error) {
     await connection.rollback();
-    console.error('克隆模块错误:', error);
+    logger.error('克隆模块错误:', { error: error.message });
     res.json({ success: false, message: '克隆失败: ' + error.message });
   } finally {
     connection.release();
@@ -820,7 +820,7 @@ app.get('/api/modules/by-library/:libraryId', async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('获取模块列表错误:', error);
+    logger.error('获取模块列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
@@ -867,7 +867,7 @@ app.post('/api/testpoints/level1/add', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('添加一级测试点错误:', error);
+    logger.error('添加一级测试点错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -901,7 +901,7 @@ app.get('/api/testpoints/level1/:moduleId', async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('获取一级测试点列表错误:', error);
+    logger.error('获取一级测试点列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
@@ -914,7 +914,7 @@ app.get('/health', (req, res) => {
 
 // 测试端点
 app.get('/api/test', (req, res) => {
-  console.log('接收到测试请求');
+  logger.info('接收到测试请求');
   res.json({ success: true, message: '测试成功', timestamp: new Date().toISOString() });
 });
 
@@ -1098,7 +1098,7 @@ app.post('/api/cases/create', async (req, res) => {
             );
           }
         }
-        console.log('项目关联添加成功');
+        logger.info('项目关联添加成功');
       }
       
       // 处理环境关联
@@ -1113,7 +1113,7 @@ app.post('/api/cases/create', async (req, res) => {
             [testCaseId, environmentId]
           );
         }
-        console.log('环境关联添加成功');
+        logger.info('环境关联添加成功');
       }
       
       // 处理测试点来源关联
@@ -1129,7 +1129,7 @@ app.post('/api/cases/create', async (req, res) => {
             [testCaseId, sourceId]
           );
         }
-        console.log('测试点来源关联添加成功');
+        logger.info('测试点来源关联添加成功');
       }
       
       // 处理测试方式关联
@@ -1144,7 +1144,7 @@ app.post('/api/cases/create', async (req, res) => {
             [testCaseId, methodId]
           );
         }
-        console.log('测试方式关联添加成功');
+        logger.info('测试方式关联添加成功');
       }
       
       // 处理测试类型关联
@@ -1159,7 +1159,7 @@ app.post('/api/cases/create', async (req, res) => {
             [testCaseId, testTypeId]
           );
         }
-        console.log('测试类型关联添加成功');
+        logger.info('测试类型关联添加成功');
       }
       
       // 处理测试状态关联
@@ -1174,7 +1174,7 @@ app.post('/api/cases/create', async (req, res) => {
             [testCaseId, statusId]
           );
         }
-        console.log('测试状态关联添加成功');
+        logger.info('测试状态关联添加成功');
       }
       
       // 处理测试阶段关联
@@ -1189,7 +1189,7 @@ app.post('/api/cases/create', async (req, res) => {
             [testCaseId, phaseId]
           );
         }
-        console.log('测试阶段关联添加成功');
+        logger.info('测试阶段关联添加成功');
       }
       
       await connection.commit();
@@ -1202,7 +1202,7 @@ app.post('/api/cases/create', async (req, res) => {
     }
     
   } catch (error) {
-    console.error('创建测试用例错误:', error);
+    logger.error('创建测试用例错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -1413,7 +1413,7 @@ app.post('/api/cases/list', async (req, res) => {
       })
     });
   } catch (error) {
-    console.error('获取测试用例列表错误:', error);
+    logger.error('获取测试用例列表错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -1528,7 +1528,7 @@ app.post('/api/cases/update', async (req, res) => {
               );
             }
           }
-          console.log('项目关联更新成功');
+          logger.info('项目关联更新成功');
         }
       }
       
@@ -1547,7 +1547,7 @@ app.post('/api/cases/update', async (req, res) => {
             [numericId, testTypeId]
           );
         }
-        console.log('测试类型关联更新成功');
+        logger.info('测试类型关联更新成功');
       }
       
       // 先删除现有的测试状态关联
@@ -1565,7 +1565,7 @@ app.post('/api/cases/update', async (req, res) => {
             [numericId, statusId]
           );
         }
-        console.log('测试状态关联更新成功');
+        logger.info('测试状态关联更新成功');
       }
       
       // 先删除现有的测试阶段关联
@@ -1583,7 +1583,7 @@ app.post('/api/cases/update', async (req, res) => {
             [numericId, phaseId]
           );
         }
-        console.log('测试阶段关联更新成功');
+        logger.info('测试阶段关联更新成功');
       }
       
       // 先删除现有的测试环境关联
@@ -1601,7 +1601,7 @@ app.post('/api/cases/update', async (req, res) => {
             [numericId, envId]
           );
         }
-        console.log('测试环境关联更新成功');
+        logger.info('测试环境关联更新成功');
       }
       
       // 先删除现有的测试点来源关联
@@ -1620,7 +1620,7 @@ app.post('/api/cases/update', async (req, res) => {
             [numericId, sourceId]
           );
         }
-        console.log('测试点来源关联更新成功');
+        logger.info('测试点来源关联更新成功');
       }
       
       // 先删除现有的测试方式关联
@@ -1638,7 +1638,7 @@ app.post('/api/cases/update', async (req, res) => {
             [numericId, methodId]
           );
         }
-        console.log('测试方式关联更新成功');
+        logger.info('测试方式关联更新成功');
       }
       
       await connection.commit();
@@ -1650,7 +1650,7 @@ app.post('/api/cases/update', async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error('更新测试用例错误:', error);
+    logger.error('更新测试用例错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -1728,7 +1728,7 @@ app.post('/api/cases/projects/update', authenticateToken, async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error('更新项目关联错误:', error);
+    logger.error('更新项目关联错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -1791,7 +1791,7 @@ app.delete('/api/cases/delete', authenticateToken, requireAdmin, async (req, res
     
   } catch (error) {
     await connection.rollback();
-    console.error('删除测试用例错误:', error);
+    logger.error('删除测试用例错误:', { error: error.message });
     res.json({ success: false, message: '删除失败: ' + error.message });
   } finally {
     connection.release();
@@ -1859,7 +1859,7 @@ app.post('/api/cases/batch-delete', authenticateToken, requireAdmin, async (req,
     
   } catch (error) {
     await connection.rollback();
-    console.error('批量删除测试用例错误:', error);
+    logger.error('批量删除测试用例错误:', { error: error.message });
     res.json({ success: false, message: '批量删除失败: ' + error.message });
   } finally {
     connection.release();
@@ -1901,7 +1901,7 @@ app.get('/api/test/data', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('检查数据失败:', error);
+    logger.error('检查数据失败:', { error: error.message });
     res.json({ success: false, message: '检查数据失败', error: error.message });
   }
 });
@@ -1929,7 +1929,7 @@ app.post('/api/environments/create', async (req, res) => {
     
     res.json({ success: true, message: '环境创建成功', envId });
   } catch (error) {
-    console.error('创建环境错误:', error);
+    logger.error('创建环境错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -1938,7 +1938,7 @@ app.post('/api/environments/create', async (req, res) => {
 // 获取环境列表
 app.get('/api/environments/list', async (req, res) => {
   try {
-    console.log('接收到获取环境列表请求');
+    logger.info('接收到获取环境列表请求');
     
     // 查询所有环境
     const [environments] = await pool.execute(
@@ -1949,7 +1949,7 @@ app.get('/api/environments/list', async (req, res) => {
     
     res.json({ success: true, environments });
   } catch (error) {
-    console.error('获取环境列表错误:', error);
+    logger.error('获取环境列表错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -1975,7 +1975,7 @@ app.get('/api/environments/get', async (req, res) => {
     
     res.json({ success: true, environment: environments[0] });
   } catch (error) {
-    console.error('获取单个环境错误:', error);
+    logger.error('获取单个环境错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -2002,7 +2002,7 @@ app.post('/api/environments/update', async (req, res) => {
     
     res.json({ success: true, message: '环境更新成功' });
   } catch (error) {
-    console.error('更新环境错误:', error);
+    logger.error('更新环境错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -2027,7 +2027,7 @@ app.delete('/api/environments/delete', async (req, res) => {
     
     res.json({ success: true, message: '环境删除成功' });
   } catch (error) {
-    console.error('删除环境错误:', error);
+    logger.error('删除环境错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -2054,7 +2054,7 @@ app.post('/api/test-sources/create', async (req, res) => {
     
     res.json({ success: true, message: '测试点来源创建成功', sourceId });
   } catch (error) {
-    console.error('创建测试点来源错误:', error);
+    logger.error('创建测试点来源错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2067,7 +2067,7 @@ app.get('/api/test-sources/list', async (req, res) => {
     );
     res.json({ success: true, sources });
   } catch (error) {
-    console.error('获取测试点来源列表错误:', error);
+    logger.error('获取测试点来源列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2087,7 +2087,7 @@ app.get('/api/test-sources/get', async (req, res) => {
     
     res.json({ success: true, source: sources[0] });
   } catch (error) {
-    console.error('获取单个测试点来源错误:', error);
+    logger.error('获取单个测试点来源错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2109,7 +2109,7 @@ app.post('/api/test-sources/update', async (req, res) => {
     
     res.json({ success: true, message: '测试点来源更新成功' });
   } catch (error) {
-    console.error('更新测试点来源错误:', error);
+    logger.error('更新测试点来源错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2128,7 +2128,7 @@ app.delete('/api/test-sources/delete', async (req, res) => {
     
     res.json({ success: true, message: '测试点来源删除成功' });
   } catch (error) {
-    console.error('删除测试点来源错误:', error);
+    logger.error('删除测试点来源错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2158,7 +2158,7 @@ app.post('/api/test-types/create', async (req, res) => {
     
     res.json({ success: true, message: '测试类型创建成功', typeId });
   } catch (error) {
-    console.error('创建测试类型错误:', error);
+    logger.error('创建测试类型错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -2167,7 +2167,7 @@ app.post('/api/test-types/create', async (req, res) => {
 // 获取测试类型列表
 app.get('/api/test-types/list', async (req, res) => {
   try {
-    console.log('接收到获取测试类型列表请求');
+    logger.info('接收到获取测试类型列表请求');
     
     // 查询所有测试类型
     const [testTypes] = await pool.execute(
@@ -2178,7 +2178,7 @@ app.get('/api/test-types/list', async (req, res) => {
     
     res.json({ success: true, testTypes });
   } catch (error) {
-    console.error('获取测试类型列表错误:', error);
+    logger.error('获取测试类型列表错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -2204,7 +2204,7 @@ app.get('/api/test-types/get', async (req, res) => {
     
     res.json({ success: true, testType: testTypes[0] });
   } catch (error) {
-    console.error('获取单个测试类型错误:', error);
+    logger.error('获取单个测试类型错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -2231,7 +2231,7 @@ app.post('/api/test-types/update', async (req, res) => {
     
     res.json({ success: true, message: '测试类型更新成功' });
   } catch (error) {
-    console.error('更新测试类型错误:', error);
+    logger.error('更新测试类型错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -2256,7 +2256,7 @@ app.delete('/api/test-types/delete', async (req, res) => {
     
     res.json({ success: true, message: '测试类型删除成功' });
   } catch (error) {
-    console.error('删除测试类型错误:', error);
+    logger.error('删除测试类型错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -2287,7 +2287,7 @@ app.post('/api/test-softwares/create', async (req, res) => {
     
     res.json({ success: true, message: '测试软件创建成功', softwareId });
   } catch (error) {
-    console.error('创建测试软件错误:', error);
+    logger.error('创建测试软件错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -2302,7 +2302,7 @@ app.get('/api/test-softwares/list', async (req, res) => {
     
     res.json({ success: true, softwares });
   } catch (error) {
-    console.error('获取测试软件列表错误:', error);
+    logger.error('获取测试软件列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2327,7 +2327,7 @@ app.get('/api/test-softwares/get', async (req, res) => {
     
     res.json({ success: true, software: softwares[0] });
   } catch (error) {
-    console.error('获取测试软件错误:', error);
+    logger.error('获取测试软件错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2348,7 +2348,7 @@ app.post('/api/test-softwares/update', async (req, res) => {
     
     res.json({ success: true, message: '测试软件更新成功' });
   } catch (error) {
-    console.error('更新测试软件错误:', error);
+    logger.error('更新测试软件错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2370,7 +2370,7 @@ app.delete('/api/test-softwares/delete', async (req, res) => {
     
     res.json({ success: true, message: '测试软件删除成功' });
   } catch (error) {
-    console.error('删除测试软件错误:', error);
+    logger.error('删除测试软件错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2400,7 +2400,7 @@ app.post('/api/test-phases/create', async (req, res) => {
     
     res.json({ success: true, message: '测试阶段创建成功', phaseId });
   } catch (error) {
-    console.error('创建测试阶段错误:', error);
+    logger.error('创建测试阶段错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -2409,7 +2409,7 @@ app.post('/api/test-phases/create', async (req, res) => {
 // 获取测试阶段列表
 app.get('/api/test-phases/list', async (req, res) => {
   try {
-    console.log('接收到获取测试阶段列表请求');
+    logger.info('接收到获取测试阶段列表请求');
     
     // 查询所有测试阶段
     const [testPhases] = await pool.execute(
@@ -2420,7 +2420,7 @@ app.get('/api/test-phases/list', async (req, res) => {
     
     res.json({ success: true, testPhases });
   } catch (error) {
-    console.error('获取测试阶段列表错误:', error);
+    logger.error('获取测试阶段列表错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -2446,7 +2446,7 @@ app.get('/api/test-phases/get', async (req, res) => {
     
     res.json({ success: true, testPhase: testPhases[0] });
   } catch (error) {
-    console.error('获取单个测试阶段错误:', error);
+    logger.error('获取单个测试阶段错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -2473,7 +2473,7 @@ app.post('/api/test-phases/update', async (req, res) => {
     
     res.json({ success: true, message: '测试阶段更新成功' });
   } catch (error) {
-    console.error('更新测试阶段错误:', error);
+    logger.error('更新测试阶段错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -2498,7 +2498,7 @@ app.delete('/api/test-phases/delete', async (req, res) => {
     
     res.json({ success: true, message: '测试阶段删除成功' });
   } catch (error) {
-    console.error('删除测试阶段错误:', error);
+    logger.error('删除测试阶段错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -2529,7 +2529,7 @@ app.post('/api/test-progresses/create', async (req, res) => {
     
     res.json({ success: true, message: '测试进度创建成功', progressId });
   } catch (error) {
-    console.error('创建测试进度错误:', error);
+    logger.error('创建测试进度错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -2538,7 +2538,7 @@ app.post('/api/test-progresses/create', async (req, res) => {
 // 获取测试进度列表
 app.get('/api/test-progresses/list', async (req, res) => {
   try {
-    console.log('接收到获取测试进度列表请求');
+    logger.info('接收到获取测试进度列表请求');
     
     // 查询所有测试进度
     const [testProgresses] = await pool.execute(
@@ -2549,7 +2549,7 @@ app.get('/api/test-progresses/list', async (req, res) => {
     
     res.json({ success: true, testProgresses });
   } catch (error) {
-    console.error('获取测试进度列表错误:', error);
+    logger.error('获取测试进度列表错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -2558,7 +2558,7 @@ app.get('/api/test-progresses/list', async (req, res) => {
 // 获取AI配置
 app.get('/api/ai-config/get', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到获取AI配置请求');
+    logger.info('接收到获取AI配置请求');
     
     const [configs] = await pool.execute(
       'SELECT config_key, config_value, description, updated_by, updated_at FROM ai_config'
@@ -2576,7 +2576,7 @@ app.get('/api/ai-config/get', authenticateToken, async (req, res) => {
     
     res.json({ success: true, config: configMap });
   } catch (error) {
-    console.error('获取AI配置错误:', error);
+    logger.error('获取AI配置错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2604,7 +2604,7 @@ app.post('/api/ai-config/save', authenticateToken, requireAdmin, async (req, res
     
     res.json({ success: true, message: 'AI配置保存成功' });
   } catch (error) {
-    console.error('保存AI配置错误:', error);
+    logger.error('保存AI配置错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2622,7 +2622,7 @@ app.get('/api/ai-models/list', authenticateToken, async (req, res) => {
     
     let query, params;
     if (isAdminUser) {
-      console.log('admin用户，查询所有模型');
+      logger.info('admin用户，查询所有模型');
       query = `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, created_by, created_at, updated_at 
                FROM ai_models 
                ORDER BY is_default DESC, created_at ASC`;
@@ -2652,7 +2652,7 @@ app.get('/api/ai-models/list', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取AI模型列表错误:', error);
+    logger.error('获取AI模型列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2693,7 +2693,7 @@ app.get('/api/ai-models/get', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取AI模型错误:', error);
+    logger.error('获取AI模型错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2730,7 +2730,7 @@ app.post('/api/ai-models/add', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: 'AI模型添加成功' });
   } catch (error) {
-    console.error('添加AI模型错误:', error);
+    logger.error('添加AI模型错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2772,7 +2772,7 @@ app.post('/api/ai-models/update', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: 'AI模型更新成功' });
   } catch (error) {
-    console.error('更新AI模型错误:', error);
+    logger.error('更新AI模型错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2805,7 +2805,7 @@ app.post('/api/ai-models/delete', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: 'AI模型删除成功' });
   } catch (error) {
-    console.error('删除AI模型错误:', error);
+    logger.error('删除AI模型错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2834,7 +2834,7 @@ app.post('/api/ai-models/set-default', authenticateToken, requireAdmin, async (r
     res.json({ success: true, message: '默认AI模型设置成功' });
   } catch (error) {
     await conn.rollback();
-    console.error('设置默认AI模型错误:', error);
+    logger.error('设置默认AI模型错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误', error: error.message });
   } finally {
     conn.release();
@@ -2936,7 +2936,7 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
       dynamicTools = await getEnabledSkillsAsTools();
       console.log(`加载了 ${dynamicTools.length} 个动态AI技能`);
     } catch (error) {
-      console.error('加载动态技能失败:', error);
+      logger.error('加载动态技能失败:', { error: error.message });
     }
     
     // 合并基础工具和动态技能
@@ -3050,7 +3050,7 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
             
             // 检查是否为报告生成类型的技能
             if (result && result.type === 'report_generation') {
-              console.log('检测到报告生成技能，准备生成最终报告');
+              logger.info('检测到报告生成技能，准备生成最终报告');
               
               // 构建报告生成的特殊提示词
               const reportPrompt = `你是一个专业的测试报告撰写专家。请根据以下数据和模板，生成一份完整的测试报告。
@@ -3164,7 +3164,7 @@ ${result.instructions}
       
       // 如果有报告结果，直接返回报告内容
       if (hasReportResult && reportContent) {
-        console.log('返回生成的测试报告');
+        logger.info('返回生成的测试报告');
         return res.json({
           success: true,
           answer: reportContent.content,
@@ -3218,7 +3218,7 @@ ${result.instructions}
         const loopAssistantMessage = loopResult.choices?.[0]?.message;
         
         if (!loopAssistantMessage) {
-          console.error('AI 返回格式错误');
+          logger.error('AI 返回格式错误');
           return res.json({ success: false, message: 'AI返回格式错误' });
         }
         
@@ -3227,7 +3227,7 @@ ${result.instructions}
         
         if (!loopToolCalls || loopToolCalls.length === 0) {
           // 没有工具调用，返回最终结果
-          console.log('AI 返回最终文本回答');
+          logger.info('AI 返回最终文本回答');
           finalAnswer = loopAssistantMessage.content || '';
           break;
         }
@@ -3315,7 +3315,7 @@ ${result.instructions}
     }
     
   } catch (error) {
-    console.error('AI 数据分析错误:', error);
+    logger.error('AI 数据分析错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误: ' + error.message });
   }
 });
@@ -3340,7 +3340,7 @@ app.get('/api/test-progresses/get', async (req, res) => {
     
     res.json({ success: true, testProgress: testProgresses[0] });
   } catch (error) {
-    console.error('获取单个测试进度错误:', error);
+    logger.error('获取单个测试进度错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -3367,7 +3367,7 @@ app.post('/api/test-progresses/update', async (req, res) => {
     
     res.json({ success: true, message: '测试进度更新成功' });
   } catch (error) {
-    console.error('更新测试进度错误:', error);
+    logger.error('更新测试进度错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -3392,7 +3392,7 @@ app.delete('/api/test-progresses/delete', async (req, res) => {
     
     res.json({ success: true, message: '测试进度删除成功' });
   } catch (error) {
-    console.error('删除测试进度错误:', error);
+    logger.error('删除测试进度错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -3423,7 +3423,7 @@ app.post('/api/test-statuses/create', async (req, res) => {
     
     res.json({ success: true, message: '测试状态创建成功', statusId });
   } catch (error) {
-    console.error('创建测试状态错误:', error);
+    logger.error('创建测试状态错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -3432,7 +3432,7 @@ app.post('/api/test-statuses/create', async (req, res) => {
 // 获取测试状态列表
 app.get('/api/test-statuses/list', async (req, res) => {
   try {
-    console.log('接收到获取测试状态列表请求');
+    logger.info('接收到获取测试状态列表请求');
     
     // 查询所有测试状态（按sort_order排序）
     const [testStatuses] = await pool.execute(
@@ -3444,7 +3444,7 @@ app.get('/api/test-statuses/list', async (req, res) => {
     
     res.json({ success: true, testStatuses });
   } catch (error) {
-    console.error('获取测试状态列表错误:', error);
+    logger.error('获取测试状态列表错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -3463,7 +3463,7 @@ app.get('/api/hyperlink-configs/list', async (req, res) => {
     );
     res.json({ success: true, configs });
   } catch (error) {
-    console.error('获取超链接配置列表错误:', error);
+    logger.error('获取超链接配置列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3484,7 +3484,7 @@ app.post('/api/hyperlink-configs/add', authenticateToken, requireAdmin, async (r
     
     res.json({ success: true, id: result.insertId, message: '添加成功' });
   } catch (error) {
-    console.error('添加超链接配置错误:', error);
+    logger.error('添加超链接配置错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3505,7 +3505,7 @@ app.post('/api/hyperlink-configs/update', authenticateToken, requireAdmin, async
     
     res.json({ success: true, message: '更新成功' });
   } catch (error) {
-    console.error('更新超链接配置错误:', error);
+    logger.error('更新超链接配置错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3522,7 +3522,7 @@ app.delete('/api/hyperlink-configs/:id', authenticateToken, requireAdmin, async 
     
     res.json({ success: true, message: '删除成功' });
   } catch (error) {
-    console.error('删除超链接配置错误:', error);
+    logger.error('删除超链接配置错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3547,7 +3547,7 @@ app.get('/api/test-statuses/get', async (req, res) => {
     
     res.json({ success: true, testStatus: testStatuses[0] });
   } catch (error) {
-    console.error('获取单个测试状态错误:', error);
+    logger.error('获取单个测试状态错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -3574,7 +3574,7 @@ app.post('/api/test-statuses/update', async (req, res) => {
     
     res.json({ success: true, message: '测试状态更新成功' });
   } catch (error) {
-    console.error('更新测试状态错误:', error);
+    logger.error('更新测试状态错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -3633,7 +3633,7 @@ app.delete('/api/test-statuses/delete', async (req, res) => {
     });
   } catch (error) {
     await connection.rollback();
-    console.error('删除测试状态错误:', error);
+    logger.error('删除测试状态错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     console.error('错误详情:', {
       code: error.code,
@@ -3687,7 +3687,7 @@ app.post('/api/priorities/create', async (req, res) => {
     
     res.json({ success: true, message: '优先级创建成功', priorityId });
   } catch (error) {
-    console.error('创建优先级错误:', error);
+    logger.error('创建优先级错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3703,7 +3703,7 @@ app.get('/api/priorities/list', async (req, res) => {
     
     res.json({ success: true, priorities });
   } catch (error) {
-    console.error('获取优先级列表错误:', error);
+    logger.error('获取优先级列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3726,7 +3726,7 @@ app.get('/api/priorities/get', async (req, res) => {
     
     res.json({ success: true, priority: priorities[0] });
   } catch (error) {
-    console.error('获取单个优先级错误:', error);
+    logger.error('获取单个优先级错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3747,7 +3747,7 @@ app.post('/api/priorities/update', async (req, res) => {
     
     res.json({ success: true, message: '优先级更新成功' });
   } catch (error) {
-    console.error('更新优先级错误:', error);
+    logger.error('更新优先级错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3769,7 +3769,7 @@ app.delete('/api/priorities/delete', async (req, res) => {
     
     res.json({ success: true, message: '优先级删除成功' });
   } catch (error) {
-    console.error('删除优先级错误:', error);
+    logger.error('删除优先级错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3799,7 +3799,7 @@ app.post('/api/test-methods/create', async (req, res) => {
     
     res.json({ success: true, message: '测试方式创建成功', methodId });
   } catch (error) {
-    console.error('创建测试方式错误:', error);
+    logger.error('创建测试方式错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -3808,7 +3808,7 @@ app.post('/api/test-methods/create', async (req, res) => {
 // 获取测试方式列表
 app.get('/api/test-methods/list', async (req, res) => {
   try {
-    console.log('接收到获取测试方式列表请求');
+    logger.info('接收到获取测试方式列表请求');
     
     // 查询所有测试方式
     const [testMethods] = await pool.execute(
@@ -3819,7 +3819,7 @@ app.get('/api/test-methods/list', async (req, res) => {
     
     res.json({ success: true, testMethods });
   } catch (error) {
-    console.error('获取测试方式列表错误:', error);
+    logger.error('获取测试方式列表错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -3845,7 +3845,7 @@ app.get('/api/test-methods/get', async (req, res) => {
     
     res.json({ success: true, testMethod: testMethods[0] });
   } catch (error) {
-    console.error('获取单个测试方式错误:', error);
+    logger.error('获取单个测试方式错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -3872,7 +3872,7 @@ app.post('/api/test-methods/update', async (req, res) => {
     
     res.json({ success: true, message: '测试方式更新成功' });
   } catch (error) {
-    console.error('更新测试方式错误:', error);
+    logger.error('更新测试方式错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -3897,7 +3897,7 @@ app.delete('/api/test-methods/delete', async (req, res) => {
     
     res.json({ success: true, message: '测试方式删除成功' });
   } catch (error) {
-    console.error('删除测试方式错误:', error);
+    logger.error('删除测试方式错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -4033,7 +4033,7 @@ app.get('/api/cases/match/:libraryId/:moduleId/:level1Id', async (req, res) => {
       testCases: formattedTestCases
     });
   } catch (error) {
-    console.error('获取匹配测试用例错误:', error);
+    logger.error('获取匹配测试用例错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -4105,7 +4105,7 @@ app.put('/api/testcases/:id', async (req, res) => {
     
     res.json({ success: true, message: '测试用例更新成功' });
   } catch (error) {
-    console.error('更新测试用例错误:', error);
+    logger.error('更新测试用例错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -4114,7 +4114,7 @@ app.put('/api/testcases/:id', async (req, res) => {
 // 获取测试类型列表
 app.get('/api/testtypes/list', async (req, res) => {
   try {
-    console.log('接收到获取测试类型列表请求');
+    logger.info('接收到获取测试类型列表请求');
     
     // 查询test_types表
     const query = 'SELECT id, name, description FROM test_types ORDER BY id ASC';
@@ -4132,7 +4132,7 @@ app.get('/api/testtypes/list', async (req, res) => {
       })) 
     });
   } catch (error) {
-    console.error('获取测试类型列表错误:', error);
+    logger.error('获取测试类型列表错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -4172,7 +4172,7 @@ app.get('/api/testcases/:id', async (req, res) => {
     
     res.json({ success: true, data: cases[0] });
   } catch (error) {
-    console.error('获取测试用例详情错误:', error);
+    logger.error('获取测试用例详情错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4222,7 +4222,7 @@ app.get('/api/testcases/:id/projects', async (req, res) => {
     
     res.json({ success: true, projects: projects });
   } catch (error) {
-    console.error('获取测试用例关联项目错误:', error);
+    logger.error('获取测试用例关联项目错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -4264,12 +4264,12 @@ async function initTestCaseProjectsTable() {
         "ALTER TABLE test_case_projects ADD UNIQUE KEY IF NOT EXISTS unique_test_case_project (test_case_id, project_id)"
       );
     } catch (error) {
-      console.log('test_case_projects表已存在唯一约束');
+      logger.info('test_case_projects表已存在唯一约束');
     }
     
-    console.log('test_case_projects表初始化完成');
+    logger.info('test_case_projects表初始化完成');
   } catch (error) {
-    console.error('初始化test_case_projects表失败:', error);
+    logger.error('初始化test_case_projects表失败:', { error: error.message });
   }
 }
 
@@ -4331,7 +4331,7 @@ app.put('/api/testcases/:id/projects', async (req, res) => {
         }
         console.log('插入了', projectIds.length, '条关联项目记录（旧格式）');
         } else {
-        console.log('没有关联项目数据需要保存');
+        logger.info('没有关联项目数据需要保存');
         }
       
       // 提交事务
@@ -4345,7 +4345,7 @@ app.put('/api/testcases/:id/projects', async (req, res) => {
       throw transactionError;
     }
   } catch (error) {
-    console.error('更新测试用例关联项目错误:', error);
+    logger.error('更新测试用例关联项目错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -4354,7 +4354,7 @@ app.put('/api/testcases/:id/projects', async (req, res) => {
 // 获取测试管理统计数据
 app.get('/api/dashboard/stats', async (req, res) => {
   try {
-    console.log('接收到获取测试管理统计数据请求');
+    logger.info('接收到获取测试管理统计数据请求');
     
     const [testCaseResult] = await pool.execute('SELECT COUNT(*) as count FROM test_cases');
     const testCaseCount = testCaseResult[0].count;
@@ -4374,7 +4374,7 @@ app.get('/api/dashboard/stats', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取测试管理统计数据错误:', error);
+    logger.error('获取测试管理统计数据错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4382,7 +4382,7 @@ app.get('/api/dashboard/stats', async (req, res) => {
 // 获取项目测试进度数据
 app.get('/api/dashboard/project-progress', async (req, res) => {
   try {
-    console.log('接收到获取项目测试进度数据请求');
+    logger.info('接收到获取项目测试进度数据请求');
     
     const { projectId, owner, statusId, progressId, libraryId } = req.query;
     
@@ -4462,7 +4462,7 @@ app.get('/api/dashboard/project-progress', async (req, res) => {
       projectProgress
     });
   } catch (error) {
-    console.error('获取项目测试进度数据错误:', error);
+    logger.error('获取项目测试进度数据错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4470,7 +4470,7 @@ app.get('/api/dashboard/project-progress', async (req, res) => {
 // 获取负责人任务分析数据
 app.get('/api/dashboard/owner-analysis', async (req, res) => {
   try {
-    console.log('接收到获取负责人任务分析数据请求');
+    logger.info('接收到获取负责人任务分析数据请求');
     
     const { projectId, owner, statusId, progressId, libraryId } = req.query;
     
@@ -4551,7 +4551,7 @@ app.get('/api/dashboard/owner-analysis', async (req, res) => {
       ownerAnalysis
     });
   } catch (error) {
-    console.error('获取负责人任务分析数据错误:', error);
+    logger.error('获取负责人任务分析数据错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4559,7 +4559,7 @@ app.get('/api/dashboard/owner-analysis', async (req, res) => {
 // 获取测试状态分布数据
 app.get('/api/dashboard/status-distribution', async (req, res) => {
   try {
-    console.log('接收到获取测试状态分布数据请求');
+    logger.info('接收到获取测试状态分布数据请求');
     
     const { projectId, owner, statusId, progressId, libraryId } = req.query;
     
@@ -4610,7 +4610,7 @@ app.get('/api/dashboard/status-distribution', async (req, res) => {
       statusDistribution
     });
   } catch (error) {
-    console.error('获取测试状态分布数据错误:', error);
+    logger.error('获取测试状态分布数据错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4618,7 +4618,7 @@ app.get('/api/dashboard/status-distribution', async (req, res) => {
 // 获取测试进度分布数据
 app.get('/api/dashboard/progress-distribution', async (req, res) => {
   try {
-    console.log('接收到获取测试进度分布数据请求');
+    logger.info('接收到获取测试进度分布数据请求');
     
     const { projectId, owner, statusId, progressId, libraryId } = req.query;
     
@@ -4669,7 +4669,7 @@ app.get('/api/dashboard/progress-distribution', async (req, res) => {
       progressDistribution
     });
   } catch (error) {
-    console.error('获取测试进度分布数据错误:', error);
+    logger.error('获取测试进度分布数据错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4677,7 +4677,7 @@ app.get('/api/dashboard/progress-distribution', async (req, res) => {
 // 获取通过率趋势数据
 app.get('/api/dashboard/trend/pass-rate', async (req, res) => {
   try {
-    console.log('接收到获取通过率趋势数据请求');
+    logger.info('接收到获取通过率趋势数据请求');
     
     const { projectId, owner, statusId, progressId, libraryId, days = 7 } = req.query;
     const daysNum = parseInt(days) || 7;
@@ -4764,7 +4764,7 @@ app.get('/api/dashboard/trend/pass-rate', async (req, res) => {
       trendData: { labels, passRates, passedCounts, failedCounts }
     });
   } catch (error) {
-    console.error('获取通过率趋势数据错误:', error);
+    logger.error('获取通过率趋势数据错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4772,7 +4772,7 @@ app.get('/api/dashboard/trend/pass-rate', async (req, res) => {
 // 获取执行次数趋势数据
 app.get('/api/dashboard/trend/executions', async (req, res) => {
   try {
-    console.log('接收到获取执行次数趋势数据请求');
+    logger.info('接收到获取执行次数趋势数据请求');
     
     const { projectId, owner, statusId, progressId, libraryId, days = 7 } = req.query;
     const daysNum = parseInt(days) || 7;
@@ -4853,7 +4853,7 @@ app.get('/api/dashboard/trend/executions', async (req, res) => {
       trendData: { labels, passedCounts, failedCounts }
     });
   } catch (error) {
-    console.error('获取执行次数趋势数据错误:', error);
+    logger.error('获取执行次数趋势数据错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4861,7 +4861,7 @@ app.get('/api/dashboard/trend/executions', async (req, res) => {
 // 获取测试进度趋势数据
 app.get('/api/dashboard/trend/progress', async (req, res) => {
   try {
-    console.log('接收到获取测试进度趋势数据请求');
+    logger.info('接收到获取测试进度趋势数据请求');
     
     const { projectId, owner, statusId, progressId, libraryId, days = 7 } = req.query;
     const daysNum = parseInt(days) || 7;
@@ -4973,7 +4973,7 @@ app.get('/api/dashboard/trend/progress', async (req, res) => {
       trendData: { labels, datasets: chartDatasets }
     });
   } catch (error) {
-    console.error('获取测试进度趋势数据错误:', error);
+    logger.error('获取测试进度趋势数据错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -5023,7 +5023,7 @@ app.delete('/api/testcases/:id', async (req, res) => {
       throw transactionError;
     }
   } catch (error) {
-    console.error('删除测试用例错误:', error);
+    logger.error('删除测试用例错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -5032,7 +5032,7 @@ app.delete('/api/testcases/:id', async (req, res) => {
 // 初始化数据库
 async function initDatabase() {
   try {
-    console.log('开始初始化数据库...');
+    logger.info('开始初始化数据库...');
     
     // 连接到MySQL服务器
     const connection = await pool.getConnection();
@@ -5063,7 +5063,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      console.log('用户表创建成功');
+      logger.info('用户表创建成功');
       
       // 确保users表有必要的拓展字段
       try {
@@ -5074,9 +5074,9 @@ async function initDatabase() {
           await connection.execute(
             "ALTER TABLE users ADD COLUMN status ENUM('pending', 'active', 'disabled') DEFAULT 'active' COMMENT '用户状态: pending-待审核, active-正常, disabled-禁用'"
           );
-          console.log('用户表status字段添加成功');
+          logger.info('用户表status字段添加成功');
         } else {
-          console.log('用户表status字段已存在');
+          logger.info('用户表status字段已存在');
         }
 
         // 添加统一的通知偏好字段
@@ -5084,17 +5084,17 @@ async function initDatabase() {
           await connection.execute("ALTER TABLE users ADD COLUMN email_notify_mentions BOOLEAN DEFAULT TRUE COMMENT '接收@提醒邮件'");
           await connection.execute("ALTER TABLE users ADD COLUMN email_notify_comments BOOLEAN DEFAULT TRUE COMMENT '接收评论提醒邮件'");
           await connection.execute("ALTER TABLE users ADD COLUMN email_notify_likes BOOLEAN DEFAULT FALSE COMMENT '接收被赞提醒邮件'");
-          console.log('用户表邮件偏好通知字段添加成功');
+          logger.info('用户表邮件偏好通知字段添加成功');
         }
         
         // 添加 muted_until 字段（用户禁言到期时间）
         if (!columnNames.includes('muted_until')) {
           await connection.execute("ALTER TABLE users ADD COLUMN muted_until TIMESTAMP NULL COMMENT '禁言到期时间'");
-          console.log('用户表muted_until字段添加成功');
+          logger.info('用户表muted_until字段添加成功');
         }
 
       } catch (error) {
-        console.error('检查或添加用户表拓展字段错误:', error);
+        logger.error('检查或添加用户表拓展字段错误:', { error: error.message });
       }
       
       // 创建模块表
@@ -5115,23 +5115,23 @@ async function initDatabase() {
       try {
         await connection.execute(`ALTER TABLE modules ADD COLUMN library_id INT`);
       } catch (error) {
-        console.log('library_id字段已存在');
+        logger.info('library_id字段已存在');
       }
       
       // 确保parent_id字段存在
       try {
         await connection.execute(`ALTER TABLE modules ADD COLUMN parent_id INT`);
       } catch (error) {
-        console.log('parent_id字段已存在');
+        logger.info('parent_id字段已存在');
       }
       
       // 确保order_index字段存在
       try {
         await connection.execute(`ALTER TABLE modules ADD COLUMN order_index INT DEFAULT 0`);
       } catch (error) {
-        console.log('order_index字段已存在');
+        logger.info('order_index字段已存在');
       }
-      console.log('模块表创建成功');
+      logger.info('模块表创建成功');
       
       // 创建一级测试点表
       await connection.execute(`
@@ -5150,9 +5150,9 @@ async function initDatabase() {
       try {
         await connection.execute(`ALTER TABLE level1_points ADD COLUMN order_index INT DEFAULT 0`);
       } catch (error) {
-        console.log('level1_points表order_index字段已存在');
+        logger.info('level1_points表order_index字段已存在');
       }
-      console.log('一级测试点表创建成功');
+      logger.info('一级测试点表创建成功');
       
       // 创建芯片表
       await connection.execute(`
@@ -5165,7 +5165,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      console.log('芯片表创建成功');
+      logger.info('芯片表创建成功');
       
       // 创建二级测试点表
       await connection.execute(`
@@ -5182,7 +5182,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      console.log('二级测试点表创建成功');
+      logger.info('二级测试点表创建成功');
       
       // 创建历史记录表
       await connection.execute(`
@@ -5208,7 +5208,7 @@ async function initDatabase() {
           UNIQUE KEY unique_testpoint_chip (testpoint_id, chip_id)
         )
       `);
-      console.log('测试点芯片关联表创建成功');
+      logger.info('测试点芯片关联表创建成功');
       
       // 检查并修改现有表结构，添加默认值
       try {
@@ -5216,9 +5216,9 @@ async function initDatabase() {
           ALTER TABLE testpoint_chips 
           MODIFY COLUMN chip_sequence VARCHAR(255) NOT NULL DEFAULT ''
         `);
-        console.log('测试点芯片关联表结构已更新');
+        logger.info('测试点芯片关联表结构已更新');
       } catch (error) {
-        console.log('测试点芯片关联表结构已是最新');
+        logger.info('测试点芯片关联表结构已是最新');
       }
       
       // 创建测试点状态表（每个芯片对应一个状态）
@@ -5233,7 +5233,7 @@ async function initDatabase() {
           UNIQUE KEY unique_testpoint_chip_status (testpoint_id, chip_id)
         )
       `);
-      console.log('测试点状态表创建成功');
+      logger.info('测试点状态表创建成功');
       
       // 创建历史快照表（用于版本恢复）
       await connection.execute(`
@@ -5248,8 +5248,8 @@ async function initDatabase() {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      console.log('历史快照表创建成功');
-      console.log('历史记录表创建成功');
+      logger.info('历史快照表创建成功');
+      logger.info('历史记录表创建成功');
       
       // 创建测试计划表
       await connection.execute(`
@@ -5271,7 +5271,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试计划表创建成功');
+      logger.info('测试计划表创建成功');
       
       // 创建测试报告表
       await connection.execute(`
@@ -5295,7 +5295,7 @@ async function initDatabase() {
           FOREIGN KEY (test_plan_id) REFERENCES test_plans(id) ON DELETE SET NULL
         )
       `);
-      console.log('测试报告表创建成功');
+      logger.info('测试报告表创建成功');
       
       // 添加新字段（逐个添加，忽略已存在错误）
       const alterStatements = [
@@ -5315,7 +5315,7 @@ async function initDatabase() {
           }
         }
       }
-      console.log('测试报告表字段检查完成');
+      logger.info('测试报告表字段检查完成');
       
       // 创建项目表
       await connection.execute(`
@@ -5328,7 +5328,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('项目表创建成功');
+      logger.info('项目表创建成功');
       
       // 创建用例库表
       await connection.execute(`
@@ -5342,7 +5342,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('用例库表创建成功');
+      logger.info('用例库表创建成功');
       
       // 创建用例库用例关联表
       await connection.execute(`
@@ -5354,7 +5354,7 @@ async function initDatabase() {
           UNIQUE KEY unique_library_case (library_id, case_id)
         )
       `);
-      console.log('用例库用例关联表创建成功');
+      logger.info('用例库用例关联表创建成功');
       
       // 创建测试用例表
       await connection.execute(`
@@ -5376,7 +5376,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试用例表创建成功');
+      logger.info('测试用例表创建成功');
       
       // 确保测试用例表有level1_id字段
       try {
@@ -5388,12 +5388,12 @@ async function initDatabase() {
         if (columns.length === 0) {
           // 字段不存在，添加level1_id字段
           await connection.execute('ALTER TABLE test_cases ADD COLUMN level1_id INT');
-          console.log('测试用例表level1_id字段添加成功');
+          logger.info('测试用例表level1_id字段添加成功');
         } else {
-          console.log('测试用例表level1_id字段已存在');
+          logger.info('测试用例表level1_id字段已存在');
         }
       } catch (error) {
-        console.error('检查或添加测试用例表level1_id字段错误:', error);
+        logger.error('检查或添加测试用例表level1_id字段错误:', { error: error.message });
         // 忽略错误，继续执行
       }
       
@@ -5407,12 +5407,12 @@ async function initDatabase() {
         if (columns.length === 0) {
           // 字段不存在，添加owner字段
           await connection.execute('ALTER TABLE test_cases ADD COLUMN owner VARCHAR(50) NOT NULL DEFAULT "admin"');
-          console.log('测试用例表owner字段添加成功');
+          logger.info('测试用例表owner字段添加成功');
         } else {
-          console.log('测试用例表owner字段已存在');
+          logger.info('测试用例表owner字段已存在');
         }
       } catch (error) {
-        console.error('检查或添加测试用例表owner字段错误:', error);
+        logger.error('检查或添加测试用例表owner字段错误:', { error: error.message });
         // 忽略错误，继续执行
       }
       
@@ -5426,12 +5426,12 @@ async function initDatabase() {
         if (columns.length === 0) {
           // 字段不存在，添加remark字段
           await connection.execute('ALTER TABLE test_cases ADD COLUMN remark TEXT');
-          console.log('测试用例表remark字段添加成功');
+          logger.info('测试用例表remark字段添加成功');
         } else {
-          console.log('测试用例表remark字段已存在');
+          logger.info('测试用例表remark字段已存在');
         }
       } catch (error) {
-        console.error('检查或添加测试用例表remark字段错误:', error);
+        logger.error('检查或添加测试用例表remark字段错误:', { error: error.message });
         // 忽略错误，继续执行
       }
       
@@ -5443,12 +5443,12 @@ async function initDatabase() {
         
         if (columns.length === 0) {
           await connection.execute('ALTER TABLE test_cases ADD COLUMN key_config TEXT');
-          console.log('测试用例表key_config字段添加成功');
+          logger.info('测试用例表key_config字段添加成功');
         } else {
-          console.log('测试用例表key_config字段已存在');
+          logger.info('测试用例表key_config字段已存在');
         }
       } catch (error) {
-        console.error('检查或添加测试用例表key_config字段错误:', error);
+        logger.error('检查或添加测试用例表key_config字段错误:', { error: error.message });
       }
       
       // 确保测试用例表有method字段（测试方式）
@@ -5459,12 +5459,12 @@ async function initDatabase() {
         
         if (columns.length === 0) {
           await connection.execute('ALTER TABLE test_cases ADD COLUMN method VARCHAR(50) DEFAULT "自动化"');
-          console.log('测试用例表method字段添加成功');
+          logger.info('测试用例表method字段添加成功');
         } else {
-          console.log('测试用例表method字段已存在');
+          logger.info('测试用例表method字段已存在');
         }
       } catch (error) {
-        console.error('检查或添加测试用例表method字段错误:', error);
+        logger.error('检查或添加测试用例表method字段错误:', { error: error.message });
       }
       
       // 确保测试用例表有status字段（测试状态）
@@ -5475,12 +5475,12 @@ async function initDatabase() {
         
         if (columns.length === 0) {
           await connection.execute('ALTER TABLE test_cases ADD COLUMN status VARCHAR(50) DEFAULT "维护中"');
-          console.log('测试用例表status字段添加成功');
+          logger.info('测试用例表status字段添加成功');
         } else {
-          console.log('测试用例表status字段已存在');
+          logger.info('测试用例表status字段已存在');
         }
       } catch (error) {
-        console.error('检查或添加测试用例表status字段错误:', error);
+        logger.error('检查或添加测试用例表status字段错误:', { error: error.message });
       }
       
       // 确保 test_cases 表有 is_deleted 软删除字段
@@ -5492,12 +5492,12 @@ async function initDatabase() {
         if (columns.length === 0) {
           await connection.execute('ALTER TABLE test_cases ADD COLUMN is_deleted TINYINT(1) DEFAULT 0 COMMENT \'软删除标记\'');
           await connection.execute('ALTER TABLE test_cases ADD COLUMN deleted_at TIMESTAMP NULL COMMENT \'删除时间\'');
-          console.log('测试用例表软删除字段添加成功');
+          logger.info('测试用例表软删除字段添加成功');
         } else {
-          console.log('测试用例表软删除字段已存在');
+          logger.info('测试用例表软删除字段已存在');
         }
       } catch (error) {
-        console.error('检查或添加测试用例表软删除字段错误:', error);
+        logger.error('检查或添加测试用例表软删除字段错误:', { error: error.message });
       }
       
       // ==================== 先创建配置表（被其他表外键引用） ====================
@@ -5515,14 +5515,14 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试进度表创建成功');
+      logger.info('测试进度表创建成功');
       
       // 确保test_progresses表有status_category字段
       try {
         const [progressColumns] = await connection.execute("SHOW COLUMNS FROM test_progresses LIKE 'status_category'");
         if (progressColumns.length === 0) {
           await connection.execute("ALTER TABLE test_progresses ADD COLUMN status_category VARCHAR(50) DEFAULT 'not_started' COMMENT '进度分类: not_started, in_progress, completed'");
-          console.log('test_progresses表status_category字段添加成功');
+          logger.info('test_progresses表status_category字段添加成功');
         }
       } catch (error) {
         console.log('检查test_progresses表status_category字段:', error.message);
@@ -5538,7 +5538,7 @@ async function initDatabase() {
             ('PROGRESS_002', '进行中', '测试任务正在进行', 'in_progress', 'admin'),
             ('PROGRESS_003', '已完成', '测试任务已完成', 'completed', 'admin')
           `);
-          console.log('默认测试进度数据插入成功');
+          logger.info('默认测试进度数据插入成功');
         } else {
           // 更新现有测试进度数据的status_category字段
           await connection.execute(`
@@ -5554,7 +5554,7 @@ async function initDatabase() {
           await connection.execute(`
             UPDATE test_progresses SET status_category = 'not_started' WHERE status_category IS NULL
           `);
-          console.log('测试进度数据status_category字段已更新');
+          logger.info('测试进度数据status_category字段已更新');
         }
       } catch (error) {
         console.log('插入默认测试进度数据错误:', error.message);
@@ -5575,7 +5575,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试状态表创建成功');
+      logger.info('测试状态表创建成功');
       
       // 确保test_statuses表有必要字段
       try {
@@ -5584,15 +5584,15 @@ async function initDatabase() {
         
         if (!columnNames.includes('status_category')) {
           await connection.execute("ALTER TABLE test_statuses ADD COLUMN status_category VARCHAR(50) DEFAULT 'pending' COMMENT '状态分类: passed, failed, pending, blocked'");
-          console.log('test_statuses表status_category字段添加成功');
+          logger.info('test_statuses表status_category字段添加成功');
         }
         if (!columnNames.includes('sort_order')) {
           await connection.execute("ALTER TABLE test_statuses ADD COLUMN sort_order INT DEFAULT 0 COMMENT '排序顺序'");
-          console.log('test_statuses表sort_order字段添加成功');
+          logger.info('test_statuses表sort_order字段添加成功');
         }
         if (!columnNames.includes('is_active')) {
           await connection.execute("ALTER TABLE test_statuses ADD COLUMN is_active TINYINT(1) DEFAULT 1 COMMENT '是否启用'");
-          console.log('test_statuses表is_active字段添加成功');
+          logger.info('test_statuses表is_active字段添加成功');
         }
       } catch (error) {
         console.log('检查test_statuses表字段:', error.message);
@@ -5609,7 +5609,7 @@ async function initDatabase() {
             ('STATUS_003', '失败', '测试用例执行失败', 'failed', 3, 1, 'admin'),
             ('STATUS_004', '阻塞', '测试用例被阻塞无法执行', 'blocked', 4, 1, 'admin')
           `);
-          console.log('默认测试状态数据插入成功');
+          logger.info('默认测试状态数据插入成功');
         } else {
           // 更新现有测试状态数据的status_category字段
           await connection.execute(`
@@ -5628,7 +5628,7 @@ async function initDatabase() {
           await connection.execute(`
             UPDATE test_statuses SET status_category = 'pending' WHERE status_category IS NULL
           `);
-          console.log('测试状态数据status_category字段已更新');
+          logger.info('测试状态数据status_category字段已更新');
         }
       } catch (error) {
         console.log('插入默认测试状态数据错误:', error.message);
@@ -5653,7 +5653,7 @@ async function initDatabase() {
           FOREIGN KEY (status_id) REFERENCES test_statuses(id) ON DELETE SET NULL
         )
       `);
-      console.log('测试用例项目关联表创建成功');
+      logger.info('测试用例项目关联表创建成功');
       
       // 确保test_case_projects表包含所有必要字段
       await initTestCaseProjectsTable();
@@ -5670,7 +5670,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('环境表创建成功');
+      logger.info('环境表创建成功');
       
       // 创建测试方式表
       await connection.execute(`
@@ -5684,7 +5684,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试方式表创建成功');
+      logger.info('测试方式表创建成功');
       
       // 插入默认测试方式数据
       await connection.execute(`
@@ -5692,7 +5692,7 @@ async function initDatabase() {
         ('METHOD_001', '手动测试', '通过人工操作进行测试', 'admin'),
         ('METHOD_002', '自动化测试', '通过自动化脚本进行测试', 'admin')
       `);
-      console.log('默认测试方式数据插入成功');
+      logger.info('默认测试方式数据插入成功');
       
       // 插入默认环境数据
       await connection.execute(`
@@ -5701,7 +5701,7 @@ async function initDatabase() {
         ('ENV_002', '测试环境', '测试人员使用的环境', 'admin'),
         ('ENV_003', '生产环境', '最终用户使用的环境', 'admin')
       `);
-      console.log('默认环境数据插入成功');
+      logger.info('默认环境数据插入成功');
       
       // 创建测试类型表
       await connection.execute(`
@@ -5715,7 +5715,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试类型表创建成功');
+      logger.info('测试类型表创建成功');
       
       // 创建测试阶段表
       await connection.execute(`
@@ -5729,7 +5729,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试阶段表创建成功');
+      logger.info('测试阶段表创建成功');
       
       // 创建测试软件表
       await connection.execute(`
@@ -5743,7 +5743,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试软件表创建成功');
+      logger.info('测试软件表创建成功');
       
       // 插入默认测试软件数据
       await connection.execute(`
@@ -5753,7 +5753,7 @@ async function initDatabase() {
         ('SOFTWARE_003', 'SAI', 'Switch Abstraction Interface测试', 'admin'),
         ('SOFTWARE_004', 'ECPU', '嵌入式CPU测试', 'admin')
       `);
-      console.log('默认测试软件数据插入成功');
+      logger.info('默认测试软件数据插入成功');
       
       // 创建优先级表
       await connection.execute(`
@@ -5767,7 +5767,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('优先级表创建成功');
+      logger.info('优先级表创建成功');
       
       // 插入默认优先级数据
       const [existingPriorities] = await connection.execute('SELECT COUNT(*) as count FROM test_priorities');
@@ -5779,7 +5779,7 @@ async function initDatabase() {
           ('PRIORITY_003', 'P2', '一般级 - 计划修复', 'admin'),
           ('PRIORITY_004', 'P3', '提示级 - 可选修复', 'admin')
         `);
-        console.log('默认优先级数据插入成功');
+        logger.info('默认优先级数据插入成功');
       }
       
       // 创建AI配置表（全局设置）
@@ -5793,7 +5793,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('AI配置表创建成功');
+      logger.info('AI配置表创建成功');
       
       // 创建AI模型表（支持多个模型配置）
       await connection.execute(`
@@ -5814,14 +5814,14 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('AI模型表创建成功');
+      logger.info('AI模型表创建成功');
       
       // 确保ai_models表有user_id字段
       try {
         const [modelColumns] = await connection.execute("SHOW COLUMNS FROM ai_models LIKE 'user_id'");
         if (modelColumns.length === 0) {
           await connection.execute("ALTER TABLE ai_models ADD COLUMN user_id INT COMMENT '用户ID'");
-          console.log('ai_models表user_id字段添加成功');
+          logger.info('ai_models表user_id字段添加成功');
         }
       } catch (error) {
         console.log('检查ai_models表user_id字段:', error.message);
@@ -5851,7 +5851,7 @@ async function initDatabase() {
           INDEX idx_creator_id (creator_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('AI技能表创建成功');
+      logger.info('AI技能表创建成功');
       
       // 确保ai_skills表有必要字段
       try {
@@ -5860,15 +5860,15 @@ async function initDatabase() {
         
         if (!columnNames.includes('is_public')) {
           await connection.execute("ALTER TABLE ai_skills ADD COLUMN is_public BOOLEAN DEFAULT TRUE COMMENT '是否公开'");
-          console.log('ai_skills表is_public字段添加成功');
+          logger.info('ai_skills表is_public字段添加成功');
         }
         if (!columnNames.includes('creator_id')) {
           await connection.execute("ALTER TABLE ai_skills ADD COLUMN creator_id INT COMMENT '创建者ID'");
-          console.log('ai_skills表creator_id字段添加成功');
+          logger.info('ai_skills表creator_id字段添加成功');
         }
         if (!columnNames.includes('updater_id')) {
           await connection.execute("ALTER TABLE ai_skills ADD COLUMN updater_id INT COMMENT '更新者ID'");
-          console.log('ai_skills表updater_id字段添加成功');
+          logger.info('ai_skills表updater_id字段添加成功');
         }
       } catch (error) {
         console.log('检查ai_skills表字段:', error.message);
@@ -5888,7 +5888,7 @@ async function initDatabase() {
           INDEX idx_skill_id (skill_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('用户技能设置表创建成功');
+      logger.info('用户技能设置表创建成功');
       
       // 创建报告模板表
       await connection.execute(`
@@ -5907,7 +5907,7 @@ async function initDatabase() {
           INDEX idx_default (is_default)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('报告模板表创建成功');
+      logger.info('报告模板表创建成功');
       
       // 创建超链接配置表
       await connection.execute(`
@@ -5922,7 +5922,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('超链接配置表创建成功');
+      logger.info('超链接配置表创建成功');
       
       // ==================== 论坛模块表 ====================
       
@@ -5950,7 +5950,7 @@ async function initDatabase() {
           INDEX idx_created_at (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('论坛帖子表创建成功');
+      logger.info('论坛帖子表创建成功');
       
       // 创建论坛评论表
       await connection.execute(`
@@ -5974,7 +5974,7 @@ async function initDatabase() {
           INDEX idx_created_at (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('论坛评论表创建成功');
+      logger.info('论坛评论表创建成功');
       
       // 创建论坛标签表
       await connection.execute(`
@@ -5986,7 +5986,7 @@ async function initDatabase() {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间'
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('论坛标签表创建成功');
+      logger.info('论坛标签表创建成功');
       
       // 创建帖子标签关联表
       await connection.execute(`
@@ -5998,7 +5998,7 @@ async function initDatabase() {
           UNIQUE KEY uk_post_tag (post_id, tag_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('帖子标签关联表创建成功');
+      logger.info('帖子标签关联表创建成功');
       
       // 创建用户点赞表
       await connection.execute(`
@@ -6011,7 +6011,7 @@ async function initDatabase() {
           UNIQUE KEY uk_user_target (user_id, target_type, target_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('用户点赞表创建成功');
+      logger.info('用户点赞表创建成功');
       
       // 插入默认论坛标签
       const [tagCount] = await connection.execute('SELECT COUNT(*) as count FROM forum_tags');
@@ -6026,7 +6026,7 @@ async function initDatabase() {
           ('接口测试', '#1abc9c'),
           ('其他', '#95a5a6')
         `);
-        console.log('默认论坛标签插入成功');
+        logger.info('默认论坛标签插入成功');
       }
       
       // 检查并添加 updated_by 字段（如果表已存在但没有该字段）
@@ -6034,7 +6034,7 @@ async function initDatabase() {
         const [templateColumns] = await connection.execute('SHOW COLUMNS FROM report_templates LIKE "updated_by"');
         if (templateColumns.length === 0) {
           await connection.execute('ALTER TABLE report_templates ADD COLUMN updated_by VARCHAR(50) COMMENT "最后编辑者" AFTER updated_at');
-          console.log('报告模板表添加 updated_by 字段成功');
+          logger.info('报告模板表添加 updated_by 字段成功');
         }
       } catch (alterError) {
         console.log('检查/添加 updated_by 字段:', alterError.message);
@@ -6096,7 +6096,7 @@ async function initDatabase() {
           'INSERT INTO report_templates (name, description, file_path, file_type, is_default, created_by) VALUES (?, ?, ?, ?, ?, ?)',
           ['默认测试报告模板', 'xTest 默认测试报告模板，包含测试概览、风险分析和改进建议', defaultTemplatePath, 'md', true, 'system']
         );
-        console.log('默认报告模板插入成功');
+        logger.info('默认报告模板插入成功');
       }
       
       // 插入默认AI技能示例
@@ -6181,7 +6181,7 @@ async function initDatabase() {
             'generate_test_report', '生成测试报告', '根据项目数据生成专业的测试报告，支持概要和详细两种模式', skill4Def, skill4Code, 'report', true, true
           ]
         );
-        console.log('默认AI技能示例插入成功');
+        logger.info('默认AI技能示例插入成功');
       }
       
       // 插入默认AI配置
@@ -6192,7 +6192,7 @@ async function initDatabase() {
           ('ai_enabled', 'true', '是否启用AI功能'),
           ('default_model_id', '', '默认AI模型ID')
         `);
-        console.log('默认AI配置插入成功');
+        logger.info('默认AI配置插入成功');
       }
       
       // 插入默认AI模型配置
@@ -6204,7 +6204,7 @@ async function initDatabase() {
           ('openai-default', 'OpenAI', 'openai', '', 'https://api.openai.com/v1/chat/completions', 'gpt-3.5-turbo', FALSE, TRUE, 'OpenAI大模型', 'admin'),
           ('zhipu-default', '智谱AI', 'zhipu', '', 'https://open.bigmodel.cn/api/paas/v4/chat/completions', 'glm-4', FALSE, TRUE, '智谱AI大模型', 'admin')
         `);
-        console.log('默认AI模型配置插入成功');
+        logger.info('默认AI模型配置插入成功');
       }
       
       // 创建测试用例环境关联表
@@ -6219,7 +6219,7 @@ async function initDatabase() {
           UNIQUE KEY unique_test_case_environment (test_case_id, environment_id)
         )
       `);
-      console.log('测试用例环境关联表创建成功');
+      logger.info('测试用例环境关联表创建成功');
       
       // 创建测试用例测试方式关联表
       await connection.execute(`
@@ -6233,7 +6233,7 @@ async function initDatabase() {
           UNIQUE KEY unique_test_case_method (test_case_id, method_id)
         )
       `);
-      console.log('测试用例测试方式关联表创建成功');
+      logger.info('测试用例测试方式关联表创建成功');
       
       // 创建测试点来源表
       await connection.execute(`
@@ -6247,7 +6247,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试点来源表创建成功');
+      logger.info('测试点来源表创建成功');
       
       // 插入默认测试点来源数据
       await connection.execute(`
@@ -6258,7 +6258,7 @@ async function initDatabase() {
         ('SOURCE_004', '缺陷回归', '缺陷修复后的回归测试', 'admin'),
         ('SOURCE_005', '技术方案', '技术方案相关测试', 'admin')
       `);
-      console.log('默认测试点来源数据插入成功');
+      logger.info('默认测试点来源数据插入成功');
       
       // 创建测试用例测试点来源关联表
       await connection.execute(`
@@ -6272,7 +6272,7 @@ async function initDatabase() {
           UNIQUE KEY unique_test_case_source (test_case_id, source_id)
         )
       `);
-      console.log('测试用例测试点来源关联表创建成功');
+      logger.info('测试用例测试点来源关联表创建成功');
       
       // 创建测试用例测试类型关联表
       await connection.execute(`
@@ -6286,7 +6286,7 @@ async function initDatabase() {
           UNIQUE KEY unique_test_case_test_type (test_case_id, test_type_id)
         )
       `);
-      console.log('测试用例测试类型关联表创建成功');
+      logger.info('测试用例测试类型关联表创建成功');
       
       // 创建测试用例测试状态关联表
       await connection.execute(`
@@ -6300,7 +6300,7 @@ async function initDatabase() {
           UNIQUE KEY unique_test_case_status (test_case_id, status_id)
         )
       `);
-      console.log('测试用例测试状态关联表创建成功');
+      logger.info('测试用例测试状态关联表创建成功');
       
       // 创建测试用例测试阶段关联表
       await connection.execute(`
@@ -6314,7 +6314,7 @@ async function initDatabase() {
           UNIQUE KEY unique_test_case_phase (test_case_id, phase_id)
         )
       `);
-      console.log('测试用例测试阶段关联表创建成功');
+      logger.info('测试用例测试阶段关联表创建成功');
       
       // 创建测试用例测试进度关联表
       await connection.execute(`
@@ -6328,7 +6328,7 @@ async function initDatabase() {
           UNIQUE KEY unique_test_case_progress (test_case_id, progress_id)
         )
       `);
-      console.log('测试用例测试进度关联表创建成功');
+      logger.info('测试用例测试进度关联表创建成功');
       
       // 检查是否有管理员用户
       const [users] = await connection.execute('SELECT * FROM users WHERE role = ?', ['管理员']);
@@ -6340,7 +6340,7 @@ async function initDatabase() {
           'INSERT INTO users (username, password, role, email) VALUES (?, ?, ?, ?)',
           ['admin', hashedPassword, '管理员', 'admin@example.com']
         );
-        console.log('默认管理员用户创建成功');
+        logger.info('默认管理员用户创建成功');
       }
       
       // 检查是否有测试人员用户
@@ -6353,7 +6353,7 @@ async function initDatabase() {
           'INSERT INTO users (username, password, role, email) VALUES (?, ?, ?, ?)',
           ['tester1', hashedPassword, '测试人员', 'tester1@example.com']
         );
-        console.log('默认测试人员用户创建成功');
+        logger.info('默认测试人员用户创建成功');
       }
       
       // 检查是否有默认模块
@@ -6363,7 +6363,7 @@ async function initDatabase() {
         await connection.execute('INSERT INTO modules (module_id, name) VALUES (?, ?)', ['module1', '模块1']);
         await connection.execute('INSERT INTO modules (module_id, name) VALUES (?, ?)', ['module2', '模块2']);
         await connection.execute('INSERT INTO modules (module_id, name) VALUES (?, ?)', ['module3', '模块3']);
-        console.log('默认模块创建成功');
+        logger.info('默认模块创建成功');
       }
       
       // 检查是否有默认芯片
@@ -6373,7 +6373,7 @@ async function initDatabase() {
         await connection.execute('INSERT INTO chips (chip_id, name, description) VALUES (?, ?, ?)', ['chip1', '芯片1', '默认测试芯片1']);
         await connection.execute('INSERT INTO chips (chip_id, name, description) VALUES (?, ?, ?)', ['chip2', '芯片2', '默认测试芯片2']);
         await connection.execute('INSERT INTO chips (chip_id, name, description) VALUES (?, ?, ?)', ['chip3', '芯片3', '默认测试芯片3']);
-        console.log('默认芯片创建成功');
+        logger.info('默认芯片创建成功');
       }
       
       // ==================== 测试计划管理相关表 ====================
@@ -6382,29 +6382,29 @@ async function initDatabase() {
       try {
         await connection.execute(`ALTER TABLE test_plans ADD COLUMN stage_id INT COMMENT '测试阶段ID'`);
       } catch (error) {
-        console.log('test_plans.stage_id字段已存在');
+        logger.info('test_plans.stage_id字段已存在');
       }
       
       try {
         await connection.execute(`ALTER TABLE test_plans ADD COLUMN software_id INT COMMENT '测试软件ID'`);
       } catch (error) {
-        console.log('test_plans.software_id字段已存在');
+        logger.info('test_plans.software_id字段已存在');
       }
       
       // 添加实际开始时间和实际完成时间字段
       try {
         await connection.execute(`ALTER TABLE test_plans ADD COLUMN actual_start_time DATETIME COMMENT '实际开始时间'`);
       } catch (error) {
-        console.log('test_plans.actual_start_time字段已存在');
+        logger.info('test_plans.actual_start_time字段已存在');
       }
       
       try {
         await connection.execute(`ALTER TABLE test_plans ADD COLUMN actual_end_time DATETIME COMMENT '实际完成时间'`);
       } catch (error) {
-        console.log('test_plans.actual_end_time字段已存在');
+        logger.info('test_plans.actual_end_time字段已存在');
       }
       
-      console.log('测试计划表字段更新成功');
+      logger.info('测试计划表字段更新成功');
       
       // 创建测试计划动态规则表 (test_plan_rules)
       await connection.execute(`
@@ -6422,7 +6422,7 @@ async function initDatabase() {
           FOREIGN KEY (plan_id) REFERENCES test_plans(id) ON DELETE CASCADE
         )
       `);
-      console.log('测试计划动态规则表创建成功');
+      logger.info('测试计划动态规则表创建成功');
       
       // 创建测试计划用例执行快照表 (test_plan_cases)
       await connection.execute(`
@@ -6448,7 +6448,7 @@ async function initDatabase() {
           UNIQUE KEY unique_plan_case (plan_id, case_id)
         )
       `);
-      console.log('测试计划用例执行快照表创建成功');
+      logger.info('测试计划用例执行快照表创建成功');
       
       // 确保 test_plan_cases 表有 bug_id 字段
       try {
@@ -6458,12 +6458,12 @@ async function initDatabase() {
         
         if (columns.length === 0) {
           await connection.execute('ALTER TABLE test_plan_cases ADD COLUMN bug_id VARCHAR(100) COMMENT \'关联的缺陷ID\' AFTER error_message');
-          console.log('test_plan_cases 表 bug_id 字段添加成功');
+          logger.info('test_plan_cases 表 bug_id 字段添加成功');
         } else {
-          console.log('test_plan_cases 表 bug_id 字段已存在');
+          logger.info('test_plan_cases 表 bug_id 字段已存在');
         }
       } catch (error) {
-        console.error('检查或添加 test_plan_cases 表 bug_id 字段错误:', error);
+        logger.error('检查或添加 test_plan_cases 表 bug_id 字段错误:', { error: error.message });
       }
       
       // 创建测试执行日志表 (test_execution_logs)
@@ -6478,7 +6478,7 @@ async function initDatabase() {
           FOREIGN KEY (plan_case_id) REFERENCES test_plan_cases(id) ON DELETE CASCADE
         )
       `);
-      console.log('测试执行日志表创建成功');
+      logger.info('测试执行日志表创建成功');
       
       // 创建测试用例执行记录表 (case_execution_records)
       await connection.execute(`
@@ -6496,17 +6496,17 @@ async function initDatabase() {
           INDEX idx_created_at (created_at)
         ) COMMENT='测试用例执行记录表'
       `);
-      console.log('测试用例执行记录表创建成功');
+      logger.info('测试用例执行记录表创建成功');
       
       // 检查并添加images字段（如果表已存在但没有该字段）
       try {
         await connection.execute(`
           ALTER TABLE case_execution_records ADD COLUMN images JSON COMMENT '图片列表JSON数组'
         `);
-        console.log('执行记录表添加images字段成功');
+        logger.info('执行记录表添加images字段成功');
       } catch (alterError) {
         if (alterError.code !== 'ER_DUP_FIELDNAME') {
-          console.log('images字段可能已存在，跳过添加');
+          logger.info('images字段可能已存在，跳过添加');
         }
       }
       
@@ -6515,10 +6515,10 @@ async function initDatabase() {
         await connection.execute(`
           ALTER TABLE case_execution_records ADD COLUMN bug_type VARCHAR(50) COMMENT 'Bug类型' AFTER bug_id
         `);
-        console.log('执行记录表添加bug_type字段成功');
+        logger.info('执行记录表添加bug_type字段成功');
       } catch (alterError) {
         if (alterError.code !== 'ER_DUP_FIELDNAME') {
-          console.log('bug_type字段可能已存在，跳过添加');
+          logger.info('bug_type字段可能已存在，跳过添加');
         }
       }
       
@@ -6558,7 +6558,7 @@ async function initDatabase() {
           INDEX idx_is_enabled (is_enabled)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('邮件配置表创建成功');
+      logger.info('邮件配置表创建成功');
       
       // 创建邮件发送日志表
       await connection.execute(`
@@ -6580,7 +6580,7 @@ async function initDatabase() {
           INDEX idx_created_at (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('邮件日志表创建成功');
+      logger.info('邮件日志表创建成功');
 
       // 创建站内通知表 (Notifications)
       await connection.execute(`
@@ -6603,7 +6603,7 @@ async function initDatabase() {
           INDEX idx_notifications_created_at (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('通知记录表创建成功');
+      logger.info('通知记录表创建成功');
       
       // 插入默认邮件配置模板
       const [existingConfigs] = await connection.execute('SELECT COUNT(*) as count FROM email_config');
@@ -6613,11 +6613,11 @@ async function initDatabase() {
           ('企业邮箱SMTP', 'smtp', 'smtp.exmail.qq.com', 465, TRUE, 'xTest测试管理系统', TRUE, FALSE),
           ('自建邮件服务器', 'self_hosted', NULL, NULL, FALSE, 'xTest测试管理系统', FALSE, FALSE)
         `);
-        console.log('默认邮件配置模板插入成功');
+        logger.info('默认邮件配置模板插入成功');
       }
       
       // 创建性能优化索引
-      console.log('开始创建性能优化索引...');
+      logger.info('开始创建性能优化索引...');
       const indexQueries = [
         'CREATE INDEX idx_users_username ON users(username)',
         'CREATE INDEX idx_users_role ON users(role)',
@@ -6644,23 +6644,23 @@ async function initDatabase() {
         } catch (idxError) {
           // 索引已存在则忽略错误 (错误码 1061 = ER_DUP_KEYNAME)
           if (idxError.errno !== 1061) {
-            console.warn('创建索引警告:', idxError.message);
+            logger.warn('创建索引警告:', { error: idxError.message });
           }
         }
       }
-      console.log('性能优化索引创建完成');
+      logger.info('性能优化索引创建完成');
       
-      console.log('数据库初始化完成');
+      logger.info('数据库初始化完成');
     } finally {
       connection.release();
     }
   } catch (error) {
-    console.error('数据库初始化失败:', error);
+    logger.error('数据库初始化失败:', { error: error.message });
     console.error('错误代码:', error.errno);
     console.error('SQL状态:', error.sqlState);
     console.error('错误信息:', error.sqlMessage);
-    console.warn('服务器将在没有数据库连接的情况下启动...');
-    console.warn('某些功能可能无法正常工作');
+    logger.warn('服务器将在没有数据库连接的情况下启动...');
+    logger.warn('某些功能可能无法正常工作');
   }
 }
 
@@ -6674,7 +6674,7 @@ app.get('/api/configs/stages', async (req, res) => {
     );
     res.json({ success: true, stages });
   } catch (error) {
-    console.error('获取测试阶段列表错误:', error);
+    logger.error('获取测试阶段列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -6687,7 +6687,7 @@ app.get('/api/configs/softwares', async (req, res) => {
     );
     res.json({ success: true, softwares });
   } catch (error) {
-    console.error('获取测试软件列表错误:', error);
+    logger.error('获取测试软件列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -6765,7 +6765,7 @@ app.get('/api/configs/filter_options', async (req, res) => {
     const allFailed = !libraries && !priorities && !methods && !types && !statuses;
     
     if (allFailed) {
-      console.log('所有数据库查询失败，使用Mock数据兜底');
+      logger.info('所有数据库查询失败，使用Mock数据兜底');
       return res.json({ success: true, data: mockData });
     }
     
@@ -6789,7 +6789,7 @@ app.get('/api/configs/filter_options', async (req, res) => {
     res.json({ success: true, data: result });
     
   } catch (error) {
-    console.error('获取筛选器配置选项错误:', error);
+    logger.error('获取筛选器配置选项错误:', { error: error.message });
     // 出错时返回Mock数据
     res.json({ success: true, data: mockData });
   }
@@ -6913,7 +6913,7 @@ app.post('/api/testplans/ai_parse_filter', authenticateToken, async (req, res) =
     res.json({ success: true, data: result });
     
   } catch (error) {
-    console.error('AI解析筛选条件错误:', error);
+    logger.error('AI解析筛选条件错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误: ' + error.message });
   }
 });
@@ -7229,7 +7229,7 @@ app.get('/api/testassets/tree', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取测试资产树错误:', error);
+    logger.error('获取测试资产树错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -7290,7 +7290,7 @@ app.get('/api/testpoints/detail/:id', async (req, res) => {
     
     res.json({ success: true, data: testCase });
   } catch (error) {
-    console.error('获取用例详情错误:', error);
+    logger.error('获取用例详情错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -7428,7 +7428,7 @@ app.post('/api/testplans/create_with_rules', async (req, res) => {
     
   } catch (error) {
     await connection.rollback();
-    console.error('创建测试计划错误:', error);
+    logger.error('创建测试计划错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误: ' + error.message });
   } finally {
     connection.release();
@@ -7571,7 +7571,7 @@ app.post('/api/testplans/auto_sync', async (req, res) => {
     
   } catch (error) {
     await connection.rollback();
-    console.error('自动同步错误:', error);
+    logger.error('自动同步错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   } finally {
     connection.release();
@@ -7751,7 +7751,7 @@ app.get('/api/testplans/:id/report', async (req, res) => {
     res.json(report);
     
   } catch (error) {
-    console.error('获取测试计划报告错误:', error);
+    logger.error('获取测试计划报告错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -7793,7 +7793,7 @@ app.get('/api/testplans/list', async (req, res) => {
     res.json({ success: true, plans });
     
   } catch (error) {
-    console.error('获取测试计划列表错误:', error);
+    logger.error('获取测试计划列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -7883,7 +7883,7 @@ app.get('/api/testplans/:id', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('获取测试计划详情错误:', error);
+    logger.error('获取测试计划详情错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -7942,7 +7942,7 @@ app.post('/api/testplans/preview_cases', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('预览用例错误:', error);
+    logger.error('预览用例错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -7978,7 +7978,7 @@ app.post('/api/testplans/:id/status', async (req, res) => {
     res.json({ success: true, message: '状态更新成功' });
     
   } catch (error) {
-    console.error('更新测试计划状态错误:', error);
+    logger.error('更新测试计划状态错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -7997,7 +7997,7 @@ app.post('/api/testplans/:id/end-time', async (req, res) => {
     res.json({ success: true, message: '完成时间更新成功' });
     
   } catch (error) {
-    console.error('更新测试计划完成时间错误:', error);
+    logger.error('更新测试计划完成时间错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -8057,7 +8057,7 @@ app.put('/api/testplans/:id', async (req, res) => {
     }
     
   } catch (error) {
-    console.error('更新测试计划错误:', error);
+    logger.error('更新测试计划错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -8072,7 +8072,7 @@ app.delete('/api/testplans/:id', async (req, res) => {
     res.json({ success: true, message: '测试计划删除成功' });
     
   } catch (error) {
-    console.error('删除测试计划错误:', error);
+    logger.error('删除测试计划错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -8080,9 +8080,9 @@ app.delete('/api/testplans/:id', async (req, res) => {
 // 启动服务器
 async function startServer() {
   try {
-    console.log('开始启动服务器...');
+    logger.info('开始启动服务器...');
     await initDatabase();
-    console.log('数据库初始化完成，开始监听端口...');
+    logger.info('数据库初始化完成，开始监听端口...');
     
     // 创建HTTP服务器
     const server = http.createServer(app);

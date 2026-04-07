@@ -67,7 +67,7 @@ router.get('/list', async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('获取模板列表错误:', error);
+    logger.error('获取模板列表错误:', { error: error.message });
     res.status(500).json({ success: false, message: '获取模板列表失败' });
   }
 });
@@ -93,7 +93,7 @@ router.get('/detail/:id', async (req, res) => {
     try {
       content = fs.readFileSync(template.file_path, 'utf8');
     } catch (e) {
-      console.error('读取模板文件错误:', e);
+      logger.error('读取模板文件错误:', { error: e.message });
     }
     
     res.json({
@@ -113,7 +113,7 @@ router.get('/detail/:id', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取模板详情错误:', error);
+    logger.error('获取模板详情错误:', { error: error.message });
     res.status(500).json({ success: false, message: '获取模板详情失败' });
   }
 });
@@ -153,7 +153,7 @@ router.post('/upload', upload.single('template'), async (req, res) => {
       templateId: result.insertId
     });
   } catch (error) {
-    console.error('上传模板错误:', error);
+    logger.error('上传模板错误:', { error: error.message });
     // 如果上传失败，删除已上传的文件
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
@@ -175,7 +175,7 @@ router.put('/update/:id', async (req, res) => {
     
     res.json({ success: true, message: '模板更新成功' });
   } catch (error) {
-    console.error('更新模板错误:', error);
+    logger.error('更新模板错误:', { error: error.message });
     res.status(500).json({ success: false, message: '更新模板失败' });
   }
 });
@@ -213,7 +213,7 @@ router.put('/update-content/:id', async (req, res) => {
     
     res.json({ success: true, message: '模板内容更新成功' });
   } catch (error) {
-    console.error('更新模板内容错误:', error);
+    logger.error('更新模板内容错误:', { error: error.message });
     res.status(500).json({ success: false, message: '更新模板内容失败' });
   }
 });
@@ -237,7 +237,7 @@ router.put('/set-default/:id', async (req, res) => {
     
     res.json({ success: true, message: '默认模板设置成功' });
   } catch (error) {
-    console.error('设置默认模板错误:', error);
+    logger.error('设置默认模板错误:', { error: error.message });
     res.status(500).json({ success: false, message: '设置默认模板失败' });
   }
 });
@@ -271,7 +271,7 @@ router.delete('/:id', async (req, res) => {
     
     res.json({ success: true, message: '模板删除成功' });
   } catch (error) {
-    console.error('删除模板错误:', error);
+    logger.error('删除模板错误:', { error: error.message });
     res.status(500).json({ success: false, message: '删除模板失败' });
   }
 });
@@ -308,7 +308,7 @@ router.get('/default-content', async (req, res) => {
       content: content
     });
   } catch (error) {
-    console.error('获取默认模板内容错误:', error);
+    logger.error('获取默认模板内容错误:', { error: error.message });
     res.json({ 
       success: false, 
       message: '获取模板失败',
@@ -352,7 +352,7 @@ router.get('/content/:id', async (req, res) => {
       content: content
     });
   } catch (error) {
-    console.error('获取模板内容错误:', error);
+    logger.error('获取模板内容错误:', { error: error.message });
     res.json({ 
       success: false, 
       message: '获取模板失败',

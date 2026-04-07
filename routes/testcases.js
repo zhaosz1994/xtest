@@ -341,7 +341,7 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
 
     } catch (error) {
         await connection.rollback();
-        console.error('批量创建测试用例错误:', error);
+        logger.error('批量创建测试用例错误:', { error: error.message });
         console.error('错误堆栈:', error.stack);
         res.json({ success: false, message: '批量创建失败: ' + error.message });
     } finally {
@@ -476,7 +476,7 @@ router.post('/:id/submit-review', authenticateToken, async (req, res) => {
 
     } catch (error) {
         await connection.rollback();
-        console.error('提交评审失败:', error);
+        logger.error('提交评审失败:', { error: error.message });
         res.json({ success: false, message: '提交评审失败: ' + error.message });
     } finally {
         connection.release();
@@ -655,7 +655,7 @@ router.post('/:id/review', authenticateToken, async (req, res) => {
 
     } catch (error) {
         await connection.rollback();
-        console.error('执行评审失败:', error);
+        logger.error('执行评审失败:', { error: error.message });
         res.json({ success: false, message: '评审失败: ' + error.message });
     } finally {
         connection.release();
@@ -725,7 +725,7 @@ router.get('/:id/review-history', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('获取评审历史失败:', error);
+        logger.error('获取评审历史失败:', { error: error.message });
         res.json({ success: false, message: '获取评审历史失败: ' + error.message });
     }
 });
@@ -782,7 +782,7 @@ router.get('/review/pending', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('获取待评审列表失败:', error);
+        logger.error('获取待评审列表失败:', { error: error.message });
         res.json({ success: false, message: '获取待评审列表失败: ' + error.message });
     }
 });
@@ -838,7 +838,7 @@ router.get('/:id/review-progress', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('获取评审进度失败:', error);
+        logger.error('获取评审进度失败:', { error: error.message });
         res.json({ success: false, message: '获取评审进度失败: ' + error.message });
     }
 });
@@ -999,7 +999,7 @@ router.post('/batch-submit-review', authenticateToken, async (req, res) => {
         
     } catch (error) {
         await connection.rollback();
-        console.error('批量提交评审错误:', error);
+        logger.error('批量提交评审错误:', { error: error.message });
         res.json({ success: false, message: '批量提交评审失败: ' + error.message });
     } finally {
         connection.release();
@@ -1182,7 +1182,7 @@ router.post('/batch-review', authenticateToken, async (req, res) => {
         
     } catch (error) {
         await connection.rollback();
-        console.error('批量评审错误:', error);
+        logger.error('批量评审错误:', { error: error.message });
         res.json({ success: false, message: '批量评审失败: ' + error.message });
     } finally {
         connection.release();
@@ -1227,7 +1227,7 @@ router.get('/pending-submit', authenticateToken, async (req, res) => {
         });
         
     } catch (error) {
-        console.error('获取待提交评审用例列表失败:', error);
+        logger.error('获取待提交评审用例列表失败:', { error: error.message });
         res.json({ success: false, message: '获取待提交评审用例列表失败: ' + error.message });
     }
 });
@@ -1422,10 +1422,6 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
         const createdCaseIds = [];
         
         if (Array.isArray(newCases) && newCases.length > 0) {
-            console.log('=== 后端批量更新调试 ===');
-            console.log('收到newCases数量:', newCases.length);
-            console.log('newCases详情:', JSON.stringify(newCases, null, 2));
-            
             const validNewCases = newCases.filter(c => c.name && c.name.trim() !== '');
             console.log('有效newCases数量:', validNewCases.length);
             
@@ -1584,7 +1580,7 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
 
     } catch (error) {
         await connection.rollback();
-        console.error('批量更新错误:', error);
+        logger.error('批量更新错误:', { error: error.message });
         res.json({ success: false, message: '批量更新失败: ' + error.message });
     } finally {
         connection.release();

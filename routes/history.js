@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../db');
 const { authenticateToken } = require('../middleware');
 const onlineUsersManager = require('../onlineUsersManager');
+const logger = require('../services/logger');
 
 // 创建操作日志表（如果不存在）
 async function ensureActivityLogTable() {
@@ -25,9 +26,9 @@ async function ensureActivityLogTable() {
         INDEX idx_action (action)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
-    console.log('操作日志表检查完成');
+    logger.info('操作日志表检查完成');
   } catch (error) {
-    console.error('创建操作日志表失败:', error);
+    logger.error('创建操作日志表失败:', { error: error.message });
   }
 }
 
@@ -44,7 +45,7 @@ async function logActivity(userId, username, role, action, description, entityTy
     );
     return true;
   } catch (error) {
-    console.error('记录操作日志失败:', error);
+    logger.error('记录操作日志失败:', { error: error.message });
     return false;
   }
 }
@@ -96,7 +97,7 @@ router.get('/list', authenticateToken, async (req, res) => {
       })
     });
   } catch (error) {
-    console.error('获取活动记录错误:', error);
+    logger.error('获取活动记录错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误', history: [] });
   }
 });
@@ -114,7 +115,7 @@ router.post('/add', authenticateToken, async (req, res) => {
     await logActivity(userId, username, role, action, description, entityType, entityId, ipAddress, userAgent);
     res.json({ success: true, message: '操作日志记录成功' });
   } catch (error) {
-    console.error('添加操作日志错误:', error);
+    logger.error('添加操作日志错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -130,7 +131,7 @@ router.get('/online-users', authenticateToken, async (req, res) => {
       onlineUsers: allOnlineUsers
     });
   } catch (error) {
-    console.error('获取在线用户错误:', error);
+    logger.error('获取在线用户错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });

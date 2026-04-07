@@ -94,7 +94,7 @@ async function searchTestPlans(keyword, limit, offset) {
             }))
         };
     } catch (error) {
-        console.error('搜索测试计划错误:', error);
+        logger.error('搜索测试计划错误:', { error: error.message });
         return { total: 0, hasMore: false, items: [], error: error.message };
     }
 }
@@ -146,7 +146,7 @@ async function searchTestCases(keyword, limit, offset, userId) {
             }))
         };
     } catch (error) {
-        console.error('搜索测试用例错误:', error);
+        logger.error('搜索测试用例错误:', { error: error.message });
         return { total: 0, hasMore: false, items: [], error: error.message };
     }
 }
@@ -241,7 +241,7 @@ async function searchPosts(keyword, limit, offset) {
             }))
         };
     } catch (error) {
-        console.error('搜索论坛帖子错误:', error);
+        logger.error('搜索论坛帖子错误:', { error: error.message });
         return { total: 0, hasMore: false, items: [], error: error.message };
     }
 }
@@ -297,7 +297,7 @@ async function searchComments(keyword, limit, offset) {
             }))
         };
     } catch (error) {
-        console.error('搜索论坛评论错误:', error);
+        logger.error('搜索论坛评论错误:', { error: error.message });
         return { total: 0, hasMore: false, items: [], error: error.message };
     }
 }
@@ -355,7 +355,7 @@ async function searchScripts(keyword, limit, offset) {
             }))
         };
     } catch (error) {
-        console.error('搜索脚本错误:', error);
+        logger.error('搜索脚本错误:', { error: error.message });
         return { total: 0, hasMore: false, items: [], error: error.message };
     }
 }
@@ -451,7 +451,7 @@ router.get('/search', authenticateToken, async (req, res) => {
         });
         
     } catch (error) {
-        console.error('搜索错误:', error);
+        logger.error('搜索错误:', { error: error.message });
         res.status(500).json({
             success: false,
             error: {

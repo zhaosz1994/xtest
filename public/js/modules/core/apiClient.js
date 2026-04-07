@@ -27,7 +27,6 @@ const apiCache = {
         if (this.timestamps.hasOwnProperty(key)) {
             delete this.timestamps[key];
         }
-        console.log(`[缓存清除] ${key}`);
     },
 
     deleteByPrefix(prefix) {
@@ -39,9 +38,6 @@ const apiCache = {
                 count++;
             }
         });
-        if (count > 0) {
-            console.log(`[缓存批量清除] 前缀 "${prefix}" 匹配 ${count} 条缓存`);
-        }
     },
 
     clear() {
@@ -90,7 +86,6 @@ async function refreshToken() {
             localStorage.setItem('authToken', authToken);
             localStorage.setItem('currentUser', JSON.stringify(currentUser));
             
-            console.log('[Token刷新] Token已自动刷新');
             return true;
         }
         
@@ -107,11 +102,8 @@ async function apiRequest(endpoint, options = {}) {
     if (method === 'GET' && useCache) {
         const cached = apiCache.get(endpoint);
         if (cached) {
-            console.log(`[缓存命中] ${endpoint}`);
             return cached;
         }
-    } else if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
-        console.log(`[API请求] ${method} ${endpoint}`);
     }
 
     const url = `${API_BASE_URL}${endpoint}`;
@@ -133,13 +125,10 @@ async function apiRequest(endpoint, options = {}) {
 
         if (!response.ok) {
             if (response.status === 403 && !skipRetry && authToken) {
-                console.log('[API请求] Token可能已过期，尝试刷新...');
-                
                 const refreshed = await refreshToken();
                 
                 if (refreshed) {
                     headers['Authorization'] = `Bearer ${authToken}`;
-                    console.log('[API请求] 使用新token重试请求');
                     
                     const retryResponse = await fetch(url, {
                         ...options,
@@ -156,7 +145,6 @@ async function apiRequest(endpoint, options = {}) {
                         return result;
                     }
                 } else {
-                    console.log('[API请求] Token刷新失败，需要重新登录');
                     authToken = null;
                     currentUser = null;
                     localStorage.removeItem('authToken');

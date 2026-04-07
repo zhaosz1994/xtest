@@ -5,6 +5,7 @@ const { authenticateToken } = require('../middleware');
 const reportService = require('../services/reportService');
 const { getUserAIConfig } = require('../services/aiService');
 const { logActivity } = require('./history');
+const logger = require('../services/logger');
 require('dotenv').config();
 
 // 获取测试报告列表（支持分页）
@@ -85,7 +86,7 @@ router.get('/list', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取测试报告列表错误:', error);
+    logger.error('获取测试报告列表错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -118,7 +119,7 @@ router.post('/create', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '测试报告创建成功' });
   } catch (error) {
-    console.error('创建测试报告错误:', error);
+    logger.error('创建测试报告错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -152,7 +153,7 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '测试报告更新成功' });
   } catch (error) {
-    console.error('更新测试报告错误:', error);
+    logger.error('更新测试报告错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -178,7 +179,7 @@ router.delete('/delete/:id', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '测试报告删除成功' });
   } catch (error) {
-    console.error('删除测试报告错误:', error);
+    logger.error('删除测试报告错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -219,7 +220,7 @@ router.get('/detail/:id', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取测试报告详情错误:', error);
+    logger.error('获取测试报告详情错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -241,7 +242,7 @@ router.post('/generate/:testPlanId', authenticateToken, async (req, res) => {
           aiAnalysis = await generateAIAnalysis(reportData, aiModel);
         }
       } catch (aiError) {
-        console.error('AI分析生成失败:', aiError);
+        logger.error('AI分析生成失败', { error: aiError.message });
       }
     }
     
@@ -299,7 +300,7 @@ router.post('/generate/:testPlanId', authenticateToken, async (req, res) => {
       priorityDistribution: reportData.priorityDistribution
     });
   } catch (error) {
-    console.error('生成测试报告错误:', error);
+    logger.error('生成测试报告错误:', { error: error.message });
     res.status(500).json({ success: false, message: '生成报告失败: ' + error.message });
   }
 });
@@ -323,7 +324,7 @@ router.get('/preview/:testPlanId', authenticateToken, async (req, res) => {
       testPlan: reportData.testPlan
     });
   } catch (error) {
-    console.error('预览测试报告错误:', error);
+    logger.error('预览测试报告错误:', { error: error.message });
     res.status(500).json({ success: false, message: '预览报告失败: ' + error.message });
   }
 });
@@ -355,7 +356,7 @@ router.get('/markdown/:reportId', authenticateToken, async (req, res) => {
       markdown: markdown
     });
   } catch (error) {
-    console.error('获取报告Markdown错误:', error);
+    logger.error('获取报告Markdown错误:', { error: error.message });
     res.status(500).json({ success: false, message: '获取报告失败' });
   }
 });
@@ -368,7 +369,7 @@ router.get('/hardware-knowledge', authenticateToken, async (req, res) => {
       knowledge: knowledge
     });
   } catch (error) {
-    console.error('获取硬件知识错误:', error);
+    logger.error('获取硬件知识错误:', { error: error.message });
     res.status(500).json({ success: false, message: '获取硬件知识失败' });
   }
 });
@@ -537,7 +538,7 @@ ${blockedCases.slice(0, 10).map(tc =>
       const choice = data.choices[0];
       
       if (!choice.message) {
-        console.warn('大模型返回格式异常: 缺少 message 字段');
+        logger.warn('大模型返回格式异常: 缺少 message 字段');
         return null;
       }
       
@@ -547,7 +548,7 @@ ${blockedCases.slice(0, 10).map(tc =>
         const firstToolCall = toolCalls[0];
         
         if (!firstToolCall.function || !firstToolCall.function.arguments) {
-          console.warn('大模型返回格式异常: tool_calls 结构不完整');
+          logger.warn('大模型返回格式异常: tool_calls 结构不完整');
           return null;
         }
         
@@ -560,7 +561,7 @@ ${blockedCases.slice(0, 10).map(tc =>
             functionArgs = argsStr;
           }
         } catch (parseError) {
-          console.warn('大模型返回格式破损，使用降级解析:', parseError.message);
+          logger.warn('大模型返回格式破损，使用降级解析', { error: parseError.message });
           const argsStr = String(firstToolCall.function.arguments);
           const strategyMatch = argsStr.match(/"test_strategy"\s*:\s*"([^"]*)"/);
           const summaryMatch = argsStr.match(/"test_summary"\s*:\s*"([^"]*)"/);
@@ -591,16 +592,16 @@ ${blockedCases.slice(0, 10).map(tc =>
         };
       }
       
-      console.warn('大模型返回格式异常: 无法解析内容');
+      logger.warn('大模型返回格式异常: 无法解析内容');
       return null;
     }
     
     return null;
   } catch (error) {
     if (error.name === 'AbortError') {
-      console.error('AI分析超时（60秒）');
+      logger.error('AI分析超时（60秒）');
     } else {
-      console.error('AI分析生成异常:', error);
+      logger.error('AI分析生成异常:', { error: error.message });
     }
     return null;
   }
@@ -653,7 +654,7 @@ router.post('/async-generate', authenticateToken, async (req, res) => {
     });
     
     processAsyncJob(jobId, req.body).catch(err => {
-      console.error('异步任务执行错误:', err);
+      logger.error('异步任务执行错误', { error: err.message, jobId });
       const job = asyncJobs.get(jobId);
       if (job) {
         job.status = 'failed';
@@ -668,7 +669,7 @@ router.post('/async-generate', authenticateToken, async (req, res) => {
       message: '任务已提交'
     });
   } catch (error) {
-    console.error('创建异步任务错误:', error);
+    logger.error('创建异步任务错误:', { error: error.message });
     res.status(500).json({ success: false, message: '创建任务失败' });
   }
 });
@@ -694,7 +695,7 @@ router.get('/job-status/:jobId', authenticateToken, async (req, res) => {
       error: job.error
     });
   } catch (error) {
-    console.error('获取任务状态错误:', error);
+    logger.error('获取任务状态错误:', { error: error.message });
     res.status(500).json({ success: false, message: '获取任务状态失败' });
   }
 });
@@ -718,7 +719,7 @@ router.post('/cancel-job/:jobId', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '任务已取消' });
   } catch (error) {
-    console.error('取消任务错误:', error);
+    logger.error('取消任务错误:', { error: error.message });
     res.status(500).json({ success: false, message: '取消任务失败' });
   }
 });
@@ -731,7 +732,7 @@ async function processAsyncJob(jobId, config) {
   let reportId = null;
   
   try {
-    console.log(`[报告生成] 开始处理任务 ${jobId}, 配置:`, JSON.stringify(config, null, 2));
+    logger.info('开始处理报告生成任务', { jobId, dimension: config.dimension, targetId: config.targetId });
     
     job.status = 'processing';
     job.message = '正在创建报告记录...';
@@ -739,7 +740,7 @@ async function processAsyncJob(jobId, config) {
     
     // 先创建一个生成中的报告记录
     const finalReportName = config.reportName || `测试报告_${new Date().toISOString().split('T')[0]}`;
-    console.log(`[报告生成] 创建报告记录: ${finalReportName}`);
+    logger.info(`[报告生成] 创建报告记录: ${finalReportName}`);
     
     const [result] = await pool.execute(`
       INSERT INTO test_reports (name, creator, creator_id, project, iteration, report_type, status, job_id, start_date, end_date)
@@ -758,7 +759,7 @@ async function processAsyncJob(jobId, config) {
     ]);
     reportId = result.insertId;
     job.reportId = reportId;
-    console.log(`[报告生成] 报告记录创建成功, ID: ${reportId}`);
+    logger.info(`[报告生成] 报告记录创建成功, ID: ${reportId}`);
     
     job.progress = 10;
     job.message = '正在组装数据...';
@@ -771,30 +772,30 @@ async function processAsyncJob(jobId, config) {
       throw new Error(`无效的目标ID: ${config.targetId}`);
     }
     
-    console.log(`[报告生成] 数据维度: ${config.dimension}, 目标ID: ${targetId}`);
+    logger.info(`[报告生成] 数据维度: ${config.dimension}, 目标ID: ${targetId}`);
     
     switch (config.dimension) {
       case 'testplan':
-        console.log(`[报告生成] 按测试计划组装数据, testPlanId: ${targetId}`);
+        logger.info(`[报告生成] 按测试计划组装数据, testPlanId: ${targetId}`);
         reportData = await reportService.assembleReportData(targetId);
         break;
       case 'project':
-        console.log(`[报告生成] 按项目组装数据, projectId: ${targetId}`);
+        logger.info(`[报告生成] 按项目组装数据, projectId: ${targetId}`);
         reportData = await assembleReportByProject(targetId);
         break;
       case 'module':
-        console.log(`[报告生成] 按模块组装数据, moduleId: ${targetId}`);
+        logger.info(`[报告生成] 按模块组装数据, moduleId: ${targetId}`);
         reportData = await assembleReportByModule(targetId);
         break;
       case 'library':
-        console.log(`[报告生成] 按用例库组装数据, libraryId: ${targetId}`);
+        logger.info(`[报告生成] 按用例库组装数据, libraryId: ${targetId}`);
         reportData = await assembleReportByLibrary(targetId);
         break;
       default:
         throw new Error(`不支持的数据维度: ${config.dimension}`);
     }
     
-    console.log(`[报告生成] 数据组装完成, 统计数据:`, JSON.stringify(reportData?.statistics, null, 2));
+    logger.debug('数据组装完成', { statistics: reportData?.statistics });
     
     job.progress = 40;
     job.message = '数据组装完成，正在生成报告...';
@@ -811,16 +812,16 @@ async function processAsyncJob(jobId, config) {
           aiAnalysis = await generateAIAnalysis(reportData, aiModel);
         }
       } catch (aiError) {
-        console.error('[报告生成] AI分析生成失败:', aiError);
+        logger.error('AI分析生成失败', { error: aiError.message, jobId });
       }
     }
     
     job.progress = 70;
     job.message = '正在生成Markdown...';
     
-    console.log(`[报告生成] 开始生成Markdown内容`);
+    logger.info(`[报告生成] 开始生成Markdown内容`);
     const markdownContent = reportService.generateMarkdownReport(reportData, aiAnalysis);
-    console.log(`[报告生成] Markdown内容生成完成, 长度: ${markdownContent.length}`);
+    logger.info(`[报告生成] Markdown内容生成完成, 长度: ${markdownContent.length}`);
     
     job.progress = 85;
     job.message = '正在保存报告...';
@@ -844,9 +845,9 @@ async function processAsyncJob(jobId, config) {
       reportId
     ]);
     
-    console.log(`[报告生成] 开始保存报告文件`);
+    logger.info(`[报告生成] 开始保存报告文件`);
     const filePath = await reportService.saveReportToFile(reportId, markdownContent);
-    console.log(`[报告生成] 报告文件保存成功: ${filePath}`);
+    logger.info(`[报告生成] 报告文件保存成功: ${filePath}`);
     
     await pool.execute('UPDATE test_reports SET summary = ? WHERE id = ?', [filePath, reportId]);
     
@@ -855,12 +856,15 @@ async function processAsyncJob(jobId, config) {
     job.message = '报告生成完成';
     job.reportId = reportId;
     
-    console.log(`[报告生成] 任务 ${jobId} 完成, 报告ID: ${reportId}`);
+    logger.info(`[报告生成] 任务 ${jobId} 完成, 报告ID: ${reportId}`);
     
   } catch (error) {
-    console.error('[报告生成] 异步任务处理错误:', error);
-    console.error('[报告生成] 错误堆栈:', error.stack);
-    console.error('[报告生成] 任务配置:', JSON.stringify(config, null, 2));
+    logger.error('异步任务处理错误', { 
+      error: error.message, 
+      stack: error.stack,
+      jobId,
+      config: { dimension: config.dimension, targetId: config.targetId }
+    });
     
     job.status = 'failed';
     job.error = error.message;
@@ -871,7 +875,7 @@ async function processAsyncJob(jobId, config) {
       try {
         await pool.execute('UPDATE test_reports SET status = ? WHERE id = ?', ['failed', reportId]);
       } catch (e) {
-        console.error('[报告生成] 更新报告状态失败:', e);
+        logger.error('[报告生成] 更新报告状态失败:', { error: e.message });
       }
     }
   }
@@ -1089,7 +1093,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
           const filePath = report.summary;
           if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
-            console.log(`[报告] 已删除报告文件: ${filePath}`);
+            logger.info(`[报告] 已删除报告文件: ${filePath}`);
           }
         }
       }
@@ -1105,7 +1109,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error('删除报告错误:', error);
+    logger.error('删除报告错误:', { error: error.message });
     res.status(500).json({ success: false, message: '删除报告失败' });
   }
 });

@@ -24,8 +24,6 @@ const ModuleLoader = {
 
     init() {
         this.totalCount = this.modules.length;
-        console.log(`[ModuleLoader] 开始加载 ${this.totalCount} 个模块...`);
-        
         this.loadAllModules();
     },
 
@@ -42,8 +40,6 @@ const ModuleLoader = {
                     module.loaded = true;
                     this.loadedCount++;
                     this.updateProgress();
-                    
-                    console.log(`[ModuleLoader] ✓ ${module.name} (${this.loadedCount}/${this.totalCount})`);
                 };
                 
                 script.onerror = () => {
@@ -60,12 +56,6 @@ const ModuleLoader = {
         });
 
         window.addEventListener('load', () => {
-            const endTime = performance.now();
-            const duration = ((endTime - startTime) / 1000).toFixed(2);
-            
-            console.log(`[ModuleLoader] 所有模块加载完成，耗时 ${duration}s`);
-            console.log(`[ModuleLoader] 成功: ${this.loadedCount}/${this.totalCount}`);
-            
             this.initializeModules();
         });
     },
@@ -87,28 +77,20 @@ const ModuleLoader = {
     },
 
     initializeModules() {
-        console.log('[ModuleLoader] 初始化模块...');
-        
         if (typeof StorageService !== 'undefined') {
-            console.log('[ModuleLoader] ✓ StorageService 已就绪');
         }
         
         if (typeof ThemeService !== 'undefined') {
             ThemeService.init();
-            console.log('[ModuleLoader] ✓ ThemeService 已初始化');
         }
         
         if (typeof Router !== 'undefined') {
             Router.init();
-            console.log('[ModuleLoader] ✓ Router 已初始化');
         }
         
         if (typeof CommandPalette !== 'undefined') {
             CommandPalette.init();
-            console.log('[ModuleLoader] ✓ CommandPalette 已初始化');
         }
-        
-        console.log('[ModuleLoader] 所有模块初始化完成');
         
         if (typeof hideLoading === 'function') {
             hideLoading();
@@ -174,7 +156,6 @@ const ModuleLoader = {
         script.onload = () => {
             module.loaded = true;
             this.loadedCount++;
-            console.log(`[ModuleLoader] ✓ ${moduleName} 重新加载成功`);
         };
         
         script.onerror = () => {
@@ -187,5 +168,4 @@ const ModuleLoader = {
 };
 
 (function() {
-    console.log('[ModuleLoader] 模块加载器已就绪');
 })();

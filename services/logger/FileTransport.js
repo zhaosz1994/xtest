@@ -6,6 +6,8 @@ class FileTransport {
     this.filename = options.filename || path.join(process.cwd(), 'logs', 'app.log');
     this.maxFileSize = options.maxFileSize || 10 * 1024 * 1024;
     this.maxFiles = options.maxFiles || 5;
+    this.rotateByDate = options.rotateByDate !== false;
+    this.currentDate = this.getCurrentDate();
     this.stream = null;
     this.currentSize = 0;
     this.initialized = false;
@@ -29,6 +31,50 @@ class FileTransport {
     
     this.createStream();
     this.initialized = true;
+    
+    if (this.rotateByDate) {
+      this.startDailyRotation();
+    }
+  }
+
+  getCurrentDate() {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  }
+
+  startDailyRotation() {
+    const checkDateChange = () => {
+      const currentDate = this.getCurrentDate();
+      if (currentDate !== this.currentDate) {
+        this.rotateByDateChange();
+      }
+    };
+    
+    setInterval(checkDateChange, 60000);
+  }
+
+  rotateByDateChange() {
+    if (this.stream) {
+      this.stream.end();
+      this.stream = null;
+    }
+    
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const datedFilename = `${this.filename}.${timestamp}`;
+    
+    if (fs.existsSync(this.filename)) {
+      try {
+        fs.renameSync(this.filename, datedFilename);
+      } catch (err) {
+        console.error(`Failed to rename log file for date rotation: ${err.message}`);
+      }
+    }
+    
+    this.currentDate = this.getCurrentDate();
+    this.createStream();
+    this.currentSize = 0;
+    
+    this.cleanOldFiles();
   }
 
   createStream() {
@@ -108,9 +154,44 @@ class FileTransport {
     }
   }
 
+  cleanOldFiles() {
+    const logDir = path.dirname(this.filename);
+    const baseName = path.basename(this.filename);
+    
+    try {
+      const files = fs.readdirSync(logDir);
+      const logFiles = files
+        .filter(f => f.startsWith(baseName) && f !== baseName)
+        .map(f => ({
+          name: f,
+          path: path.join(logDir, f),
+          time: fs.statSync(path.join(logDir, f)).mtime.getTime()
+        }))
+        .sort((a, b) => b.time - a.time);
+      
+      while (logFiles.length > this.maxFiles) {
+        const oldestFile = logFiles.pop();
+        try {
+          fs.unlinkSync(oldestFile.path);
+        } catch (err) {
+          console.error(`Failed to delete old log file: ${err.message}`);
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to clean old log files: ${err.message}`);
+    }
+  }
+
   write(logEntry) {
     if (!this.initialized || !this.stream) {
       return;
+    }
+    
+    if (this.rotateByDate) {
+      const currentDate = this.getCurrentDate();
+      if (currentDate !== this.currentDate) {
+        this.rotateByDateChange();
+      }
     }
     
     const logString = logEntry.formatted + '\n';
@@ -157,16 +238,9 @@ class FileTransport {
   }
 
   end() {
-    return new Promise((resolve) => {
-      if (this.stream) {
-        this.stream.end(() => {
-          this.initialized = false;
-          resolve();
-        });
-      } else {
-        resolve();
-      }
-    });
+    if (this.stream) {
+      this.stream.end();
+    }
   }
 }
 

@@ -110,7 +110,7 @@ const CommandPalette = {
             },
             {
                 id: 'ai-assistant',
-                title: 'AI知识问答',
+                title: 'AI问答',
                 description: '打开AI助手',
                 icon: '🤖',
                 shortcut: ['A', 'I'],

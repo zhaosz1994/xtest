@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../db');
 const { authenticateToken } = require('../middleware');
 const { logActivity } = require('./history');
+const logger = require('../services/logger');
 
 // 获取用例库列表
 router.get('/list', authenticateToken, async (req, res) => {
@@ -27,7 +28,7 @@ router.get('/list', authenticateToken, async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('获取用例库列表错误:', error);
+    logger.error('获取用例库列表失败', { error: error.message });
     res.json({
       success: false,
       message: '获取用例库列表失败'
@@ -68,7 +69,7 @@ router.post('/create', authenticateToken, async (req, res) => {
       libraryId: result.insertId
     });
   } catch (error) {
-    console.error('创建用例库错误:', error);
+    logger.error('创建用例库失败', { error: error.message, name });
     res.json({
       success: false,
       message: '创建用例库失败'
@@ -109,7 +110,7 @@ router.get('/detail/:id', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取用例库详情错误:', error);
+    logger.error('获取用例库详情失败', { error: error.message, id });
     res.json({
       success: false,
       message: '获取用例库详情失败'
@@ -139,7 +140,7 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
       message: '用例库更新成功'
     });
   } catch (error) {
-    console.error('更新用例库错误:', error);
+    logger.error('更新用例库失败', { error: error.message, id, name });
     res.json({
       success: false,
       message: '更新用例库失败'
@@ -166,7 +167,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     }
     const libraryName = libraries[0].name;
     
-    console.log(`[高危操作] 开始删除用例库 ID: ${id}`);
+    logger.info(`开始删除用例库`, { libraryId: id, libraryName });
     const startTime = Date.now();
     
     // 开始事务
@@ -178,7 +179,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       [id]
     );
     const moduleIds = modules.map(m => m.id);
-    console.log(`[删除进度] 找到 ${moduleIds.length} 个模块`);
+    logger.debug(`删除用例库进度`, { step: '查找模块', count: moduleIds.length });
     
     if (moduleIds.length === 0) {
       // 没有关联模块，直接删除用例库
@@ -203,7 +204,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       moduleIds
     );
     const level1Ids = level1Points.map(l => l.id);
-    console.log(`[删除进度] 找到 ${level1Ids.length} 个一级测试点`);
+    logger.debug(`删除用例库进度`, { step: '查找一级测试点', count: level1Ids.length });
     
     if (level1Ids.length > 0) {
       const level1Placeholders = level1Ids.map(() => '?').join(',');
@@ -214,7 +215,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
         level1Ids
       );
       const testCaseIds = testCases.map(tc => tc.id);
-      console.log(`[删除进度] 找到 ${testCaseIds.length} 个测试用例`);
+      logger.debug(`删除用例库进度`, { step: '查找测试用例', count: testCaseIds.length });
       
       // 4. 批量删除测试用例项目关联（分批处理，每批1000条）
       if (testCaseIds.length > 0) {
@@ -227,7 +228,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
             batch
           );
         }
-        console.log(`[删除进度] 已删除测试用例项目关联`);
+        logger.debug(`删除用例库进度`, { step: '删除测试用例项目关联' });
       }
       
       // 5. 批量软删除测试用例（分批处理）
@@ -241,7 +242,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
             batch
           );
         }
-        console.log(`[删除进度] 已软删除测试用例`);
+        logger.debug(`删除用例库进度`, { step: '软删除测试用例' });
       }
       
       // 6. 批量删除一级测试点
@@ -254,7 +255,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
           batch
         );
       }
-      console.log(`[删除进度] 已删除一级测试点`);
+      logger.debug(`删除用例库进度`, { step: '删除一级测试点' });
     }
     
     // 7. 批量删除模块
@@ -267,7 +268,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
         batch
       );
     }
-    console.log(`[删除进度] 已删除模块`);
+    logger.debug(`删除用例库进度`, { step: '删除模块' });
     
     // 8. 最后删除用例库本身
     const [result] = await connection.execute(
@@ -289,9 +290,13 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     const endTime = Date.now();
     const duration = ((endTime - startTime) / 1000).toFixed(2);
     
-    console.log(`[高危操作完成] 用例库 ID: ${id} 已删除，耗时: ${duration}秒`);
-    console.log(`  - 删除模块: ${moduleIds.length} 个`);
-    console.log(`  - 删除一级测试点: ${level1Ids.length} 个`);
+    logger.info(`用例库删除完成`, { 
+      libraryId: id, 
+      libraryName,
+      duration: `${duration}秒`,
+      deletedModules: moduleIds.length,
+      deletedLevel1Points: level1Ids.length
+    });
     
     res.json({
       success: true,
@@ -304,7 +309,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     
   } catch (error) {
     await connection.rollback();
-    console.error('删除用例库错误:', error);
+    logger.error('删除用例库失败', { error: error.message, id });
     res.status(500).json({
       success: false,
       message: '删除用例库失败: ' + error.message
@@ -371,7 +376,7 @@ router.post('/clone', authenticateToken, async (req, res) => {
     );
     const newLibraryId = libraryResult.insertId;
     
-    console.log(`[克隆用例库] 创建新用例库: ${newLibraryName}, ID: ${newLibraryId}`);
+    logger.info(`开始克隆用例库`, { newLibraryName, newLibraryId, sourceLibraryId });
     
     // 检查新用例库名称是否重复
     const [existingLibs] = await connection.execute(
@@ -394,7 +399,7 @@ router.post('/clone', authenticateToken, async (req, res) => {
       [sourceLibraryId]
     );
     
-    console.log(`[克隆用例库] 找到 ${modules.length} 个模块待克隆`);
+    logger.debug(`克隆用例库进度`, { step: '查找模块', count: modules.length });
     
     // 4. 批量克隆模块（每批50个）
     const moduleOldIds = [];
@@ -524,14 +529,14 @@ router.post('/clone', authenticateToken, async (req, res) => {
           clonedCaseCount += batch.length;
           
           if (clonedCaseCount % 5000 === 0) {
-            console.log(`[克隆用例库] 已插入 ${clonedCaseCount} 条用例`);
+            logger.debug(`克隆用例库进度`, { step: '插入用例', count: clonedCaseCount });
           }
         }
       }
       
       // 6.5 克隆测试用例的多对多关联数据
       if (caseIdMap.size > 0) {
-        console.log(`[克隆用例库] 开始克隆关联数据，用例数: ${caseIdMap.size}`);
+        logger.debug(`克隆用例库进度`, { step: '克隆关联数据', caseCount: caseIdMap.size });
         
         // 克隆测试环境关联
         const [envRelations] = await connection.execute(
@@ -641,7 +646,7 @@ router.post('/clone', authenticateToken, async (req, res) => {
               );
             }
           }
-          console.log(`[克隆用例库] 已克隆测试用例项目关联`);
+          logger.debug(`克隆用例库进度`, { step: '克隆项目关联' });
         }
         
         // 克隆执行记录（如果不清空执行记录）
@@ -663,10 +668,10 @@ router.post('/clone', authenticateToken, async (req, res) => {
               );
             }
           }
-          console.log(`[克隆用例库] 已克隆执行记录`);
+          logger.debug(`克隆用例库进度`, { step: '克隆执行记录' });
         }
         
-        console.log(`[克隆用例库] 关联数据克隆完成`);
+        logger.debug(`克隆用例库进度`, { step: '关联数据克隆完成' });
       }
     }
     
@@ -691,10 +696,13 @@ router.post('/clone', authenticateToken, async (req, res) => {
     
     await connection.commit();
     
-    console.log(`[克隆用例库完成] 新用例库ID: ${newLibraryId}`);
-    console.log(`  - 克隆模块: ${clonedModuleCount} 个`);
-    console.log(`  - 克隆测试点: ${clonedLevel1Count} 个`);
-    console.log(`  - 克隆用例: ${clonedCaseCount} 个`);
+    logger.info(`用例库克隆完成`, { 
+      newLibraryId, 
+      newLibraryName,
+      clonedModuleCount,
+      clonedLevel1Count,
+      clonedCaseCount
+    });
     
     res.json({ 
       success: true, 
@@ -710,7 +718,7 @@ router.post('/clone', authenticateToken, async (req, res) => {
     
   } catch (error) {
     await connection.rollback();
-    console.error('克隆用例库错误:', error);
+    logger.error('克隆用例库失败', { error: error.message, sourceLibraryId });
     res.json({ success: false, message: '克隆失败: ' + error.message });
   } finally {
     connection.release();

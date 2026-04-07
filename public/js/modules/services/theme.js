@@ -51,7 +51,6 @@ const ThemeService = {
 
         this.emit('themeChanged', { theme: themeName, colors: theme.colors });
 
-        console.log(`[Theme] 已切换到 ${theme.name}`);
         return true;
     },
 
@@ -111,8 +110,6 @@ function initTheme() {
     }
 
     ThemeService.on('themeChanged', ({ theme, colors }) => {
-        console.log('[Theme] 主题已更改:', theme);
-        
         const themeIcon = document.querySelector('.theme-icon');
         if (themeIcon) {
             themeIcon.textContent = ThemeService.themes[theme].icon;

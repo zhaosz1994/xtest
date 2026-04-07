@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../db');
 const { authenticateToken } = require('../middleware');
 const { logActivity } = require('./history');
+const logger = require('../services/logger');
 require('dotenv').config();
 
 // 获取测试计划列表（支持分页）
@@ -127,7 +128,7 @@ router.get('/list', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取测试计划列表错误:', error);
+    logger.error('获取测试计划列表失败', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -161,7 +162,7 @@ router.post('/create_with_rules', authenticateToken, async (req, res) => {
           testPhase = stageRows[0].name;
         }
       } catch (e) {
-        console.log('获取测试阶段名称失败:', e.message);
+        logger.warn('获取测试阶段名称失败', { error: e.message, stage_id });
       }
     }
     
@@ -212,7 +213,7 @@ router.post('/create_with_rules', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     await connection.rollback();
-    console.error('创建测试计划错误:', error);
+    logger.error('创建测试计划失败', { error: error.message, name });
     res.status(500).json({ success: false, message: '服务器错误: ' + error.message });
   } finally {
     connection.release();
@@ -238,7 +239,7 @@ router.post('/create', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '测试计划创建成功' });
   } catch (error) {
-    console.error('创建测试计划错误:', error);
+    logger.error('创建测试计划失败', { error: error.message, name });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -273,7 +274,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
           testPhase = stageRows[0].name;
         }
       } catch (e) {
-        console.log('获取测试阶段名称失败:', e.message);
+        logger.warn('获取测试阶段名称失败', { error: e.message, stage_id });
       }
     }
     
@@ -327,7 +328,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     await connection.rollback();
-    console.error('更新测试计划错误:', error);
+    logger.error('更新测试计划失败', { error: error.message, id });
     res.status(500).json({ success: false, message: '服务器错误: ' + error.message });
   } finally {
     connection.release();
@@ -353,7 +354,7 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '测试计划更新成功' });
   } catch (error) {
-    console.error('更新测试计划错误:', error);
+    logger.error('更新测试计划失败', { error: error.message, id, name });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -379,7 +380,7 @@ router.delete('/delete/:id', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '测试计划删除成功' });
   } catch (error) {
-    console.error('删除测试计划错误:', error);
+    logger.error('删除测试计划失败', { error: error.message, id });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -464,7 +465,7 @@ router.get('/detail/:id', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取测试计划详情错误:', error);
+    logger.error('获取测试计划详情失败', { error: error.message, id });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -563,7 +564,7 @@ router.get('/:id/cases', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取测试计划用例列表错误:', error);
+    logger.error('获取测试计划用例列表失败', { error: error.message, id });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -574,16 +575,11 @@ router.put('/:planId/cases/:caseId', authenticateToken, async (req, res) => {
   const { status, executor_id, error_message, bug_id } = req.body;
   const currentUser = req.user;
   
-  console.log('Request body:', req.body);
-  console.log('Extracted status:', status);
-  
   const connection = await pool.getConnection();
   try {
     const normalizeStatus = (statusInput) => {
       if (!statusInput) return null;
-      console.log('normalizeStatus input:', statusInput);
       const statusLower = statusInput.toLowerCase().trim();
-      console.log('normalizeStatus statusLower:', statusLower);
       const statusMap = {
         'pass': 'pass',
         '通过': 'pass',
@@ -607,18 +603,14 @@ router.put('/:planId/cases/:caseId', authenticateToken, async (req, res) => {
         '流量丢失': 'traffic_drop'
       };
       const result = statusMap[statusLower] || statusMap[statusInput] || null;
-      console.log('normalizeStatus result:', result);
       return result;
     };
     
     const normalizedStatus = normalizeStatus(status);
-    console.log('Normalized status:', normalizedStatus);
     const validStatuses = ['pass', 'fail', 'blocked', 'paused', 'pending', 'asic_hang', 'core_dump', 'traffic_drop'];
-    console.log('Valid statuses:', validStatuses);
-    console.log('Is normalizedStatus valid?', normalizedStatus && validStatuses.includes(normalizedStatus));
     if (!normalizedStatus || !validStatuses.includes(normalizedStatus)) {
       connection.release();
-      console.log('Invalid status:', status);
+      logger.warn('无效的状态值', { status, planId, caseId });
       return res.status(400).json({ success: false, message: `无效的状态值: ${status}` });
     }
     
@@ -644,7 +636,7 @@ router.put('/:planId/cases/:caseId', authenticateToken, async (req, res) => {
   } catch (error) {
     await connection.rollback();
     connection.release();
-    console.error('更新用例状态错误:', error);
+    logger.error('更新用例状态失败', { error: error.message, planId, caseId });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -655,16 +647,11 @@ router.put('/:planId/cases/batch', authenticateToken, async (req, res) => {
   const { caseIds, status, bug_id } = req.body;
   const currentUser = req.user;
   
-  console.log('Batch request body:', req.body);
-  console.log('Batch extracted status:', status);
-  
   const connection = await pool.getConnection();
   try {
     const normalizeStatus = (statusInput) => {
       if (!statusInput) return null;
-      console.log('Batch normalizeStatus input:', statusInput);
       const statusLower = statusInput.toLowerCase().trim();
-      console.log('Batch normalizeStatus statusLower:', statusLower);
       const statusMap = {
         'pass': 'pass',
         '通过': 'pass',
@@ -688,18 +675,14 @@ router.put('/:planId/cases/batch', authenticateToken, async (req, res) => {
         '流量丢失': 'traffic_drop'
       };
       const result = statusMap[statusLower] || statusMap[statusInput] || null;
-      console.log('Batch normalizeStatus result:', result);
       return result;
     };
     
     const normalizedStatus = normalizeStatus(status);
-    console.log('Batch normalized status:', normalizedStatus);
     const validStatuses = ['pass', 'fail', 'blocked', 'paused', 'pending', 'asic_hang', 'core_dump', 'traffic_drop'];
-    console.log('Batch valid statuses:', validStatuses);
-    console.log('Batch is normalizedStatus valid?', normalizedStatus && validStatuses.includes(normalizedStatus));
     if (!normalizedStatus || !validStatuses.includes(normalizedStatus)) {
       connection.release();
-      console.log('Batch invalid status:', status);
+      logger.warn('批量更新无效的状态值', { status, planId });
       return res.status(400).json({ success: false, message: `无效的状态值: ${status}` });
     }
     
@@ -730,7 +713,7 @@ router.put('/:planId/cases/batch', authenticateToken, async (req, res) => {
   } catch (error) {
     await connection.rollback();
     connection.release();
-    console.error('批量更新用例状态错误:', error);
+    logger.error('批量更新用例状态失败', { error: error.message, planId });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -823,7 +806,7 @@ router.post('/:id/reset', authenticateToken, async (req, res) => {
   } catch (error) {
     await connection.rollback();
     connection.release();
-    console.error('重置测试计划错误:', error);
+    logger.error('重置测试计划失败', { error: error.message, planId });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });

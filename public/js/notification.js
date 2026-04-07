@@ -8,22 +8,19 @@ const NotificationManager = {
     unreadCount: 0,
     pollingInterval: null,
     token: null,
-    validUsernames: null, // 缓存有效用户名列表
+    validUsernames: null,
     
     init() {
         if (this.initialized) return;
         
-        // 统一使用 authToken 键名
         this.token = localStorage.getItem('authToken');
-        
-        console.log('[通知系统] Token:', this.token ? '已获取' : '未找到');
         
         if (!this.token) return;
         
         this.createDropdownStructure();
         this.bindEvents();
         this.fetchUnreadCount();
-        this.loadValidUsernames(); // 加载有效用户名列表，用于@提及验证
+        this.loadValidUsernames();
         
         this.pollingInterval = setInterval(() => this.fetchUnreadCount(), 30000);
         
@@ -34,10 +31,8 @@ const NotificationManager = {
         const container = document.querySelector('.notification-dropdown-container');
         if (!container) return;
         
-        // 检查是否已有下拉菜单
         if (container.querySelector('.notification-dropdown')) return;
         
-        // 创建下拉菜单结构
         const dropdown = document.createElement('div');
         dropdown.className = 'notification-dropdown';
         dropdown.innerHTML = `
@@ -60,7 +55,6 @@ const NotificationManager = {
         const container = document.querySelector('.notification-dropdown-container');
         
         if (bellBtn && container) {
-            // 点击外部关闭下拉菜单
             document.addEventListener('click', (e) => {
                 if (!container.contains(e.target)) {
                     container.classList.remove('open');
@@ -79,7 +73,6 @@ const NotificationManager = {
             });
         }
         
-        // 使用事件委托处理"全部已读"按钮
         document.addEventListener('click', (e) => {
             if (e.target.id === 'mark-all-read-btn') {
                 e.stopPropagation();
@@ -87,11 +80,9 @@ const NotificationManager = {
             }
         });
         
-        // 使用事件委托处理"进入消息中心"按钮
         document.addEventListener('click', (e) => {
             if (e.target.id === 'view-all-notifications-btn') {
                 e.stopPropagation();
-                // 跳转到消息中心页面
                 window.location.href = '/messages.html';
             }
         });
@@ -116,13 +107,10 @@ const NotificationManager = {
         try {
             const response = await fetch(url, { ...options, headers: { ...headers, ...options.headers } });
             
-            // 处理 401 未授权错误 (Token 过期或无效)
             if (response.status === 401) {
                 console.warn('[通知系统] Token 已过期或无效，清除本地认证信息');
                 localStorage.removeItem('authToken');
                 localStorage.removeItem('currentUser');
-                // 可选：跳转到登录页面
-                // window.location.href = '/login.html';
                 return null;
             }
             
@@ -137,7 +125,7 @@ const NotificationManager = {
         if (!this.token) return;
         try {
             const res = await this.fetchWithAuth('/api/notifications/unread');
-            if (!res) return; // Token 过期或请求失败
+            if (!res) return;
             const data = await res.json();
             if (data && data.success) {
                 const count = typeof data.count === 'number' ? data.count : 0;
@@ -183,13 +171,9 @@ const NotificationManager = {
             }
             const data = await res.json();
             
-            console.log('[通知系统] API 返回数据:', data);
-            
             if (data.success && data.notifications && data.notifications.length > 0) {
-                console.log('[通知系统] 渲染通知列表, 数量:', data.notifications.length);
                 listEl.innerHTML = data.notifications.map(notif => this.renderNotificationItem(notif)).join('');
             } else {
-                console.log('[通知系统] 无通知数据');
                 listEl.innerHTML = '<div style="padding: 30px 20px; text-align: center; color: #999; font-size: 13px;">暂无新通知</div>';
             }
         } catch (e) {
@@ -274,49 +258,34 @@ const NotificationManager = {
         return div.innerHTML;
     },
     
-    /**
-     * 加载有效用户名列表（用于验证@提及）
-     */
     async loadValidUsernames() {
         try {
-            // 使用公开接口获取用户名列表
             const res = await fetch('/api/users/usernames');
             if (!res) return;
             const data = await res.json();
             if (data.success && data.usernames) {
                 this.validUsernames = new Set(data.usernames.map(u => u.toLowerCase()));
-                console.log('[通知系统] 已加载用户名列表, 数量:', this.validUsernames.size);
             }
         } catch (e) {
             console.error('[通知系统] 加载用户名列表失败:', e);
         }
     },
     
-    /**
-     * 解析文本中的 @用户名 并转换为高亮链接
-     * @param {string} text - 包含 @用户名 的文本
-     * @returns {string} 转换后的 HTML
-     */
     parseMentions(text) {
         if (!text) return '';
         
-        // 匹配 @用户名 的模式 (支持中英文字符、数字和下划线)
         return text.replace(/@([a-zA-Z0-9_\u4e00-\u9fa5]+)/g, (match, username) => {
-            // 验证是否为有效用户名
             const isValidUser = this.validUsernames && this.validUsernames.has(username.toLowerCase());
             
             if (isValidUser) {
-                // 有效用户名：高亮显示并添加链接
                 return `<a href="/user-center.html?username=${encodeURIComponent(username)}" class="mention-highlight" style="color: #007bff; font-weight: 500; text-decoration: none; background-color: #e7f3ff; padding: 1px 4px; border-radius: 3px;">@${username}</a>`;
             } else {
-                // 无效用户名：保持原样，不高亮
                 return match;
             }
         });
     }
 };
 
-// 暴露到 window 对象，供其他模块使用
 window.NotificationManager = NotificationManager;
 
 document.addEventListener('DOMContentLoaded', () => {

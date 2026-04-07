@@ -83,7 +83,7 @@ router.get('/summary', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('获取工作台概览失败:', error);
+        logger.error('获取工作台概览失败:', { error: error.message });
         res.json({ success: false, message: '获取工作台概览失败: ' + error.message });
     }
 });
@@ -149,7 +149,7 @@ router.get('/pending-reviews', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('获取待评审列表失败:', error);
+        logger.error('获取待评审列表失败:', { error: error.message });
         res.json({ success: false, message: '获取待评审列表失败: ' + error.message });
     }
 });
@@ -206,7 +206,7 @@ router.get('/pending-executions', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('获取待执行列表失败:', error);
+        logger.error('获取待执行列表失败:', { error: error.message });
         res.json({ success: false, message: '获取待执行列表失败: ' + error.message });
     }
 });
@@ -276,7 +276,7 @@ router.get('/my-plans', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('获取我的计划失败:', error);
+        logger.error('获取我的计划失败:', { error: error.message });
         res.json({ success: false, message: '获取我的计划失败: ' + error.message });
     }
 });
@@ -317,7 +317,7 @@ router.get('/recent-activities', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('获取最近活动失败:', error);
+        logger.error('获取最近活动失败:', { error: error.message });
         res.json({ success: false, message: '获取最近活动失败: ' + error.message });
     }
 });

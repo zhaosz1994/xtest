@@ -1,5 +1,6 @@
 const mysql = require('mysql2');
 require('dotenv').config();
+const logger = require('./services/logger');
 
 // 基础配置
 const dbConfig = {
@@ -38,7 +39,7 @@ pool.on('release', (connection) => {
 });
 
 pool.on('error', (error) => {
-  console.error('数据库连接池错误:', error);
+  logger.error('数据库连接池错误', { error: error.message });
 });
 
 // 添加连接池状态监控
@@ -51,11 +52,11 @@ setInterval(() => {
     
     // 只在有活动连接时记录
     if (activeConnections > 0 || waitingConnections > 0) {
-      console.log(`数据库连接池状态: 活跃=${activeConnections}, 等待=${waitingConnections}, 总计=${totalConnections}`);
+      logger.debug('数据库连接池状态', { active: activeConnections, waiting: waitingConnections, total: totalConnections });
       
       // 如果等待连接数过多，发出警告
       if (waitingConnections > 10) {
-        console.warn(`⚠️ 数据库连接池压力较大，等待连接数: ${waitingConnections}`);
+        logger.warn('数据库连接池压力较大', { waitingConnections });
       }
     }
   }

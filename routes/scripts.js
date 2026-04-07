@@ -81,7 +81,7 @@ router.get('/testcases/:id/scripts', authenticateToken, async (req, res) => {
         });
         
     } catch (error) {
-        console.error('获取关联脚本失败:', error);
+        logger.error('获取关联脚本失败:', { error: error.message });
         res.json({ success: false, message: '获取关联脚本失败: ' + error.message });
     }
 });
@@ -110,7 +110,7 @@ router.get('/testcases/scripts/:scriptId', authenticateToken, async (req, res) =
         });
         
     } catch (error) {
-        console.error('获取脚本详情失败:', error);
+        logger.error('获取脚本详情失败:', { error: error.message });
         res.json({ success: false, message: '获取脚本详情失败: ' + error.message });
     }
 });
@@ -167,7 +167,7 @@ router.post('/testcases/:id/scripts', authenticateToken, async (req, res) => {
         });
         
     } catch (error) {
-        console.error('添加关联脚本失败:', error);
+        logger.error('添加关联脚本失败:', { error: error.message });
         res.json({ success: false, message: '添加关联脚本失败: ' + error.message });
     }
 });
@@ -217,7 +217,7 @@ router.put('/testcases/scripts/:scriptId', authenticateToken, async (req, res) =
         });
         
     } catch (error) {
-        console.error('更新关联脚本失败:', error);
+        logger.error('更新关联脚本失败:', { error: error.message });
         res.json({ success: false, message: '更新关联脚本失败: ' + error.message });
     }
 });
@@ -239,7 +239,7 @@ router.delete('/testcases/scripts/:scriptId', authenticateToken, async (req, res
                     fs.unlinkSync(script.file_path);
                 }
             } catch (e) {
-                console.warn('删除脚本文件失败:', e.message);
+                logger.warn('删除脚本文件失败:', { error: e.message });
             }
         }
         
@@ -251,7 +251,7 @@ router.delete('/testcases/scripts/:scriptId', authenticateToken, async (req, res
         });
         
     } catch (error) {
-        console.error('删除关联脚本失败:', error);
+        logger.error('删除关联脚本失败:', { error: error.message });
         res.json({ success: false, message: '删除关联脚本失败: ' + error.message });
     }
 });
@@ -276,7 +276,7 @@ router.post('/testcases/scripts/upload', authenticateToken, upload.single('file'
         });
         
     } catch (error) {
-        console.error('上传脚本文件失败:', error);
+        logger.error('上传脚本文件失败:', { error: error.message });
         res.json({ success: false, message: '上传脚本文件失败: ' + error.message });
     }
 });
@@ -313,7 +313,7 @@ router.get('/testcases/scripts/download/:scriptId', authenticateToken, async (re
         });
         
     } catch (error) {
-        console.error('下载脚本文件失败:', error);
+        logger.error('下载脚本文件失败:', { error: error.message });
         res.status(500).json({ success: false, message: '下载脚本文件失败: ' + error.message });
     }
 });
@@ -400,7 +400,7 @@ router.post('/testcases/scripts/batch', authenticateToken, async (req, res) => {
         
     } catch (error) {
         await connection.rollback();
-        console.error('批量添加脚本失败:', error);
+        logger.error('批量添加脚本失败:', { error: error.message });
         res.json({ success: false, message: '批量添加脚本失败: ' + error.message });
     } finally {
         connection.release();
@@ -443,7 +443,7 @@ router.put('/testcases/:id/scripts/order', authenticateToken, async (req, res) =
         }
         
     } catch (error) {
-        console.error('更新脚本排序失败:', error);
+        logger.error('更新脚本排序失败:', { error: error.message });
         res.json({ success: false, message: '更新脚本排序失败: ' + error.message });
     }
 });

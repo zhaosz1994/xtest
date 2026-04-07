@@ -16,11 +16,9 @@ const Router = {
 
     init() {
         if (this.initialized) {
-            console.log('[Router] 已经初始化，跳过重复初始化');
             return;
         }
         this.initialized = true;
-        console.log('[Router] 初始化路由系统');
         window.addEventListener('hashchange', () => this.handleRouteChange());
         this.handleRouteChange();
     },
@@ -54,9 +52,6 @@ const Router = {
         const routeName = this.getCurrentRoute();
         const route = this.routes[routeName];
 
-        console.log('[Router] 路由变化:', routeName, route);
-        console.log('[Router] 是否已认证:', this.isAuthenticated());
-
         if (!route) {
             console.warn('[Router] 未知路由，跳转到默认页面');
             this.navigateTo(this.defaultRoute);
@@ -64,13 +59,11 @@ const Router = {
         }
 
         if (route.requiresAuth && !this.isAuthenticated()) {
-            console.log('[Router] 需要登录，跳转到登录页');
             this.navigateTo('login');
             return;
         }
 
         if (route.requiresAdmin && !this.isAdmin()) {
-            console.log('[Router] 需要管理员权限');
             showErrorMessage('只有管理员才能访问此页面');
             this.navigateTo(this.defaultRoute);
             return;
@@ -78,13 +71,11 @@ const Router = {
 
         if (!route.requiresAuth && this.isAuthenticated()) {
             if (routeName === 'login' || routeName === 'register') {
-                console.log('[Router] 已登录，跳转到首页');
                 this.navigateTo(this.defaultRoute);
                 return;
             }
         }
 
-        console.log('[Router] 显示页面:', route.section);
         this.showSection(route.section, route.title);
 
         document.title = route.title + ' - xTest';
@@ -116,7 +107,6 @@ const Router = {
             const urlLibraryId = parseInt(libraryIdMatch[1]);
             const library = caseLibraries.find(lib => lib.id == urlLibraryId);
             if (library) {
-                console.log('[Router.showSection] 从URL恢复用例库详情:', library.name, 'ID:', urlLibraryId);
                 currentCaseLibraryId = urlLibraryId;
 
                 const currentCaseLibraryElement = document.getElementById('current-case-library');
@@ -186,8 +176,6 @@ const Router = {
     },
 
     showLoginSection() {
-        console.log('[Router] 显示登录页面');
-        
         document.querySelectorAll('section').forEach(section => {
             section.style.display = 'none';
         });
@@ -195,13 +183,11 @@ const Router = {
         const testlinkContainer = document.querySelector('.testlink-container');
         if (testlinkContainer) {
             testlinkContainer.style.display = 'none';
-            console.log('[Router] 隐藏testlink-container');
         }
 
         const loginSection = document.getElementById('login-section');
         if (loginSection) {
             loginSection.style.display = 'flex';
-            console.log('[Router] 显示login-section');
         } else {
             console.error('[Router] 未找到login-section元素');
         }

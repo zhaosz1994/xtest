@@ -147,6 +147,48 @@ body {
     color: var(--color-text-tertiary, #999);
 }
 
+/* ========== 顶部导航栏新增按钮样式 ========== */
+.nav-btn-text {
+    display: inline;
+}
+
+.nav-ai-btn {
+    background: linear-gradient(135deg, #1890ff 0%, #096dd9 100%);
+    border-color: transparent;
+    color: #fff;
+}
+
+.nav-ai-btn:hover {
+    background: linear-gradient(135deg, #40a9ff 0%, #1890ff 100%);
+    border-color: transparent;
+    color: #fff;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(24, 144, 255, 0.3);
+}
+
+.nav-ai-btn svg {
+    animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+.nav-community-btn {
+    background: transparent;
+    border: 1px solid var(--color-border-primary, #d9d9d9);
+    color: var(--color-text-secondary, #666);
+}
+
+.nav-community-btn:hover {
+    background: var(--color-bg-tertiary, #f5f5f5);
+    border-color: var(--color-brand-primary, #1890ff);
+    color: var(--color-brand-primary, #1890ff);
+}
+
+/* ========== 顶部导航栏新增按钮样式结束 ========== */
+
 /* 主内容区 */
 .testlink-main {
     display: flex;
@@ -154,7 +196,8 @@ body {
     min-height: calc(100vh - 56px);
 }
 
-/* 左侧导航 */
+/* ========== 左侧导航侧边栏样式 - 已隐藏，保留代码以备后续恢复 ========== */
+/*
 .testlink-sidebar {
     width: 200px;
     background-color: var(--color-bg-primary, #fff);
@@ -235,14 +278,17 @@ body {
 .sidebar-community-link svg {
     flex-shrink: 0;
 }
+*/
+/* ========== 侧边栏样式结束 ========== */
 
-/* 右侧内容 */
+/* 右侧内容 - 调整为全宽 */
 .testlink-content {
     flex: 1;
     padding: 24px;
     background-color: var(--color-bg-secondary, #f5f7fa);
     overflow-y: auto;
     transition: background-color var(--transition-theme, 0.3s ease);
+    width: 100%;
 }
 
 /* 通用部分样式 */
@@ -299,7 +345,8 @@ h2 {
 
 
 
-/* 侧边栏搜索分析控件样式 */
+/* ========== 侧边栏搜索分析控件样式 - 已隐藏，保留代码以备后续恢复 ========== */
+/*
 .search-analysis-sidebar {
     margin-top: 16px;
     position: relative;
@@ -352,6 +399,8 @@ h2 {
 .search-analysis-sidebar:hover .sidebar-search-dropdown {
     display: block;
 }
+*/
+/* ========== 侧边栏搜索分析控件样式结束 ========== */
 
 /* 添加按钮样式 */
 .add-button-container {
@@ -8568,7 +8617,6 @@ body.floating-panel-resizing * {
     height: 100%;
     background: rgba(0, 0, 0, 0.5);
     z-index: 10000;
-    backdrop-filter: blur(4px);
 }
 
 .ai-modal.show {

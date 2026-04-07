@@ -8,7 +8,6 @@ const WebSocketService = {
 
     connect() {
         if (this.socket && this.isConnected) {
-            console.log('[WebSocket] 已经连接，无需重复连接');
             return;
         }
 
@@ -16,7 +15,6 @@ const WebSocketService = {
             const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${wsProtocol}//${window.location.host}`;
             
-            console.log('[WebSocket] 正在连接:', wsUrl);
             this.socket = io(wsUrl, {
                 transports: ['websocket', 'polling'],
                 reconnection: true,
@@ -35,7 +33,6 @@ const WebSocketService = {
         if (!this.socket) return;
 
         this.socket.on('connect', () => {
-            console.log('[WebSocket] 连接成功');
             this.isConnected = true;
             this.reconnectAttempts = 0;
             
@@ -51,7 +48,6 @@ const WebSocketService = {
         });
 
         this.socket.on('disconnect', (reason) => {
-            console.log('[WebSocket] 断开连接:', reason);
             this.isConnected = false;
             this.emit('disconnected', { reason });
         });
@@ -62,7 +58,6 @@ const WebSocketService = {
         });
 
         this.socket.on('reconnect', (attemptNumber) => {
-            console.log('[WebSocket] 重连成功，尝试次数:', attemptNumber);
             this.isConnected = true;
             this.reconnectAttempts = 0;
         });
@@ -73,32 +68,26 @@ const WebSocketService = {
         });
 
         this.socket.on('user:online', (data) => {
-            console.log('[WebSocket] 用户上线:', data);
             this.emit('user_online', data);
         });
 
         this.socket.on('user:offline', (data) => {
-            console.log('[WebSocket] 用户下线:', data);
             this.emit('user_offline', data);
         });
 
         this.socket.on('online:users', (users) => {
-            console.log('[WebSocket] 在线用户列表:', users);
             this.emit('online_users', users);
         });
 
         this.socket.on('notification:new', (notification) => {
-            console.log('[WebSocket] 新通知:', notification);
             this.emit('notification', notification);
         });
 
         this.socket.on('module:update', (data) => {
-            console.log('[WebSocket] 模块更新:', data);
             this.emit('module_update', data);
         });
 
         this.socket.on('testcase:update', (data) => {
-            console.log('[WebSocket] 用例更新:', data);
             this.emit('testcase_update', data);
         });
     },
@@ -152,7 +141,6 @@ const WebSocketService = {
 
     disconnect() {
         if (this.socket) {
-            console.log('[WebSocket] 主动断开连接');
             this.socket.disconnect();
             this.socket = null;
             this.isConnected = false;
@@ -169,7 +157,6 @@ const WebSocketService = {
 
 function initWebSocket() {
     if (!currentUser || !authToken) {
-        console.log('[WebSocket] 用户未登录，跳过 WebSocket 连接');
         return;
     }
 
