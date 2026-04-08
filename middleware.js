@@ -1,5 +1,16 @@
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
+const logger = require('./services/logger');
+
+const ADMIN_ROLES = ['管理员', 'admin', 'Administrator'];
+
+function isAdmin(user) {
+    return user && ADMIN_ROLES.includes(user.role);
+}
+
+function isOwner(user, resourceUserId) {
+    return user && user.id === parseInt(resourceUserId);
+}
 
 // JWT认证中间件
 const authenticateToken = (req, res, next) => {
@@ -19,27 +30,29 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// 管理员权限中间件（支持中英文角色值判断）
+// 管理员权限中间件
 const requireAdmin = (req, res, next) => {
-  if (req.user.role !== '管理员' && req.user.role !== 'admin' && req.user.role !== 'Administrator') {
+  if (!isAdmin(req.user)) {
     return res.status(403).json({ message: '需要管理员权限' });
   }
   next();
 };
 
 // 检查是否为管理员或资源所有者
+// 安全：仅从路由参数(params)获取资源用户ID，防止通过query/body伪造
 const requireAdminOrOwner = (resourceUserIdField = 'userId') => {
   return (req, res, next) => {
-    // 支持中英文角色值判断管理员权限
-    if (req.user.role === '管理员' || req.user.role === 'admin' || req.user.role === 'Administrator') {
+    if (isAdmin(req.user)) {
       return next();
     }
     
-    const resourceUserId = req.params[resourceUserIdField] || 
-                           req.body[resourceUserIdField] || 
-                           req.query[resourceUserIdField];
+    const resourceUserId = req.params[resourceUserIdField];
     
-    if (resourceUserId && parseInt(resourceUserId) === req.user.id) {
+    if (!resourceUserId) {
+      return res.status(400).json({ success: false, message: '缺少资源标识参数' });
+    }
+    
+    if (isOwner(req.user, resourceUserId)) {
       return next();
     }
     
@@ -54,8 +67,7 @@ const requireAdminOrOwner = (resourceUserIdField = 'userId') => {
 const canModifyProfile = (req, res, next) => {
   const targetUserId = parseInt(req.params.id || req.body.id);
   
-  // 支持中英文角色值判断管理员权限
-  if (req.user.role === '管理员' || req.user.role === 'admin' || req.user.role === 'Administrator') {
+  if (isAdmin(req.user)) {
     return next();
   }
   
@@ -74,8 +86,7 @@ const canModifyAIModel = async (req, res, next) => {
   const pool = require('./db');
   const modelId = req.params.id || req.body.id;
   
-  // 支持中英文角色值判断管理员权限
-  if (req.user.role === '管理员' || req.user.role === 'admin' || req.user.role === 'Administrator') {
+  if (isAdmin(req.user)) {
     return next();
   }
   
@@ -102,7 +113,7 @@ const canModifyAIModel = async (req, res, next) => {
       message: '您没有权限操作此AI模型' 
     });
   } catch (error) {
-    console.error('检查AI模型权限错误:', error);
+    logger.error('检查AI模型权限错误', { error: error.message, modelId });
     return res.status(500).json({ 
       success: false, 
       message: '服务器错误' 
@@ -115,8 +126,7 @@ const canModifyAISkill = async (req, res, next) => {
   const pool = require('./db');
   const skillId = req.params.id;
   
-  // 支持中英文角色值判断管理员权限
-  if (req.user.role === '管理员' || req.user.role === 'admin' || req.user.role === 'Administrator') {
+  if (isAdmin(req.user)) {
     return next();
   }
   
@@ -149,22 +159,12 @@ const canModifyAISkill = async (req, res, next) => {
       message: '您没有权限操作此技能' 
     });
   } catch (error) {
-    console.error('检查AI技能权限错误:', error);
+    logger.error('检查AI技能权限错误', { error: error.message, skillId });
     return res.status(500).json({ 
       success: false, 
       message: '服务器错误' 
     });
   }
-};
-
-// 辅助函数：判断是否为管理员（支持中英文角色值）
-const isAdmin = (user) => {
-  return user && (user.role === '管理员' || user.role === 'admin' || user.role === 'Administrator');
-};
-
-// 辅助函数：判断是否为资源所有者
-const isOwner = (user, resourceUserId) => {
-  return user && user.id === parseInt(resourceUserId);
 };
 
 module.exports = {
@@ -175,5 +175,6 @@ module.exports = {
   canModifyAIModel,
   canModifyAISkill,
   isAdmin,
-  isOwner
+  isOwner,
+  ADMIN_ROLES
 };

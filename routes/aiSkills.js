@@ -1,8 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
+const aiReadOnlyPool = require('../db-ai-readonly');
 const vm = require('vm');
 const { authenticateToken, requireAdmin, canModifyAISkill, isAdmin } = require('../middleware');
+const { validateSQL, extractTablesFromSQL } = require('../services/sqlSecurityValidator');
+const { createSecureExecutor, getUserProjects } = require('../services/dataIsolationMiddleware');
+const aiAuditLogger = require('../services/aiAuditLogger');
+const { encryptAPIKey, decryptAPIKey, isEncrypted } = require('../services/apiKeyEncryption');
+const logger = require('../services/logger');
 
 const SAFE_GLOBALS = ['console', 'Date', 'Math', 'JSON', 'Object', 'Array', 'String', 'Number', 'Boolean', 'Error', 'TypeError', 'RangeError', 'SyntaxError', 'Promise', 'Symbol', 'Map', 'Set', 'WeakMap', 'WeakSet'];
 
@@ -24,14 +30,6 @@ const DANGEROUS_PATTERNS = [
     /\[\s*['"]constructor['"]\s*\]/i
 ];
 
-const SQL_INJECTION_PATTERNS = [
-    /;\s*(DROP|DELETE|TRUNCATE|ALTER|CREATE|GRANT|REVOKE)/i,
-    /UNION\s+SELECT/i,
-    /OR\s+1\s*=\s*1/i,
-    /'\s*OR\s*'/i,
-    /"\s*OR\s*"/i
-];
-
 function validateCodeSecurity(code) {
     if (!code || typeof code !== 'string') {
         throw new Error('代码不能为空');
@@ -42,28 +40,11 @@ function validateCodeSecurity(code) {
             throw new Error(`代码包含不允许的模式: ${pattern.source}`);
         }
     }
-    
-    for (const pattern of SQL_INJECTION_PATTERNS) {
-        if (pattern.test(code)) {
-            throw new Error(`代码包含潜在的SQL注入风险: ${pattern.source}`);
-        }
-    }
 }
 
-function sanitizeSQL(sql) {
-    const dangerousKeywords = ['DROP', 'DELETE', 'TRUNCATE', 'ALTER', 'CREATE', 'GRANT', 'REVOKE'];
-    const upperSQL = sql.toUpperCase();
+async function createSafeSandbox(userId, userRole, username, skillName, skillId) {
+    const secureExecutor = await createSecureExecutor(userId, userRole);
     
-    for (const keyword of dangerousKeywords) {
-        if (upperSQL.includes(keyword)) {
-            throw new Error(`SQL语句包含不允许的关键字: ${keyword}`);
-        }
-    }
-    
-    return sql;
-}
-
-function createSafeSandbox(dbPool) {
     const sandbox = {
         console: {
             log: (...args) => console.log('[Skill]', ...args),
@@ -86,21 +67,58 @@ function createSafeSandbox(dbPool) {
         Set: Set,
         db: {
             query: async (sql, params) => {
+                const startTime = Date.now();
+                let result = null;
+                let error = null;
+                
                 try {
-                    sanitizeSQL(sql);
-                    const [rows] = await dbPool.execute(sql, params || []);
-                    return rows;
-                } catch (error) {
-                    throw new Error(`数据库查询错误: ${error.message}`);
-                }
-            },
-            execute: async (sql, params) => {
-                try {
-                    sanitizeSQL(sql);
-                    const [result] = await dbPool.execute(sql, params || []);
+                    const validation = validateSQL(sql, params || []);
+                    
+                    if (!validation.valid) {
+                        throw new Error(`SQL验证失败: ${validation.errors.join('; ')}`);
+                    }
+                    
+                    result = await secureExecutor.query(sql, params || []);
+                    
+                    const executionTimeMs = Date.now() - startTime;
+                    
+                    await aiAuditLogger.logSuccess({
+                        userId,
+                        username,
+                        skillName,
+                        skillId,
+                        operationType: 'SELECT',
+                        sqlQuery: sql,
+                        sqlParams: params,
+                        tablesAccessed: validation.tables,
+                        resultCount: result ? result.length : 0,
+                        executionTimeMs,
+                        status: 'success'
+                    });
+                    
                     return result;
-                } catch (error) {
-                    throw new Error(`数据库执行错误: ${error.message}`);
+                    
+                } catch (err) {
+                    error = err;
+                    
+                    const executionTimeMs = Date.now() - startTime;
+                    
+                    await aiAuditLogger.logFailure({
+                        userId,
+                        username,
+                        skillName,
+                        skillId,
+                        operationType: 'SELECT',
+                        sqlQuery: sql,
+                        sqlParams: params,
+                        tablesAccessed: [],
+                        resultCount: 0,
+                        executionTimeMs,
+                        errorMessage: err.message,
+                        status: 'failed'
+                    });
+                    
+                    throw new Error(`数据库查询错误: ${err.message}`);
                 }
             }
         }
@@ -112,11 +130,6 @@ function createSafeSandbox(dbPool) {
     return vm.createContext(sandbox);
 }
 
-// ========================================
-// AI 技能管理 API - RBAC 改造版
-// ========================================
-
-// 获取技能列表（支持 RBAC：公共技能 + 自己创建的技能）
 router.get('/list', authenticateToken, async (req, res) => {
   try {
     const currentUserId = req.user.id;
@@ -200,12 +213,11 @@ router.get('/list', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取AI技能列表错误:', error);
+    logger.error('获取AI技能列表错误:', { error: error.message });
     res.status(500).json({ success: false, message: '获取技能列表失败' });
   }
 });
 
-// 获取单个技能详情
 router.get('/detail/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -259,12 +271,11 @@ router.get('/detail/:id', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取AI技能详情错误:', error);
+    logger.error('获取AI技能详情错误:', { error: error.message });
     res.status(500).json({ success: false, message: '获取技能详情失败' });
   }
 });
 
-// 创建新技能
 router.post('/create', authenticateToken, async (req, res) => {
   try {
     const { 
@@ -293,21 +304,13 @@ router.post('/create', authenticateToken, async (req, res) => {
       return res.json({ success: false, message: '技能定义必须是有效的 JSON 格式' });
     }
     
-    const dangerousPatterns = [
-      /process\.exit/i,
-      /require\s*\(\s*['"]child_process['"]\s*\)/i,
-      /eval\s*\(/i,
-      /Function\s*\(/i,
-      /import\s+.*from\s+['"]child_process['"]/i
-    ];
-    
-    for (const pattern of dangerousPatterns) {
-      if (pattern.test(executeCode)) {
-        return res.json({ 
-          success: false, 
-          message: '执行代码包含不安全的操作，请检查后重试' 
-        });
-      }
+    try {
+      validateCodeSecurity(executeCode);
+    } catch (error) {
+      return res.json({ 
+        success: false, 
+        message: `执行代码安全检查失败: ${error.message}` 
+      });
     }
     
     const isPublic = makePublicAndEnableAll === true;
@@ -339,7 +342,7 @@ router.post('/create', authenticateToken, async (req, res) => {
       skillId: skillId
     });
   } catch (error) {
-    console.error('创建AI技能错误:', error);
+    logger.error('创建AI技能错误:', { error: error.message });
     if (error.code === 'ER_DUP_ENTRY') {
       return res.json({ success: false, message: '技能名称已存在' });
     }
@@ -347,7 +350,6 @@ router.post('/create', authenticateToken, async (req, res) => {
   }
 });
 
-// 更新技能（需要权限校验）
 router.put('/update/:id', authenticateToken, canModifyAISkill, async (req, res) => {
   try {
     const { id } = req.params;
@@ -381,20 +383,13 @@ router.put('/update/:id', authenticateToken, canModifyAISkill, async (req, res) 
     }
     
     if (executeCode) {
-      const dangerousPatterns = [
-        /process\.exit/i,
-        /require\s*\(\s*['"]child_process['"]\s*\)/i,
-        /eval\s*\(/i,
-        /Function\s*\(/i
-      ];
-      
-      for (const pattern of dangerousPatterns) {
-        if (pattern.test(executeCode)) {
-          return res.json({ 
-            success: false, 
-            message: '执行代码包含不安全的操作，请检查后重试' 
-          });
-        }
+      try {
+        validateCodeSecurity(executeCode);
+      } catch (error) {
+        return res.json({ 
+          success: false, 
+          message: `执行代码安全检查失败: ${error.message}` 
+        });
       }
     }
     
@@ -425,12 +420,11 @@ router.put('/update/:id', authenticateToken, canModifyAISkill, async (req, res) 
     
     res.json({ success: true, message: '技能更新成功' });
   } catch (error) {
-    console.error('更新AI技能错误:', error);
+    logger.error('更新AI技能错误:', { error: error.message });
     res.status(500).json({ success: false, message: '更新技能失败: ' + error.message });
   }
 });
 
-// 删除技能（需要权限校验）
 router.delete('/:id', authenticateToken, canModifyAISkill, async (req, res) => {
   try {
     const { id } = req.params;
@@ -448,12 +442,11 @@ router.delete('/:id', authenticateToken, canModifyAISkill, async (req, res) => {
     
     res.json({ success: true, message: '技能删除成功' });
   } catch (error) {
-    console.error('删除AI技能错误:', error);
+    logger.error('删除AI技能错误:', { error: error.message });
     res.status(500).json({ success: false, message: '删除技能失败' });
   }
 });
 
-// 切换技能启用状态（仅影响当前用户）
 router.post('/toggle/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -486,18 +479,18 @@ router.post('/toggle/:id', authenticateToken, async (req, res) => {
       isEnabled: newStatus
     });
   } catch (error) {
-    console.error('切换技能状态错误:', error);
+    logger.error('切换技能状态错误:', { error: error.message });
     res.status(500).json({ success: false, message: '操作失败' });
   }
 });
 
-// ========================================
-// 动态执行引擎
-// ========================================
-
-// 获取启用的技能并组装成 LLM tools 数组
 async function getEnabledSkillsAsTools(userId) {
   try {
+    if (userId === undefined || userId === null) {
+      logger.error('getEnabledSkillsAsTools: userId 不能为空');
+      return [];
+    }
+    
     const query = `
       SELECT s.name, s.definition
       FROM ai_skills s
@@ -515,16 +508,17 @@ async function getEnabledSkillsAsTools(userId) {
       return definition;
     });
   } catch (error) {
-    console.error('获取启用的技能失败:', error);
+    logger.error('获取启用的技能失败:', { error: error.message });
     return [];
   }
 }
 
-// 动态执行技能代码（使用安全沙箱）
 async function executeSkillCode(skillName, args, context = {}) {
+  const { userId, username, userRole } = context;
+  
   try {
     const [skills] = await pool.execute(
-      'SELECT execute_code, name FROM ai_skills WHERE name = ? AND is_enabled = TRUE',
+      'SELECT execute_code, name, id FROM ai_skills WHERE name = ? AND is_enabled = TRUE',
       [skillName]
     );
     
@@ -533,18 +527,20 @@ async function executeSkillCode(skillName, args, context = {}) {
     }
     
     const executeCode = skills[0].execute_code;
+    const skillId = skills[0].id;
     
-    const securityError = validateCodeSecurity(executeCode);
-    if (securityError) {
-      return { error: `安全检查失败: ${securityError}` };
+    try {
+      validateCodeSecurity(executeCode);
+    } catch (error) {
+      return { error: `安全检查失败: ${error.message}` };
     }
     
-    const sandbox = safeSandbox(pool);
-    sandbox.db.args = args;
-    Object.assign(sandbox.db, context);
+    const sandbox = await createSafeSandbox(userId, userRole, username, skillName, skillId);
+    sandbox.args = args;
+    Object.assign(sandbox, context);
     
     const script = new vm.Script(executeCode);
-    const result = script.runInContext(sandbox, 10000);
+    const result = await script.runInContext(sandbox, { timeout: 10000 });
     
     return result;
     
@@ -554,15 +550,14 @@ async function executeSkillCode(skillName, args, context = {}) {
   }
 }
 
-// 批量执行多个技能
-async function executeMultipleSkills(toolCalls) {
+async function executeMultipleSkills(toolCalls, context) {
   const results = [];
   
   for (const call of toolCalls) {
     const skillName = call.function.name;
     const args = JSON.parse(call.function.arguments);
     
-    const result = await executeSkillCode(skillName, args);
+    const result = await executeSkillCode(skillName, args, context);
     
     results.push({
       tool_call_id: call.id,
@@ -574,7 +569,6 @@ async function executeMultipleSkills(toolCalls) {
   return results;
 }
 
-// 导出函数供其他模块使用
 module.exports = {
   router,
   getEnabledSkillsAsTools,

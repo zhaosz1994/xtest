@@ -14,7 +14,7 @@ router.post('/create', async (req, res) => {
     
     res.json({ success: true, message: '历史快照创建成功' });
   } catch (error) {
-    console.error('创建历史快照错误:', error);
+    logger.error('创建历史快照错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -31,7 +31,7 @@ router.get('/:entity_type/:entity_id', async (req, res) => {
     
     res.json({ success: true, snapshots });
   } catch (error) {
-    console.error('获取历史快照错误:', error);
+    logger.error('获取历史快照错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -97,7 +97,7 @@ router.post('/restore/:snapshot_id', async (req, res) => {
     
     res.json({ success: true, message: '版本恢复成功' });
   } catch (error) {
-    console.error('恢复版本错误:', error);
+    logger.error('恢复版本错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });

@@ -232,7 +232,8 @@
                         <span class="logo-icon">⚡</span>
                         <span class="logo-text">xTest</span>
                     </div>
-                    <a href="#/dashboard" class="nav-item active">测试管理</a>
+                    <a href="#/workspace" class="nav-item">我的工作台</a>
+                    <a href="#/dashboard" class="nav-item">测试管理</a>
                     <a href="#/cases" class="nav-item">用例库</a>
                     <a href="#/testplans" class="nav-item">测试计划</a>
                     <a href="#/reports" class="nav-item">测试报告</a>
@@ -240,6 +241,20 @@
                 </div>
                 <div class="nav-right">
                     <div class="nav-actions">
+                        <!-- AI问答入口 -->
+                        <button class="nav-action-btn nav-ai-btn" onclick="openAIAssistant()" title="AI问答">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+                            </svg>
+                            <span class="nav-btn-text">AI问答</span>
+                        </button>
+                        <!-- 社区入口 -->
+                        <a href="/forum.html" class="nav-action-btn nav-community-btn" title="社区">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                            <span class="nav-btn-text">社区</span>
+                        </a>
                         <button class="nav-action-btn" id="command-palette-btn" title="命令面板 (Ctrl+K)">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <circle cx="11" cy="11" r="8"></circle>
@@ -289,12 +304,17 @@
 
         <!-- 主内容区 -->
         <div class="testlink-main">
-            <!-- 左侧导航 -->
+            <!-- ========== 左侧导航侧边栏 - 已隐藏，保留代码以备后续恢复 ========== -->
+            <!--
             <aside class="testlink-sidebar">
                 <div class="sidebar-section">
+                    <h3>我的工作台</h3>
+                    <ul>
+                        <li><a href="#/workspace" class="sidebar-link">工作台首页</a></li>
+                    </ul>
                     <h3>测试管理</h3>
                     <ul>
-                        <li><a href="#/dashboard" class="sidebar-link active">测试概览</a></li>
+                        <li><a href="#/dashboard" class="sidebar-link">测试概览</a></li>
                         <li><a href="#/testplans" class="sidebar-link">测试计划</a></li>
                         <li><a href="#/cases" class="sidebar-link">测试用例</a></li>
                         <li><a href="#/reports" class="sidebar-link">测试报告</a></li>
@@ -304,12 +324,12 @@
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px; margin-right: 6px;">
                                 <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
                             </svg>
-                            AI知识问答
+                            AI问答
                         </button>
                     </div>
                 </div>
                 <div class="sidebar-bottom-section">
-                    <a href="/forum.html" class="sidebar-community-link" target="_blank">
+                    <a href="/forum.html" class="sidebar-community-link">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; margin-right: 8px;">
                             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                         </svg>
@@ -317,9 +337,175 @@
                     </a>
                 </div>
             </aside>
+            -->
+            <!-- ========== 侧边栏代码结束 ========== -->
 
             <!-- 右侧内容 -->
             <main class="testlink-content">
+
+                <!-- 我的工作台页面 -->
+                <section id="workspace-section" style="display: none;">
+                    <div class="page-header">
+                        <div class="header-left">
+                            <h2>我的工作台</h2>
+                        </div>
+                        <div class="header-right">
+                            <span class="workspace-date" id="workspace-current-date"></span>
+                        </div>
+                    </div>
+                    
+                    <div class="workspace-content">
+                        <!-- 欢迎信息 -->
+                        <div class="workspace-welcome">
+                            <span class="welcome-text">欢迎回来，<span id="workspace-username"></span>！</span>
+                        </div>
+                        
+                        <!-- 数据概览卡片 -->
+                        <div class="workspace-summary-cards">
+                            <div class="workspace-summary-card pending-execution" onclick="navigateToPendingExecutions()">
+                                <div class="card-icon">📋</div>
+                                <div class="card-content">
+                                    <span class="card-label">待我执行</span>
+                                    <span class="card-number pending-executions-count" id="pending-executions-count">0</span>
+                                    <span class="card-trend" id="pending-executions-trend"></span>
+                                </div>
+                                <div class="card-action">查看详情 →</div>
+                            </div>
+                            <div class="workspace-summary-card pending-review" onclick="navigateToPendingReviews()">
+                                <div class="card-icon">⏳</div>
+                                <div class="card-content">
+                                    <span class="card-label">待我评审</span>
+                                    <span class="card-number pending-reviews-count" id="pending-reviews-count">0</span>
+                                    <span class="card-trend" id="pending-reviews-trend"></span>
+                                </div>
+                                <div class="card-action">查看详情 →</div>
+                            </div>
+                            <div class="workspace-summary-card expiring" onclick="navigateToExpiringPlans()">
+                                <div class="card-icon">⚠️</div>
+                                <div class="card-content">
+                                    <span class="card-label">即将到期</span>
+                                    <span class="card-number expiring-count" id="expiring-count">0</span>
+                                    <span class="card-desc">3天内到期</span>
+                                </div>
+                                <div class="card-action">查看详情 →</div>
+                            </div>
+                            <div class="workspace-summary-card completed" onclick="navigateToWeeklyCompleted()">
+                                <div class="card-icon">✓</div>
+                                <div class="card-content">
+                                    <span class="card-label">本周完成</span>
+                                    <span class="card-number completed-count" id="weekly-completed-count">0</span>
+                                    <span class="card-desc">本周已完成</span>
+                                </div>
+                                <div class="card-action">查看详情 →</div>
+                            </div>
+                        </div>
+                        
+                        <!-- 标签页导航 -->
+                        <div class="workspace-tabs">
+                            <button class="workspace-tab active" data-tab="todo">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M9 11l3 3L22 4"></path>
+                                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                                </svg>
+                                我的待办
+                                <span class="tab-badge" id="todo-badge">0</span>
+                            </button>
+                            <button class="workspace-tab" data-tab="plans">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                                </svg>
+                                我的计划
+                                <span class="tab-badge" id="plans-badge">0</span>
+                            </button>
+                            <button class="workspace-tab" data-tab="activities">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <polyline points="12 6 12 12 16 14"></polyline>
+                                </svg>
+                                最近处理
+                                <span class="tab-badge" id="activities-badge">0</span>
+                            </button>
+                        </div>
+                        
+                        <!-- 标签页内容 -->
+                        <div class="workspace-tab-content">
+                            <!-- 我的待办 -->
+                            <div class="workspace-panel active" id="workspace-todo-panel">
+                                <!-- 待评审用例列表 -->
+                                <div class="workspace-list-section">
+                                    <div class="list-header">
+                                        <h3 class="list-title">
+                                            <span class="title-icon">⏳</span>
+                                            待评审用例
+                                            <span class="list-count" id="pending-reviews-list-count">(0)</span>
+                                        </h3>
+                                        <a href="javascript:void(0);" class="view-all-link" onclick="viewAllPendingReviews()">查看全部 →</a>
+                                    </div>
+                                    <div class="workspace-list" id="pending-reviews-list">
+                                        <div class="empty-state">
+                                            <span class="empty-icon">🎉</span>
+                                            <p>暂无待评审用例</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- 待执行用例列表 -->
+                                <div class="workspace-list-section">
+                                    <div class="list-header">
+                                        <h3 class="list-title">
+                                            <span class="title-icon">📋</span>
+                                            待执行用例
+                                            <span class="list-count" id="pending-executions-list-count">(0)</span>
+                                        </h3>
+                                        <a href="javascript:void(0);" class="view-all-link" onclick="viewAllPendingExecutions()">查看全部 →</a>
+                                    </div>
+                                    <div class="workspace-list" id="pending-executions-list">
+                                        <div class="empty-state">
+                                            <span class="empty-icon">🎉</span>
+                                            <p>暂无待执行用例</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- 我的计划 -->
+                            <div class="workspace-panel" id="workspace-plans-panel">
+                                <div class="list-header">
+                                    <h3 class="list-title">
+                                        <span class="title-icon">📅</span>
+                                        我参与的测试计划
+                                        <span class="list-count" id="my-plans-count">(0)</span>
+                                    </h3>
+                                    <a href="javascript:void(0);" class="view-all-link" onclick="viewAllMyPlans()">查看全部 →</a>
+                                </div>
+                                <div class="workspace-plans-list" id="my-plans-list">
+                                    <div class="empty-state">
+                                        <span class="empty-icon">🎉</span>
+                                        <p>暂无参与的测试计划</p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- 最近处理 -->
+                            <div class="workspace-panel" id="workspace-activities-panel">
+                                <div class="list-header">
+                                    <h3 class="list-title">
+                                        <span class="title-icon">🕐</span>
+                                        最近活动记录
+                                        <span class="list-count" id="recent-activities-count">(0)</span>
+                                    </h3>
+                                    <a href="javascript:void(0);" class="view-all-link" onclick="viewAllActivities()">查看全部 →</a>
+                                </div>
+                                <div class="workspace-activities-timeline" id="recent-activities-list">
+                                    <div class="empty-state">
+                                        <span class="empty-icon">🎉</span>
+                                        <p>暂无最近活动</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
 
                 <!-- 测试管理页面 -->
                 <section id="dashboard-section" style="display: none;">
@@ -333,7 +519,7 @@
                             <div class="add-dropdown" id="add-dropdown">
                                 <a href="#" onclick="addTestCase()">新建用例</a>
                                 <a href="#" onclick="addCaseLibrary()">新建用例库</a>
-                                <a href="#" onclick="addTestPlan()">新建测试计划</a>
+                                <a href="#" onclick="openAdvancedTestPlanModal()">新建测试计划</a>
                                 <a href="#" onclick="addTestReport()">新建测试报告</a>
                                 <a href="#" onclick="addEnvironment()">新增环境</a>
                             </div>
@@ -599,7 +785,6 @@
                                     <tr>
                                         <th>排名</th>
                                         <th>用户名</th>
-                                        <th>角色</th>
                                         <th>操作时间</th>
                                         <th>操作内容</th>
                                         <th>状态</th>
@@ -607,7 +792,7 @@
                                 </thead>
                                 <tbody id="recent-logins-body">
                                     <tr>
-                                        <td colspan="6" class="no-data">暂无登录记录</td>
+                                        <td colspan="5" class="no-data">暂无登录记录</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -712,7 +897,7 @@
                                     <a href="#" onclick="addTestCase()">新建用例</a>
                                     <a href="#" onclick="batchCreateTestCases()">批量新建用例</a>
                                     <a href="#" onclick="addCaseLibrary()">新建用例库</a>
-                                    <a href="#" onclick="addTestPlan()">新建测试计划</a>
+                                    <a href="#" onclick="openAdvancedTestPlanModal()">新建测试计划</a>
                                     <a href="#" onclick="addTestReport()">新建测试报告</a>
                                 </div>
                             </div>
@@ -789,7 +974,7 @@
                         </div>
                         <div class="header-right">
                             <div class="search-box">
-                                <input type="text" placeholder="搜索用例" class="search-input">
+                                <input type="text" id="case-management-search-input" placeholder="搜索用例" class="search-input" style="width: 500px; height: 48px;">
                             </div>
                             <div class="case-actions">
                                 <button class="secondary-btn" onclick="openImportExcelModal()">
@@ -1071,6 +1256,12 @@
                                 }
                                 
                                 /* 操作按钮样式 */
+                                .col-actions {
+                                    padding: 8px 12px;
+                                    vertical-align: middle;
+                                    text-align: center;
+                                }
+                                
                                 .actions-cell {
                                     display: flex;
                                     gap: 8px;
@@ -1254,27 +1445,33 @@
                                 </div>
                                 <div style="display: flex; align-items: center; gap: 8px;">
                                     <div class="search-box" style="position: relative;">
-                                        <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" style="position: absolute; left: 8px; top: 50%; transform: translateY(-50%);">
+                                        <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%);">
                                             <circle cx="11" cy="11" r="8"></circle>
                                             <path d="M21 21l-4.35-4.35"></path>
                                         </svg>
-                                        <input type="text" id="testcase-search-input" placeholder="模糊搜索用例..." class="search-input" style="width: 320px; height: 28px; padding: 0 10px 0 28px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; background: white; color: #1e293b; outline: none; transition: all 0.2s ease;">
+                                        <input type="text" id="testcase-search-input" placeholder="模糊搜索用例..." class="search-input" style="width: 480px; height: 45px; padding: 0 12px 0 36px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; background: white; color: #1e293b; outline: none; transition: all 0.2s ease;">
                                     </div>
-                                    <button class="add-case-btn" onclick="batchCreateTestCases()" title="批量新建测试用例" style="background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0;">
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <button class="add-case-btn" onclick="batchViewTestCases()" data-tooltip="批量查看测试用例" style="background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; width: 45px; height: 45px;">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                            <path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                                        </svg>
+                                    </button>
+                                    <button class="add-case-btn" onclick="batchCreateTestCases()" data-tooltip="批量新建测试用例" style="background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; width: 45px; height: 45px;">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <rect x="3" y="3" width="7" height="7" rx="1"></rect>
                                             <rect x="14" y="3" width="7" height="7" rx="1"></rect>
                                             <rect x="14" y="14" width="7" height="7" rx="1"></rect>
                                             <rect x="3" y="14" width="7" height="7" rx="1"></rect>
                                         </svg>
                                     </button>
-                                    <button class="add-case-btn" onclick="openAddTestCaseModal()" title="新建用例">
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <button class="add-case-btn" onclick="openAddTestCaseModal()" data-tooltip="新建用例" style="width: 45px; height: 45px;">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <path d="M12 5v14M5 12h14"></path>
                                         </svg>
                                     </button>
-                                    <button class="close-panel-btn" onclick="closeFloatingPanel()" title="关闭">
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <button class="close-panel-btn" onclick="closeFloatingPanel()" data-tooltip="关闭" style="width: 45px; height: 45px;">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <path d="M18 6L6 18M6 6l12 12"></path>
                                         </svg>
                                     </button>
@@ -1288,18 +1485,21 @@
                                 <table class="test-points-table" id="test-points-table">
                                     <thead>
                                         <tr>
+                                            <th style="width: 40px;">
+                                                <input type="checkbox" id="select-all-cases" onchange="toggleSelectAllCases(this.checked)" style="width: 16px; height: 16px; cursor: pointer;">
+                                            </th>
                                             <th style="width: 60px;">编号</th>
-                                            <th>测试项</th>
-                                            <th style="width: 150px;">测试目的</th>
-                                            <th style="width: 80px;">负责人</th>
-                                            <th style="width: 100px;">测试环境</th>
-                                            <th style="width: 90px;">测试方式</th>
-                                            <th style="width: 130px;">更新时间</th>
+                                            <th style="min-width: 150px;">测试项</th>
+                                            <th style="width: 400px;">测试目的</th>
+                                            <th style="width: 90px;">负责人</th>
+                                            <th style="width: 120px;">测试环境</th>
+                                            <th style="width: 100px;">测试方式</th>
+                                            <th style="width: 140px;">更新时间</th>
                                         </tr>
                                     </thead>
                                     <tbody id="test-points-body">
                                         <tr>
-                                            <td colspan="7" class="no-data">
+                                            <td colspan="8" class="no-data">
                                                 <div style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px;">
                                                     <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5">
                                                         <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
@@ -1310,6 +1510,20 @@
                                         </tr>
                                     </tbody>
                                 </table>
+                                <div class="batch-action-toolbar" id="batch-action-toolbar" style="display: none;">
+                                    <div class="selection-info">
+                                        <span class="selected-count">已选择 <strong id="selected-case-count">0</strong> 项</span>
+                                        <button class="clear-selection-btn" onclick="clearCaseSelection()">清除选择</button>
+                                    </div>
+                                    <div class="batch-actions">
+                                        <button class="btn btn-warning" onclick="batchSubmitReview()">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"></path>
+                                            </svg>
+                                            批量提交评审
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -2405,7 +2619,7 @@
                         <!-- AI配置 -->
                         <div class="config-panel" id="ai-config-config">
                             <div class="config-section">
-                                <h3>🤖 AI知识问答配置</h3>
+                                <h3>🤖 AI问答配置</h3>
                                 <p class="config-description">配置AI大模型的API密钥和模型参数，支持多个模型配置。用户使用AI问答时将使用默认模型。</p>
                                 
                                 <div class="form-row">
@@ -2420,6 +2634,7 @@
                                 
                                 <div class="config-actions" style="margin-top: 16px; margin-bottom: 16px;">
                                     <button class="primary-btn" id="add-ai-model-btn">+ 添加AI模型</button>
+                                    <button class="secondary-btn" id="view-ai-logs-btn" onclick="window.location.href='/ai-operation-logs.html'">📊 查看AI操作日志</button>
                                 </div>
                                 
                                 <table class="config-table">
@@ -2469,6 +2684,7 @@
                                             <select id="ai-model-provider-select">
                                                 <option value="deepseek">DeepSeek</option>
                                                 <option value="openai">OpenAI</option>
+                                                <option value="openai-compatible">OpenAI兼容API</option>
                                                 <option value="zhipu">智谱AI</option>
                                                 <option value="anthropic">Anthropic</option>
                                                 <option value="custom">自定义</option>
@@ -4497,7 +4713,7 @@ return rows[0];'></textarea>
     </div>
 
     <!-- 编辑关联项目模态框 -->
-    <div id="edit-project-associations-modal" class="modal" style="display: none; z-index: 12500;">
+    <div id="edit-project-associations-modal" class="modal" style="display: none; z-index: 100000;">
         <div class="modal-content project-association-content">
             <div class="modal-header project-association-header">
                 <div class="pa-header-info">
@@ -4670,6 +4886,13 @@ return rows[0];'></textarea>
                     </svg>
                     测试内容
                 </button>
+                <button class="case-tab" data-tab="scripts">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="16 18 22 12 16 6"></polyline>
+                        <polyline points="8 6 2 12 8 18"></polyline>
+                    </svg>
+                    关联脚本
+                </button>
                 <button class="case-tab" data-tab="projects">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
@@ -4682,6 +4905,13 @@ return rows[0];'></textarea>
                         <polyline points="12 6 12 12 16 14"></polyline>
                     </svg>
                     执行记录
+                </button>
+                <button class="case-tab" data-tab="review">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 11l3 3L22 4"></path>
+                        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                    </svg>
+                    评审信息
                 </button>
             </div>
             
@@ -4869,6 +5099,50 @@ return rows[0];'></textarea>
                         </div>
                     </div>
                     
+                    <!-- 关联脚本标签页 -->
+                    <div class="case-tab-content" id="tab-scripts">
+                        <div class="form-card">
+                            <div class="form-card-header">
+                                <span class="form-card-icon">📜</span>
+                                <span>关联脚本</span>
+                                <button type="button" onclick="openAddScriptModal()" class="btn btn-sm btn-primary" style="margin-left: auto;">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                                    </svg>
+                                    添加脚本
+                                </button>
+                            </div>
+                            <div class="form-card-body">
+                                <div class="scripts-table-container" id="scripts-table-container">
+                                    <table class="scripts-table" id="scripts-table">
+                                        <thead>
+                                            <tr>
+                                                <th style="width: 40px;">#</th>
+                                                <th style="width: 250px;">脚本名称</th>
+                                                <th style="width: 80px;">类型</th>
+                                                <th>描述</th>
+                                                <th style="width: 120px;">源文件</th>
+                                                <th style="width: 150px;">链接</th>
+                                                <th style="width: 100px;">操作</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="scripts-table-body">
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="scripts-empty" id="scripts-empty" style="display: none;">
+                                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <polyline points="16 18 22 12 16 6"></polyline>
+                                        <polyline points="8 6 2 12 8 18"></polyline>
+                                    </svg>
+                                    <p>暂无关联脚本</p>
+                                    <button type="button" onclick="openAddScriptModal()" class="btn btn-sm btn-primary">添加脚本</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
                     <!-- 关联项目标签页 -->
                     <div class="case-tab-content" id="tab-projects">
                         <div class="form-card">
@@ -4993,6 +5267,72 @@ return rows[0];'></textarea>
                             </div>
                         </div>
                     </div>
+                    
+                    <!-- 评审信息标签页 -->
+                    <div class="case-tab-content" id="tab-review">
+                        <!-- 评审状态卡片 -->
+                        <div class="review-status-card">
+                            <div class="card-header">
+                                <span class="card-icon">📋</span>
+                                <span class="card-title">评审状态</span>
+                            </div>
+                            <div class="card-body">
+                                <div class="status-info">
+                                    <div class="status-row">
+                                        <span class="status-label">当前状态:</span>
+                                        <span class="review-status-badge draft" id="review-status-badge">
+                                            <span class="status-icon">📝</span>
+                                            <span class="status-text">草稿</span>
+                                        </span>
+                                    </div>
+                                    <div class="status-row">
+                                        <span class="status-label">评审人:</span>
+                                        <span class="status-value" id="reviewer-name">-</span>
+                                    </div>
+                                    <div class="status-row">
+                                        <span class="status-label">提交时间:</span>
+                                        <span class="status-value" id="review-submitted-time">-</span>
+                                    </div>
+                                    <div class="status-row">
+                                        <span class="status-label">已等待:</span>
+                                        <span class="status-value" id="review-waiting-time">-</span>
+                                    </div>
+                                </div>
+                                
+                                <!-- 评审操作按钮 -->
+                                <div class="review-actions" id="review-actions" style="display: none;">
+                                    <button type="button" class="btn btn-success" onclick="approveReview()">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <polyline points="20 6 9 17 4 12"></polyline>
+                                        </svg>
+                                        通过
+                                    </button>
+                                    <button type="button" class="btn btn-danger" onclick="rejectReview()">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                                        </svg>
+                                        驳回
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 评审历史时间轴 -->
+                        <div class="review-history-container">
+                            <div class="history-header">
+                                <h3 class="history-title">
+                                    <span class="title-icon">📜</span>
+                                    评审历史
+                                </h3>
+                                <button type="button" class="expand-btn" onclick="toggleReviewHistory(this)">展开全部</button>
+                            </div>
+                            
+                            <div class="history-timeline" id="review-history-timeline">
+                                <!-- 动态加载评审历史记录 -->
+                            </div>
+                        </div>
+                    </div>
                 </form>
             </div>
             
@@ -5008,6 +5348,13 @@ return rows[0];'></textarea>
                 </div>
                 <div class="modal-footer-right">
                     <button class="btn btn-secondary" onclick="closeTestCaseDetailModal()">取消</button>
+                    <button class="btn btn-warning" id="submit-review-btn" onclick="submitForReview()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 11l3 3L22 4"></path>
+                            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                        </svg>
+                        提交评审
+                    </button>
                     <button class="btn btn-primary" onclick="saveTestCaseDetail()">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
@@ -5021,13 +5368,102 @@ return rows[0];'></textarea>
         </div>
     </div>
 
+    <!-- 添加/编辑关联脚本弹窗 -->
+    <div id="script-modal" class="modal" style="display: none; z-index: 99998;">
+        <div class="modal-content" style="width: 600px; max-width: 95%;">
+            <div class="modal-header">
+                <h3 id="script-modal-title">添加关联脚本</h3>
+                <button class="close-modal" onclick="closeScriptModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="script-form">
+                    <input type="hidden" id="script-id">
+                    <input type="hidden" id="script-file-path">
+                    <input type="hidden" id="script-file-size">
+                    <input type="hidden" id="script-original-filename">
+                    
+                    <div class="form-group">
+                        <label class="form-label required">脚本名称</label>
+                        <input type="text" id="script-name" class="form-input" placeholder="如：sdk_fdb_func_xxx_xxx.tcl" required>
+                        <p class="form-hint">支持 .tcl, .py, .sh 等脚本文件名称</p>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">脚本类型</label>
+                            <select id="script-type" class="form-select">
+                                <option value="tcl">TCL</option>
+                                <option value="py">Python</option>
+                                <option value="sh">Shell</option>
+                                <option value="other">其他</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">脚本描述</label>
+                        <textarea id="script-description" class="form-textarea" rows="2" placeholder="脚本功能描述"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">源文件上传</label>
+                        <div class="file-upload-area" id="script-upload-area">
+                            <input type="file" id="script-file-input" style="display: none;" accept=".tcl,.py,.sh,.txt,.json,.pl,.rb,.js,.yaml,.yml,.xml,.cfg,.conf,.ini">
+                            <div class="file-upload-content" id="script-upload-content">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="17 8 12 3 7 8"></polyline>
+                                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                                </svg>
+                                <p>点击上传或拖拽文件到此处</p>
+                                <span class="file-upload-hint">支持 .tcl, .py, .sh 等格式，最大 10MB</span>
+                            </div>
+                            <div class="file-upload-preview" id="script-file-preview" style="display: none;">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                    <polyline points="14 2 14 8 20 8"></polyline>
+                                </svg>
+                                <span id="script-file-name"></span>
+                                <button type="button" class="btn-remove-file" onclick="removeScriptFile()">×</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">外部链接</label>
+                        <input type="url" id="script-link-url" class="form-input" placeholder="https://gitlab.xxx.com/xxx.tcl">
+                        <input type="text" id="script-link-title" class="form-input" placeholder="链接标题（如：GitLab源码）" style="margin-top: 8px;">
+                        <div class="link-type-selector" style="margin-top: 8px;">
+                            <label class="radio-item">
+                                <input type="radio" name="link-type" value="external" checked>
+                                <span>外部链接</span>
+                            </label>
+                            <label class="radio-item">
+                                <input type="radio" name="link-type" value="gitlab">
+                                <span>GitLab</span>
+                            </label>
+                            <label class="radio-item">
+                                <input type="radio" name="link-type" value="other">
+                                <span>其他</span>
+                            </label>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeScriptModal()">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveScript()">保存</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 自定义成功提示组件 -->
     <div id="success-toast" class="success-toast" style="display: none;">
         <div class="success-toast-content"></div>
     </div>
 
     <!-- 错误提示模态框 -->
-    <div id="error-modal" class="modal" style="z-index: 12000;">
+    <div id="error-modal" class="modal" style="z-index: 9999999;">
         <div class="modal-content" style="width: 400px; max-width: 90%;">
             <div class="modal-header">
                 <h3>错误提示</h3>
@@ -5038,6 +5474,322 @@ return rows[0];'></textarea>
             </div>
             <div class="modal-footer" style="justify-content: center;">
                 <button class="primary-btn" onclick="closeErrorModal()">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 提交评审对话框 -->
+    <div id="submit-review-modal" class="modal" style="display: none; z-index: 99999;">
+        <div class="modal-content" style="width: 600px; max-width: 90%;">
+            <div class="modal-header">
+                <h3>提交评审</h3>
+                <button class="close-btn" onclick="closeSubmitReviewModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- 已选评审人显示 -->
+                <div class="selected-reviewers-box">
+                    <div class="selected-header">
+                        <span class="selected-label">已选评审人</span>
+                        <span class="selected-count"><span id="selected-reviewers-count">0</span> 人</span>
+                    </div>
+                    <div class="selected-reviewers-container" id="selected-reviewers-display">
+                        <span class="no-selection">请选择评审人（可多选）</span>
+                    </div>
+                </div>
+                
+                <!-- 选择评审人 -->
+                <div class="form-group">
+                    <label class="form-label required">选择评审人</label>
+                    <div class="user-search-box">
+                        <input type="text" id="reviewer-search" class="form-input" placeholder="🔍 搜索用户名..." oninput="filterReviewers(this.value)">
+                    </div>
+                    
+                    <!-- 常用评审人 -->
+                    <div class="frequent-reviewers" id="frequent-reviewers-section" style="display: none;">
+                        <div class="section-title">常用评审人</div>
+                        <div class="user-chips" id="frequent-reviewers-chips">
+                        </div>
+                    </div>
+                    
+                    <!-- 全部用户列表 -->
+                    <div class="all-users-list">
+                        <div class="section-title">
+                            <span>全部用户</span>
+                            <span class="users-count-badge"><span id="users-count">0</span> 人</span>
+                        </div>
+                        <div class="user-grid" id="all-users-list">
+                        </div>
+                        <div class="user-pagination" id="user-pagination" style="display: none;">
+                            <button class="pagination-btn" id="prev-page-btn" onclick="prevUserPage()">上一页</button>
+                            <span class="pagination-info">第 <span id="current-page">1</span> 页，共 <span id="total-pages">1</span> 页</span>
+                            <button class="pagination-btn" id="next-page-btn" onclick="nextUserPage()">下一页</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 评审说明 -->
+                <div class="form-group">
+                    <label class="form-label">评审说明（选填）</label>
+                    <textarea id="review-comment" class="form-textarea" rows="3" placeholder="请输入评审说明..." maxlength="500" oninput="updateReviewCommentCount()"></textarea>
+                    <div class="char-count"><span id="review-comment-count">0</span>/500</div>
+                </div>
+                
+                <!-- 提示信息 -->
+                <div class="info-message">
+                    <span class="info-icon">ℹ️</span>
+                    <span>多人评审规则：所有评审人都通过后，用例才会通过；任一评审人驳回，用例即被驳回</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeSubmitReviewModal()">取消</button>
+                <button class="btn btn-primary" onclick="confirmSubmitReview()">确认提交</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 快速评审对话框 -->
+    <div id="quick-review-modal" class="modal" style="display: none; z-index: 99999;">
+        <div class="modal-content" style="width: 520px; max-width: 90%;">
+            <div class="modal-header" style="background: linear-gradient(135deg, #667eea 0%, #76bdc2 100%); border-radius: 12px 12px 0; padding: 16px 20px;">
+                <h3 style="margin: 0; font-size: 18px; color: #fff; display: flex; align-items: center;">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;">
+                        <path d="M9 12l3 15l3 15"></path>
+                    </svg>
+                    快速评审
+                </h3>
+                <button class="close-btn" onclick="closeQuickReviewModal()" style="color: #fff;">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- 用例信息 -->
+                <div class="case-info-box">
+                    <div class="case-name" id="quick-review-case-name">-</div>
+                    <div class="case-meta">
+                        <span>优先级: <span id="quick-review-case-priority" class="priority-tag">-</span></span>
+                        <span>模块: <span id="quick-review-case-module">-</span></span>
+                    </div>
+                </div>
+                
+                <!-- 评审意见 -->
+                <div class="form-group">
+                    <label class="form-label">评审意见（选填）</label>
+                    <textarea id="quick-review-comment" class="form-textarea" rows="3" placeholder="请输入评审意见..." maxlength="500" oninput="updateQuickReviewCommentCount()"></textarea>
+                    <div class="char-count"><span id="quick-review-char-count">0</span>/500</div>
+                </div>
+                
+                <!-- 快捷评语 -->
+                <div class="quick-comments">
+                    <div class="section-title">快捷评语：</div>
+                    <div class="quick-comment-btns">
+                        <button type="button" class="quick-comment-btn" data-comment="设计合理">设计合理</button>
+                        <button type="button" class="quick-comment-btn" data-comment="覆盖全面">覆盖全面</button>
+                        <button type="button" class="quick-comment-btn" data-comment="步骤清晰">步骤清晰</button>
+                        <button type="button" class="quick-comment-btn" data-comment="可直接执行">可直接执行</button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <div class="review-actions">
+                    <button class="btn btn-reject" onclick="quickRejectReview()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="15" y1="9" x2="15" y2="15"></line>
+                            <line x1="9" y1="9" x2="15" y2="15"></line>
+                        </svg>
+                        驳回
+                    </button>
+                    <button class="btn btn-approve" onclick="quickApproveReview()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        通过
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 所有待评审用例对话框 -->
+    <div id="all-pending-reviews-modal" class="modal" style="display: none; z-index: 10000;">
+        <div class="modal-content" style="width: 1200px; max-width: 95%; max-height: 90vh;">
+            <div class="modal-header" style="background: linear-gradient(135deg, #667eea 0%, #76bdc2 100%); border-radius: 12px 12px 0 0; padding: 16px 20px;">
+                <h3 style="margin: 0; font-size: 18px; color: #fff; display: flex; align-items: center;">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;">
+                        <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+                    </svg>
+                    所有待评审用例
+                    <span id="all-pending-reviews-count" style="margin-left: 12px; background: rgba(255,255,255,0.2); padding: 4px 12px; border-radius: 12px; font-size: 14px;">(0)</span>
+                </h3>
+                <button class="close-btn" onclick="closeAllPendingReviewsModal()" style="color: #fff;">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 20px; max-height: calc(90vh - 140px); overflow-y: auto;">
+                <!-- 搜索和操作栏 -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <div style="display: flex; gap: 12px; align-items: center;">
+                        <input type="text" id="all-pending-reviews-search" placeholder="搜索用例名称、模块..." 
+                            class="filter-search" style="width: 300px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                        <button class="secondary-btn" onclick="searchAllPendingReviews()">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <path d="m21 21-4.35-4.35"></path>
+                            </svg>
+                            搜索
+                        </button>
+                    </div>
+                    <div id="all-pending-reviews-batch-actions" style="display: none; gap: 12px;">
+                        <button class="btn btn-approve" onclick="batchApproveAllPendingReviews()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                            批量通过
+                        </button>
+                        <button class="btn btn-reject" onclick="batchRejectAllPendingReviews()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="15" y1="9" x2="9" y2="15"></line>
+                                <line x1="9" y1="9" x2="15" y2="15"></line>
+                            </svg>
+                            批量驳回
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- 用例列表 -->
+                <div id="all-pending-reviews-list" style="min-height: 300px;">
+                    <div style="text-align: center; padding: 60px 20px; color: #94a3b8;">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5" style="margin-bottom: 12px;">
+                            <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                        </svg>
+                        <p>加载中...</p>
+                    </div>
+                </div>
+                
+                <!-- 分页 -->
+                <div id="all-pending-reviews-pagination" style="display: none; margin-top: 20px; padding-top: 16px; border-top: 1px solid #e5e7eb;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div style="font-size: 13px; color: #6b7280;">
+                            共 <span id="all-pending-reviews-total">0</span> 条记录，每页显示 
+                            <select id="all-pending-reviews-page-size" onchange="changeAllPendingReviewsPageSize()" style="padding: 4px 8px; border: 1px solid #e2e8f0; border-radius: 4px;">
+                                <option value="10">10</option>
+                                <option value="20" selected>20</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                            </select> 条
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <button id="all-pending-reviews-prev-btn" class="pagination-btn" onclick="prevAllPendingReviewsPage()" disabled>上一页</button>
+                            <span style="font-size: 13px; color: #6b7280;">
+                                第 <span id="all-pending-reviews-current-page">1</span> 页，共 <span id="all-pending-reviews-total-pages">1</span> 页
+                            </span>
+                            <button id="all-pending-reviews-next-btn" class="pagination-btn" onclick="nextAllPendingReviewsPage()">下一页</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 通过评审对话框 -->
+    <div id="approve-review-modal" class="modal" style="display: none; z-index: 99999;">
+        <div class="modal-content" style="width: 500px; max-width: 90%;">
+            <div class="modal-header">
+                <h3>通过评审</h3>
+                <button class="close-btn" onclick="closeApproveReviewModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- 用例信息 -->
+                <div class="case-info-box">
+                    <div class="case-name" id="approve-case-name">-</div>
+                    <div class="case-meta">
+                        <span>优先级: <span id="approve-case-priority">-</span></span>
+                        <span>模块: <span id="approve-case-module">-</span></span>
+                    </div>
+                </div>
+                
+                <!-- 评审意见 -->
+                <div class="form-group">
+                    <label class="form-label">评审意见（选填）</label>
+                    <textarea id="approve-comment" class="form-textarea" rows="3" placeholder="用例设计合理，测试覆盖全面..." maxlength="500" oninput="updateApproveCommentCount()"></textarea>
+                    <div class="char-count"><span id="approve-char-count">0</span>/500</div>
+                </div>
+                
+                <!-- 快捷评语 -->
+                <div class="quick-comments">
+                    <div class="section-title">快捷评语:</div>
+                    <div class="quick-comment-chips">
+                        <button class="quick-comment-chip" onclick="insertQuickComment('设计合理')">设计合理</button>
+                        <button class="quick-comment-chip" onclick="insertQuickComment('覆盖全面')">覆盖全面</button>
+                        <button class="quick-comment-chip" onclick="insertQuickComment('步骤清晰')">步骤清晰</button>
+                        <button class="quick-comment-chip" onclick="insertQuickComment('可直接执行')">可直接执行</button>
+                    </div>
+                </div>
+                
+                <!-- 提示信息 -->
+                <div class="info-message">
+                    <span class="info-icon">ℹ️</span>
+                    <span>通过后用例将变为"已通过"状态，可被执行</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeApproveReviewModal()">取消</button>
+                <button class="btn btn-success" onclick="confirmApproveReview()">确认通过</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 驳回评审对话框 -->
+    <div id="reject-review-modal" class="modal" style="display: none; z-index: 99999;">
+        <div class="modal-content" style="width: 500px; max-width: 90%;">
+            <div class="modal-header">
+                <h3>驳回评审</h3>
+                <button class="close-btn" onclick="closeRejectReviewModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- 驳回原因 -->
+                <div class="form-group">
+                    <label class="form-label required">驳回原因</label>
+                    <textarea id="reject-reason" class="form-textarea" rows="3" placeholder="请详细说明驳回原因..." maxlength="500" oninput="updateRejectReasonCount()"></textarea>
+                    <div class="char-count"><span id="reject-char-count">0</span>/500</div>
+                </div>
+                
+                <!-- 常见驳回原因 -->
+                <div class="common-reasons">
+                    <div class="section-title">常见驳回原因:</div>
+                    <div class="reason-options">
+                        <label class="reason-option">
+                            <input type="radio" name="reject-reason-option" value="缺少边界条件测试" onchange="selectRejectReason(this.value)">
+                            <span>缺少边界条件测试</span>
+                        </label>
+                        <label class="reason-option">
+                            <input type="radio" name="reject-reason-option" value="测试步骤不够详细" onchange="selectRejectReason(this.value)">
+                            <span>测试步骤不够详细</span>
+                        </label>
+                        <label class="reason-option">
+                            <input type="radio" name="reject-reason-option" value="预期结果不明确" onchange="selectRejectReason(this.value)">
+                            <span>预期结果不明确</span>
+                        </label>
+                        <label class="reason-option">
+                            <input type="radio" name="reject-reason-option" value="缺少异常场景" onchange="selectRejectReason(this.value)">
+                            <span>缺少异常场景</span>
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- 修改建议 -->
+                <div class="form-group">
+                    <label class="form-label">修改建议（选填）</label>
+                    <textarea id="reject-suggestion" class="form-textarea" rows="3" placeholder="建议增加以下测试场景：&#10;1. 用户名长度边界测试&#10;2. 特殊字符输入测试" maxlength="500" oninput="updateRejectSuggestionCount()"></textarea>
+                    <div class="char-count"><span id="reject-suggestion-count">0</span>/500</div>
+                </div>
+                
+                <!-- 提示信息 -->
+                <div class="info-message warning">
+                    <span class="info-icon">⚠️</span>
+                    <span>驳回后创建者需修改用例并重新提交评审</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeRejectReviewModal()">取消</button>
+                <button class="btn btn-danger" onclick="confirmRejectReview()">确认驳回</button>
             </div>
         </div>
     </div>
@@ -5364,7 +6116,7 @@ return rows[0];'></textarea>
     </div>
 
     <!-- 邮件配置模态框 -->
-    <div id="email-config-modal" class="modal" style="z-index: 11000; display: none; align-items: center; justify-content: center;">
+    <div id="email-config-modal" class="modal" style="z-index: 100000; display: none; align-items: center; justify-content: center;">
         <div class="modal-content" style="width: 720px; max-width: 95%; margin: 0; max-height: 90vh; overflow-y: auto; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.15);">
             <div class="modal-header" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 24px 28px; border-radius: 16px 16px 0 0; display: flex; align-items: center; justify-content: space-between;">
                 <div style="display: flex; align-items: center; gap: 12px;">
@@ -5575,7 +6327,7 @@ return rows[0];'></textarea>
     </div>
     
     <!-- 测试邮件模态框 -->
-    <div id="test-email-modal" class="modal" style="z-index: 11000; display: none; align-items: center; justify-content: center;">
+    <div id="test-email-modal" class="modal" style="z-index: 100000; display: none; align-items: center; justify-content: center;">
         <div class="modal-content" style="width: 400px; max-width: 90%; margin: 0;">
             <div class="modal-header">
                 <h3>🧪 发送测试邮件</h3>
@@ -5601,7 +6353,7 @@ return rows[0];'></textarea>
     </div>
 
     <!-- 确认提示模态框 -->
-    <div id="confirm-modal" class="modal" style="z-index: 12000; display: none; align-items: center; justify-content: center;">
+    <div id="confirm-modal" class="modal" style="z-index: 100000; display: none; align-items: center; justify-content: center;">
         <div class="modal-content" style="width: 400px; max-width: 90%; margin: 0;">
             <div class="modal-header">
                 <h3>确认提示</h3>
@@ -5617,8 +6369,27 @@ return rows[0];'></textarea>
         </div>
     </div>
     
+    <!-- 输入提示模态框 -->
+    <div id="prompt-modal" class="modal" style="z-index: 100001; display: none; align-items: center; justify-content: center;">
+        <div class="modal-content" style="width: 450px; max-width: 90%; margin: 0;">
+            <div class="modal-header">
+                <h3 id="prompt-title">输入提示</h3>
+                <button class="close-btn" onclick="closePromptModal(false)">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="prompt-message" style="font-size: 14px; margin-bottom: 12px;"></div>
+                <textarea id="prompt-input" style="width: 100%; min-height: 80px; padding: 10px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; resize: vertical; box-sizing: border-box;" placeholder="请输入内容..."></textarea>
+                <div id="prompt-hint" style="font-size: 12px; color: #6b7280; margin-top: 6px;"></div>
+            </div>
+            <div class="modal-footer" style="justify-content: center; gap: 16px;">
+                <button class="secondary-btn" onclick="closePromptModal(false)">取消</button>
+                <button class="primary-btn" onclick="closePromptModal(true)">确认</button>
+            </div>
+        </div>
+    </div>
+    
     <!-- 超链接配置模态框 -->
-    <div id="hyperlink-config-modal" class="modal" style="z-index: 11000; display: none; align-items: center; justify-content: center;">
+    <div id="hyperlink-config-modal" class="modal" style="z-index: 100000; display: none; align-items: center; justify-content: center;">
         <div class="modal-content" style="max-width: 500px;">
             <div class="modal-header">
                 <h3 id="hyperlink-modal-title">添加超链接配置</h3>
@@ -5723,12 +6494,9 @@ return rows[0];'></textarea>
         
         <div class="drawer-footer">
             <button class="secondary-btn" onclick="closeTestPlanDrawer()">关闭</button>
-            <button class="primary-btn" onclick="executeTestPlan(currentDrawerPlanId)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;margin-right:6px;">
-                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                </svg>
-                执行测试
-            </button>
+            <span id="testplan-drawer-action-btn">
+                <!-- 动态填充 -->
+            </span>
         </div>
     </div>
     
@@ -5766,10 +6534,15 @@ return rows[0];'></textarea>
     <!-- Socket.io -->
     <script src="/js/socket.io.min.js"></script>
     <script src="/js/chart.umd.min.js"></script>
+    
+    <!-- 模块化代码 - 在原有 script.js 之前加载 -->
+    <script src="/js/modules/moduleLoader.js"></script>
+    
+    <!-- 原有的 script.js -->
     <script src="script.js"></script>
     <script src="js/notification.js"></script>
     
-    <!-- AI知识问答模态框 -->
+    <!-- AI问答模态框 -->
     <div id="ai-assistant-modal" class="ai-modal">
         <div class="ai-modal-content">
             <div class="ai-modal-header">
@@ -5777,7 +6550,7 @@ return rows[0];'></textarea>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px;">
                         <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
                     </svg>
-                    <h3>AI知识问答助手</h3>
+                    <h3>AI问答助手</h3>
                 </div>
                 <button class="ai-close-btn" onclick="closeAIAssistant()">&times;</button>
             </div>
@@ -5786,7 +6559,7 @@ return rows[0];'></textarea>
                     <div class="ai-welcome-message">
                         <div class="ai-avatar">AI</div>
                         <div class="ai-message-content">
-                            <p>您好！我是AI知识问答助手，可以帮助您：</p>
+                            <p>您好！我是AI问答助手，可以帮助您：</p>
                             <ul>
                                 <li>📊 分析测试数据和统计信息</li>
                                 <li>🔍 查询测试用例、项目和进度</li>
@@ -5823,6 +6596,9 @@ return rows[0];'></textarea>
                     <span>💡 AI配置由管理员在配置中心统一管理</span>
                 </div>
             </div>
+            <div class="ai-resize-handle ai-resize-handle-right"></div>
+            <div class="ai-resize-handle ai-resize-handle-bottom"></div>
+            <div class="ai-resize-handle ai-resize-handle-corner"></div>
         </div>
     </div>
     

@@ -1,5 +1,6 @@
 const mysql = require('mysql2');
 require('dotenv').config();
+const logger = require('./services/logger');
 
 // 基础配置
 const dbConfig = {
@@ -7,11 +8,11 @@ const dbConfig = {
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   waitForConnections: true,
-  connectionLimit: 200,
-  queueLimit: 500,
+  connectionLimit: 1000,
+  queueLimit: 5000,
   enableKeepAlive: true,
   keepAliveInitialDelay: 30000,
-  connectTimeout: 10000,
+  connectTimeout: 30000,
   timezone: '+08:00'
 };
 
@@ -24,6 +25,23 @@ if (process.env.DB_SOCKET) {
 
 const pool = mysql.createPool(dbConfig);
 
+// 添加连接池事件监听器
+pool.on('acquire', (connection) => {
+  //console.log(`数据库连接已获取: ${connection.threadId}`);
+});
+
+pool.on('enqueue', () => {
+  //console.log('数据库连接排队中');
+});
+
+pool.on('release', (connection) => {
+  //console.log(`数据库连接已释放: ${connection.threadId}`);
+});
+
+pool.on('error', (error) => {
+  logger.error('数据库连接池错误', { error: error.message });
+});
+
 // 添加连接池状态监控
 setInterval(() => {
   const poolStatus = pool._stat;
@@ -34,11 +52,11 @@ setInterval(() => {
     
     // 只在有活动连接时记录
     if (activeConnections > 0 || waitingConnections > 0) {
-      console.log(`数据库连接池状态: 活跃=${activeConnections}, 等待=${waitingConnections}, 总计=${totalConnections}`);
+      logger.debug('数据库连接池状态', { active: activeConnections, waiting: waitingConnections, total: totalConnections });
       
       // 如果等待连接数过多，发出警告
       if (waitingConnections > 10) {
-        console.warn(`⚠️ 数据库连接池压力较大，等待连接数: ${waitingConnections}`);
+        logger.warn('数据库连接池压力较大', { waitingConnections });
       }
     }
   }

@@ -17,7 +17,7 @@ router.get('/configs', authenticateToken, requireAdmin, async (req, res) => {
     
     res.json({ success: true, configs: configs });
   } catch (error) {
-    console.error('获取邮件配置错误:', error);
+    logger.error('获取邮件配置错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -39,7 +39,7 @@ router.get('/configs/:id', authenticateToken, requireAdmin, async (req, res) => 
     
     res.json({ success: true, config: config });
   } catch (error) {
-    console.error('获取邮件配置错误:', error);
+    logger.error('获取邮件配置错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -79,7 +79,7 @@ router.post('/configs', authenticateToken, requireAdmin, async (req, res) => {
     
     res.json({ success: true, message: '邮件配置创建成功', id: result.insertId });
   } catch (error) {
-    console.error('创建邮件配置错误:', error);
+    logger.error('创建邮件配置错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -135,7 +135,7 @@ router.put('/configs/:id', authenticateToken, requireAdmin, async (req, res) => 
     
     res.json({ success: true, message: '邮件配置更新成功' });
   } catch (error) {
-    console.error('更新邮件配置错误:', error);
+    logger.error('更新邮件配置错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -159,7 +159,7 @@ router.delete('/configs/:id', authenticateToken, requireAdmin, async (req, res) 
     
     res.json({ success: true, message: '邮件配置删除成功' });
   } catch (error) {
-    console.error('删除邮件配置错误:', error);
+    logger.error('删除邮件配置错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -191,7 +191,7 @@ router.post('/test', authenticateToken, requireAdmin, async (req, res) => {
     
     res.json(result);
   } catch (error) {
-    console.error('测试邮件发送错误:', error);
+    logger.error('测试邮件发送错误:', { error: error.message });
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -246,7 +246,7 @@ router.get('/logs', authenticateToken, requireAdmin, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取邮件日志错误:', error);
+    logger.error('获取邮件日志错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -300,7 +300,7 @@ router.get('/stats', authenticateToken, requireAdmin, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取邮件统计错误:', error);
+    logger.error('获取邮件统计错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -320,7 +320,7 @@ router.post('/send-verification', authenticateToken, async (req, res) => {
     
     res.json(result);
   } catch (error) {
-    console.error('发送验证码错误:', error);
+    logger.error('发送验证码错误:', { error: error.message });
     res.status(500).json({ success: false, message: error.message });
   }
 });

@@ -12,6 +12,7 @@ const crypto = require('crypto');
 const pool = require('../db');
 const jwt = require('jsonwebtoken');
 const notificationService = require('../services/notificationService');
+const logger = require('../services/logger');
 
 // ==================== 常量定义 ====================
 
@@ -65,7 +66,7 @@ const checkMuted = async (req, res, next) => {
         
         next();
     } catch (error) {
-        console.error('检查禁言状态错误:', error);
+        logger.error('检查禁言状态错误:', { error: error.message });
         res.status(500).json({ 
             success: false, 
             message: '服务器错误' 
@@ -238,7 +239,7 @@ router.post('/upload', authenticateToken, (req, res, next) => {
         const userId = req.user.id;
         const fileUrl = `/uploads/forum/${userId}/${req.file.filename}`;
         
-        console.log(`[论坛] 用户 ${req.user.username} 上传图片: ${fileUrl}`);
+        logger.info(`用户 ${req.user.username} 上传图片: ${fileUrl}`);
         
         res.json({
             success: 1,
@@ -246,7 +247,7 @@ router.post('/upload', authenticateToken, (req, res, next) => {
             data: { url: fileUrl, alt: req.file.originalname, name: req.file.filename }
         });
     } catch (error) {
-        console.error('图片上传错误:', error);
+        logger.error('图片上传错误:', { error: error.message });
         res.status(500).json({ success: 0, msg: '服务器错误' });
     }
 });
@@ -294,7 +295,7 @@ router.post('/attachments', authenticateToken, (req, res, next) => {
         
         res.json({ success: true, message: `成功上传 ${attachments.length} 个文件`, data: attachments });
     } catch (error) {
-        console.error('附件上传错误:', error);
+        logger.error('附件上传错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     }
 });
@@ -326,7 +327,7 @@ router.get('/attachments/download/:id', async (req, res) => {
         const filePath = path.join(__dirname, '../public', attachment.file_path);
         res.download(filePath, attachment.file_name);
     } catch (error) {
-        console.error('下载附件错误:', error);
+        logger.error('下载附件错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     }
 });
@@ -388,7 +389,7 @@ router.post('/posts', authenticateToken, checkMuted, async (req, res) => {
                         [trimmedName, randomColor]
                     );
                     tagId = tagResult.insertId;
-                    console.log(`[论坛] 自动创建新标签: ${trimmedName} (ID: ${tagId})`);
+                    logger.info(`自动创建新标签: ${trimmedName} (ID: ${tagId})`);
                 }
                 
                 if (tagId && !tagIds.includes(tagId)) {
@@ -419,10 +420,10 @@ router.post('/posts', authenticateToken, checkMuted, async (req, res) => {
         
         await connection.commit();
         
-        console.log(`[论坛] 用户 ${req.user.username} 创建帖子: ${postId}`);
+        logger.info(`用户 ${req.user.username} 创建帖子: ${postId}`);
 
         // 异步处理提及通知
-        notificationService.processMentions(content, authorId, insertedPostId, `/forum/post/${postId}`, 'post').catch(e => console.error(e));
+        notificationService.processMentions(content, authorId, insertedPostId, `/forum/post/${postId}`, 'post').catch(e => logger.error('操作失败', { error: e.message }));
         
         res.json({
             success: true,
@@ -431,7 +432,7 @@ router.post('/posts', authenticateToken, checkMuted, async (req, res) => {
         });
     } catch (error) {
         await connection.rollback();
-        console.error('创建帖子错误:', error);
+        logger.error('创建帖子错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     } finally {
         connection.release();
@@ -565,7 +566,7 @@ router.get('/posts', optionalAuth, async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('获取帖子列表错误:', error);
+        logger.error('获取帖子列表错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     }
 });
@@ -629,7 +630,7 @@ router.get('/posts/my', authenticateToken, async (req, res) => {
             limit: limit
         });
     } catch (error) {
-        console.error('获取我的帖子错误:', error);
+        logger.error('获取我的帖子错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     }
 });
@@ -685,7 +686,7 @@ router.get('/posts/:id', async (req, res) => {
                 [post.id]
             );
         } catch (attError) {
-            console.warn('获取附件失败，可能表不存在:', attError.message);
+            logger.warn('获取附件失败，可能表不存在:', { error: attError.message });
         }
         
         // 评论分页
@@ -794,7 +795,7 @@ router.get('/posts/:id', async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('获取帖子详情错误:', error);
+        logger.error('获取帖子详情错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     }
 });
@@ -852,7 +853,7 @@ router.put('/posts/:id', authenticateToken, async (req, res) => {
                     [attId, actualPostId]
                 );
             }
-            console.log(`[论坛] 删除附件: ${deletedAttachmentIds.join(', ')}`);
+            logger.info(`删除附件: ${deletedAttachmentIds.join(', ')}`);
         }
         
         if (newAttachmentIds && Array.isArray(newAttachmentIds) && newAttachmentIds.length > 0) {
@@ -862,7 +863,7 @@ router.put('/posts/:id', authenticateToken, async (req, res) => {
                     [actualPostId, attId]
                 );
             }
-            console.log(`[论坛] 关联新附件: ${newAttachmentIds.join(', ')}`);
+            logger.info(`关联新附件: ${newAttachmentIds.join(', ')}`);
         }
         
         if (tags !== undefined && Array.isArray(tags)) {
@@ -904,12 +905,12 @@ router.put('/posts/:id', authenticateToken, async (req, res) => {
         
         await connection.commit();
         
-        console.log(`[论坛] 用户 ${req.user.username} 更新帖子: ${postId}`);
+        logger.info(`用户 ${req.user.username} 更新帖子: ${postId}`);
         
         res.json({ success: true, message: '帖子更新成功' });
     } catch (error) {
         await connection.rollback();
-        console.error('更新帖子错误:', error);
+        logger.error('更新帖子错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     } finally {
         connection.release();
@@ -971,12 +972,12 @@ router.delete('/posts/:id', authenticateToken, async (req, res) => {
         
         await connection.commit();
         
-        console.log(`[论坛] 用户 ${req.user.username} 删除帖子: ${postId}`);
+        logger.info(`用户 ${req.user.username} 删除帖子: ${postId}`);
         
         res.json({ success: true, message: '帖子已删除' });
     } catch (error) {
         await connection.rollback();
-        console.error('删除帖子错误:', error);
+        logger.error('删除帖子错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     } finally {
         connection.release();
@@ -1031,12 +1032,12 @@ router.post('/comments', authenticateToken, checkMuted, async (req, res) => {
             [actualPostId]
         );
         
-        console.log(`[论坛] 用户 ${req.user.username} 发表评论: ${commentId}${isAnonymousFlag ? ' (匿名)' : ''}`);
+        logger.info(`用户 ${req.user.username} 发表评论: ${commentId}${isAnonymousFlag ? ' (匿名)' : ''}`);
 
         // 异步触发通知
         try {
             // 1. 处理 @ 提及
-            notificationService.processMentions(content, authorId, actualPostId, `/forum/post/${postId}`, 'comment').catch(e => console.error(e));
+            notificationService.processMentions(content, authorId, actualPostId, `/forum/post/${postId}`, 'comment').catch(e => logger.error('操作失败', { error: e.message }));
 
             // 2. 如果这篇帖子不是匿名发布的，通知原帖作者
             const [originalPosts] = await pool.execute('SELECT author_id, is_anonymous, title FROM forum_posts WHERE id = ?', [actualPostId]);
@@ -1044,11 +1045,11 @@ router.post('/comments', authenticateToken, checkMuted, async (req, res) => {
                 const op = originalPosts[0];
                 if (op.is_anonymous !== 1) { // 只有非匿名帖子才发被互动通知
                     const preview = notificationService.generatePreview(content);
-                    notificationService.notifyInteraction(op.author_id, authorId, 'comment', actualPostId, preview, `/forum/post/${postId}`).catch(e => console.error(e));
+                    notificationService.notifyInteraction(op.author_id, authorId, 'comment', actualPostId, preview, `/forum/post/${postId}`).catch(e => logger.error('操作失败', { error: e.message }));
                 }
             }
         } catch (notifErr) {
-            console.error('触发评论通知时出错', notifErr);
+            logger.error('触发评论通知时出错', { error: notifErr.message });
         }
         
         res.json({
@@ -1057,7 +1058,7 @@ router.post('/comments', authenticateToken, checkMuted, async (req, res) => {
             data: { id: result.insertId, commentId: commentId, isAnonymous: isAnonymousFlag === 1 }
         });
     } catch (error) {
-        console.error('发表评论错误:', error);
+        logger.error('发表评论错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     }
 });
@@ -1123,12 +1124,12 @@ router.delete('/comments/:id', authenticateToken, async (req, res) => {
         
         await connection.commit();
         
-        console.log(`[论坛] 用户 ${req.user.username} 删除评论: ${commentId}（包含 ${childComments.length} 条子评论）`);
+        logger.info(`用户 ${req.user.username} 删除评论: ${commentId}（包含 ${childComments.length} 条子评论）`);
         
         res.json({ success: true, message: `评论已删除（包含 ${childComments.length} 条子评论）` });
     } catch (error) {
         await connection.rollback();
-        console.error('删除评论错误:', error);
+        logger.error('删除评论错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     } finally {
         connection.release();
@@ -1192,7 +1193,7 @@ router.get('/comments/my', authenticateToken, async (req, res) => {
             limit: limit
         });
     } catch (error) {
-        console.error('获取我的评论错误:', error);
+        logger.error('获取我的评论错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     }
 });
@@ -1250,7 +1251,7 @@ router.get('/recycle-bin', authenticateToken, async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('获取回收站错误:', error);
+        logger.error('获取回收站错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     }
 });
@@ -1282,7 +1283,7 @@ router.post('/posts/:id/restore', authenticateToken, async (req, res) => {
         
         res.json({ success: true, message: '帖子已恢复' });
     } catch (error) {
-        console.error('恢复帖子错误:', error);
+        logger.error('恢复帖子错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     }
 });
@@ -1314,7 +1315,7 @@ router.post('/comments/:id/restore', authenticateToken, async (req, res) => {
         
         res.json({ success: true, message: '评论已恢复' });
     } catch (error) {
-        console.error('恢复评论错误:', error);
+        logger.error('恢复评论错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     }
 });
@@ -1342,7 +1343,7 @@ router.get('/tags', async (req, res) => {
         
         res.json({ success: true, data: [allTag, ...tags] });
     } catch (error) {
-        console.error('获取标签列表错误:', error);
+        logger.error('获取标签列表错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     }
 });
@@ -1390,12 +1391,12 @@ router.delete('/tags/:id', authenticateToken, async (req, res) => {
         
         await connection.commit();
         
-        console.log(`[论坛] 管理员 ${req.user.username} 删除标签: ${tags[0].name}`);
+        logger.info(`管理员 ${req.user.username} 删除标签: ${tags[0].name}`);
         
         res.json({ success: true, message: '标签已删除' });
     } catch (error) {
         await connection.rollback();
-        console.error('删除标签错误:', error);
+        logger.error('删除标签错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     } finally {
         connection.release();
@@ -1433,11 +1434,11 @@ router.put('/posts/:id/pin', authenticateToken, async (req, res) => {
             [pinned ? 1 : 0, posts[0].id]
         );
         
-        console.log(`[论坛] 管理员 ${req.user.username} ${pinned ? '置顶' : '取消置顶'}帖子: ${postId}`);
+        logger.info(`管理员 ${req.user.username} ${pinned ? '置顶' : '取消置顶'}帖子: ${postId}`);
         
         res.json({ success: true, message: pinned ? '帖子已置顶' : '已取消置顶' });
     } catch (error) {
-        console.error('置顶帖子错误:', error);
+        logger.error('置顶帖子错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     }
 });
@@ -1470,11 +1471,11 @@ router.put('/posts/:id/lock', authenticateToken, async (req, res) => {
             [locked ? 1 : 0, posts[0].id]
         );
         
-        console.log(`[论坛] 管理员 ${req.user.username} ${locked ? '锁定' : '解锁'}帖子: ${postId}`);
+        logger.info(`管理员 ${req.user.username} ${locked ? '锁定' : '解锁'}帖子: ${postId}`);
         
         res.json({ success: true, message: locked ? '帖子已锁定' : '帖子已解锁' });
     } catch (error) {
-        console.error('锁定帖子错误:', error);
+        logger.error('锁定帖子错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     }
 });
@@ -1571,11 +1572,11 @@ router.post('/posts/:id/like', authenticateToken, async (req, res) => {
                 if (originalPosts.length > 0) {
                     const op = originalPosts[0];
                     if (op.is_anonymous !== 1) { 
-                        notificationService.notifyInteraction(op.author_id, userId, 'like', actualPostId, '', `/forum/post/${op.post_id}`).catch(e => console.error(e));
+                        notificationService.notifyInteraction(op.author_id, userId, 'like', actualPostId, '', `/forum/post/${op.post_id}`).catch(e => logger.error('操作失败', { error: e.message }));
                     }
                 }
             } catch (notifErr) {
-                console.error('触发点赞通知时出错', notifErr);
+                logger.error('触发点赞通知时出错', { error: notifErr.message });
             }
         }
         
@@ -1586,7 +1587,7 @@ router.post('/posts/:id/like', authenticateToken, async (req, res) => {
         });
     } catch (error) {
         await connection.rollback();
-        console.error('点赞操作错误:', error);
+        logger.error('点赞操作错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     } finally {
         connection.release();
@@ -1641,7 +1642,7 @@ router.post('/users/:id/mute', authenticateToken, checkAdmin, async (req, res) =
             [mutedUntil, targetUserId]
         );
         
-        console.log(`[论坛] 管理员 ${req.user.username} 禁言用户 ${targetUser.username} ${days} 天，至 ${mutedUntil.toLocaleString()}`);
+        logger.info(`管理员 ${req.user.username} 禁言用户 ${targetUser.username} ${days} 天，至 ${mutedUntil.toLocaleString()}`);
         
         res.json({ 
             success: true, 
@@ -1652,7 +1653,7 @@ router.post('/users/:id/mute', authenticateToken, checkAdmin, async (req, res) =
             }
         });
     } catch (error) {
-        console.error('禁言用户错误:', error);
+        logger.error('禁言用户错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     }
 });
@@ -1679,11 +1680,11 @@ router.delete('/users/:id/mute', authenticateToken, checkAdmin, async (req, res)
             [targetUserId]
         );
         
-        console.log(`[论坛] 管理员 ${req.user.username} 解除用户 ${users[0].username} 的禁言`);
+        logger.info(`管理员 ${req.user.username} 解除用户 ${users[0].username} 的禁言`);
         
         res.json({ success: true, message: '已解除禁言' });
     } catch (error) {
-        console.error('解除禁言错误:', error);
+        logger.error('解除禁言错误:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     }
 });

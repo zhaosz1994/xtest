@@ -73,7 +73,7 @@ router.post('/upload-image', imageUpload.single('image'), (req, res) => {
       }
     });
   } catch (error) {
-    console.error('图片上传错误:', error);
+    logger.error('图片上传错误:', { error: error.message });
     res.json({ success: false, message: '图片上传失败: ' + error.message });
   }
 });
@@ -159,7 +159,7 @@ async function exportModuleStructure(req, res, libraryId, moduleIds, moduleId) {
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.send(buffer);
   } catch (error) {
-    console.error('[导出模块结构] 错误:', error);
+    logger.error('[导出模块结构] 错误:', { error: error.message });
     res.json({ success: false, message: '导出失败: ' + error.message });
   }
 }
@@ -171,8 +171,6 @@ async function exportModuleStructure(req, res, libraryId, moduleIds, moduleId) {
 router.get('/export', async (req, res) => {
   try {
     const { libraryId, moduleIds, moduleId, status, includeLevel1, includeCases } = req.query;
-    
-    console.log('[导出] 接收到的参数:', { libraryId, moduleIds, moduleId, status, includeLevel1, includeCases });
     
     // 解析参数
     const shouldIncludeLevel1 = includeLevel1 !== 'false';
@@ -372,7 +370,7 @@ router.get('/export', async (req, res) => {
     res.send(buffer);
     
   } catch (error) {
-    console.error('导出Excel错误:', error);
+    logger.error('导出Excel错误:', { error: error.message });
     res.json({ success: false, message: '导出失败: ' + error.message });
   }
 });
@@ -446,7 +444,7 @@ router.post('/import/parse-headers', upload.single('file'), async (req, res) => 
     });
     
   } catch (error) {
-    console.error('解析Excel表头错误:', error);
+    logger.error('解析Excel表头错误:', { error: error.message });
     res.json({ success: false, message: '解析文件失败: ' + error.message });
   }
 });
@@ -518,7 +516,7 @@ router.post('/import/parse-sheet', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('解析Sheet错误:', error);
+    logger.error('解析Sheet错误:', { error: error.message });
     res.json({ success: false, message: '解析Sheet失败: ' + error.message });
   }
 });
@@ -673,7 +671,7 @@ router.get('/import/system-options', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('获取系统选项失败:', error);
+    logger.error('获取系统选项失败:', { error: error.message });
     res.json({ success: false, message: '获取系统选项失败: ' + error.message });
   }
 });
@@ -1115,7 +1113,7 @@ router.post('/import/execute', async (req, res) => {
     
   } catch (error) {
     await connection.rollback();
-    console.error('导入Excel错误:', error);
+    logger.error('导入Excel错误:', { error: error.message });
     res.json({ success: false, message: '导入失败: ' + error.message });
   } finally {
     connection.release();
@@ -1136,7 +1134,7 @@ router.post('/import/cleanup', (req, res) => {
     
     res.json({ success: true });
   } catch (error) {
-    console.error('清理临时文件失败:', error);
+    logger.error('清理临时文件失败:', { error: error.message });
     res.json({ success: false, message: '清理失败' });
   }
 });
@@ -1185,7 +1183,7 @@ router.get('/template', (req, res) => {
     res.send(buffer);
     
   } catch (error) {
-    console.error('生成模板错误:', error);
+    logger.error('生成模板错误:', { error: error.message });
     res.json({ success: false, message: '生成模板失败' });
   }
 });

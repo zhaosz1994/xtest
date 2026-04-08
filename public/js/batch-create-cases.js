@@ -55,6 +55,12 @@
     let currentEditingIndex = null;
 
     // ─────────────────────────────────────────────────────────────────
+    // 全部测试点模式 - 二级嵌套数据结构
+    // ─────────────────────────────────────────────────────────────────
+    let isAllLevel1Mode = false;
+    let level1BatchData = [];
+
+    // ─────────────────────────────────────────────────────────────────
     // TagSelector 标签多选组件
     // ─────────────────────────────────────────────────────────────────
     const DrawerTagSelector = {
@@ -266,6 +272,12 @@
     }
 
     function hasUnsavedData() {
+        if (isAllLevel1Mode) {
+            return level1BatchData.some(item => {
+                if (item.name && item.name.trim()) return true;
+                return item.cases.some(c => c.name && c.name.trim());
+            });
+        }
         return batchData.some(row => row.name && row.name.trim() !== '');
     }
 
@@ -407,6 +419,10 @@
     function getTestEnvs() {
         return configData.environments.length > 0 ? configData.environments.map(e => e.name) : TEST_ENVIRONMENTS;
     }
+    function getUsers() {
+        const users = allUsers.length > 0 ? allUsers : (currentUser ? [currentUser.username] : []);
+        return users.filter(u => u.toLowerCase() !== 'admin');
+    }
 
     function createEmptyRow(defaults = {}) {
         return {
@@ -418,6 +434,662 @@
             phase: defaults.phase || (getTestPhases()[1] || '集成测试'),
             env: defaults.env || (getTestEnvs()[1] || '测试环境')
         };
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 全部测试点模式 - 一级测试点相关函数
+    // ─────────────────────────────────────────────────────────────────
+    function createEmptyLevel1() {
+        return {
+            type: 'level1',
+            id: 'temp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+            name: '',
+            priority: '中',
+            owner: defaultOwner || (currentUser ? currentUser.username : ''),
+            expanded: true,
+            cases: [createEmptyRow()]
+        };
+    }
+
+    function getLevel1RowHTML(item, level1Index) {
+        const testTypes = getTestTypes();
+        const caseCount = item.cases ? item.cases.length : 0;
+        const hasCases = caseCount > 0;
+        const expandIconClass = item.expanded ? 'expanded' : (hasCases ? '' : 'empty');
+        
+        return `
+            <tr class="level1-row" data-level1-index="${level1Index}" data-type="level1">
+                <td class="level1-expand-cell">
+                    <span class="level1-expand-icon ${expandIconClass}" data-action="toggle-expand" data-level1-index="${level1Index}">
+                        ${hasCases ? `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>` : ''}
+                    </span>
+                </td>
+                <td class="level1-index-cell">
+                    <span style="font-weight: 600; color: #1890ff;">${level1Index + 1}</span>
+                </td>
+                <td>
+                    <div class="level1-name-cell">
+                        <span class="folder-icon">📁</span>
+                        <input type="text"
+                               class="cell-input"
+                               data-field="name"
+                               data-level1-index="${level1Index}"
+                               data-type="level1"
+                               value="${escapeHtml(item.name)}"
+                               placeholder="请输入测试点名称"
+                               maxlength="100"
+                               style="font-weight: 600;">
+                    </div>
+                </td>
+                <td>
+                    <select class="cell-select" data-field="type" data-level1-index="${level1Index}" data-type="level1">
+                        ${testTypes.map(t => `<option value="${t}" ${item.type === t ? 'selected' : ''}>${t}</option>`).join('')}
+                    </select>
+                </td>
+                <td class="col-level1-actions" colspan="4">
+                    <div class="level1-actions">
+                    <button class="action-btn add-case-btn" data-action="add-case" data-level1-index="${level1Index}" data-tooltip="添加测试用例">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                    </button>
+                    <button class="action-btn copy-btn" data-action="copy-level1" data-level1-index="${level1Index}" data-tooltip="复制测试点">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                    </button>
+                    <button class="action-btn delete-btn" data-action="delete-level1" data-level1-index="${level1Index}" data-tooltip="删除测试点">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+
+    function getCaseTableHeaderHTML() {
+        return `
+            <tr class="case-header-row">
+                <th class="col-expand" style="width: 40px;"></th>
+                <th class="col-index">#</th>
+                <th class="col-name">测试用例名称</th>
+                <th class="col-priority">优先级</th>
+                <th class="col-type">测试类型</th>
+                <th class="col-owner">负责人</th>
+                <th class="col-phase">测试阶段</th>
+                <th class="col-env">测试环境</th>
+                <th class="col-actions">操作</th>
+            </tr>
+        `;
+    }
+
+    function getCaseRowHTML(caseItem, level1Index, caseIndex, globalCaseIndex) {
+        const testTypes = getTestTypes();
+        const testPhases = getTestPhases();
+        const testEnvs = getTestEnvs();
+        const collapsed = !level1BatchData[level1Index]?.expanded;
+        
+        return `
+            <tr class="case-row ${collapsed ? 'collapsed' : ''}" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-type="case">
+                <td class="level1-expand-cell"></td>
+                <td class="col-index-cell">
+                    <span style="color: #52c41a; font-weight: 600;">${globalCaseIndex}</span>
+                </td>
+                <td>
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="color: #52c41a; font-size: 14px;">📄</span>
+                        <input type="text"
+                               class="cell-input"
+                               data-field="name"
+                               data-level1-index="${level1Index}"
+                               data-case-index="${caseIndex}"
+                               data-type="case"
+                               value="${escapeHtml(caseItem.name)}"
+                               placeholder="请输入用例名称"
+                               maxlength="100">
+                    </div>
+                </td>
+                <td>
+                    <select class="cell-select" data-field="priority" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-type="case">
+                        ${getPriorities().map(p => `<option value="${p}" ${caseItem.priority === p ? 'selected' : ''}>${p}</option>`).join('')}
+                    </select>
+                </td>
+                <td>
+                    <select class="cell-select" data-field="type" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-type="case">
+                        ${testTypes.map(t => `<option value="${t}" ${caseItem.type === t ? 'selected' : ''}>${t}</option>`).join('')}
+                    </select>
+                </td>
+                <td>
+                    <select class="cell-select" data-field="owner" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-type="case">
+                        ${getUsers().map(u => `<option value="${u}" ${caseItem.owner === u ? 'selected' : ''}>${u}</option>`).join('')}
+                    </select>
+                </td>
+                <td>
+                    <select class="cell-select" data-field="phase" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-type="case">
+                        ${testPhases.map(p => `<option value="${p}" ${caseItem.phase === p ? 'selected' : ''}>${p}</option>`).join('')}
+                    </select>
+                </td>
+                <td>
+                    <select class="cell-select" data-field="env" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-type="case">
+                        ${testEnvs.map(e => `<option value="${e}" ${caseItem.env === e ? 'selected' : ''}>${e}</option>`).join('')}
+                    </select>
+                </td>
+                <td class="col-actions">
+                    <div class="actions-cell">
+                    <button class="action-btn detail-btn ${hasDetailData(caseItem) ? 'has-detail' : ''}" data-action="detail" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-tooltip="${hasDetailData(caseItem) ? '已完善详情' : '详细信息'}">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="16" y1="13" x2="8" y2="13"></line>
+                            <line x1="16" y1="17" x2="8" y2="17"></line>
+                        </svg>
+                    </button>
+                    <button class="action-btn clone-btn" data-action="clone" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-tooltip="从库中克隆已有用例">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="10" cy="10" r="7"></circle>
+                            <line x1="21" y1="21" x2="15" y2="15"></line>
+                            <line x1="10" y1="7" x2="10" y2="13"></line>
+                            <line x1="7" y1="10" x2="13" y2="10"></line>
+                        </svg>
+                    </button>
+                    <button class="action-btn copy-btn" data-action="copy" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-tooltip="复制">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                    </button>
+                    <button class="action-btn delete-btn" data-action="delete" data-level1-index="${level1Index}" data-case-index="${caseIndex}" data-tooltip="删除">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+
+    function renderLevel1Table() {
+        const tbody = document.getElementById('table-body');
+        if (!tbody) return;
+
+        const table = document.getElementById('batch-table');
+        if (table) {
+            table.classList.add('level1-mode');
+        }
+
+        updateLevel1CountHint();
+        try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(level1BatchData)); } catch(_) {}
+
+        let html = '';
+        let globalCaseIndex = 0;
+
+        level1BatchData.forEach((item, level1Index) => {
+            html += getLevel1RowHTML(item, level1Index);
+            
+            if (item.expanded && item.cases && item.cases.length > 0) {
+                html += getCaseTableHeaderHTML();
+                item.cases.forEach((caseItem, caseIndex) => {
+                    globalCaseIndex++;
+                    html += getCaseRowHTML(caseItem, level1Index, caseIndex, globalCaseIndex);
+                });
+            }
+        });
+
+        tbody.innerHTML = html;
+        updateAddCaseButtonState();
+    }
+
+    function updateLevel1CountHint() {
+        const hint = document.getElementById('level1-count-hint');
+        if (hint) {
+            const level1Count = level1BatchData.length;
+            let totalCases = 0;
+            level1BatchData.forEach(item => {
+                totalCases += (item.cases ? item.cases.length : 0);
+            });
+            hint.textContent = `共 ${level1Count} 个测试点，${totalCases} 条用例`;
+        }
+    }
+
+    function updateAddCaseButtonState() {
+        const btn = document.getElementById('add-case-to-level1-btn');
+        if (btn) {
+            btn.disabled = level1BatchData.length === 0;
+        }
+    }
+
+    function toggleLevel1Expand(level1Index) {
+        if (level1Index < 0 || level1Index >= level1BatchData.length) return;
+        
+        level1BatchData[level1Index].expanded = !level1BatchData[level1Index].expanded;
+        renderLevel1Table();
+    }
+
+    function addLevel1Row() {
+        if (level1BatchData.length >= MAX_ROWS) {
+            showErrorMessage(`已达到最大限制（${MAX_ROWS}条），请分批提交`);
+            return;
+        }
+        
+        const newLevel1 = createEmptyLevel1();
+        level1BatchData.push(newLevel1);
+        renderLevel1Table();
+        
+        const tbody = document.getElementById('table-body');
+        if (tbody) {
+            const lastLevel1Row = tbody.querySelector(`tr[data-level1-index="${level1BatchData.length - 1}"]`);
+            if (lastLevel1Row) {
+                const nameInput = lastLevel1Row.querySelector('.cell-input[data-field="name"]');
+                if (nameInput) nameInput.focus();
+            }
+        }
+        
+        showSuccessMessage('已添加新测试点');
+    }
+
+    function addCaseToLevel1(level1Index) {
+        if (level1Index === undefined || level1Index === null) {
+            if (level1BatchData.length === 0) {
+                showErrorMessage('请先添加一级测试点');
+                return;
+            }
+            level1Index = level1BatchData.length - 1;
+        }
+        
+        if (level1Index < 0 || level1Index >= level1BatchData.length) return;
+        
+        let totalCases = 0;
+        level1BatchData.forEach(item => {
+            totalCases += (item.cases ? item.cases.length : 0);
+        });
+        if (totalCases >= MAX_ROWS) {
+            showErrorMessage(`已达到最大行数限制（${MAX_ROWS}条），请分批提交`);
+            return;
+        }
+        
+        level1BatchData[level1Index].cases.push(createEmptyRow());
+        level1BatchData[level1Index].expanded = true;
+        renderLevel1Table();
+        
+        const tbody = document.getElementById('table-body');
+        if (tbody) {
+            const caseRows = tbody.querySelectorAll(`tr.case-row[data-level1-index="${level1Index}"]`);
+            if (caseRows.length > 0) {
+                const lastCaseRow = caseRows[caseRows.length - 1];
+                const nameInput = lastCaseRow.querySelector('.cell-input[data-field="name"]');
+                if (nameInput) nameInput.focus();
+            }
+        }
+    }
+
+    function handleLevel1TableInput(event) {
+        const target = event.target;
+        if (!target.matches('.cell-input, .cell-select')) return;
+
+        const rowType = target.dataset.type;
+        const level1Index = parseInt(target.dataset.level1Index, 10);
+        const field = target.dataset.field;
+        const value = target.value;
+
+        if (isNaN(level1Index) || !field) return;
+
+        if (rowType === 'level1') {
+            if (level1BatchData[level1Index]) {
+                level1BatchData[level1Index][field] = value;
+            }
+        } else if (rowType === 'case') {
+            const caseIndex = parseInt(target.dataset.caseIndex, 10);
+            if (!isNaN(caseIndex) && level1BatchData[level1Index] && level1BatchData[level1Index].cases[caseIndex]) {
+                level1BatchData[level1Index].cases[caseIndex][field] = value;
+            }
+        }
+        
+        try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(level1BatchData)); } catch(_) {}
+    }
+
+    function handleLevel1TableAction(event) {
+        const target = event.target.closest('.action-btn, .level1-expand-icon');
+        if (!target) return;
+
+        const action = target.dataset.action;
+        const level1Index = parseInt(target.dataset.level1Index, 10);
+        const caseIndex = parseInt(target.dataset.caseIndex, 10);
+
+        if (action === 'toggle-expand') {
+            event.preventDefault();
+            event.stopPropagation();
+            toggleLevel1Expand(level1Index);
+        } else if (action === 'add-case') {
+            addCaseToLevel1(level1Index);
+        } else if (action === 'copy-level1') {
+            copyLevel1Row(level1Index);
+        } else if (action === 'delete-level1') {
+            deleteLevel1Row(level1Index);
+        } else if (action === 'detail') {
+            openDrawerForCase(level1Index, caseIndex);
+        } else if (action === 'clone') {
+            window.openCloneCaseModalForLevel1(level1Index, caseIndex);
+        } else if (action === 'copy') {
+            copyCaseInLevel1(level1Index, caseIndex);
+        } else if (action === 'delete') {
+            deleteCaseInLevel1(level1Index, caseIndex);
+        }
+    }
+
+    function copyLevel1Row(level1Index) {
+        if (level1Index < 0 || level1Index >= level1BatchData.length) return;
+        
+        if (level1BatchData.length >= MAX_ROWS) {
+            showErrorMessage(`已达到最大限制（${MAX_ROWS}条），请分批提交`);
+            return;
+        }
+        
+        const original = level1BatchData[level1Index];
+        const copy = {
+            ...original,
+            id: 'temp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+            name: original.name ? `${original.name}-Copy` : '',
+            cases: original.cases.map(c => ({
+                ...c,
+                id: Date.now() + Math.random(),
+                name: c.name ? `${c.name}-Copy` : ''
+            }))
+        };
+        
+        level1BatchData.splice(level1Index + 1, 0, copy);
+        renderLevel1Table();
+        showSuccessMessage('已复制测试点');
+    }
+
+    async function deleteLevel1Row(level1Index) {
+        if (level1BatchData.length <= 1) {
+            showErrorMessage('至少保留一个测试点');
+            return;
+        }
+        
+        const item = level1BatchData[level1Index];
+        const caseCount = item.cases ? item.cases.length : 0;
+        
+        let message = `确定要删除测试点「${item.name || '未命名'}」吗？`;
+        if (caseCount > 0) {
+            message += `\n该测试点下有 ${caseCount} 个测试用例，将一并删除。`;
+        }
+        
+        const confirmed = await showConfirmMessage(message);
+        if (!confirmed) return;
+        
+        level1BatchData.splice(level1Index, 1);
+        renderLevel1Table();
+        showSuccessMessage('删除成功');
+    }
+
+    function copyCaseInLevel1(level1Index, caseIndex) {
+        if (level1Index < 0 || level1Index >= level1BatchData.length) return;
+        const cases = level1BatchData[level1Index].cases;
+        if (caseIndex < 0 || caseIndex >= cases.length) return;
+        
+        let totalCases = 0;
+        level1BatchData.forEach(item => {
+            totalCases += (item.cases ? item.cases.length : 0);
+        });
+        if (totalCases >= MAX_ROWS) {
+            showErrorMessage(`已达到最大行数限制（${MAX_ROWS}条），请分批提交`);
+            return;
+        }
+        
+        const original = cases[caseIndex];
+        const copy = {
+            ...original,
+            id: Date.now() + Math.random(),
+            name: original.name ? `${original.name}-Copy` : ''
+        };
+        
+        cases.splice(caseIndex + 1, 0, copy);
+        level1BatchData[level1Index].expanded = true;
+        renderLevel1Table();
+        showSuccessMessage('已复制用例');
+    }
+
+    async function deleteCaseInLevel1(level1Index, caseIndex) {
+        if (level1Index < 0 || level1Index >= level1BatchData.length) return;
+        const cases = level1BatchData[level1Index].cases;
+        if (cases.length <= 1) {
+            showErrorMessage('每个测试点至少保留一条用例');
+            return;
+        }
+        
+        const confirmed = await showConfirmMessage('确定要删除该用例吗？');
+        if (!confirmed) return;
+        
+        cases.splice(caseIndex, 1);
+        renderLevel1Table();
+        showSuccessMessage('删除成功');
+    }
+
+    function openDrawerForCase(level1Index, caseIndex) {
+        if (level1Index < 0 || level1Index >= level1BatchData.length) return;
+        const cases = level1BatchData[level1Index].cases;
+        if (caseIndex < 0 || caseIndex >= cases.length) return;
+
+        currentEditingIndex = { level1Index, caseIndex };
+        const row = cases[caseIndex];
+
+        const drawerTitle = document.querySelector('.drawer-title');
+        if (drawerTitle) {
+            const caseName = row.name && row.name.trim() ? row.name.trim() : '（未命名）';
+            drawerTitle.textContent = `编辑用例详情 — ${caseName}`;
+        }
+
+        const preconditionEl = document.getElementById('drawer-precondition');
+        const purposeEl = document.getElementById('drawer-purpose');
+        const stepsEl = document.getElementById('drawer-steps');
+        const expectedEl = document.getElementById('drawer-expected');
+        const keyConfigEl = document.getElementById('drawer-key-config');
+        const remarkEl = document.getElementById('drawer-remark');
+
+        if (preconditionEl) preconditionEl.value = row.precondition || '';
+        if (purposeEl) purposeEl.value = row.purpose || '';
+        if (stepsEl) stepsEl.value = row.steps || '';
+        if (expectedEl) expectedEl.value = row.expected || '';
+        if (keyConfigEl) keyConfigEl.value = row.key_config || '';
+        if (remarkEl) remarkEl.value = row.remark || '';
+
+        initDrawerTagSelectors(row);
+        initDrawerProjects(row);
+
+        const drawerOverlay = document.getElementById('drawer-overlay');
+        const drawer = document.getElementById('detail-drawer');
+
+        if (drawerOverlay) drawerOverlay.classList.add('active');
+        if (drawer) drawer.classList.add('active');
+    }
+
+    function syncDrawerToLevel1Data() {
+        if (!currentEditingIndex || currentEditingIndex.level1Index === undefined) return;
+        const { level1Index, caseIndex } = currentEditingIndex;
+        if (level1Index < 0 || level1Index >= level1BatchData.length) return;
+        const cases = level1BatchData[level1Index].cases;
+        if (caseIndex < 0 || caseIndex >= cases.length) return;
+
+        cases[caseIndex].precondition = document.getElementById('drawer-precondition')?.value || '';
+        cases[caseIndex].purpose = document.getElementById('drawer-purpose')?.value || '';
+        cases[caseIndex].steps = document.getElementById('drawer-steps')?.value || '';
+        cases[caseIndex].expected = document.getElementById('drawer-expected')?.value || '';
+        cases[caseIndex].key_config = document.getElementById('drawer-key-config')?.value || '';
+        cases[caseIndex].remark = document.getElementById('drawer-remark')?.value || '';
+        cases[caseIndex].environments = DrawerTagSelector.getValues('drawer-environments-selector').join(',');
+        cases[caseIndex].methods = DrawerTagSelector.getValues('drawer-methods-selector').join(',');
+        cases[caseIndex].sources = DrawerTagSelector.getValues('drawer-sources-selector').join(',');
+        cases[caseIndex].projects = document.getElementById('drawer-projects')?.value || '';
+    }
+
+    function saveDrawerDataForLevel1() {
+        if (!currentEditingIndex || currentEditingIndex.level1Index === undefined) return;
+        
+        const { level1Index, caseIndex } = currentEditingIndex;
+        if (level1Index < 0 || level1Index >= level1BatchData.length) {
+            showErrorMessage('数据不存在');
+            closeDrawer();
+            return;
+        }
+        
+        syncDrawerToLevel1Data();
+        closeDrawer();
+        
+        const tbody = document.getElementById('table-body');
+        if (tbody) {
+            const caseRow = tbody.querySelector(`tr.case-row[data-level1-index="${level1Index}"][data-case-index="${caseIndex}"]`);
+            if (caseRow) {
+                const btn = caseRow.querySelector('.detail-btn');
+                if (btn) {
+                    const hasDetail = hasDetailData(level1BatchData[level1Index].cases[caseIndex]);
+                    if (hasDetail) {
+                        btn.classList.add('has-detail');
+                        btn.setAttribute('data-tooltip', '已完善详情');
+                    } else {
+                        btn.classList.remove('has-detail');
+                        btn.setAttribute('data-tooltip', '详细信息');
+                    }
+                }
+            }
+        }
+        
+        try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(level1BatchData)); } catch(_) {}
+        showSuccessMessage('详情保存成功');
+    }
+
+    function validateLevel1Data() {
+        const errors = [];
+        level1BatchData.forEach((item, level1Index) => {
+            if (!item.name || item.name.trim() === '') {
+                errors.push(`测试点 ${level1Index + 1}：测试点名称不能为空`);
+            }
+            if (!item.cases || item.cases.length === 0) {
+                errors.push(`测试点 ${level1Index + 1}：至少需要一条测试用例`);
+            } else {
+                item.cases.forEach((caseItem, caseIndex) => {
+                    if (!caseItem.name || caseItem.name.trim() === '') {
+                        errors.push(`测试点 ${level1Index + 1} 的用例 ${caseIndex + 1}：用例名称不能为空`);
+                    }
+                });
+            }
+        });
+        return errors;
+    }
+
+    async function saveBatchForLevel1() {
+        if (isSaving) return;
+
+        if (currentEditingIndex !== null && currentEditingIndex.level1Index !== undefined) {
+            syncDrawerToLevel1Data();
+        }
+
+        const errors = validateLevel1Data();
+        if (errors.length > 0) {
+            showErrorMessage(errors[0]);
+            return;
+        }
+
+        isSaving = true;
+        const saveBtn = document.getElementById('save-btn');
+        const btnText = saveBtn?.querySelector('.btn-text');
+        const btnLoading = saveBtn?.querySelector('.btn-loading');
+
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            if (btnText) btnText.style.display = 'none';
+            if (btnLoading) btnLoading.style.display = 'flex';
+        }
+
+        try {
+            const payload = {
+                moduleId: moduleId,
+                libraryId: libraryId,
+                level1Points: level1BatchData.map(item => ({
+                    name: item.name.trim(),
+                    priority: item.priority,
+                    owner: item.owner || currentUser?.username || '',
+                    cases: item.cases.map(caseItem => ({
+                        name: caseItem.name.trim(),
+                        priority: caseItem.priority,
+                        type: caseItem.type,
+                        owner: caseItem.owner || item.owner || currentUser?.username || '',
+                        phase: caseItem.phase,
+                        env: caseItem.env,
+                        precondition: caseItem.precondition || '',
+                        purpose: caseItem.purpose || '',
+                        steps: caseItem.steps || '',
+                        expected: caseItem.expected || '',
+                        key_config: caseItem.key_config || '',
+                        remark: caseItem.remark || '',
+                        projects: caseItem.projects || '',
+                        environments: caseItem.environments || '',
+                        methods: caseItem.methods || '',
+                        sources: caseItem.sources || ''
+                    }))
+                }))
+            };
+
+            const result = await apiRequest('/api/testpoints/level1/batch-create', {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+
+            if (result.success) {
+                try { sessionStorage.removeItem(DRAFT_KEY); } catch(_) {}
+                showSaveSuccessBanner(result.data?.caseCount || 0);
+            } else {
+                showErrorMessage(result.message || '批量创建失败');
+            }
+        } catch (error) {
+            console.error('保存错误:', error);
+            showErrorMessage('保存失败，请重试');
+        } finally {
+            isSaving = false;
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                if (btnText) btnText.style.display = 'inline';
+                if (btnLoading) btnLoading.style.display = 'none';
+            }
+        }
+    }
+
+    function hasUnsavedDataForLevel1() {
+        return level1BatchData.some(item => {
+            if (item.name && item.name.trim()) return true;
+            return item.cases.some(c => c.name && c.name.trim());
+        });
+    }
+
+    function applyBulkDefaultsToLevel1(priority, type, phase, env, scope) {
+        level1BatchData.forEach((item, level1Index) => {
+            if (priority && (scope === 'all' || !item.priority)) {
+                item.priority = priority;
+            }
+            if (item.cases) {
+                item.cases.forEach((caseItem, caseIndex) => {
+                    const isTarget = scope === 'all' || (scope === 'empty' && !caseItem.name.trim());
+                    if (isTarget) {
+                        if (priority) caseItem.priority = priority;
+                        if (type) caseItem.type = type;
+                        if (phase) caseItem.phase = phase;
+                        if (env) caseItem.env = env;
+                    }
+                });
+            }
+        });
+        
+        renderLevel1Table();
+        closeBulkDefaultsModal();
+        try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(level1BatchData)); } catch(_) {}
+        showSuccessMessage('已批量应用默认值');
     }
 
     function getRowHTML(row, index) {
@@ -466,7 +1138,8 @@
                         ${testEnvs.map(e => `<option value="${e}" ${row.env === e ? 'selected' : ''}>${e}</option>`).join('')}
                     </select>
                 </td>
-                <td class="actions-cell">
+                <td class="col-actions">
+                    <div class="actions-cell">
                     <button class="action-btn detail-btn ${hasDetailData(row) ? 'has-detail' : ''}" data-action="detail" data-index="${index}" data-tooltip="${hasDetailData(row) ? '已完善详情' : '详细信息'}">
                         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -495,6 +1168,7 @@
                             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                         </svg>
                     </button>
+                    </div>
                 </td>
         `;
     }
@@ -1040,6 +1714,12 @@
     function saveDrawerData() {
         if (currentEditingIndex === null) return;
 
+        // 全部测试点模式
+        if (isAllLevel1Mode && typeof currentEditingIndex === 'object' && currentEditingIndex.level1Index !== undefined) {
+            saveDrawerDataForLevel1();
+            return;
+        }
+
         const rowIndex = currentEditingIndex;
         if (rowIndex < 0 || rowIndex >= batchData.length) {
             showErrorMessage('数据不存在');
@@ -1118,6 +1798,12 @@
         const env      = document.getElementById('bulk-env')?.value;
         const scope    = document.querySelector('input[name="bulk-scope"]:checked')?.value || 'empty';
 
+        // 全部测试点模式
+        if (isAllLevel1Mode) {
+            applyBulkDefaultsToLevel1(priority, type, phase, env, scope);
+            return;
+        }
+
         const tbody = document.getElementById('table-body');
         let changed = 0;
         
@@ -1159,8 +1845,13 @@
     async function saveBatch() {
         if (isSaving) return;
 
-        // ✅ 修复：如果用户处于“编辑详情”的侧滑抽屉中，尚未点击“保存详情”就直接点击上面的“批量保存”按钮
-        // 需要自动将抽屉里的最新内容（如“关键配置”、“前置条件”等）强制同步进 batchData，否则会丢失！
+        // 全部测试点模式
+        if (isAllLevel1Mode) {
+            return saveBatchForLevel1();
+        }
+
+        // ✅ 修复：如果用户处于"编辑详情"的侧滑抽屉中，尚未点击"保存详情"就直接点击上面的"批量保存"按钮
+        // 需要自动将抽屉里的最新内容（如"关键配置"、"前置条件"等）强制同步进 batchData，否则会丢失！
         if (currentEditingIndex !== null) {
             syncDrawerToData();
         }
@@ -1389,7 +2080,23 @@
             );
         }
 
-        listEl.innerHTML = filteredPoints.map(point => `
+        let html = '';
+        
+        if (!keyword || keyword.trim() === '') {
+            const isAllSelected = !level1Id || level1Id === '';
+            html += `
+                <div class="level1-dropdown-item ${isAllSelected ? 'selected' : ''}"
+                     data-id=""
+                     data-module-id=""
+                     data-name="全部测试点"
+                     data-module-name="">
+                    <div class="level1-dropdown-item-name">全部测试点</div>
+                    <div class="level1-dropdown-item-module">查看所有测试点</div>
+                </div>
+            `;
+        }
+
+        html += filteredPoints.map(point => `
             <div class="level1-dropdown-item ${point.id == level1Id ? 'selected' : ''}"
                  data-id="${point.id}"
                  data-module-id="${point.module_id}"
@@ -1400,7 +2107,9 @@
             </div>
         `).join('');
 
-        if (filteredPoints.length === 0) {
+        listEl.innerHTML = html;
+
+        if (filteredPoints.length === 0 && (keyword && keyword.trim() !== '')) {
             listEl.innerHTML = '<div class="level1-dropdown-empty">暂无匹配的一级测试点</div>';
         }
     }
@@ -1431,8 +2140,14 @@
 
     async function selectLevel1Point(pointId, pointName, newModuleId, newModuleName) {
         const currentUrl = new URL(window.location.href);
-        currentUrl.searchParams.set('level1Id', pointId);
-        currentUrl.searchParams.set('level1Name', pointName);
+        
+        if (pointId && pointId !== '') {
+            currentUrl.searchParams.set('level1Id', pointId);
+            currentUrl.searchParams.set('level1Name', pointName);
+        } else {
+            currentUrl.searchParams.delete('level1Id');
+            currentUrl.searchParams.delete('level1Name');
+        }
 
         if (newModuleId && newModuleId != moduleId) {
             currentUrl.searchParams.set('moduleId', newModuleId);
@@ -1532,6 +2247,10 @@
         const drawerCancelBtn = document.getElementById('drawer-cancel');
         const drawerSaveBtn   = document.getElementById('drawer-save');
         const bulkDefaultsBtn = document.getElementById('bulk-defaults-btn');
+        
+        // 全部测试点模式的按钮
+        const addLevel1Btn = document.getElementById('add-level1-btn');
+        const addCaseToLevel1Btn = document.getElementById('add-case-to-level1-btn');
 
         if (backBtn) backBtn.addEventListener('click', goBack);
 
@@ -1544,12 +2263,23 @@
             saveBtn.addEventListener('click', saveBatch);
         }
 
+        // 指定测试点模式的添加按钮
         if (addRowBtn) addRowBtn.addEventListener('click', addRow);
+        
+        // 全部测试点模式的按钮
+        if (addLevel1Btn) addLevel1Btn.addEventListener('click', addLevel1Row);
+        if (addCaseToLevel1Btn) addCaseToLevel1Btn.addEventListener('click', () => addCaseToLevel1());
 
         if (tableBody) {
-            tableBody.addEventListener('input', handleTableInput);
-            tableBody.addEventListener('change', handleTableInput);
-            tableBody.addEventListener('click', handleTableAction);
+            if (isAllLevel1Mode) {
+                tableBody.addEventListener('input', handleLevel1TableInput);
+                tableBody.addEventListener('change', handleLevel1TableInput);
+                tableBody.addEventListener('click', handleLevel1TableAction);
+            } else {
+                tableBody.addEventListener('input', handleTableInput);
+                tableBody.addEventListener('change', handleTableInput);
+                tableBody.addEventListener('click', handleTableAction);
+            }
         }
 
         if (errorModalClose) {
@@ -1954,6 +2684,9 @@
             return;
         }
 
+        // 判断是否为"全部测试点"模式
+        isAllLevel1Mode = !level1Id;
+
         await Promise.all([
             loadConfigData(),
             loadAllLevel1Points(),
@@ -1969,20 +2702,56 @@
             const saved = sessionStorage.getItem(DRAFT_KEY);
             if (saved) {
                 const parsed = JSON.parse(saved);
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                    batchData = parsed;
-                    restored = true;
+                if (isAllLevel1Mode) {
+                    if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].type === 'level1') {
+                        level1BatchData = parsed;
+                        restored = true;
+                    }
+                } else {
+                    if (Array.isArray(parsed) && parsed.length > 0) {
+                        batchData = parsed;
+                        restored = true;
+                    }
                 }
             }
         } catch (_) {}
 
         if (!restored) {
-            batchData = [createEmptyRow()];
+            if (isAllLevel1Mode) {
+                level1BatchData = [createEmptyLevel1()];
+            } else {
+                batchData = [createEmptyRow()];
+            }
+        }
+
+        // 根据模式显示/隐藏相应的UI元素
+        const addRowSection = document.getElementById('add-row-section');
+        const addLevel1Section = document.getElementById('add-level1-section');
+        const tableHeadNormal = document.getElementById('table-head-normal');
+        const tableHeadLevel1 = document.getElementById('table-head-level1');
+        
+        if (isAllLevel1Mode) {
+            if (addRowSection) addRowSection.style.display = 'none';
+            if (addLevel1Section) addLevel1Section.style.display = 'flex';
+            if (tableHeadNormal) tableHeadNormal.style.display = 'none';
+            if (tableHeadLevel1) tableHeadLevel1.style.display = '';
+        } else {
+            if (addRowSection) addRowSection.style.display = 'flex';
+            if (addLevel1Section) addLevel1Section.style.display = 'none';
+            if (tableHeadNormal) tableHeadNormal.style.display = '';
+            if (tableHeadLevel1) tableHeadLevel1.style.display = 'none';
         }
 
         initBreadcrumb();
         createBulkDefaultsModal();
-        renderTable();
+        initDrawerScriptFileUpload();
+        
+        if (isAllLevel1Mode) {
+            renderLevel1Table();
+        } else {
+            renderTable();
+        }
+        
         initEventListeners();
         initDrawerResizer();
         initTableResizer();
@@ -2527,6 +3296,275 @@
         window.closeCloneCaseModal();
         showSuccessMessage(`成功克隆「${targetCase.name}」到第 ${index + 2} 行`);
     };
+
+    // ========================================
+    // 关联脚本管理功能
+    // ========================================
+    
+    let currentDrawerScripts = [];
+    let editingDrawerScriptIndex = -1;
+    
+    function openDrawerScriptModal() {
+        editingDrawerScriptIndex = -1;
+        document.getElementById('drawer-script-modal-title').textContent = '添加关联脚本';
+        document.getElementById('drawer-script-form').reset();
+        document.getElementById('drawer-script-id').value = '';
+        document.getElementById('drawer-script-file-path').value = '';
+        document.getElementById('drawer-script-file-size').value = '';
+        document.getElementById('drawer-script-original-filename').value = '';
+        document.querySelector('input[name="drawer-link-type"][value="external"]').checked = true;
+        
+        const filePreview = document.getElementById('drawer-script-file-preview');
+        const uploadContent = document.getElementById('drawer-script-upload-content');
+        if (filePreview) filePreview.style.display = 'none';
+        if (uploadContent) uploadContent.style.display = 'block';
+        
+        document.getElementById('drawer-script-modal').style.display = 'block';
+    }
+    
+    function closeDrawerScriptModal() {
+        document.getElementById('drawer-script-modal').style.display = 'none';
+        editingDrawerScriptIndex = -1;
+    }
+    
+    function editDrawerScript(index) {
+        const script = currentDrawerScripts[index];
+        if (!script) return;
+        
+        editingDrawerScriptIndex = index;
+        document.getElementById('drawer-script-modal-title').textContent = '编辑关联脚本';
+        document.getElementById('drawer-script-name-input').value = script.script_name || '';
+        document.getElementById('drawer-script-type-input').value = script.script_type || 'tcl';
+        document.getElementById('drawer-script-desc-input').value = script.description || '';
+        document.getElementById('drawer-script-link-input').value = script.link_url || '';
+        document.getElementById('drawer-script-link-title-input').value = script.link_title || '';
+        document.getElementById('drawer-script-file-path').value = script.file_path || '';
+        document.getElementById('drawer-script-file-size').value = script.file_size || '';
+        document.getElementById('drawer-script-original-filename').value = script.original_filename || '';
+        
+        const linkType = script.link_type || 'external';
+        const linkTypeRadio = document.querySelector(`input[name="drawer-link-type"][value="${linkType}"]`);
+        if (linkTypeRadio) linkTypeRadio.checked = true;
+        
+        const filePreview = document.getElementById('drawer-script-file-preview');
+        const uploadContent = document.getElementById('drawer-script-upload-content');
+        
+        if (script.file_path) {
+            document.getElementById('drawer-script-file-name').textContent = script.original_filename || script.script_name;
+            if (filePreview) filePreview.style.display = 'flex';
+            if (uploadContent) uploadContent.style.display = 'none';
+        } else {
+            if (filePreview) filePreview.style.display = 'none';
+            if (uploadContent) uploadContent.style.display = 'block';
+        }
+        
+        document.getElementById('drawer-script-modal').style.display = 'block';
+    }
+    
+    function saveDrawerScript() {
+        const name = document.getElementById('drawer-script-name-input').value.trim();
+        const type = document.getElementById('drawer-script-type-input').value;
+        const desc = document.getElementById('drawer-script-desc-input').value.trim();
+        const linkUrl = document.getElementById('drawer-script-link-input').value.trim();
+        const linkTitle = document.getElementById('drawer-script-link-title-input').value.trim();
+        const linkType = document.querySelector('input[name="drawer-link-type"]:checked').value;
+        const filePath = document.getElementById('drawer-script-file-path').value;
+        const fileSize = document.getElementById('drawer-script-file-size').value;
+        const originalFilename = document.getElementById('drawer-script-original-filename').value;
+        
+        if (!name) {
+            showErrorMessage('请输入脚本名称');
+            return;
+        }
+        
+        const scriptData = {
+            script_name: name,
+            script_type: type,
+            description: desc,
+            link_url: linkUrl || null,
+            link_title: linkTitle || null,
+            link_type: linkType,
+            file_path: filePath || null,
+            file_size: fileSize ? parseInt(fileSize) : null,
+            original_filename: originalFilename || null
+        };
+        
+        if (editingDrawerScriptIndex >= 0) {
+            currentDrawerScripts[editingDrawerScriptIndex] = scriptData;
+        } else {
+            currentDrawerScripts.push(scriptData);
+        }
+        
+        renderDrawerScriptsSummary();
+        closeDrawerScriptModal();
+    }
+    
+    function removeDrawerScript(index) {
+        showConfirmMessage('确定要删除此脚本吗？').then(confirmed => {
+            if (confirmed) {
+                currentDrawerScripts.splice(index, 1);
+                renderDrawerScriptsSummary();
+            }
+        });
+    }
+    
+    function removeDrawerScriptFile() {
+        document.getElementById('drawer-script-file-path').value = '';
+        document.getElementById('drawer-script-file-size').value = '';
+        document.getElementById('drawer-script-original-filename').value = '';
+        
+        const filePreview = document.getElementById('drawer-script-file-preview');
+        const uploadContent = document.getElementById('drawer-script-upload-content');
+        if (filePreview) filePreview.style.display = 'none';
+        if (uploadContent) uploadContent.style.display = 'block';
+        
+        document.getElementById('drawer-script-file-input').value = '';
+    }
+    
+    function initDrawerScriptFileUpload() {
+        const fileInput = document.getElementById('drawer-script-file-input');
+        const uploadArea = document.getElementById('drawer-script-upload-area');
+        
+        if (!fileInput || !uploadArea) return;
+        
+        uploadArea.addEventListener('click', (e) => {
+            if (e.target.closest('.btn-remove-file')) return;
+            fileInput.click();
+        });
+        
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleDrawerScriptFileUpload(files[0]);
+            }
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleDrawerScriptFileUpload(e.target.files[0]);
+            }
+        });
+    }
+    
+    async function handleDrawerScriptFileUpload(file) {
+        const maxSize = 10 * 1024 * 1024;
+        if (file.size > maxSize) {
+            showErrorMessage('文件大小不能超过10MB');
+            return;
+        }
+        
+        const allowedExts = ['.tcl', '.py', '.sh', '.txt', '.json', '.pl', '.rb', '.js', '.yaml', '.yml', '.xml', '.cfg', '.conf', '.ini'];
+        const ext = '.' + file.name.split('.').pop().toLowerCase();
+        if (!allowedExts.includes(ext)) {
+            showErrorMessage('不支持的文件类型: ' + ext);
+            return;
+        }
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        try {
+            const response = await fetch('/api/testcases/scripts/upload', {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'Authorization': `Bearer ${authToken}`
+                }
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                document.getElementById('drawer-script-file-path').value = data.file.path;
+                document.getElementById('drawer-script-file-size').value = data.file.size;
+                document.getElementById('drawer-script-original-filename').value = data.file.originalName;
+                
+                document.getElementById('drawer-script-file-name').textContent = data.file.originalName;
+                document.getElementById('drawer-script-file-preview').style.display = 'flex';
+                document.getElementById('drawer-script-upload-content').style.display = 'none';
+                
+                const nameInput = document.getElementById('drawer-script-name-input');
+                if (!nameInput.value) {
+                    nameInput.value = data.file.originalName;
+                }
+                
+                showSuccessMessage('文件上传成功');
+            } else {
+                showErrorMessage(data.message || '上传失败');
+            }
+        } catch (error) {
+            console.error('上传文件失败:', error);
+            showErrorMessage('上传文件失败');
+        }
+    }
+    
+    function renderDrawerScriptsSummary() {
+        const listContainer = document.getElementById('drawer-scripts-list');
+        const emptyState = document.getElementById('drawer-scripts-empty');
+        const editBtn = document.getElementById('drawer-edit-scripts-btn');
+        
+        if (currentDrawerScripts.length > 0) {
+            emptyState.style.display = 'none';
+            listContainer.style.display = 'block';
+            editBtn.style.display = 'inline-flex';
+            
+            listContainer.innerHTML = currentDrawerScripts.map((script, index) => `
+                <div class="drawer-script-item">
+                    <span class="script-type-badge ${script.script_type}">${script.script_type.toUpperCase()}</span>
+                    <span class="script-name">${escapeHtml(script.script_name)}</span>
+                    ${script.file_path ? `<span class="script-file-indicator" title="已上传文件">📎</span>` : ''}
+                    ${script.link_url ? `<a href="${escapeHtml(script.link_url)}" class="script-link">查看</a>` : ''}
+                    <button type="button" class="btn-icon" onclick="editDrawerScript(${index})" title="编辑">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4-9.5-9.5z"></path>
+                        </svg>
+                    </button>
+                    <button type="button" class="btn-icon btn-danger" onclick="removeDrawerScript(${index})" title="删除">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </div>
+            `).join('');
+            
+            document.getElementById('drawer-scripts').value = JSON.stringify(currentDrawerScripts);
+        } else {
+            emptyState.style.display = 'block';
+            listContainer.style.display = 'none';
+            editBtn.style.display = 'none';
+            document.getElementById('drawer-scripts').value = '';
+        }
+    }
+    
+    function getDrawerScripts() {
+        return currentDrawerScripts;
+    }
+    
+    function clearDrawerScripts() {
+        currentDrawerScripts = [];
+        renderDrawerScriptsSummary();
+    }
+    
+    window.openDrawerScriptModal = openDrawerScriptModal;
+    window.closeDrawerScriptModal = closeDrawerScriptModal;
+    window.editDrawerScript = editDrawerScript;
+    window.saveDrawerScript = saveDrawerScript;
+    window.removeDrawerScript = removeDrawerScript;
+    window.removeDrawerScriptFile = removeDrawerScriptFile;
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);

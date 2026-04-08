@@ -349,7 +349,55 @@ function calculateStatistics(testCases) {
     return stats;
 }
 
-function generateMarkdownReport(reportData, aiAnalysis) {
+// 获取报告模板配置
+function getTemplateConfig(template) {
+    const templates = {
+        'standard': {
+            title: '测试报告',
+            description: '常规汇总与回归测试报告',
+            sections: ['basicInfo', 'statistics', 'modules', 'failedCases', 'summary', 'bugs'],
+            focusAreas: ['功能验证', '回归测试', '用例覆盖']
+        },
+        'hardware': {
+            title: '硬件测试报告',
+            description: '硬件底层专项分析报告',
+            sections: ['basicInfo', 'statistics', 'modules', 'failedCases', 'hardwareAnalysis', 'summary'],
+            focusAreas: ['硬件兼容性', '底层驱动', '性能指标', '稳定性'],
+            extraPrompt: `请特别关注以下硬件相关测试场景：
+- PFC (Priority Flow Control) 流控测试
+- Buffer 溢出和丢包测试
+- ASIC 状态和寄存器测试
+- Traffic Drop 分析
+- Core Dump 和 ASIC Hang 问题`
+        },
+        'performance': {
+            title: '性能测试报告',
+            description: '性能测试专项报告',
+            sections: ['basicInfo', 'performanceMetrics', 'statistics', 'bottlenecks', 'summary'],
+            focusAreas: ['响应时间', '吞吐量', '并发性能', '资源利用率'],
+            extraPrompt: `请特别关注以下性能相关指标：
+- 响应时间和延迟分析
+- 吞吐量和处理能力
+- 资源利用率（CPU、内存、网络）
+- 性能瓶颈识别`
+        },
+        'ai-deep': {
+            title: 'AI深度分析报告',
+            description: 'AI深度分析报告',
+            sections: ['basicInfo', 'statistics', 'aiInsights', 'riskAnalysis', 'recommendations', 'summary'],
+            focusAreas: ['智能分析', '风险评估', '优化建议', '趋势预测'],
+            extraPrompt: `请进行深度AI分析，包括：
+- 测试质量评估和改进建议
+- 风险点识别和优先级排序
+- 测试覆盖率分析
+- 后续测试策略建议`
+        }
+    };
+    
+    return templates[template] || templates['standard'];
+}
+
+function generateMarkdownReport(reportData, aiAnalysis, template = 'standard') {
     const { testPlan, statistics, moduleDistribution, priorityDistribution, ownerDistribution, failedCases } = reportData;
     
     const formatDate = (date) => {
@@ -371,7 +419,15 @@ function generateMarkdownReport(reportData, aiAnalysis) {
         ? `${testPlan.software} (v${testPlan.softwareVersion})`
         : (testPlan.software || '-');
     
-    let markdown = `# ${testPlan.project || '测试项目'} 测试报告
+    // 根据模板类型生成不同的报告标题和结构
+    const templateConfig = getTemplateConfig(template);
+    
+    let markdown = `# ${testPlan.project || '测试项目'} ${templateConfig.title}
+
+---
+
+> **报告类型**: ${templateConfig.description}
+> **生成时间**: ${new Date().toLocaleString('zh-CN')}
 
 ---
 
@@ -471,34 +527,6 @@ ${aiAnalysis?.suggestions || `### 测试限制
         const failRate = stats.total > 0 ? ((stats.failed / stats.total) * 100).toFixed(1) : 0;
         markdown += `| ${priority} | ${stats.total} | ${stats.passed} | ${stats.failed} | ${failRate}% |\n`;
     });
-    
-    markdown += `
-### 3.2 失败用例清单
-
-| 用例ID | 用例名称 | 模块 | 优先级 | 失败原因 |
-|--------|----------|------|--------|----------|
-`;
-    
-    const allFailedCases = reportData.testCases.filter(tc => {
-        const status = tc.status || tc.execution_status || tc.status_name || '';
-        return isStatusFailed(status);
-    });
-    
-    // 限制显示数量，防止内存爆炸
-    const MAX_FAILED_CASES_DISPLAY = 100;
-    
-    if (allFailedCases.length > 0) {
-        const displayCases = allFailedCases.slice(0, MAX_FAILED_CASES_DISPLAY);
-        displayCases.forEach(tc => {
-            markdown += `| ${tc.caseId || tc.id} | ${tc.name} | ${tc.module || '-'} | ${tc.priority} | 待分析 |\n`;
-        });
-        
-        if (allFailedCases.length > MAX_FAILED_CASES_DISPLAY) {
-            markdown += `| ... | **还有 ${allFailedCases.length - MAX_FAILED_CASES_DISPLAY} 条失败用例未显示** | ... | ... | 请在 xTest 平台上查看详情 |\n`;
-        }
-    } else {
-        markdown += `| - | 暂无失败用例 | - | - | - |\n`;
-    }
     
     markdown += `
 ---

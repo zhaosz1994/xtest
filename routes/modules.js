@@ -1,19 +1,11 @@
 const express = require('express');
 const router = express.Router();
-
-// 测试数据库连接
-console.log('正在加载模块路由...');
-try {
-    const pool = require('../db');
-    console.log('数据库连接池加载成功');
-} catch (error) {
-    console.error('数据库连接池加载失败:', error);
-    process.exit(1);
-}
-
 const pool = require('../db');
 const { authenticateToken } = require('../middleware');
 const { logActivity } = require('./history');
+const logger = require('../services/logger');
+
+logger.debug('模块路由已加载');
 
 // 获取模块列表（支持分页和按用例库过滤）
 router.post('/list', async (req, res) => {
@@ -42,10 +34,7 @@ router.post('/list', async (req, res) => {
     
     query += ` GROUP BY m.id ORDER BY m.order_index ASC, m.created_at DESC LIMIT ${limitValue} OFFSET ${offsetValue}`;
     
-    console.log('执行SQL查询:', query);
-    console.log('查询参数:', params);
-    
-    const [modules] = await pool.execute(query, params);
+    const [modules] = await pool.query(query, params);
     
     console.log('查询结果:', modules);
     
@@ -59,7 +48,7 @@ router.post('/list', async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('获取模块列表错误:', error);
+    logger.error('获取模块列表错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
@@ -110,7 +99,7 @@ router.post('/create', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '模块添加成功' });
   } catch (error) {
-    console.error('添加模块错误:', error);
+    logger.error('添加模块错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
@@ -151,7 +140,7 @@ router.post('/search', async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('搜索模块错误:', error);
+    logger.error('搜索模块错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
@@ -187,7 +176,7 @@ router.post('/reorder', async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error('调整模块顺序错误:', error);
+    logger.error('调整模块顺序错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
@@ -211,7 +200,7 @@ router.post('/batchCreate', async (req, res) => {
     
     res.json({ success: true, message: '批量创建模块成功' });
   } catch (error) {
-    console.error('批量创建模块错误:', error);
+    logger.error('批量创建模块错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
@@ -523,7 +512,7 @@ router.post('/clone', authenticateToken, async (req, res) => {
     
   } catch (error) {
     await connection.rollback();
-    console.error('克隆模块错误:', error);
+    logger.error('克隆模块错误:', { error: error.message });
     res.json({ success: false, message: '克隆失败: ' + error.message });
   } finally {
     connection.release();
@@ -549,7 +538,7 @@ router.get('/by-library/:libraryId', async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('获取模块列表错误:', error);
+    logger.error('获取模块列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
@@ -579,7 +568,7 @@ router.get('/by-project/:projectId', async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('获取项目模块列表错误:', error);
+    logger.error('获取项目模块列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });

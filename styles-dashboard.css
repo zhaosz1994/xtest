@@ -616,7 +616,7 @@
     }
 }
 
-/* AI知识问答模态框样式 */
+/* AI问答模态框样式 */
 .ai-modal {
     display: none;
     position: fixed;

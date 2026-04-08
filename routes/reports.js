@@ -5,6 +5,8 @@ const { authenticateToken } = require('../middleware');
 const reportService = require('../services/reportService');
 const { getUserAIConfig } = require('../services/aiService');
 const { logActivity } = require('./history');
+const logger = require('../services/logger');
+const aiAuditLogger = require('../services/aiAuditLogger');
 require('dotenv').config();
 
 // 获取测试报告列表（支持分页）
@@ -85,7 +87,7 @@ router.get('/list', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取测试报告列表错误:', error);
+    logger.error('获取测试报告列表错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -118,7 +120,7 @@ router.post('/create', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '测试报告创建成功' });
   } catch (error) {
-    console.error('创建测试报告错误:', error);
+    logger.error('创建测试报告错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -152,7 +154,7 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '测试报告更新成功' });
   } catch (error) {
-    console.error('更新测试报告错误:', error);
+    logger.error('更新测试报告错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -178,7 +180,7 @@ router.delete('/delete/:id', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '测试报告删除成功' });
   } catch (error) {
-    console.error('删除测试报告错误:', error);
+    logger.error('删除测试报告错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -219,29 +221,32 @@ router.get('/detail/:id', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取测试报告详情错误:', error);
+    logger.error('获取测试报告详情错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
 router.post('/generate/:testPlanId', authenticateToken, async (req, res) => {
   const { testPlanId } = req.params;
-  const { useAI = true } = req.body;
+  const { useAI = true, versionNote = '' } = req.body;
   const currentUserId = req.user.id;
+  const currentUsername = req.user.username;
   
   try {
     const reportData = await reportService.assembleReportData(testPlanId);
     
     let aiAnalysis = null;
+    let aiAnalysisFailed = false;
     if (useAI) {
       try {
         const aiModel = await getUserAIConfig(currentUserId);
         
         if (aiModel) {
-          aiAnalysis = await generateAIAnalysis(reportData, aiModel);
+          aiAnalysis = await generateAIAnalysis(reportData, aiModel, currentUserId, currentUsername);
         }
       } catch (aiError) {
-        console.error('AI分析生成失败:', aiError);
+        aiAnalysisFailed = true;
+        logger.error('AI分析生成失败', { error: aiError.message });
       }
     }
     
@@ -249,57 +254,66 @@ router.post('/generate/:testPlanId', authenticateToken, async (req, res) => {
     
     const reportName = `${reportData.testPlan.project || '测试'}_${reportData.testPlan.name || '报告'}_${new Date().toISOString().split('T')[0]}`;
     
-    const [existingReport] = await pool.execute(
-      'SELECT id, summary FROM test_reports WHERE test_plan_id = ? ORDER BY created_at DESC LIMIT 1',
+    // 查找该测试计划的当前报告
+    const [existingReports] = await pool.execute(
+      'SELECT id, version FROM test_reports WHERE test_plan_id = ? AND is_current_version = 1 ORDER BY created_at DESC LIMIT 1',
       [testPlanId]
     );
     
     let reportId;
     let filePath;
+    let newVersion = 1;
+    let parentReportId = null;
     
-    if (existingReport.length > 0) {
-      reportId = existingReport[0].id;
-      const oldFilePath = existingReport[0].summary;
-      if (oldFilePath && oldFilePath.startsWith('/')) {
-        await reportService.deleteReportFile(oldFilePath);
-      }
-      filePath = await reportService.saveReportToFile(reportId, markdownContent);
-      await pool.execute(`
-        UPDATE test_reports 
-        SET name = ?, summary = ?, start_date = ?, end_date = ?, updated_at = NOW()
-        WHERE id = ?
-      `, [reportName, filePath, reportData.testPlan.startDate, reportData.testPlan.endDate, reportId]);
-    } else {
-      const [result] = await pool.execute(`
-        INSERT INTO test_reports (name, creator, project, iteration, test_plan_id, report_type, summary, start_date, end_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
-        reportName,
-        reportData.testPlan.owner,
-        reportData.testPlan.project,
-        reportData.testPlan.iteration,
-        testPlanId,
-        'AI生成',
-        '',
-        reportData.testPlan.startDate,
-        reportData.testPlan.endDate
-      ]);
-      reportId = result.insertId;
-      filePath = await reportService.saveReportToFile(reportId, markdownContent);
-      await pool.execute('UPDATE test_reports SET summary = ? WHERE id = ?', [filePath, reportId]);
+    if (existingReports.length > 0) {
+      const currentReport = existingReports[0];
+      parentReportId = currentReport.id;
+      newVersion = (currentReport.version || 1) + 1;
+      
+      // 将旧报告标记为历史版本
+      await pool.execute(
+        'UPDATE test_reports SET is_current_version = 0 WHERE id = ?',
+        [currentReport.id]
+      );
     }
+    
+    // 创建新版本报告
+    const [result] = await pool.execute(`
+      INSERT INTO test_reports (name, creator, creator_id, project, iteration, test_plan_id, report_type, summary, start_date, end_date, version, parent_report_id, version_note, is_current_version, ai_analysis_failed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+    `, [
+      reportName,
+      reportData.testPlan.owner,
+      currentUserId,
+      reportData.testPlan.project,
+      reportData.testPlan.iteration,
+      testPlanId,
+      'AI生成',
+      '',
+      reportData.testPlan.startDate,
+      reportData.testPlan.endDate,
+      newVersion,
+      parentReportId,
+      versionNote,
+      aiAnalysisFailed ? 1 : 0
+    ]);
+    
+    reportId = result.insertId;
+    filePath = await reportService.saveReportToFile(reportId, markdownContent);
+    await pool.execute('UPDATE test_reports SET summary = ? WHERE id = ?', [filePath, reportId]);
     
     res.json({
       success: true,
       reportId: reportId,
       reportName: reportName,
+      version: newVersion,
       markdown: markdownContent,
       statistics: reportData.statistics,
       moduleDistribution: reportData.moduleDistribution,
       priorityDistribution: reportData.priorityDistribution
     });
   } catch (error) {
-    console.error('生成测试报告错误:', error);
+    logger.error('生成测试报告错误:', { error: error.message });
     res.status(500).json({ success: false, message: '生成报告失败: ' + error.message });
   }
 });
@@ -323,7 +337,7 @@ router.get('/preview/:testPlanId', authenticateToken, async (req, res) => {
       testPlan: reportData.testPlan
     });
   } catch (error) {
-    console.error('预览测试报告错误:', error);
+    logger.error('预览测试报告错误:', { error: error.message });
     res.status(500).json({ success: false, message: '预览报告失败: ' + error.message });
   }
 });
@@ -355,7 +369,7 @@ router.get('/markdown/:reportId', authenticateToken, async (req, res) => {
       markdown: markdown
     });
   } catch (error) {
-    console.error('获取报告Markdown错误:', error);
+    logger.error('获取报告Markdown错误:', { error: error.message });
     res.status(500).json({ success: false, message: '获取报告失败' });
   }
 });
@@ -368,13 +382,17 @@ router.get('/hardware-knowledge', authenticateToken, async (req, res) => {
       knowledge: knowledge
     });
   } catch (error) {
-    console.error('获取硬件知识错误:', error);
+    logger.error('获取硬件知识错误:', { error: error.message });
     res.status(500).json({ success: false, message: '获取硬件知识失败' });
   }
 });
 
-async function generateAIAnalysis(reportData, aiModel) {
+async function generateAIAnalysis(reportData, aiModel, userId = null, username = null) {
   const reportService = require('../services/reportService');
+  const startTime = Date.now();
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let totalTokens = 0;
   
   const HARDWARE_KNOWLEDGE = reportService.getHardwareKnowledge();
   
@@ -533,11 +551,18 @@ ${blockedCases.slice(0, 10).map(tc =>
 
     const data = await response.json();
     
+    // 记录token使用情况
+    if (data.usage) {
+      promptTokens = data.usage.prompt_tokens || 0;
+      completionTokens = data.usage.completion_tokens || 0;
+      totalTokens = data.usage.total_tokens || 0;
+    }
+    
     if (data.choices && Array.isArray(data.choices) && data.choices.length > 0) {
       const choice = data.choices[0];
       
       if (!choice.message) {
-        console.warn('大模型返回格式异常: 缺少 message 字段');
+        logger.warn('大模型返回格式异常: 缺少 message 字段');
         return null;
       }
       
@@ -547,7 +572,7 @@ ${blockedCases.slice(0, 10).map(tc =>
         const firstToolCall = toolCalls[0];
         
         if (!firstToolCall.function || !firstToolCall.function.arguments) {
-          console.warn('大模型返回格式异常: tool_calls 结构不完整');
+          logger.warn('大模型返回格式异常: tool_calls 结构不完整');
           return null;
         }
         
@@ -560,7 +585,7 @@ ${blockedCases.slice(0, 10).map(tc =>
             functionArgs = argsStr;
           }
         } catch (parseError) {
-          console.warn('大模型返回格式破损，使用降级解析:', parseError.message);
+          logger.warn('大模型返回格式破损，使用降级解析', { error: parseError.message });
           const argsStr = String(firstToolCall.function.arguments);
           const strategyMatch = argsStr.match(/"test_strategy"\s*:\s*"([^"]*)"/);
           const summaryMatch = argsStr.match(/"test_summary"\s*:\s*"([^"]*)"/);
@@ -573,34 +598,93 @@ ${blockedCases.slice(0, 10).map(tc =>
           if (limitationsMatch) functionArgs.limitations = limitationsMatch[1];
         }
         
-        return {
+        const result = {
           summary: `### 测试策略\n\n${functionArgs.test_strategy || '本次测试覆盖了主要功能模块。'}\n\n### 测试总结\n\n${functionArgs.test_summary || '测试按计划完成。'}`,
           riskAnalysis: `### 遗留重要问题\n\n${functionArgs.legacy_issues || '暂无遗留问题。'}`,
           suggestions: `### 测试限制\n\n${functionArgs.limitations || '本次测试覆盖了主要场景。'}`,
           structured: functionArgs
         };
+        
+        // 记录成功的AI使用
+        const executionTimeMs = Date.now() - startTime;
+        if (userId) {
+          aiAuditLogger.logSuccess({
+            userId: userId,
+            username: username,
+            skillName: '测试报告AI分析',
+            skillId: null,
+            operationType: 'ANALYZE',
+            executionTimeMs: executionTimeMs,
+            modelName: aiModel?.model_name,
+            promptTokens: promptTokens,
+            completionTokens: completionTokens,
+            totalTokens: totalTokens,
+            resultCount: 1
+          });
+        }
+        
+        return result;
       }
       
       const aiContent = choice.message.content || '';
       if (aiContent) {
         const sections = parseAIContent(aiContent);
-        return {
+        const result = {
           summary: sections.summary || '### 测试总结\n\n本次测试按计划完成。',
           riskAnalysis: sections.riskAnalysis || '### 风险评估\n\n当前测试结果整体稳定。',
           suggestions: sections.suggestions || '### 改进建议\n\n建议增加测试覆盖。'
         };
+        
+        // 记录成功的AI使用
+        const executionTimeMs = Date.now() - startTime;
+        if (userId) {
+          aiAuditLogger.logSuccess({
+            userId: userId,
+            username: username,
+            skillName: '测试报告AI分析',
+            skillId: null,
+            operationType: 'ANALYZE',
+            executionTimeMs: executionTimeMs,
+            modelName: aiModel?.model_name,
+            promptTokens: promptTokens,
+            completionTokens: completionTokens,
+            totalTokens: totalTokens,
+            resultCount: 1
+          });
+        }
+        
+        return result;
       }
       
-      console.warn('大模型返回格式异常: 无法解析内容');
+      logger.warn('大模型返回格式异常: 无法解析内容');
       return null;
     }
     
     return null;
   } catch (error) {
+    const executionTimeMs = Date.now() - startTime;
+    
+    // 记录失败的AI使用
+    if (userId) {
+      aiAuditLogger.logFailure({
+        userId: userId,
+        username: username,
+        skillName: '测试报告AI分析',
+        skillId: null,
+        operationType: 'ANALYZE',
+        executionTimeMs: executionTimeMs,
+        modelName: aiModel?.model_name,
+        promptTokens: promptTokens,
+        completionTokens: completionTokens,
+        totalTokens: totalTokens,
+        errorMessage: error.message
+      });
+    }
+    
     if (error.name === 'AbortError') {
-      console.error('AI分析超时（60秒）');
+      logger.error('AI分析超时（60秒）');
     } else {
-      console.error('AI分析生成异常:', error);
+      logger.error('AI分析生成异常:', { error: error.message });
     }
     return null;
   }
@@ -631,8 +715,83 @@ function parseAIContent(content) {
   return sections;
 }
 
-// 异步任务存储 (生产环境应使用Redis)
-const asyncJobs = new Map();
+// ==================== 异步任务数据库操作 ====================
+
+async function createJob(jobId, jobData) {
+  await pool.execute(`
+    INSERT INTO report_jobs (id, user_id, username, status, progress, message, config, report_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    jobId,
+    jobData.userId,
+    jobData.username,
+    jobData.status || 'pending',
+    jobData.progress || 0,
+    jobData.message || '任务已创建',
+    JSON.stringify(jobData.config || {}),
+    jobData.reportId || null
+  ]);
+}
+
+async function getJob(jobId) {
+  const [jobs] = await pool.execute(
+    'SELECT * FROM report_jobs WHERE id = ?',
+    [jobId]
+  );
+  if (jobs.length === 0) return null;
+  const job = jobs[0];
+  return {
+    id: job.id,
+    userId: job.user_id,
+    username: job.username,
+    status: job.status,
+    progress: job.progress,
+    message: job.message,
+    error: job.error_message,
+    config: job.config ? (typeof job.config === 'string' ? JSON.parse(job.config) : job.config) : {},
+    reportId: job.report_id,
+    createdAt: job.created_at,
+    updatedAt: job.updated_at
+  };
+}
+
+async function updateJob(jobId, updates) {
+  const fields = [];
+  const values = [];
+  
+  if (updates.status !== undefined) {
+    fields.push('status = ?');
+    values.push(updates.status);
+  }
+  if (updates.progress !== undefined) {
+    fields.push('progress = ?');
+    values.push(updates.progress);
+  }
+  if (updates.message !== undefined) {
+    fields.push('message = ?');
+    values.push(updates.message);
+  }
+  if (updates.error !== undefined) {
+    fields.push('error_message = ?');
+    values.push(updates.error);
+  }
+  if (updates.reportId !== undefined) {
+    fields.push('report_id = ?');
+    values.push(updates.reportId);
+  }
+  
+  if (fields.length > 0) {
+    values.push(jobId);
+    await pool.execute(
+      `UPDATE report_jobs SET ${fields.join(', ')} WHERE id = ?`,
+      values
+    );
+  }
+}
+
+async function deleteJob(jobId) {
+  await pool.execute('DELETE FROM report_jobs WHERE id = ?', [jobId]);
+}
 
 // 异步生成报告API
 router.post('/async-generate', authenticateToken, async (req, res) => {
@@ -641,25 +800,22 @@ router.post('/async-generate', authenticateToken, async (req, res) => {
   try {
     const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
-    asyncJobs.set(jobId, {
-      id: jobId,
+    await createJob(jobId, {
+      userId: req.user.id,
+      username: req.user.username,
       status: 'pending',
       progress: 0,
       message: '任务已创建',
-      createdAt: new Date(),
-      userId: req.user.id,
-      username: req.user.username,
       config: { dimension, targetId, template, splitOptions, reportName, reportDesc, enableAI }
     });
     
-    processAsyncJob(jobId, req.body).catch(err => {
-      console.error('异步任务执行错误:', err);
-      const job = asyncJobs.get(jobId);
-      if (job) {
-        job.status = 'failed';
-        job.error = err.message;
-        job.progress = 100;
-      }
+    processAsyncJob(jobId, req.body, req.user.id, req.user.username).catch(async (err) => {
+      logger.error('异步任务执行错误', { error: err.message, jobId });
+      await updateJob(jobId, {
+        status: 'failed',
+        error: err.message,
+        progress: 100
+      });
     });
     
     res.json({
@@ -668,7 +824,7 @@ router.post('/async-generate', authenticateToken, async (req, res) => {
       message: '任务已提交'
     });
   } catch (error) {
-    console.error('创建异步任务错误:', error);
+    logger.error('创建异步任务错误:', { error: error.message });
     res.status(500).json({ success: false, message: '创建任务失败' });
   }
 });
@@ -678,7 +834,7 @@ router.get('/job-status/:jobId', authenticateToken, async (req, res) => {
   const { jobId } = req.params;
   
   try {
-    const job = asyncJobs.get(jobId);
+    const job = await getJob(jobId);
     
     if (!job) {
       return res.status(404).json({ success: false, message: '任务不存在' });
@@ -694,7 +850,7 @@ router.get('/job-status/:jobId', authenticateToken, async (req, res) => {
       error: job.error
     });
   } catch (error) {
-    console.error('获取任务状态错误:', error);
+    logger.error('获取任务状态错误:', { error: error.message });
     res.status(500).json({ success: false, message: '获取任务状态失败' });
   }
 });
@@ -704,50 +860,51 @@ router.post('/cancel-job/:jobId', authenticateToken, async (req, res) => {
   const { jobId } = req.params;
   
   try {
-    const job = asyncJobs.get(jobId);
+    const job = await getJob(jobId);
     
     if (!job) {
       return res.status(404).json({ success: false, message: '任务不存在' });
     }
     
     if (job.status === 'pending' || job.status === 'processing') {
-      job.status = 'cancelled';
-      job.message = '任务已取消';
-      asyncJobs.delete(jobId);
+      await updateJob(jobId, {
+        status: 'cancelled',
+        message: '任务已取消'
+      });
+      await deleteJob(jobId);
     }
     
     res.json({ success: true, message: '任务已取消' });
   } catch (error) {
-    console.error('取消任务错误:', error);
+    logger.error('取消任务错误:', { error: error.message });
     res.status(500).json({ success: false, message: '取消任务失败' });
   }
 });
 
 // 异步任务处理函数
-async function processAsyncJob(jobId, config) {
-  const job = asyncJobs.get(jobId);
-  if (!job) return;
-  
+async function processAsyncJob(jobId, config, userId, username) {
   let reportId = null;
   
   try {
-    console.log(`[报告生成] 开始处理任务 ${jobId}, 配置:`, JSON.stringify(config, null, 2));
+    logger.info('开始处理报告生成任务', { jobId, dimension: config.dimension, targetId: config.targetId });
     
-    job.status = 'processing';
-    job.message = '正在创建报告记录...';
-    job.progress = 5;
+    await updateJob(jobId, {
+      status: 'processing',
+      message: '正在创建报告记录...',
+      progress: 5
+    });
     
     // 先创建一个生成中的报告记录
     const finalReportName = config.reportName || `测试报告_${new Date().toISOString().split('T')[0]}`;
-    console.log(`[报告生成] 创建报告记录: ${finalReportName}`);
+    logger.info(`[报告生成] 创建报告记录: ${finalReportName}`);
     
     const [result] = await pool.execute(`
       INSERT INTO test_reports (name, creator, creator_id, project, iteration, report_type, status, job_id, start_date, end_date)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       finalReportName,
-      job.username || '系统生成',
-      job.userId || null,
+      username || '系统生成',
+      userId || null,
       '',
       '',
       config.template || 'AI生成',
@@ -757,11 +914,13 @@ async function processAsyncJob(jobId, config) {
       null
     ]);
     reportId = result.insertId;
-    job.reportId = reportId;
-    console.log(`[报告生成] 报告记录创建成功, ID: ${reportId}`);
+    await updateJob(jobId, { reportId: reportId });
+    logger.info(`[报告生成] 报告记录创建成功, ID: ${reportId}`);
     
-    job.progress = 10;
-    job.message = '正在组装数据...';
+    await updateJob(jobId, {
+      progress: 10,
+      message: '正在组装数据...'
+    });
     
     let reportData;
     
@@ -771,66 +930,76 @@ async function processAsyncJob(jobId, config) {
       throw new Error(`无效的目标ID: ${config.targetId}`);
     }
     
-    console.log(`[报告生成] 数据维度: ${config.dimension}, 目标ID: ${targetId}`);
+    logger.info(`[报告生成] 数据维度: ${config.dimension}, 目标ID: ${targetId}`);
     
     switch (config.dimension) {
       case 'testplan':
-        console.log(`[报告生成] 按测试计划组装数据, testPlanId: ${targetId}`);
+        logger.info(`[报告生成] 按测试计划组装数据, testPlanId: ${targetId}`);
         reportData = await reportService.assembleReportData(targetId);
         break;
       case 'project':
-        console.log(`[报告生成] 按项目组装数据, projectId: ${targetId}`);
+        logger.info(`[报告生成] 按项目组装数据, projectId: ${targetId}`);
         reportData = await assembleReportByProject(targetId);
         break;
       case 'module':
-        console.log(`[报告生成] 按模块组装数据, moduleId: ${targetId}`);
+        logger.info(`[报告生成] 按模块组装数据, moduleId: ${targetId}`);
         reportData = await assembleReportByModule(targetId);
         break;
       case 'library':
-        console.log(`[报告生成] 按用例库组装数据, libraryId: ${targetId}`);
+        logger.info(`[报告生成] 按用例库组装数据, libraryId: ${targetId}`);
         reportData = await assembleReportByLibrary(targetId);
         break;
       default:
         throw new Error(`不支持的数据维度: ${config.dimension}`);
     }
     
-    console.log(`[报告生成] 数据组装完成, 统计数据:`, JSON.stringify(reportData?.statistics, null, 2));
+    logger.debug('数据组装完成', { statistics: reportData?.statistics });
     
-    job.progress = 40;
-    job.message = '数据组装完成，正在生成报告...';
+    await updateJob(jobId, {
+      progress: 40,
+      message: '数据组装完成，正在生成报告...'
+    });
     
     let aiAnalysis = null;
+    let aiAnalysisFailed = false;
     if (config.enableAI) {
-      job.message = '正在进行AI分析...';
-      job.progress = 50;
+      await updateJob(jobId, {
+        message: '正在进行AI分析...',
+        progress: 50
+      });
       
       try {
-        const aiModel = await getUserAIConfig(job.userId);
+        const aiModel = await getUserAIConfig(userId);
         
         if (aiModel) {
-          aiAnalysis = await generateAIAnalysis(reportData, aiModel);
+          aiAnalysis = await generateAIAnalysis(reportData, aiModel, userId, username);
         }
       } catch (aiError) {
-        console.error('[报告生成] AI分析生成失败:', aiError);
+        aiAnalysisFailed = true;
+        logger.error('AI分析生成失败', { error: aiError.message, jobId });
       }
     }
     
-    job.progress = 70;
-    job.message = '正在生成Markdown...';
+    await updateJob(jobId, {
+      progress: 70,
+      message: '正在生成Markdown...'
+    });
     
-    console.log(`[报告生成] 开始生成Markdown内容`);
-    const markdownContent = reportService.generateMarkdownReport(reportData, aiAnalysis);
-    console.log(`[报告生成] Markdown内容生成完成, 长度: ${markdownContent.length}`);
+    logger.info(`[报告生成] 开始生成Markdown内容`);
+    const markdownContent = reportService.generateMarkdownReport(reportData, aiAnalysis, config.template);
+    logger.info(`[报告生成] Markdown内容生成完成, 长度: ${markdownContent.length}`);
     
-    job.progress = 85;
-    job.message = '正在保存报告...';
+    await updateJob(jobId, {
+      progress: 85,
+      message: '正在保存报告...'
+    });
     
     const hasAiAnalysis = aiAnalysis ? true : false;
     
     // 更新已创建的报告记录
     await pool.execute(`
       UPDATE test_reports 
-      SET project = ?, iteration = ?, test_plan_id = ?, summary = ?, has_ai_analysis = ?, status = ?, start_date = ?, end_date = ?
+      SET project = ?, iteration = ?, test_plan_id = ?, summary = ?, has_ai_analysis = ?, status = ?, start_date = ?, end_date = ?, ai_analysis_failed = ?
       WHERE id = ?
     `, [
       reportData.testPlan?.project || '',
@@ -841,37 +1010,45 @@ async function processAsyncJob(jobId, config) {
       'ready',
       reportData.testPlan?.startDate || null,
       reportData.testPlan?.endDate || null,
+      aiAnalysisFailed ? 1 : 0,
       reportId
     ]);
     
-    console.log(`[报告生成] 开始保存报告文件`);
+    logger.info(`[报告生成] 开始保存报告文件`);
     const filePath = await reportService.saveReportToFile(reportId, markdownContent);
-    console.log(`[报告生成] 报告文件保存成功: ${filePath}`);
+    logger.info(`[报告生成] 报告文件保存成功: ${filePath}`);
     
     await pool.execute('UPDATE test_reports SET summary = ? WHERE id = ?', [filePath, reportId]);
     
-    job.progress = 100;
-    job.status = 'completed';
-    job.message = '报告生成完成';
-    job.reportId = reportId;
+    await updateJob(jobId, {
+      progress: 100,
+      status: 'completed',
+      message: '报告生成完成',
+      reportId: reportId
+    });
     
-    console.log(`[报告生成] 任务 ${jobId} 完成, 报告ID: ${reportId}`);
+    logger.info(`[报告生成] 任务 ${jobId} 完成, 报告ID: ${reportId}`);
     
   } catch (error) {
-    console.error('[报告生成] 异步任务处理错误:', error);
-    console.error('[报告生成] 错误堆栈:', error.stack);
-    console.error('[报告生成] 任务配置:', JSON.stringify(config, null, 2));
+    logger.error('异步任务处理错误', { 
+      error: error.message, 
+      stack: error.stack,
+      jobId,
+      config: { dimension: config.dimension, targetId: config.targetId }
+    });
     
-    job.status = 'failed';
-    job.error = error.message;
-    job.progress = 100;
+    await updateJob(jobId, {
+      status: 'failed',
+      error: error.message,
+      progress: 100
+    });
     
     // 更新报告状态为失败
     if (reportId) {
       try {
         await pool.execute('UPDATE test_reports SET status = ? WHERE id = ?', ['failed', reportId]);
       } catch (e) {
-        console.error('[报告生成] 更新报告状态失败:', e);
+        logger.error('[报告生成] 更新报告状态失败:', { error: e.message });
       }
     }
   }
@@ -1070,7 +1247,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       
       // 权限检查：管理员或创建者可以删除
       const isAdmin = userRole === '管理员' || userRole === 'admin';
-      const isCreator = report.creator_id == userId || report.creator == req.user.username;
+      const isCreator = parseInt(report.creator_id, 10) === parseInt(userId, 10) || report.creator === req.user.username;
       
       if (!isAdmin && !isCreator) {
         connection.release();
@@ -1089,7 +1266,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
           const filePath = report.summary;
           if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
-            console.log(`[报告] 已删除报告文件: ${filePath}`);
+            logger.info(`[报告] 已删除报告文件: ${filePath}`);
           }
         }
       }
@@ -1105,7 +1282,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error('删除报告错误:', error);
+    logger.error('删除报告错误:', { error: error.message });
     res.status(500).json({ success: false, message: '删除报告失败' });
   }
 });

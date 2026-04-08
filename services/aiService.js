@@ -18,6 +18,10 @@ async function getSystemDefaultAIConfig() {
 }
 
 async function getUserAIConfig(userId, modelId = null) {
+  if (userId === undefined || userId === null) {
+    console.error('getUserAIConfig: userId 不能为空');
+    return await getSystemDefaultAIConfig();
+  }
   try {
     let query, params;
     

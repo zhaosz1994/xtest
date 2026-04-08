@@ -210,7 +210,7 @@ function initVditor() {
                     return null;
                 }
             },
-            success: (editor, msg) => console.log('图片上传成功:', msg),
+            success: (editor, msg) => {},
             error: (msg) => {
                 console.error('图片上传失败:', msg);
                 showToast('图片上传失败，请重试', 'error');

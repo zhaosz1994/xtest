@@ -8,7 +8,7 @@ router.get('/list', authenticateToken, async (req, res) => {
     const [projects] = await pool.execute('SELECT * FROM projects ORDER BY created_at DESC');
     res.json({ success: true, projects });
   } catch (error) {
-    console.error('获取项目列表失败:', error);
+    logger.error('获取项目列表失败:', { error: error.message });
     res.status(500).json({ success: false, message: '获取项目列表失败' });
   }
 });
@@ -35,7 +35,7 @@ router.post('/add', authenticateToken, requireAdmin, async (req, res) => {
     
     res.json({ success: true, message: '项目添加成功', project: newProject[0] });
   } catch (error) {
-    console.error('添加项目失败:', error);
+    logger.error('添加项目失败:', { error: error.message });
     res.status(500).json({ success: false, message: '添加项目失败' });
   }
 });
@@ -68,7 +68,7 @@ router.put('/update/:id', authenticateToken, requireAdmin, async (req, res) => {
     
     res.json({ success: true, message: '项目更新成功', project: updatedProject[0] });
   } catch (error) {
-    console.error('更新项目失败:', error);
+    logger.error('更新项目失败:', { error: error.message });
     res.status(500).json({ success: false, message: '更新项目失败' });
   }
 });
@@ -86,7 +86,7 @@ router.delete('/delete/:id', authenticateToken, requireAdmin, async (req, res) =
     
     res.json({ success: true, message: '项目删除成功' });
   } catch (error) {
-    console.error('删除项目失败:', error);
+    logger.error('删除项目失败:', { error: error.message });
     res.status(500).json({ success: false, message: '删除项目失败' });
   }
 });
@@ -108,7 +108,7 @@ router.post('/delete', authenticateToken, requireAdmin, async (req, res) => {
     
     res.json({ success: true, message: '项目删除成功' });
   } catch (error) {
-    console.error('删除项目失败:', error);
+    logger.error('删除项目失败:', { error: error.message });
     res.status(500).json({ success: false, message: '删除项目失败' });
   }
 });
