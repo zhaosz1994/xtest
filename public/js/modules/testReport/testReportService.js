@@ -35,6 +35,7 @@ const TestReportService = {
 
             if (response.success) {
                 showSuccessMessage('测试报告创建成功');
+                DataEventManager.emit(DataEvents.TEST_REPORT_CHANGED, { action: 'create', reportData });
                 return { success: true, reportId: response.reportId };
             } else {
                 showErrorMessage(response.message || '创建失败');
@@ -58,6 +59,7 @@ const TestReportService = {
 
             if (response.success) {
                 showSuccessMessage('测试报告删除成功');
+                DataEventManager.emit(DataEvents.TEST_REPORT_CHANGED, { action: 'delete', reportId });
                 return { success: true };
             } else {
                 showErrorMessage(response.message || '删除失败');

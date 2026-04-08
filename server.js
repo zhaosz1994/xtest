@@ -8243,6 +8243,31 @@ async function startServer() {
       });
     });
     
+    const securityChecks = [
+      {
+        name: 'JWT_SECRET',
+        value: process.env.JWT_SECRET,
+        minLength: 16,
+        errorMessage: 'JWT_SECRET 必须至少16个字符，当前系统存在安全风险'
+      },
+      {
+        name: 'DB_PASSWORD',
+        value: process.env.DB_PASSWORD,
+        minLength: 6,
+        errorMessage: 'DB_PASSWORD 不能为空且建议至少6个字符'
+      }
+    ];
+    
+    for (const check of securityChecks) {
+      if (!check.value || check.value.length < check.minLength) {
+        console.error(`\n[安全校验失败] ${check.name}: ${check.errorMessage}`);
+        console.error('请检查 .env 文件配置后重启服务\n');
+        process.exit(1);
+      }
+    }
+    
+    logger.info('安全配置校验通过');
+    
     // 启动服务器
     server.listen(PORT, () => {
       logger.info(`服务器运行在 http://localhost:${PORT}`);

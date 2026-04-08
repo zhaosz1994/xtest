@@ -32,6 +32,7 @@ const TestPlanService = {
 
             if (response.success) {
                 showSuccessMessage('测试计划创建成功');
+                DataEventManager.emit(DataEvents.TEST_PLAN_CHANGED, { action: 'create', planData });
                 return { success: true, planId: response.planId };
             } else {
                 showErrorMessage(response.message || '创建失败');
@@ -56,6 +57,7 @@ const TestPlanService = {
 
             if (response.success) {
                 showSuccessMessage('测试计划更新成功');
+                DataEventManager.emit(DataEvents.TEST_PLAN_CHANGED, { action: 'update', planId, planData });
                 return { success: true };
             } else {
                 showErrorMessage(response.message || '更新失败');
@@ -79,6 +81,7 @@ const TestPlanService = {
 
             if (response.success) {
                 showSuccessMessage('测试计划删除成功');
+                DataEventManager.emit(DataEvents.TEST_PLAN_CHANGED, { action: 'delete', planId });
                 return { success: true };
             } else {
                 showErrorMessage(response.message || '删除失败');

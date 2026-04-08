@@ -47,11 +47,11 @@ router.get('/list', authenticateToken, async (req, res) => {
       LEFT JOIN (
         SELECT
           plan_id,
-          SUM(CASE WHEN status = 'pass' THEN 1 ELSE 0 END) as pass_count,
-          SUM(CASE WHEN status IN ('fail', 'asic_hang', 'core_dump', 'traffic_drop') THEN 1 ELSE 0 END) as fail_count,
-          SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) as blocked_count,
-          SUM(CASE WHEN status = 'paused' THEN 1 ELSE 0 END) as paused_count,
-          SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending_count
+          SUM(CASE WHEN LOWER(status) = 'pass' THEN 1 ELSE 0 END) as pass_count,
+          SUM(CASE WHEN LOWER(status) IN ('fail', 'asic_hang', 'core_dump', 'traffic_drop') THEN 1 ELSE 0 END) as fail_count,
+          SUM(CASE WHEN LOWER(status) = 'blocked' THEN 1 ELSE 0 END) as blocked_count,
+          SUM(CASE WHEN LOWER(status) = 'paused' THEN 1 ELSE 0 END) as paused_count,
+          SUM(CASE WHEN LOWER(status) = 'pending' THEN 1 ELSE 0 END) as pending_count
         FROM test_plan_cases
         GROUP BY plan_id
       ) tc ON tp.id = tc.plan_id
@@ -411,11 +411,11 @@ router.get('/detail/:id', authenticateToken, async (req, res) => {
     // 获取用例状态分布统计
     const [statusStats] = await pool.execute(`
       SELECT
-        status,
+        LOWER(status) as status,
         COUNT(*) as count
       FROM test_plan_cases
       WHERE plan_id = ?
-      GROUP BY status
+      GROUP BY LOWER(status)
     `, [id]);
 
     const statusStatistics = {};
@@ -629,10 +629,39 @@ router.put('/:planId/cases/:caseId', authenticateToken, async (req, res) => {
     
     await updatePlanStatisticsWithTx(connection, planId);
     
+    const [updatedStats] = await connection.execute(`
+      SELECT
+        total_cases as totalCases,
+        tested_cases as testedCases,
+        pass_rate as passRate
+      FROM test_plans
+      WHERE id = ?
+    `, [planId]);
+    
+    const [caseStats] = await connection.execute(`
+      SELECT
+        SUM(CASE WHEN LOWER(status) = 'pass' THEN 1 ELSE 0 END) as passedCases,
+        SUM(CASE WHEN LOWER(status) IN ('fail', 'asic_hang', 'core_dump', 'traffic_drop') THEN 1 ELSE 0 END) as failedCases,
+        SUM(CASE WHEN LOWER(status) = 'blocked' THEN 1 ELSE 0 END) as blockedCases,
+        SUM(CASE WHEN LOWER(status) = 'paused' THEN 1 ELSE 0 END) as pausedCases,
+        SUM(CASE WHEN LOWER(status) = 'pending' THEN 1 ELSE 0 END) as pendingCases
+      FROM test_plan_cases
+      WHERE plan_id = ?
+    `, [planId]);
+    
     await connection.commit();
     connection.release();
     
-    res.json({ success: true, message: '状态更新成功' });
+    const responseData = {
+      success: true,
+      message: '状态更新成功',
+      stats: {
+        ...updatedStats[0],
+        ...caseStats[0]
+      }
+    };
+    
+    res.json(responseData);
   } catch (error) {
     await connection.rollback();
     connection.release();
@@ -706,10 +735,39 @@ router.put('/:planId/cases/batch', authenticateToken, async (req, res) => {
     
     await updatePlanStatisticsWithTx(connection, planId);
     
+    const [updatedStats] = await connection.execute(`
+      SELECT
+        total_cases as totalCases,
+        tested_cases as testedCases,
+        pass_rate as passRate
+      FROM test_plans
+      WHERE id = ?
+    `, [planId]);
+    
+    const [caseStats] = await connection.execute(`
+      SELECT
+        SUM(CASE WHEN LOWER(status) = 'pass' THEN 1 ELSE 0 END) as passedCases,
+        SUM(CASE WHEN LOWER(status) IN ('fail', 'asic_hang', 'core_dump', 'traffic_drop') THEN 1 ELSE 0 END) as failedCases,
+        SUM(CASE WHEN LOWER(status) = 'blocked' THEN 1 ELSE 0 END) as blockedCases,
+        SUM(CASE WHEN LOWER(status) = 'paused' THEN 1 ELSE 0 END) as pausedCases,
+        SUM(CASE WHEN LOWER(status) = 'pending' THEN 1 ELSE 0 END) as pendingCases
+      FROM test_plan_cases
+      WHERE plan_id = ?
+    `, [planId]);
+    
     await connection.commit();
     connection.release();
     
-    res.json({ success: true, message: `已更新 ${caseIds.length} 个用例的状态` });
+    const responseData = {
+      success: true,
+      message: `已更新 ${caseIds.length} 个用例的状态`,
+      stats: {
+        ...updatedStats[0],
+        ...caseStats[0]
+      }
+    };
+    
+    res.json(responseData);
   } catch (error) {
     await connection.rollback();
     connection.release();
@@ -725,9 +783,9 @@ async function updatePlanStatisticsWithTx(connection, planId) {
   const [stats] = await connection.execute(`
     SELECT
       COUNT(*) as total,
-      SUM(CASE WHEN status IN ('pass', 'fail', 'asic_hang', 'core_dump', 'traffic_drop') THEN 1 ELSE 0 END) as valid_tested,
-      SUM(CASE WHEN status != 'pending' THEN 1 ELSE 0 END) as tested_progress,
-      SUM(CASE WHEN status = 'pass' THEN 1 ELSE 0 END) as passed
+      SUM(CASE WHEN LOWER(status) IN ('pass', 'fail', 'asic_hang', 'core_dump', 'traffic_drop') THEN 1 ELSE 0 END) as valid_tested,
+      SUM(CASE WHEN LOWER(status) != 'pending' THEN 1 ELSE 0 END) as tested_progress,
+      SUM(CASE WHEN LOWER(status) = 'pass' THEN 1 ELSE 0 END) as passed
     FROM test_plan_cases
     WHERE plan_id = ?
   `, [planId]);

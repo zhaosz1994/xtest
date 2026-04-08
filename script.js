@@ -66,7 +66,9 @@ const DataEvents = {
     MODULE_CHANGED: 'moduleDataChanged',
     LEVEL1_POINT_CHANGED: 'level1PointChanged',
     EXECUTION_RECORD_CHANGED: 'executionRecordChanged',
-    DASHBOARD_REFRESH: 'dashboardRefresh'
+    DASHBOARD_REFRESH: 'dashboardRefresh',
+    TEST_PLAN_CHANGED: 'testPlanDataChanged',
+    TEST_REPORT_CHANGED: 'testReportDataChanged'
 };
 
 // ==================== 测试用例编辑状态持久化管理器 ====================
@@ -26226,7 +26228,7 @@ function recalculatePlanStats(plan, cases) {
     let pausedCases = 0;
 
     cases.forEach(tc => {
-        const status = tc.status || 'pending';
+        const status = (tc.status || 'pending').toLowerCase().trim();
         if (status === 'pass') {
             testedCases++;
             passedCases++;
@@ -26265,7 +26267,7 @@ function renderDrawerProgress(plan) {
     const passedCases = plan.passedCases || 0;
     const failedCases = plan.failedCases || 0;
     const blockedCases = plan.blockedCases || 0;
-    const pendingCases = totalCases - testedCases;
+    const pendingCases = plan.pendingCases || (totalCases - testedCases);
 
     progressStats.innerHTML = `
         <div class="stat-item passed">
@@ -26416,16 +26418,19 @@ async function openDrawerCaseDetail(caseId) {
 
 // 获取状态显示文本
 function getStatusText(status) {
+    if (!status) return '未执行';
+    const normalizedStatus = status.toLowerCase().trim();
     const statusTextMap = {
         'pass': '通过',
         'fail': '失败',
         'blocked': '阻塞',
         'pending': '未执行',
+        'paused': '暂停',
         'asic_hang': 'ASIC挂起',
         'core_dump': '核心转储',
         'traffic_drop': '流量丢失'
     };
-    return statusTextMap[status] || status || '未执行';
+    return statusTextMap[normalizedStatus] || status || '未执行';
 }
 
 // 显示用例状态编辑器
@@ -26595,7 +26600,18 @@ async function saveCaseStatus(caseId, planId) {
             const plan = testPlans.find(p => p.id === numericPlanId);
             console.log('plan found:', plan ? 'yes' : 'no');
             if (plan) {
-                recalculatePlanStats(plan, drawerCasesData);
+                if (result.stats) {
+                    plan.totalCases = result.stats.totalCases || 0;
+                    plan.testedCases = result.stats.testedCases || 0;
+                    plan.passRate = result.stats.passRate || 0;
+                    plan.passedCases = result.stats.passedCases || 0;
+                    plan.failedCases = result.stats.failedCases || 0;
+                    plan.blockedCases = result.stats.blockedCases || 0;
+                    plan.pausedCases = result.stats.pausedCases || 0;
+                    plan.pendingCases = result.stats.pendingCases || 0;
+                } else {
+                    recalculatePlanStats(plan, drawerCasesData);
+                }
                 renderDrawerProgress(plan);
                 renderDrawerInfo(plan);
             }
@@ -26623,6 +26639,8 @@ function escapeHtml(text) {
 
 // 获取状态样式类
 function getStatusClass(status) {
+    if (!status) return 'pending';
+    const normalizedStatus = status.toLowerCase().trim();
     const statusMap = {
         '通过': 'pass',
         'pass': 'pass',
@@ -26631,9 +26649,17 @@ function getStatusClass(status) {
         '阻塞': 'blocked',
         'blocked': 'blocked',
         '未执行': 'pending',
-        'pending': 'pending'
+        'pending': 'pending',
+        '暂停': 'paused',
+        'paused': 'paused',
+        'asic_hang': 'fail',
+        'asic挂起': 'fail',
+        'core_dump': 'fail',
+        '核心转储': 'fail',
+        'traffic_drop': 'fail',
+        '流量丢失': 'fail'
     };
-    return statusMap[status] || 'pending';
+    return statusMap[normalizedStatus] || 'pending';
 }
 
 // 筛选抽屉中的用例
