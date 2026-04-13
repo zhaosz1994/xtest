@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 const { authenticateToken } = require('../middleware');
+const { getUserProjects } = require('../services/dataIsolationMiddleware');
+const logger = require('../services/logger');
 
 function escapeHtml(text) {
     if (!text) return '';
@@ -38,20 +40,36 @@ function validateSearchParams({ keyword, types, limit, offset }) {
     return { valid: true };
 }
 
-async function searchTestPlans(keyword, limit, offset) {
+async function searchTestPlans(keyword, limit, offset, userProjects, isAdmin) {
     const searchPattern = `%${keyword}%`;
     
     try {
+        let projectFilter = '';
+        const params = [searchPattern, searchPattern, searchPattern, searchPattern];
+        
+        if (!isAdmin && userProjects.length > 0) {
+            const placeholders = userProjects.map(() => '?').join(',');
+            projectFilter = ` AND tp.project_id IN (${placeholders})`;
+            userProjects.forEach(id => params.push(id));
+        } else if (!isAdmin) {
+            projectFilter = ' AND 1=0';
+        }
+        
         const [countResult] = await pool.execute(`
             SELECT COUNT(*) as total
-            FROM test_plans
-            WHERE name LIKE ? 
-               OR project LIKE ? 
-               OR owner LIKE ?
-               OR test_phase LIKE ?
-        `, [searchPattern, searchPattern, searchPattern, searchPattern]);
+            FROM test_plans tp
+            WHERE (tp.name LIKE ? 
+               OR tp.project LIKE ? 
+               OR tp.owner LIKE ?
+               OR tp.test_phase LIKE ?)${projectFilter}
+        `, params);
         
         const total = countResult[0].total;
+        
+        const queryParams = [searchPattern, searchPattern, searchPattern, searchPattern];
+        if (!isAdmin && userProjects.length > 0) {
+            userProjects.forEach(id => queryParams.push(id));
+        }
         
         const [rows] = await pool.execute(`
             SELECT 
@@ -68,13 +86,13 @@ async function searchTestPlans(keyword, limit, offset) {
                 p.name as project_name
             FROM test_plans tp
             LEFT JOIN projects p ON tp.project = p.code
-            WHERE tp.name LIKE ? 
+            WHERE (tp.name LIKE ? 
                OR tp.project LIKE ? 
                OR tp.owner LIKE ?
-               OR tp.test_phase LIKE ?
+               OR tp.test_phase LIKE ?)${projectFilter}
             ORDER BY tp.updated_at DESC
             LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
-        `, [searchPattern, searchPattern, searchPattern, searchPattern]);
+        `, queryParams);
         
         return {
             total,
@@ -99,20 +117,36 @@ async function searchTestPlans(keyword, limit, offset) {
     }
 }
 
-async function searchTestCases(keyword, limit, offset, userId) {
+async function searchTestCases(keyword, limit, offset, userId, userProjects, isAdmin) {
     const searchPattern = `%${keyword}%`;
     
     try {
+        let projectFilter = '';
+        const params = [searchPattern, searchPattern, searchPattern];
+        
+        if (!isAdmin && userProjects.length > 0) {
+            const placeholders = userProjects.map(() => '?').join(',');
+            projectFilter = ` AND tc.project_id IN (${placeholders})`;
+            userProjects.forEach(id => params.push(id));
+        } else if (!isAdmin) {
+            projectFilter = ' AND 1=0';
+        }
+        
         const [countResult] = await pool.execute(`
             SELECT COUNT(*) as total
             FROM test_cases tc
             LEFT JOIN modules m ON tc.module_id = m.id
-            WHERE tc.name LIKE ? 
+            WHERE (tc.name LIKE ? 
                OR tc.purpose LIKE ?
-               OR m.name LIKE ?
-        `, [searchPattern, searchPattern, searchPattern]);
+               OR m.name LIKE ?)${projectFilter}
+        `, params);
         
         const total = countResult[0].total;
+        
+        const queryParams = [searchPattern, searchPattern, searchPattern];
+        if (!isAdmin && userProjects.length > 0) {
+            userProjects.forEach(id => queryParams.push(id));
+        }
         
         const [rows] = await pool.execute(`
             SELECT 
@@ -125,12 +159,12 @@ async function searchTestCases(keyword, limit, offset, userId) {
                 m.name as module_name
             FROM test_cases tc
             LEFT JOIN modules m ON tc.module_id = m.id
-            WHERE tc.name LIKE ? 
+            WHERE (tc.name LIKE ? 
                OR tc.purpose LIKE ?
-               OR m.name LIKE ?
+               OR m.name LIKE ?)${projectFilter}
             ORDER BY tc.updated_at DESC
             LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
-        `, [searchPattern, searchPattern, searchPattern]);
+        `, queryParams);
         
         return {
             total,
@@ -366,8 +400,13 @@ router.get('/search', authenticateToken, async (req, res) => {
     try {
         const { keyword, types = 'all', limit = 5, offset = 0 } = req.query;
         const userId = req.user.id;
+        const userRole = req.user.role;
+        const isAdmin = userRole === '管理员' || userRole === 'admin' || userRole === 'Administrator';
         
-        console.log('[搜索请求] 参数:', { keyword, types, limit, offset, limitType: typeof limit, offsetType: typeof offset });
+        let userProjects = [];
+        if (!isAdmin) {
+            userProjects = await getUserProjects(userId);
+        }
         
         const validation = validateSearchParams({ keyword, types, limit, offset });
         if (!validation.valid) {
@@ -384,8 +423,6 @@ router.get('/search', authenticateToken, async (req, res) => {
         const limitNum = Math.min(Math.max(1, parseInt(limit) || 5), 20);
         const offsetNum = Math.max(0, parseInt(offset) || 0);
         
-        console.log('[搜索请求] 转换后:', { limitNum, offsetNum, limitNumType: typeof limitNum, offsetNumType: typeof offsetNum });
-        
         const typeList = types === 'all' 
             ? ['testplan', 'case', 'post', 'comment', 'script'] 
             : types.split(',').map(t => t.trim()).filter(t => 
@@ -397,7 +434,7 @@ router.get('/search', authenticateToken, async (req, res) => {
         
         if (typeList.includes('testplan')) {
             searchPromises.push(
-                searchTestPlans(searchTerm, limitNum, offsetNum)
+                searchTestPlans(searchTerm, limitNum, offsetNum, userProjects, isAdmin)
                     .then(r => { results.testPlans = r; })
                     .catch(e => { results.testPlans = { total: 0, items: [], error: e.message }; })
             );
@@ -405,7 +442,7 @@ router.get('/search', authenticateToken, async (req, res) => {
         
         if (typeList.includes('case')) {
             searchPromises.push(
-                searchTestCases(searchTerm, limitNum, offsetNum, userId)
+                searchTestCases(searchTerm, limitNum, offsetNum, userId, userProjects, isAdmin)
                     .then(r => { results.testCases = r; })
                     .catch(e => { results.testCases = { total: 0, items: [], error: e.message }; })
             );

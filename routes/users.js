@@ -3,12 +3,14 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../db');
+const { loginLimiter, writeLimiter } = require('../services/rateLimiter');
 const { authenticateToken, requireAdmin } = require('../middleware');
 const { logActivity } = require('./history');
+const logger = require('../services/logger');
 require('dotenv').config();
 
 // 登录
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   const { username, password, rememberMe } = req.body;
   const ipAddress = req.ip || req.connection.remoteAddress;
   const userAgent = req.get('User-Agent');
@@ -96,22 +98,33 @@ router.post('/refresh-token', authenticateToken, async (req, res) => {
 });
 
 // 注册
-router.post('/register', async (req, res) => {
+router.post('/register', loginLimiter, async (req, res) => {
   const { username, password, email } = req.body;
   const ipAddress = req.ip || req.connection.remoteAddress;
   const userAgent = req.get('User-Agent');
 
   try {
-    // 检查用户名是否已存在
-    const [existingUsers] = await pool.execute('SELECT * FROM users WHERE username = ?', [username]);
-    if (existingUsers.length > 0) {
-      return res.status(400).json({ message: '用户名已存在' });
+    if (!username || !password || !email) {
+      return res.status(400).json({ success: false, message: '用户名、密码和邮箱不能为空' });
     }
 
-    // 检查邮箱是否已存在
-    const [existingEmails] = await pool.execute('SELECT * FROM users WHERE email = ?', [email]);
-    if (existingEmails.length > 0) {
-      return res.status(400).json({ message: '邮箱已被注册' });
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: '密码长度不能少于6位' });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ success: false, message: '邮箱格式不正确' });
+    }
+
+    const [existingUsers] = await pool.execute('SELECT * FROM users WHERE username = ?', [username]);
+    if (existingUsers.length > 0) {
+      return res.status(400).json({ success: false, message: '用户名已存在' });
+    }
+
+    const [existingEmail] = await pool.execute('SELECT id FROM users WHERE email = ?', [email]);
+    if (existingEmail.length > 0) {
+      return res.status(400).json({ success: false, message: '邮箱已被注册' });
     }
 
     // 加密密码
@@ -129,10 +142,10 @@ router.post('/register', async (req, res) => {
       await logActivity(newUsers[0].id, username, '测试人员', '用户注册', `新用户 ${username} 注册成功，等待管理员审核`, 'user', newUsers[0].id, ipAddress, userAgent);
     }
 
-    res.json({ message: '注册成功，请等待管理员审核后方可登录' });
+    res.json({ success: true, message: '注册成功，请等待管理员审核后方可登录' });
   } catch (error) {
     logger.error('注册错误:', { error: error.message });
-    res.status(500).json({ message: '服务器错误' });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -221,7 +234,7 @@ router.post('/add', authenticateToken, requireAdmin, async (req, res) => {
     // 检查用户名是否已存在
     const [existingUsers] = await pool.execute('SELECT * FROM users WHERE username = ?', [username]);
     if (existingUsers.length > 0) {
-      return res.status(400).json({ message: '用户名已存在' });
+      return res.status(400).json({ success: false, message: '用户名已存在' });
     }
 
     // 加密密码
@@ -239,10 +252,10 @@ router.post('/add', authenticateToken, requireAdmin, async (req, res) => {
       await logActivity(currentUser.id, currentUser.username, currentUser.role, '添加用户', `管理员 ${currentUser.username} 添加了新用户 ${username}`, 'user', newUsers[0].id, ipAddress, userAgent);
     }
 
-    res.json({ message: '用户添加成功' });
+    res.json({ success: true, message: '用户添加成功' });
   } catch (error) {
     logger.error('添加用户错误:', { error: error.message });
-    res.status(500).json({ message: '服务器错误' });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -334,7 +347,7 @@ router.put('/edit/:id', authenticateToken, requireAdmin, async (req, res) => {
     // 获取被编辑用户的信息
     const [users] = await pool.execute('SELECT username FROM users WHERE id = ?', [id]);
     if (users.length === 0) {
-      return res.status(404).json({ message: '用户不存在' });
+      return res.status(404).json({ success: false, message: '用户不存在' });
     }
     
     await pool.execute(
@@ -345,10 +358,10 @@ router.put('/edit/:id', authenticateToken, requireAdmin, async (req, res) => {
     // 记录操作日志
     await logActivity(currentUser.id, currentUser.username, currentUser.role, '编辑用户', `管理员 ${currentUser.username} 编辑了用户 ${users[0].username}`, 'user', parseInt(id), ipAddress, userAgent);
 
-    res.json({ message: '用户编辑成功' });
+    res.json({ success: true, message: '用户编辑成功' });
   } catch (error) {
     logger.error('编辑用户错误:', { error: error.message });
-    res.status(500).json({ message: '服务器错误' });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -364,25 +377,25 @@ router.put('/:id/approve', authenticateToken, requireAdmin, async (req, res) => 
     // 验证状态值
     const validStatuses = ['pending', 'active', 'disabled'];
     if (!validStatuses.includes(status)) {
-      return res.status(400).json({ message: '无效的状态值' });
+      return res.status(400).json({ success: false, message: '无效的状态值' });
     }
 
     // 获取用户信息
     const [users] = await pool.execute('SELECT * FROM users WHERE id = ?', [id]);
     if (users.length === 0) {
-      return res.status(404).json({ message: '用户不存在' });
+      return res.status(404).json({ success: false, message: '用户不存在' });
     }
 
     const targetUser = users[0];
 
     // 不允许修改自己的状态
     if (targetUser.id === currentUser.id) {
-      return res.status(400).json({ message: '不能修改自己的状态' });
+      return res.status(400).json({ success: false, message: '不能修改自己的状态' });
     }
     
     // 保护admin账户，不能被禁用
     if (targetUser.username.toLowerCase() === 'admin' && status !== 'active') {
-      return res.status(400).json({ message: '系统管理员账户不允许禁用' });
+      return res.status(400).json({ success: false, message: '系统管理员账户不允许禁用' });
     }
 
     // 更新用户状态
@@ -405,7 +418,7 @@ router.put('/:id/approve', authenticateToken, requireAdmin, async (req, res) => 
     res.json({ success: true, message: `用户已${statusText}` });
   } catch (error) {
     logger.error('审核用户错误:', { error: error.message });
-    res.status(500).json({ message: '服务器错误' });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -420,12 +433,12 @@ router.delete('/delete/:id', authenticateToken, requireAdmin, async (req, res) =
     // 获取被删除用户的信息
     const [users] = await pool.execute('SELECT username FROM users WHERE id = ?', [id]);
     if (users.length === 0) {
-      return res.status(404).json({ message: '用户不存在' });
+      return res.status(404).json({ success: false, message: '用户不存在' });
     }
     
     // 保护admin账户，不能被删除
     if (users[0].username.toLowerCase() === 'admin') {
-      return res.status(400).json({ message: '系统管理员账户不允许删除' });
+      return res.status(400).json({ success: false, message: '系统管理员账户不允许删除' });
     }
     
     await pool.execute('DELETE FROM users WHERE id = ?', [id]);
@@ -433,10 +446,10 @@ router.delete('/delete/:id', authenticateToken, requireAdmin, async (req, res) =
     // 记录操作日志
     await logActivity(currentUser.id, currentUser.username, currentUser.role, '删除用户', `管理员 ${currentUser.username} 删除了用户 ${users[0].username}`, 'user', parseInt(id), ipAddress, userAgent);
 
-    res.json({ message: '用户删除成功' });
+    res.json({ success: true, message: '用户删除成功' });
   } catch (error) {
     logger.error('删除用户错误:', { error: error.message });
-    res.status(500).json({ message: '服务器错误' });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -448,7 +461,7 @@ router.post('/update', authenticateToken, requireAdmin, async (req, res) => {
     // 根据用户名查找用户ID
     const [users] = await pool.execute('SELECT id FROM users WHERE username = ?', [username]);
     if (users.length === 0) {
-      return res.status(404).json({ message: '用户不存在' });
+      return res.status(404).json({ success: false, message: '用户不存在' });
     }
     
     const userId = users[0].id;
@@ -464,10 +477,10 @@ router.post('/update', authenticateToken, requireAdmin, async (req, res) => {
     }
     
     await pool.execute(updateQuery, updateParams);
-    res.json({ message: '用户更新成功' });
+    res.json({ success: true, message: '用户更新成功' });
   } catch (error) {
     logger.error('更新用户错误:', { error: error.message });
-    res.status(500).json({ message: '服务器错误' });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -476,16 +489,19 @@ router.post('/delete', authenticateToken, requireAdmin, async (req, res) => {
   const { username } = req.body;
 
   try {
-    // 根据用户名删除用户
+    if (username && username.toLowerCase() === 'admin') {
+      return res.status(400).json({ success: false, message: '系统管理员账户不允许删除' });
+    }
+
     const [result] = await pool.execute('DELETE FROM users WHERE username = ?', [username]);
     if (result.affectedRows === 0) {
-      return res.status(404).json({ message: '用户不存在' });
+      return res.status(404).json({ success: false, message: '用户不存在' });
     }
     
-    res.json({ message: '用户删除成功' });
+    res.json({ success: true, message: '用户删除成功' });
   } catch (error) {
     logger.error('删除用户错误:', { error: error.message });
-    res.status(500).json({ message: '服务器错误' });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 

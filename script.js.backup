@@ -81,7 +81,7 @@ const DataEventManager = {
             try {
                 callback(data);
             } catch (error) {
-                logger.error(`事件处理器错误 [${event}]:`, error);
+                console.error(`事件处理器错误 [${event}]:`, error);
             }
         });
     }
@@ -112,7 +112,7 @@ const TestCaseEditState = {
             sessionStorage.setItem(this.STORAGE_KEY, JSON.stringify(stateToSave));
             console.log('编辑状态已保存到sessionStorage:', stateToSave);
         } catch (error) {
-            logger.error('保存编辑状态失败:', error);
+            console.error('保存编辑状态失败:', error);
         }
     },
 
@@ -134,7 +134,7 @@ const TestCaseEditState = {
                 return state;
             }
         } catch (error) {
-            logger.error('加载编辑状态失败:', error);
+            console.error('加载编辑状态失败:', error);
         }
         return null;
     },
@@ -144,7 +144,7 @@ const TestCaseEditState = {
             sessionStorage.removeItem(this.STORAGE_KEY);
             console.log('编辑状态已清除');
         } catch (error) {
-            logger.error('清除编辑状态失败:', error);
+            console.error('清除编辑状态失败:', error);
         }
     },
 
@@ -318,7 +318,7 @@ const Router = {
         console.log('[Router] 是否已认证:', this.isAuthenticated());
 
         if (!route) {
-            logger.warn('[Router] 未知路由，跳转到默认页面');
+            console.warn('[Router] 未知路由，跳转到默认页面');
             this.navigateTo(this.defaultRoute);
             return;
         }
@@ -467,7 +467,7 @@ const Router = {
             loginSection.style.display = 'flex';
             console.log('[Router] 显示login-section');
         } else {
-            logger.error('[Router] 未找到login-section元素');
+            console.error('[Router] 未找到login-section元素');
         }
     },
 
@@ -869,7 +869,7 @@ const CommandPalette = {
                     if (typeof openAdvancedTestPlanModal === 'function') {
                         await openAdvancedTestPlanModal();
                     } else {
-                        logger.warn('openAdvancedTestPlanModal function not found');
+                        console.warn('openAdvancedTestPlanModal function not found');
                         addTestPlan();
                     }
                 }
@@ -1206,7 +1206,7 @@ const CommandPalette = {
                 if (error.name === 'AbortError') {
                     return;
                 }
-                logger.error('搜索错误:', error);
+                console.error('搜索错误:', error);
                 this.renderSearchError('搜索服务暂时不可用');
             } finally {
                 this.isLoading = false;
@@ -1549,7 +1549,7 @@ const CommandPalette = {
                     if (typeof viewTestPlanDetail === 'function') {
                         await viewTestPlanDetail(id);
                     } else {
-                        logger.warn('viewTestPlanDetail function not found');
+                        console.warn('viewTestPlanDetail function not found');
                         const testplan = document.querySelector(`[data-testplan-id="${id}"]`);
                         if (testplan) {
                             testplan.click();
@@ -1564,7 +1564,7 @@ const CommandPalette = {
                     if (typeof openDrawerCaseDetail === 'function') {
                         await openDrawerCaseDetail(id);
                     } else {
-                        logger.warn('openDrawerCaseDetail function not found');
+                        console.warn('openDrawerCaseDetail function not found');
                         const testCase = document.querySelector(`[data-case-id="${id}"]`);
                         if (testCase) {
                             testCase.click();
@@ -2057,7 +2057,7 @@ function showToast(message, type = 'info') {
             showErrorMessage(message);
             break;
         case 'warning':
-            logger.warn('警告:', message);
+            console.warn('警告:', message);
             showErrorMessage(message);
             break;
         default:
@@ -2074,9 +2074,9 @@ function showErrorMessage(message) {
         errorMessage.textContent = message;
         modal.style.display = 'block';
     } else {
-        logger.error('错误模态框元素未找到:', { modalExists: !!modal, errorMessageExists: !!errorMessage });
-        logger.error('错误消息:', message);
-        logger.warn('showErrorMessage: 模态框元素不存在，已在控制台输出错误');
+        console.error('错误模态框元素未找到:', { modalExists: !!modal, errorMessageExists: !!errorMessage });
+        console.error('错误消息:', message);
+        console.warn('showErrorMessage: 模态框元素不存在，已在控制台输出错误');
     }
 }
 
@@ -2177,7 +2177,7 @@ async function refreshToken() {
         
         return false;
     } catch (error) {
-        logger.error('[Token刷新] 刷新失败:', error);
+        console.error('[Token刷新] 刷新失败:', error);
         return false;
     }
 }
@@ -2311,7 +2311,7 @@ async function apiRequest(endpoint, options = {}) {
 
         return result;
     } catch (error) {
-        logger.error('API请求错误:', error);
+        console.error('API请求错误:', error);
 
         if (error.name === 'TypeError' || error.message.includes('fetch')) {
             showNetworkError('网络连接失败，请检查网络设置');
@@ -2385,7 +2385,7 @@ async function loadData() {
                 ];
             }
         } catch (error) {
-            logger.error('加载用户数据失败:', error);
+            console.error('加载用户数据失败:', error);
             // 加载失败时使用默认数据
             mockUsers = [
                 { username: 'admin', password: 'ctc@2026.', role: '管理员', email: 'admin@example.com' },
@@ -2406,7 +2406,7 @@ async function loadData() {
                 ];
             }
         } catch (error) {
-            logger.error('加载历史记录失败:', error);
+            console.error('加载历史记录失败:', error);
             // 加载失败时使用默认数据
             historyRecords = [
                 { time: '2026-01-13 10:00:00', user: 'admin', action: '添加', content: '添加了模块1', version: 'v1.0' },
@@ -2431,7 +2431,7 @@ async function loadData() {
                 ];
             }
         } catch (error) {
-            logger.error('加载模块数据失败:', error);
+            console.error('加载模块数据失败:', error);
             // 加载失败时使用默认数据
             modules = [
                 { id: 'module1', name: '模块1' },
@@ -2454,7 +2454,7 @@ async function loadData() {
                 ];
             }
         } catch (error) {
-            logger.error('加载芯片数据失败:', error);
+            console.error('加载芯片数据失败:', error);
             // 加载失败时使用默认数据
             chips = [
                 { id: 1, chip_id: 'chip1', name: '芯片1', description: '默认测试芯片1' },
@@ -2463,7 +2463,7 @@ async function loadData() {
             ];
         }
     } catch (error) {
-        logger.error('加载数据失败:', error);
+        console.error('加载数据失败:', error);
         // 加载失败时使用默认数据
         mockUsers = [
             { username: 'admin', password: 'ctc@2026.', role: '管理员', email: 'admin@example.com' },
@@ -2542,7 +2542,7 @@ function initWebSocket() {
             initModuleData();
         });
     } catch (error) {
-        logger.error('WebSocket初始化失败:', error);
+        console.error('WebSocket初始化失败:', error);
         // WebSocket连接失败不影响其他功能
     }
 }
@@ -2652,7 +2652,7 @@ async function loadTestPlans() {
         // 渲染测试计划表格
         renderTestPlansTable();
     } catch (error) {
-        logger.error('加载测试计划错误:', error);
+        console.error('加载测试计划错误:', error);
         // 使用默认数据
         testPlans = [
             {
@@ -2751,7 +2751,7 @@ async function loadTestPlanFilters() {
         }
 
     } catch (error) {
-        logger.error('加载过滤组件数据错误:', error);
+        console.error('加载过滤组件数据错误:', error);
     }
 }
 
@@ -3606,7 +3606,7 @@ async function deleteTestPlan(planId) {
                 }
             } catch (error) {
                 hideLoading();
-                logger.error('删除测试计划错误:', error);
+                console.error('删除测试计划错误:', error);
                 showErrorMessage('删除失败: ' + error.message);
             }
         }
@@ -3766,7 +3766,7 @@ async function loadTestCases() {
             console.log('cases-table-body not found, skipping render');
         }
     } catch (error) {
-        logger.error('加载用例错误:', error);
+        console.error('加载用例错误:', error);
         // 使用默认数据，确保包含remark字段
         testCases = [
             {
@@ -3877,7 +3877,7 @@ async function loadTestReports() {
         updateReportsStats(testReports);
 
     } catch (error) {
-        logger.error('加载测试报告失败:', error);
+        console.error('加载测试报告失败:', error);
         testReports = [];
         loadReportsData();
     } finally {
@@ -4041,7 +4041,7 @@ function renderPagination(containerId, currentPage, totalPages, pageChangeCallba
             parent.parentNode.insertBefore(paginationDiv, parent.nextSibling);
             console.log('Pagination container created');
         } else {
-            logger.error('Parent element not found for pagination');
+            console.error('Parent element not found for pagination');
         }
         return;
     }
@@ -4365,7 +4365,7 @@ async function initModuleSelection() {
         console.log('可用模块:', availableModules);
 
     } catch (error) {
-        logger.error('初始化模块选择错误:', error);
+        console.error('初始化模块选择错误:', error);
     } finally {
         hideLoading();
     }
@@ -4432,7 +4432,7 @@ async function batchOperation(operation, data, batchSize = 100) {
 
         return { success: true, results };
     } catch (error) {
-        logger.error('批量操作错误:', error);
+        console.error('批量操作错误:', error);
         return { success: false, error: error.message };
     }
 }
@@ -4503,7 +4503,7 @@ async function loadLibrariesForClone() {
             });
         }
     } catch (error) {
-        logger.error('加载用例库列表失败:', error);
+        console.error('加载用例库列表失败:', error);
     }
 }
 
@@ -4528,7 +4528,7 @@ async function loadModulesForClone(libraryId) {
             moduleSelect.disabled = false;
         }
     } catch (error) {
-        logger.error('加载模块列表失败:', error);
+        console.error('加载模块列表失败:', error);
     }
 }
 
@@ -4609,7 +4609,7 @@ async function submitNewModuleForm() {
             showErrorMessage('模块添加失败: ' + (createData.message || '未知错误'));
         }
     } catch (error) {
-        logger.error('添加模块错误:', error);
+        console.error('添加模块错误:', error);
         showErrorMessage('添加模块失败: ' + (error.message || '未知错误'));
     } finally {
         hideLoading();
@@ -4708,7 +4708,7 @@ async function submitCloneModuleForm() {
         }
     } catch (error) {
         hideLoading();
-        logger.error('克隆模块错误:', error);
+        console.error('克隆模块错误:', error);
         showErrorMessage('克隆模块失败: ' + error.message);
     }
 }
@@ -4732,7 +4732,7 @@ function closeReorderModulesModal() {
 async function loadModulesForReordering() {
     const reorderList = document.getElementById('reorder-list');
     if (!reorderList) {
-        logger.error('reorder-list元素不存在');
+        console.error('reorder-list元素不存在');
         return;
     }
 
@@ -4779,7 +4779,7 @@ async function loadModulesForReordering() {
                 responseJson = JSON.parse(responseText);
                 console.log('解析后的JSON:', responseJson);
             } catch (parseError) {
-                logger.error('JSON解析错误:', parseError);
+                console.error('JSON解析错误:', parseError);
             }
 
             let modules = [];
@@ -4822,7 +4822,7 @@ async function loadModulesForReordering() {
             console.log('渲染完成，列表子元素数量:', reorderList.children.length);
 
         } catch (apiError) {
-            logger.error('API测试错误:', apiError);
+            console.error('API测试错误:', apiError);
 
             // 直接显示测试数据
             const testModules = [
@@ -4852,8 +4852,8 @@ async function loadModulesForReordering() {
         }
 
     } catch (error) {
-        logger.error('加载模块数据用于重排序错误:', error);
-        logger.error('错误堆栈:', error.stack);
+        console.error('加载模块数据用于重排序错误:', error);
+        console.error('错误堆栈:', error.stack);
         showErrorMessage('加载模块数据失败: ' + (error.message || '未知错误'));
     } finally {
         hideLoading();
@@ -4932,7 +4932,7 @@ async function submitReorderModulesForm() {
             showErrorMessage('模块顺序调整失败: ' + (updateData.message || '未知错误'));
         }
     } catch (error) {
-        logger.error('调整模块顺序错误:', error);
+        console.error('调整模块顺序错误:', error);
         showErrorMessage('调整模块顺序失败: ' + (error.message || '未知错误'));
     } finally {
         hideLoading();
@@ -4988,7 +4988,7 @@ async function initModuleData() {
         // 自动加载当前用例库的所有一级测试点
         await loadAllLevel1Points();
     } catch (error) {
-        logger.error('初始化模块数据错误:', error);
+        console.error('初始化模块数据错误:', error);
         // 没有默认模块数据，只显示"所有用例"
         moduleList = [];
 
@@ -5167,7 +5167,7 @@ async function filterModules(searchTerm) {
         // 更新分页控件
         updateModulePagination(totalPages);
     } catch (error) {
-        logger.error('过滤模块错误:', error);
+        console.error('过滤模块错误:', error);
         // 降级到本地过滤
         const caseNavList = document.querySelector('.case-nav-list');
         if (!caseNavList) return;
@@ -5603,7 +5603,7 @@ async function submitEditModuleForm() {
             showErrorMessage('模块重命名失败: ' + (renameData.message || '重命名失败，请稍后重试'));
         }
     } catch (error) {
-        logger.error('重命名模块错误:', error);
+        console.error('重命名模块错误:', error);
         showErrorMessage('模块重命名失败: ' + error.message);
     } finally {
         hideLoading();
@@ -5695,7 +5695,7 @@ async function submitAddSubModuleForm() {
             showErrorMessage('子模块创建失败: ' + (createData.message || '创建失败，请稍后重试'));
         }
     } catch (error) {
-        logger.error('创建子模块错误:', error);
+        console.error('创建子模块错误:', error);
         showErrorMessage('子模块创建失败: ' + error.message);
     } finally {
         hideLoading();
@@ -5741,7 +5741,7 @@ async function deleteModule(moduleId, moduleName) {
             showErrorMessage('模块删除失败: ' + (deleteData.message || '删除失败，请稍后重试'));
         }
     } catch (error) {
-        logger.error('删除模块错误:', error);
+        console.error('删除模块错误:', error);
         showErrorMessage('模块删除失败: ' + error.message);
     } finally {
         hideLoading();
@@ -5799,13 +5799,13 @@ async function loadAllLevel1Points() {
             // 保存当前用例库ID
             localStorage.setItem('currentCaseLibraryId', JSON.stringify(currentCaseLibraryId));
         } catch (error) {
-            logger.error('保存一级测试点数据到本地缓存失败:', error);
+            console.error('保存一级测试点数据到本地缓存失败:', error);
         }
 
         // 更新一级测试点显示
         updateLevel1PointsDisplay();
     } catch (error) {
-        logger.error('加载所有一级测试用例错误:', error);
+        console.error('加载所有一级测试用例错误:', error);
         // 加载失败时使用空数据
         level1Points = [];
 
@@ -5883,13 +5883,13 @@ async function loadLevel1Points(moduleId) {
             // 保存当前用例库ID
             localStorage.setItem('currentCaseLibraryId', JSON.stringify(currentCaseLibraryId));
         } catch (error) {
-            logger.error('保存一级测试点数据到本地缓存失败:', error);
+            console.error('保存一级测试点数据到本地缓存失败:', error);
         }
 
         // 更新一级测试点显示
         updateLevel1PointsDisplay();
     } catch (error) {
-        logger.error('加载一级测试点错误:', error);
+        console.error('加载一级测试点错误:', error);
         // 加载失败时使用空数据
         level1Points = [];
 
@@ -5904,7 +5904,7 @@ async function loadLevel1Points(moduleId) {
 function updateLevel1PointsDisplay() {
     const level1List = document.getElementById('level1-list');
     if (!level1List) {
-        logger.error('[一级测试点] 未找到 level1-list 元素');
+        console.error('[一级测试点] 未找到 level1-list 元素');
         return;
     }
 
@@ -6134,7 +6134,7 @@ function initLevel1PointClickEvents() {
                         const elements = document.elementsFromPoint(event.clientX, event.clientY);
                         isMouseOverPanel = elements.some(el => el === panel || panel.contains(el));
                     } catch (error) {
-                        logger.error('检查鼠标位置错误:', error);
+                        console.error('检查鼠标位置错误:', error);
                         return;
                     }
 
@@ -6178,7 +6178,7 @@ function initLevel1PointClickEvents() {
                     const elements = document.elementsFromPoint(event.clientX, event.clientY);
                     isMouseOverPanel = elements.some(el => el === panel || panel.contains(el));
                 } catch (error) {
-                    logger.error('检查鼠标位置错误:', error);
+                    console.error('检查鼠标位置错误:', error);
                 }
 
                 if (!isMouseOverPanel) {
@@ -6224,7 +6224,7 @@ async function showFloatingPanel(pointId, rowElement) {
         initFloatingPanelDrag();
 
     } catch (error) {
-        logger.error('显示悬浮面板错误:', error);
+        console.error('显示悬浮面板错误:', error);
         const panel = document.getElementById('test-points-floating-panel');
         if (panel) {
             panel.classList.remove('show');
@@ -6382,7 +6382,7 @@ async function refreshTestCasesList() {
         if (table) table.style.display = 'table';
 
     } catch (error) {
-        logger.error('刷新测试用例列表错误:', error);
+        console.error('刷新测试用例列表错误:', error);
     }
 }
 
@@ -6432,7 +6432,7 @@ async function getLevel2TestPoints(level1Id) {
                         moduleId = targetPoint.module_id;
                         console.log('从本地缓存获取到模块ID:', moduleId);
                     } else {
-                        logger.error('测试点数据中没有module_id字段:', targetPoint);
+                        console.error('测试点数据中没有module_id字段:', targetPoint);
                     }
                 } else {
                     // 尝试从当前level1Points数组中查找，同样处理ID类型不匹配
@@ -6446,7 +6446,7 @@ async function getLevel2TestPoints(level1Id) {
                             moduleId = currentPoint.module_id;
                             console.log('从当前数据数组获取到模块ID:', moduleId);
                         } else {
-                            logger.error('当前数据数组中的测试点没有module_id字段:', currentPoint);
+                            console.error('当前数据数组中的测试点没有module_id字段:', currentPoint);
                         }
                     } else {
                         // 尝试遍历查找，打印更多信息
@@ -6455,18 +6455,18 @@ async function getLevel2TestPoints(level1Id) {
                             console.log(`测试点${index}: id=${point.id}, type=${typeof point.id}, level1Id=${level1Id}, type=${typeof level1Id}, match=${String(point.id) === String(level1Id)}`);
                         });
 
-                        logger.error('无法获取测试点的模块ID，测试点不在缓存或当前数据中');
+                        console.error('无法获取测试点的模块ID，测试点不在缓存或当前数据中');
                         return [];
                     }
                 }
             } catch (cacheError) {
-                logger.error('读取本地缓存失败:', cacheError);
+                console.error('读取本地缓存失败:', cacheError);
                 return [];
             }
         }
 
         if (!libraryId || !moduleId || !level1Id) {
-            logger.error('仍然缺少必要的ID信息:', { libraryId, moduleId, level1Id });
+            console.error('仍然缺少必要的ID信息:', { libraryId, moduleId, level1Id });
             return [];
         }
 
@@ -6492,7 +6492,7 @@ async function getLevel2TestPoints(level1Id) {
             return [];
         }
     } catch (error) {
-        logger.error('获取匹配测试用例错误:', error);
+        console.error('获取匹配测试用例错误:', error);
         return [];
     }
 }
@@ -6952,8 +6952,8 @@ async function openTestCaseDetailModal(testCase) {
         TestCaseEditState.setupAutoSave(testCase);
         
     } catch (error) {
-        logger.error('打开测试用例详情模态框失败:', error);
-        logger.error('错误堆栈:', error.stack);
+        console.error('打开测试用例详情模态框失败:', error);
+        console.error('错误堆栈:', error.stack);
         showErrorMessage('打开测试用例详情失败: ' + error.message);
     }
 }
@@ -7003,7 +7003,7 @@ async function loadEnvironmentsForDetail(testEnvironment) {
         );
 
     } catch (error) {
-        logger.error('加载测试环境失败:', error);
+        console.error('加载测试环境失败:', error);
     }
 }
 
@@ -7044,7 +7044,7 @@ async function loadSourcesForDetail(testSources) {
         );
 
     } catch (error) {
-        logger.error('加载测试点来源失败:', error);
+        console.error('加载测试点来源失败:', error);
     }
 }
 
@@ -7091,7 +7091,7 @@ async function loadPhasesForDetail(testPhases) {
         );
 
     } catch (error) {
-        logger.error('加载测试阶段失败:', error);
+        console.error('加载测试阶段失败:', error);
     }
 }
 
@@ -7140,7 +7140,7 @@ async function loadMethodsForDetail(testMethod) {
         );
 
     } catch (error) {
-        logger.error('加载测试方式失败:', error);
+        console.error('加载测试方式失败:', error);
     }
 }
 
@@ -7158,7 +7158,7 @@ async function loadPrioritiesForDetail(selectedPriority) {
 
         const prioritySelect = document.getElementById('detail-case-priority');
         if (!prioritySelect) {
-            logger.error('找不到优先级下拉框元素');
+            console.error('找不到优先级下拉框元素');
             return;
         }
 
@@ -7182,7 +7182,7 @@ async function loadPrioritiesForDetail(selectedPriority) {
         }
 
     } catch (error) {
-        logger.error('加载优先级失败:', error);
+        console.error('加载优先级失败:', error);
         const prioritySelect = document.getElementById('detail-case-priority');
         if (prioritySelect) {
             prioritySelect.innerHTML = `
@@ -7209,7 +7209,7 @@ async function loadTestTypesForDetail(selectedType) {
 
         const typeSelect = document.getElementById('detail-case-type');
         if (!typeSelect) {
-            logger.error('找不到测试类型下拉框元素');
+            console.error('找不到测试类型下拉框元素');
             return;
         }
 
@@ -7230,7 +7230,7 @@ async function loadTestTypesForDetail(selectedType) {
         }
 
     } catch (error) {
-        logger.error('加载测试类型失败:', error);
+        console.error('加载测试类型失败:', error);
         const typeSelect = document.getElementById('detail-case-type');
         if (typeSelect) {
             typeSelect.innerHTML = `
@@ -7284,8 +7284,8 @@ async function getTestCaseProjectDetails(testCaseId) {
         console.log('解析后的关联项目:', JSON.stringify(projects, null, 2));
         return projects;
     } catch (error) {
-        logger.error('获取测试用例项目详情失败:', error);
-        logger.error('错误堆栈:', error.stack);
+        console.error('获取测试用例项目详情失败:', error);
+        console.error('错误堆栈:', error.stack);
         return [];
     }
 }
@@ -7318,7 +7318,7 @@ async function loadTestCaseProjects(testCaseId) {
             console.log('[loadTestCaseProjects] 获取到的关联项目:', associatedProjects);
             console.log('[loadTestCaseProjects] 关联项目数量:', associatedProjects ? associatedProjects.length : 0);
         } catch (error) {
-            logger.error('[loadTestCaseProjects] 获取关联项目详情错误:', error);
+            console.error('[loadTestCaseProjects] 获取关联项目详情错误:', error);
         }
 
         console.log('[loadTestCaseProjects] 检查条件: associatedProjects=', associatedProjects, 'length=', associatedProjects ? associatedProjects.length : 'null');
@@ -7375,7 +7375,7 @@ async function loadTestCaseProjects(testCaseId) {
 
         container.innerHTML = projectsHtml;
     } catch (error) {
-        logger.error('加载测试用例项目关联失败:', error);
+        console.error('加载测试用例项目关联失败:', error);
         const container = document.getElementById('detail-case-projects-list');
 
         if (container) {
@@ -7408,7 +7408,7 @@ function selectAllProjects() {
         }
         */
     } catch (error) {
-        logger.error('全选项目出错:', error);
+        console.error('全选项目出错:', error);
     }
 }
 
@@ -7426,7 +7426,7 @@ function deselectAllProjects() {
         }
         */
     } catch (error) {
-        logger.error('取消全选项目出错:', error);
+        console.error('取消全选项目出错:', error);
     }
 }
 
@@ -7557,7 +7557,7 @@ async function loadBugTypeOptions() {
             });
         }
     } catch (error) {
-        logger.error('加载Bug类型选项失败:', error);
+        console.error('加载Bug类型选项失败:', error);
     }
 }
 
@@ -7642,7 +7642,7 @@ async function submitExecutionRecord() {
         }
     } catch (error) {
         hideLoading();
-        logger.error('添加执行记录错误:', error);
+        console.error('添加执行记录错误:', error);
         showErrorMessage('添加执行记录失败: ' + error.message);
     }
 }
@@ -7661,7 +7661,7 @@ async function loadExecutionRecords(caseId) {
             renderExecutionRecords([]);
         }
     } catch (error) {
-        logger.error('加载执行记录错误:', error);
+        console.error('加载执行记录错误:', error);
         window.currentExecutionRecords = [];
         renderExecutionRecords([]);
     }
@@ -7693,7 +7693,7 @@ async function renderExecutionRecords(records) {
             hyperlinkConfigs = response.configs;
         }
     } catch (error) {
-        logger.error('加载超链接配置失败:', error);
+        console.error('加载超链接配置失败:', error);
     }
 
     timeline.innerHTML = records.map(record => {
@@ -8110,7 +8110,7 @@ async function editExecutionRecord(recordId) {
             });
         }
     } catch (error) {
-        logger.error('加载Bug类型选项失败:', error);
+        console.error('加载Bug类型选项失败:', error);
     }
     
     // 创建编辑模态框
@@ -8315,7 +8315,7 @@ async function saveEditRecord(recordId) {
             showErrorMessage(result.message || '更新失败');
         }
     } catch (error) {
-        logger.error('保存执行记录失败:', error);
+        console.error('保存执行记录失败:', error);
         showErrorMessage('保存失败');
     } finally {
         hideLoading();
@@ -8370,7 +8370,7 @@ async function viewExecutionRecordDetail(event, recordId) {
                 <a href="${bugUrl}" target="_blank" style="color: #2563eb; text-decoration: underline;">${escapeHtml(record.bugId)}</a>
             </div>`;
         } catch (error) {
-            logger.error('获取超链接配置失败:', error);
+            console.error('获取超链接配置失败:', error);
             bugIdHtml = `<div style="margin-top: 12px;"><span style="font-weight: 500; color: #6b7280;">Bug ID: </span><span>${escapeHtml(record.bugId)}</span></div>`;
         }
     }
@@ -8485,7 +8485,7 @@ async function deleteExecutionRecord(recordId) {
             showErrorMessage(result.message || '删除失败');
         }
     } catch (error) {
-        logger.error('删除执行记录失败:', error);
+        console.error('删除执行记录失败:', error);
         showErrorMessage('删除失败: ' + error.message);
     } finally {
         hideLoading();
@@ -8602,7 +8602,7 @@ async function saveTestCaseDetail() {
 
         // 确保libraryId和moduleId不为空（用于后续刷新操作）
         if (!libraryId || !moduleId) {
-            logger.error('libraryId或moduleId为空，尝试从UI获取');
+            console.error('libraryId或moduleId为空，尝试从UI获取');
             // 尝试从选中的模块获取libraryId和moduleId
             const activeModuleEl = document.querySelector('.case-nav-item.active');
             if (activeModuleEl) {
@@ -8680,11 +8680,11 @@ async function saveTestCaseDetail() {
                                 localStorage.removeItem('tempProjectAssociations');
                                 console.log('已清除本地存储中的临时关联项目数据');
                             } else {
-                                logger.error('临时关联项目保存失败:', updateResponse.message);
+                                console.error('临时关联项目保存失败:', updateResponse.message);
                                 showErrorMessage('关联项目保存失败: ' + updateResponse.message);
                             }
                         } catch (error) {
-                            logger.error('保存临时关联项目失败:', error);
+                            console.error('保存临时关联项目失败:', error);
                             showErrorMessage('关联项目保存失败: ' + error.message);
                         }
                     } else {
@@ -8693,7 +8693,7 @@ async function saveTestCaseDetail() {
                         console.log('已清除本地存储中的空临时关联项目数据');
                     }
                 } catch (parseError) {
-                    logger.error('解析本地存储中的临时关联项目数据失败:', parseError);
+                    console.error('解析本地存储中的临时关联项目数据失败:', parseError);
                     localStorage.removeItem('tempProjectAssociations');
                     console.log('已清除本地存储中的无效临时关联项目数据');
                 }
@@ -8706,7 +8706,7 @@ async function saveTestCaseDetail() {
             showErrorMessage('测试用例保存失败: ' + (saveData.message || '保存失败，请稍后重试'));
         }
     } catch (error) {
-        logger.error('保存测试用例错误:', error);
+        console.error('保存测试用例错误:', error);
         showErrorMessage('测试用例保存失败: ' + error.message);
     } finally {
         hideLoading();
@@ -8774,7 +8774,7 @@ async function deleteTestCase() {
             showErrorMessage('测试用例删除失败: ' + (deleteData.message || '删除失败，请稍后重试'));
         }
     } catch (error) {
-        logger.error('删除测试用例错误:', error);
+        console.error('删除测试用例错误:', error);
         showErrorMessage('测试用例删除失败: ' + error.message);
     } finally {
         hideLoading();
@@ -8803,7 +8803,7 @@ async function openAddLevel1PointModal() {
             `;
         }
     } catch (error) {
-        logger.error('加载测试类型失败:', error);
+        console.error('加载测试类型失败:', error);
     }
     
     modal.style.display = 'block';
@@ -8995,10 +8995,10 @@ async function submitAddLevel1PointForm() {
                     authToken = loginData.token;
                     console.log('自动登录成功');
                 } else if (loginData.success === false && loginData.message) {
-                    logger.error('自动登录失败:', loginData.message);
+                    console.error('自动登录失败:', loginData.message);
                 }
             } catch (error) {
-                logger.error('自动登录失败:', error);
+                console.error('自动登录失败:', error);
             }
         }
 
@@ -9022,7 +9022,7 @@ async function submitAddLevel1PointForm() {
 
             console.log('API调用结果:', createData);
         } catch (error) {
-            logger.error('API调用失败:', error);
+            console.error('API调用失败:', error);
         }
 
         // 检查API调用结果
@@ -9096,7 +9096,7 @@ async function submitAddLevel1PointForm() {
                         }
                     }
                 } catch (error) {
-                    logger.error('重新登录失败:', error);
+                    console.error('重新登录失败:', error);
                 }
 
                 // 尝试本地添加
@@ -9151,7 +9151,7 @@ async function submitAddLevel1PointForm() {
             }
         }
     } catch (error) {
-        logger.error('添加一级测试点错误:', error);
+        console.error('添加一级测试点错误:', error);
 
         // 尝试本地添加
         const pointName = document.getElementById('level1-point-name').value.trim();
@@ -9336,7 +9336,7 @@ async function deleteUser(userId) {
             showErrorMessage('用户删除失败: ' + (deleteData.message || '删除失败，请稍后重试'));
         }
     } catch (error) {
-        logger.error('删除用户错误:', error);
+        console.error('删除用户错误:', error);
         showErrorMessage('用户删除失败: ' + error.message);
     } finally {
         hideLoading();
@@ -9430,7 +9430,7 @@ async function submitUserForm() {
             }
         }
     } catch (error) {
-        logger.error((isEdit ? '编辑' : '创建') + '用户错误:', error);
+        console.error((isEdit ? '编辑' : '创建') + '用户错误:', error);
         showErrorMessage((isEdit ? '编辑' : '创建') + '用户失败: ' + error.message);
     } finally {
         hideLoading();
@@ -9488,7 +9488,7 @@ async function loadUsers(searchTerm = '', page = 1) {
 
         console.log('用户列表加载完成');
     } catch (error) {
-        logger.error('加载用户列表失败:', error);
+        console.error('加载用户列表失败:', error);
         mockUsers = [];
         updateUsersConfig();
     }
@@ -9603,7 +9603,7 @@ function updateUsersConfig() {
             `;
         }
     } else {
-        logger.error('用户管理页面表格元素未找到');
+        console.error('用户管理页面表格元素未找到');
     }
 }
 
@@ -9639,7 +9639,7 @@ async function approveUser(userId, status) {
         }
     } catch (error) {
         hideLoading();
-        logger.error('审核用户错误:', error);
+        console.error('审核用户错误:', error);
         showErrorMessage('操作失败: ' + error.message);
     }
 }
@@ -9690,7 +9690,7 @@ async function loadRecentLogins() {
             updateRecentLoginsTable([]);
         }
     } catch (error) {
-        logger.error('加载最近登录人员失败:', error);
+        console.error('加载最近登录人员失败:', error);
         // 错误情况下使用空数据
         updateRecentLoginsTable([]);
     }
@@ -10182,7 +10182,7 @@ async function onBatchViewLibraryChange() {
                     moduleSelect.innerHTML = '<option value="">暂无模块</option>';
                 }
             } catch (error) {
-                logger.error('加载模块列表失败:', error);
+                console.error('加载模块列表失败:', error);
                 moduleSelect.innerHTML = '<option value="">加载失败</option>';
             }
         }
@@ -10230,7 +10230,7 @@ async function onBatchViewModuleChange() {
                     level1Select.innerHTML = '<option value="">暂无测试点</option>';
                 }
             } catch (error) {
-                logger.error('加载测试点列表失败:', error);
+                console.error('加载测试点列表失败:', error);
                 level1Select.innerHTML = '<option value="">加载失败</option>';
             }
         }
@@ -10384,7 +10384,7 @@ async function openBatchCreateSelectModal() {
             }
         }
     } catch (error) {
-        logger.error('加载用例库列表失败:', error);
+        console.error('加载用例库列表失败:', error);
     }
     
     modal.style.display = 'flex';
@@ -10445,7 +10445,7 @@ async function onBatchSelectLibrary(libraryId) {
             moduleSelect.innerHTML = '<option value="">该用例库下暂无模块</option>';
         }
     } catch (error) {
-        logger.error('加载模块列表失败:', error);
+        console.error('加载模块列表失败:', error);
         moduleSelect.innerHTML = '<option value="">加载失败</option>';
     }
 }
@@ -10491,7 +10491,7 @@ async function onBatchSelectModule(moduleId) {
             level1Select.disabled = false;
         }
     } catch (error) {
-        logger.error('加载一级测试点列表失败:', error);
+        console.error('加载一级测试点列表失败:', error);
         level1Select.innerHTML = '<option value="">加载失败</option>';
         level1Select.disabled = false;
     }
@@ -10644,7 +10644,7 @@ async function openAddTestCaseSelectModal() {
             }
         }
     } catch (error) {
-        logger.error('加载用例库列表失败:', error);
+        console.error('加载用例库列表失败:', error);
     }
     
     modal.style.display = 'flex';
@@ -10705,7 +10705,7 @@ async function onAddCaseSelectLibrary(libraryId) {
             moduleSelect.innerHTML = '<option value="">该用例库下暂无模块</option>';
         }
     } catch (error) {
-        logger.error('加载模块列表失败:', error);
+        console.error('加载模块列表失败:', error);
         moduleSelect.innerHTML = '<option value="">加载失败</option>';
     }
 }
@@ -10751,7 +10751,7 @@ async function onAddCaseSelectModule(moduleId) {
             level1Select.disabled = false;
         }
     } catch (error) {
-        logger.error('加载一级测试点列表失败:', error);
+        console.error('加载一级测试点列表失败:', error);
         level1Select.innerHTML = '<option value="">加载失败</option>';
         level1Select.disabled = false;
     }
@@ -10800,7 +10800,7 @@ async function loadTestPhasesForTestCase() {
     try {
         const phaseSelect = document.getElementById('case-phases');
         if (!phaseSelect) {
-            logger.error('case-phases element not found');
+            console.error('case-phases element not found');
             return;
         }
 
@@ -10815,11 +10815,11 @@ async function loadTestPhasesForTestCase() {
                 phaseSelect.appendChild(option);
             });
         } else {
-            logger.error('加载测试阶段列表失败:', response.message);
+            console.error('加载测试阶段列表失败:', response.message);
             phaseSelect.innerHTML = '<option value="">加载测试阶段失败</option>';
         }
     } catch (error) {
-        logger.error('加载测试阶段列表错误:', error);
+        console.error('加载测试阶段列表错误:', error);
         const phaseSelect = document.getElementById('case-phases');
         if (phaseSelect) {
             phaseSelect.innerHTML = '<option value="">加载测试阶段失败</option>';
@@ -10841,7 +10841,7 @@ async function openAddTestCaseModal() {
 
         const modal = document.getElementById('add-case-modal');
         if (!modal) {
-            logger.error('add-case-modal element not found');
+            console.error('add-case-modal element not found');
             return;
         }
 
@@ -10941,8 +10941,8 @@ async function openAddTestCaseModal() {
         initAddCaseModalResizer();
 
     } catch (error) {
-        logger.error('Error in openAddTestCaseModal:', error);
-        logger.error('Error stack:', error.stack);
+        console.error('Error in openAddTestCaseModal:', error);
+        console.error('Error stack:', error.stack);
     }
 }
 
@@ -11047,7 +11047,7 @@ function validateAddCaseStep(step) {
 function updateNewCaseProjectsSummary() {
     const summaryContainer = document.getElementById('new-case-projects-summary');
     if (!summaryContainer) {
-        logger.error('[关联项目] 未找到 new-case-projects-summary 元素');
+        console.error('[关联项目] 未找到 new-case-projects-summary 元素');
         return;
     }
 
@@ -11117,7 +11117,7 @@ async function loadTestTypesForTestCase() {
     try {
         const testTypeSelect = document.getElementById('case-type');
         if (!testTypeSelect) {
-            logger.error('case-type element not found');
+            console.error('case-type element not found');
             return;
         }
 
@@ -11152,7 +11152,7 @@ async function loadTestTypesForTestCase() {
                     testTypeSelect.value = testTypesData.testTypes[0].name;
                 }
             } else {
-                logger.error('API返回数据格式不符合预期:', testTypesData);
+                console.error('API返回数据格式不符合预期:', testTypesData);
                 // 加载失败时使用默认选项
                 testTypeSelect.innerHTML = `
                     <option value="功能测试">功能测试</option>
@@ -11162,7 +11162,7 @@ async function loadTestTypesForTestCase() {
                 `;
             }
         } catch (apiError) {
-            logger.error('调用API获取测试类型失败:', apiError);
+            console.error('调用API获取测试类型失败:', apiError);
             // API调用失败时使用默认选项
             testTypeSelect.innerHTML = `
                 <option value="功能测试">功能测试</option>
@@ -11172,8 +11172,8 @@ async function loadTestTypesForTestCase() {
             `;
         }
     } catch (error) {
-        logger.error('加载测试类型列表错误:', error);
-        logger.error('错误堆栈:', error.stack);
+        console.error('加载测试类型列表错误:', error);
+        console.error('错误堆栈:', error.stack);
 
         // 加载失败时使用默认选项
         const testTypeSelect = document.getElementById('case-type');
@@ -11193,7 +11193,7 @@ async function loadEnvironmentsForTestCase() {
     try {
         const environmentSelect = document.getElementById('case-environments');
         if (!environmentSelect) {
-            logger.error('case-environments element not found');
+            console.error('case-environments element not found');
             return;
         }
 
@@ -11221,7 +11221,7 @@ async function loadEnvironmentsForTestCase() {
         `;
 
     } catch (error) {
-        logger.error('加载测试环境列表错误:', error);
+        console.error('加载测试环境列表错误:', error);
         const environmentSelect = document.getElementById('case-environments');
         if (environmentSelect) {
             environmentSelect.innerHTML = `
@@ -11236,7 +11236,7 @@ async function loadTestMethodsForTestCase() {
     try {
         const methodSelect = document.getElementById('case-methods');
         if (!methodSelect) {
-            logger.error('case-methods element not found');
+            console.error('case-methods element not found');
             return;
         }
 
@@ -11264,7 +11264,7 @@ async function loadTestMethodsForTestCase() {
         `;
 
     } catch (error) {
-        logger.error('加载测试方式列表错误:', error);
+        console.error('加载测试方式列表错误:', error);
         const methodSelect = document.getElementById('case-methods');
         if (methodSelect) {
             methodSelect.innerHTML = `
@@ -11279,7 +11279,7 @@ async function loadModulesForTestCase() {
     try {
         const moduleSelect = document.getElementById('case-module');
         if (!moduleSelect) {
-            logger.error('case-module element not found');
+            console.error('case-module element not found');
             return;
         }
 
@@ -11323,7 +11323,7 @@ async function loadModulesForTestCase() {
             moduleSelect.innerHTML = options;
         }
     } catch (error) {
-        logger.error('加载模块列表错误:', error);
+        console.error('加载模块列表错误:', error);
         const moduleSelect = document.getElementById('case-module');
         if (moduleSelect) {
             moduleSelect.innerHTML = `
@@ -11364,7 +11364,7 @@ async function loadTestProgresses() {
         console.log('解析后的testProgresses:', testProgresses);
         return testProgresses;
     } catch (error) {
-        logger.error('加载测试进度列表错误:', error);
+        console.error('加载测试进度列表错误:', error);
         // 使用默认测试进度数据
         const defaultProgresses = [
             { id: 1, progress_id: 1, name: '已完成' },
@@ -11406,7 +11406,7 @@ async function loadTestStatuses() {
         console.log('解析后的testStatuses:', testStatuses);
         return testStatuses;
     } catch (error) {
-        logger.error('加载测试状态列表错误:', error);
+        console.error('加载测试状态列表错误:', error);
         // 使用默认测试状态数据
         const defaultStatuses = [
             { id: 1, status_id: 1, name: 'PASS' },
@@ -11440,19 +11440,19 @@ async function loadProjectsForAssociation() {
         try {
             projectsData = await apiRequest('/projects/list');
         } catch (error) {
-            logger.error('加载项目列表错误:', error);
+            console.error('加载项目列表错误:', error);
         }
 
         try {
             testProgresses = await loadTestProgresses();
         } catch (error) {
-            logger.error('加载测试进度错误:', error);
+            console.error('加载测试进度错误:', error);
         }
 
         try {
             testStatuses = await loadTestStatuses();
         } catch (error) {
-            logger.error('加载测试状态错误:', error);
+            console.error('加载测试状态错误:', error);
         }
 
         let projectList = [];
@@ -11504,7 +11504,7 @@ async function loadProjectsForAssociation() {
             container.innerHTML = projectsHtml;
         }
     } catch (error) {
-        logger.error('加载项目列表错误:', error);
+        console.error('加载项目列表错误:', error);
         const container = document.getElementById('new-case-projects-container');
 
         if (container) {
@@ -11561,7 +11561,7 @@ function editProjectAssociations() {
         // 加载项目数据到模态框
         loadProjectsForEditModal();
     } catch (error) {
-        logger.error('打开编辑关联项目模态框错误:', error);
+        console.error('打开编辑关联项目模态框错误:', error);
         showErrorMessage('打开编辑关联项目模态框失败: ' + error.message);
     }
 }
@@ -11619,7 +11619,7 @@ function openEditTestCaseProjectAssociationsModal() {
             throw new Error('无法找到编辑关联项目模态框');
         }
     } catch (error) {
-        logger.error('打开编辑用例项目关联模态框失败:', error);
+        console.error('打开编辑用例项目关联模态框失败:', error);
         showErrorMessage('打开编辑用例项目关联模态框失败: ' + error.message);
     }
 }
@@ -11645,7 +11645,7 @@ function selectAllEditProjects() {
             });
         }
     } catch (error) {
-        logger.error('全选项目错误:', error);
+        console.error('全选项目错误:', error);
     }
 }
 
@@ -11660,7 +11660,7 @@ function deselectAllEditProjects() {
             });
         }
     } catch (error) {
-        logger.error('取消全选项目错误:', error);
+        console.error('取消全选项目错误:', error);
     }
 }
 
@@ -11673,7 +11673,7 @@ async function loadProjectsForEditModal() {
         const tableContainer = document.querySelector('.pa-table-container');
 
         if (!tbody) {
-            logger.error('pa-projects-tbody 元素不存在');
+            console.error('pa-projects-tbody 元素不存在');
             return;
         }
 
@@ -11812,7 +11812,7 @@ async function loadProjectsForEditModal() {
         }
 
     } catch (error) {
-        logger.error('加载项目列表错误:', error);
+        console.error('加载项目列表错误:', error);
         const loadingState = document.getElementById('pa-loading-state');
         const emptyState = document.getElementById('pa-empty-state');
         if (loadingState) loadingState.style.display = 'none';
@@ -11966,7 +11966,7 @@ async function saveProjectAssociations() {
     try {
         const tbody = document.getElementById('pa-projects-tbody');
         if (!tbody) {
-            logger.error('pa-projects-tbody不存在');
+            console.error('pa-projects-tbody不存在');
             return;
         }
 
@@ -12066,7 +12066,7 @@ async function saveProjectAssociations() {
             showSuccessMessage('关联项目已保存到本地，待测试用例保存时一并提交');
         }
     } catch (error) {
-        logger.error('保存关联项目错误:', error);
+        console.error('保存关联项目错误:', error);
         showErrorMessage('保存关联项目失败');
     }
 }
@@ -12085,7 +12085,7 @@ function selectAllNewCaseProjects() {
         }
         */
     } catch (error) {
-        logger.error('全选新建测试用例项目出错:', error);
+        console.error('全选新建测试用例项目出错:', error);
     }
 }
 
@@ -12103,7 +12103,7 @@ function deselectAllNewCaseProjects() {
         }
         */
     } catch (error) {
-        logger.error('取消全选新建测试用例项目出错:', error);
+        console.error('取消全选新建测试用例项目出错:', error);
     }
 }
 
@@ -12346,13 +12346,13 @@ async function submitTestCaseForm() {
 
         // 验证必填字段
         if (!formData.name) {
-            logger.error('测试用例名称不能为空');
+            console.error('测试用例名称不能为空');
             showErrorMessage('测试用例名称不能为空');
             hideLoading();
             return;
         }
         if (!formData.moduleId || selectedEnvironments.length === 0 || selectedMethods.length === 0) {
-            logger.error('[新建用例] 缺少必填字段:', {
+            console.error('[新建用例] 缺少必填字段:', {
                 moduleId: formData.moduleId,
                 moduleIdValid: !!formData.moduleId,
                 environments: selectedEnvironments,
@@ -12405,12 +12405,12 @@ async function submitTestCaseForm() {
 
             showSuccessMessage('测试用例创建成功');
         } else {
-            logger.error('测试用例创建失败:', createData.message);
+            console.error('测试用例创建失败:', createData.message);
             showErrorMessage('创建测试用例失败: ' + (createData.message || '创建失败，请稍后重试'));
         }
     } catch (error) {
-        logger.error('创建测试用例错误:', error);
-        logger.error('Error stack:', error.stack);
+        console.error('创建测试用例错误:', error);
+        console.error('Error stack:', error.stack);
         showErrorMessage('创建测试用例失败: ' + error.message);
     } finally {
         hideLoading();
@@ -12657,7 +12657,7 @@ async function loadReportDrawerData(reportId) {
             `;
         }
     } catch (error) {
-        logger.error('加载报告详情失败:', error);
+        console.error('加载报告详情失败:', error);
         contentArea.innerHTML = `
             <div style="padding: 40px; text-align: center; color: var(--color-text-secondary, #6b7280);">
                 <p>加载失败: ${error.message}</p>
@@ -12749,7 +12749,7 @@ async function loadReportDetail(reportId) {
             initReportCharts(null);
         }
     } catch (error) {
-        logger.error('加载报告详情错误:', error);
+        console.error('加载报告详情错误:', error);
         const currentReportNameEl = document.getElementById('current-report-name');
         const reportNameInputEl = document.getElementById('report-name-input');
         if (currentReportNameEl) currentReportNameEl.textContent = '测试报告';
@@ -12935,7 +12935,7 @@ async function generateReportFromTestPlan(testPlanId) {
             showToast(result.message || '报告生成失败', 'error');
         }
     } catch (error) {
-        logger.error('生成报告错误:', error);
+        console.error('生成报告错误:', error);
         showToast('报告生成失败: ' + error.message, 'error');
     } finally {
         hideLoading();
@@ -12951,7 +12951,7 @@ function copyMarkdownContent() {
     navigator.clipboard.writeText(currentReportMarkdown).then(() => {
         showToast('Markdown内容已复制到剪贴板', 'success');
     }).catch(err => {
-        logger.error('复制失败:', err);
+        console.error('复制失败:', err);
         showToast('复制失败', 'error');
     });
 }
@@ -12997,7 +12997,7 @@ async function regenerateReport() {
             }
         }
     } catch (error) {
-        logger.error('重新生成报告错误:', error);
+        console.error('重新生成报告错误:', error);
         showToast('重新生成失败', 'error');
     }
 }
@@ -13050,7 +13050,7 @@ async function regenerateReportWithAI(reportId) {
             showToast(result.message || 'AI分析生成失败', 'error');
         }
     } catch (error) {
-        logger.error('重新生成AI分析错误:', error);
+        console.error('重新生成AI分析错误:', error);
         showToast('重新生成失败: ' + error.message, 'error');
     } finally {
         hideLoading();
@@ -13319,7 +13319,7 @@ function addCaseLibrary() {
     if (modal) {
         modal.style.display = 'block';
     } else {
-        logger.error('新建用例库模态框未找到');
+        console.error('新建用例库模态框未找到');
     }
 }
 
@@ -13341,13 +13341,13 @@ async function loadCaseLibraries() {
             console.log('成功加载用例库数量:', librariesData.libraries.length);
             caseLibraries = librariesData.libraries;
         } else {
-            logger.warn('API加载失败，使用空数据');
+            console.warn('API加载失败，使用空数据');
             caseLibraries = [];
         }
 
         renderCaseLibrariesTable();
     } catch (error) {
-        logger.error('加载用例库错误:', error);
+        console.error('加载用例库错误:', error);
         caseLibraries = [];
         renderCaseLibrariesTable();
     } finally {
@@ -13361,7 +13361,7 @@ function renderCaseLibrariesTable() {
     const tableBody = document.getElementById('case-library-body');
 
     if (!tableBody) {
-        logger.error('用例库表格体未找到');
+        console.error('用例库表格体未找到');
         return;
     }
 
@@ -13505,7 +13505,7 @@ async function loadLibrariesForLibraryClone() {
             });
         }
     } catch (error) {
-        logger.error('加载用例库列表失败:', error);
+        console.error('加载用例库列表失败:', error);
     }
 }
 
@@ -13523,11 +13523,11 @@ function getCurrentUserFull() {
             return JSON.parse(userStr);
         }
     } catch (error) {
-        logger.error('获取用户信息失败:', error);
+        console.error('获取用户信息失败:', error);
     }
 
     // 如果都没有，返回默认管理员（开发环境）
-    logger.warn('未找到用户信息，返回默认管理员');
+    console.warn('未找到用户信息，返回默认管理员');
     return { username: 'admin', role: '管理员' };
 }
 
@@ -13665,7 +13665,7 @@ async function confirmDeleteLibrary(libraryId, libraryName) {
             confirmBtn.innerHTML = '确认删除';
         }
     } catch (error) {
-        logger.error('删除用例库错误:', error);
+        console.error('删除用例库错误:', error);
         errorMsg.textContent = '网络错误，请稍后重试';
         errorMsg.style.display = 'block';
         confirmBtn.disabled = false;
@@ -13703,7 +13703,7 @@ async function verifyCaseLibraryPersistence() {
         }
 
     } catch (error) {
-        logger.error('验证持久化错误:', error);
+        console.error('验证持久化错误:', error);
         showErrorMessage('验证数据库持久化失败: ' + error.message);
     } finally {
         hideLoading();
@@ -13745,10 +13745,10 @@ function initConfigCenter() {
                     targetPanel.classList.add('active');
                 }
 
-                // 更新 URL hash（使用路由兼容格式）
-                const configName = menuItem.getAttribute('href')?.replace('#/settings?config=', '');
+                // 更新 URL hash
+                const configName = menuItem.getAttribute('href')?.replace('#config=', '');
                 if (configName) {
-                    history.replaceState(null, '', `#/settings?config=${configName}`);
+                    history.replaceState(null, '', `#config=${configName}`);
                 }
 
                 // 触发对应的数据加载
@@ -13877,13 +13877,14 @@ function applyMenuVisibilityByRole() {
 // 从 URL hash 恢复配置面板
 function restoreConfigPanelFromHash() {
     const hash = window.location.hash;
-    const configMatch = hash.match(/[?&]config=([^&]+)/);
+    const configMatch = hash.match(/[#&?]config=([^&]+)/);
 
     if (configMatch) {
         const configName = configMatch[1];
-        const menuItem = document.querySelector(`.menu-item[href="#/settings?config=${configName}"]`);
+        const menuItem = document.querySelector(`.menu-item[href="#config=${configName}"]`);
 
         if (menuItem) {
+            // 模拟点击菜单项
             menuItem.click();
         }
     }
@@ -13918,7 +13919,7 @@ function loadConfigPanelData(panelId) {
         console.log('加载配置面板数据:', panelId);
         loader();
     } else {
-        logger.warn('未找到配置面板加载函数:', panelId);
+        console.warn('未找到配置面板加载函数:', panelId);
     }
 }
 
@@ -13941,11 +13942,11 @@ async function loadProfileData() {
             profileEmail = user.email || '';
             document.getElementById('profile-email-display').textContent = profileEmail || '未设置';
         } else {
-            logger.error('加载用户信息失败:', result);
+            console.error('加载用户信息失败:', result);
             showErrorMessage(result.message || '加载用户信息失败');
         }
     } catch (error) {
-        logger.error('加载用户信息失败:', error);
+        console.error('加载用户信息失败:', error);
         showErrorMessage('加载用户信息失败');
     }
 }
@@ -13989,7 +13990,7 @@ async function submitEmailChange() {
             showErrorMessage(result.message || '修改失败');
         }
     } catch (error) {
-        logger.error('修改邮箱失败:', error);
+        console.error('修改邮箱失败:', error);
         showErrorMessage('修改邮箱失败');
     }
 }
@@ -14039,7 +14040,7 @@ async function submitPasswordChange() {
             showErrorMessage(result.message || '修改失败');
         }
     } catch (error) {
-        logger.error('修改密码失败:', error);
+        console.error('修改密码失败:', error);
         showErrorMessage('修改密码失败');
     }
 }
@@ -14053,37 +14054,20 @@ async function loadNotificationPrefs() {
         const result = await apiRequest('/users/preferences');
         if (result.success && result.data) {
             const prefs = result.data;
-            const mentionsCheckbox = document.getElementById('pref-email-mentions');
-            const commentsCheckbox = document.getElementById('pref-email-comments');
-            const likesCheckbox = document.getElementById('pref-email-likes');
-            
-            if (mentionsCheckbox) {
-                mentionsCheckbox.checked = prefs.email_notify_mentions === 1 || prefs.email_notify_mentions === true;
-            }
-            if (commentsCheckbox) {
-                commentsCheckbox.checked = prefs.email_notify_comments === 1 || prefs.email_notify_comments === true;
-            }
-            if (likesCheckbox) {
-                likesCheckbox.checked = prefs.email_notify_likes === 1 || prefs.email_notify_likes === true;
-            }
+            document.getElementById('pref-email-mentions').checked = prefs.email_notify_mentions;
+            document.getElementById('pref-email-comments').checked = prefs.email_notify_comments;
+            document.getElementById('pref-email-likes').checked = prefs.email_notify_likes;
         }
     } catch (error) {
-        logger.error('加载消息提醒配置失败:', error);
+        console.error('加载消息提醒配置失败:', error);
         showErrorMessage('加载提醒配置失败');
     }
 }
 
 async function saveNotificationPrefs() {
     const btn = document.getElementById('save-notification-prefs-btn');
-    const btnText = btn.querySelector('.btn-text') || btn;
-    const originalText = btnText.textContent;
-    
     btn.disabled = true;
-    if (btnText !== btn) {
-        btnText.textContent = '保存中...';
-    } else {
-        btn.innerHTML = '<span class="btn-icon">⏳</span> 保存中...';
-    }
+    btn.textContent = '保存中...';
     
     const prefs = {
         email_notify_mentions: document.getElementById('pref-email-mentions').checked,
@@ -14104,11 +14088,11 @@ async function saveNotificationPrefs() {
             showErrorMessage(result.message || '保存失败');
         }
     } catch (error) {
-        logger.error('保存消息提醒配置失败:', error);
+        console.error('保存消息提醒配置失败:', error);
         showErrorMessage('保存配置失败');
     } finally {
         btn.disabled = false;
-        btn.innerHTML = '<span class="btn-icon">💾</span> 保存设置';
+        btn.textContent = '保存设置';
     }
 }
 
@@ -14136,7 +14120,7 @@ async function loadEmailConfigs() {
             await loadEmailStats();
         }
     } catch (error) {
-        logger.error('加载邮件配置失败:', error);
+        console.error('加载邮件配置失败:', error);
     }
 }
 
@@ -14190,7 +14174,7 @@ async function loadEmailStats() {
             document.getElementById('email-remaining').textContent = Math.max(0, remaining);
         }
     } catch (error) {
-        logger.error('加载邮件统计失败:', error);
+        console.error('加载邮件统计失败:', error);
     }
 }
 
@@ -14246,7 +14230,7 @@ async function editEmailConfig(id) {
             document.getElementById('email-config-modal').style.display = 'flex';
         }
     } catch (error) {
-        logger.error('获取邮件配置失败:', error);
+        console.error('获取邮件配置失败:', error);
         showToast('获取邮件配置失败', 'error');
     }
 }
@@ -14318,7 +14302,7 @@ async function saveEmailConfig() {
             showToast(result.message || '保存失败', 'error');
         }
     } catch (error) {
-        logger.error('保存邮件配置失败:', error);
+        console.error('保存邮件配置失败:', error);
         showToast('保存失败', 'error');
     }
 }
@@ -14338,7 +14322,7 @@ async function deleteEmailConfig(id) {
             showToast(result.message || '删除失败', 'error');
         }
     } catch (error) {
-        logger.error('删除邮件配置失败:', error);
+        console.error('删除邮件配置失败:', error);
         showToast('删除失败', 'error');
     }
 }
@@ -14403,7 +14387,7 @@ async function loadHyperlinkConfigs() {
             `).join('');
         }
     } catch (error) {
-        logger.error('加载超链接配置失败:', error);
+        console.error('加载超链接配置失败:', error);
         tbody.innerHTML = '<tr><td colspan="6" class="no-data">加载失败</td></tr>';
     }
 }
@@ -14471,7 +14455,7 @@ async function saveHyperlinkConfig() {
             showErrorMessage(result.message || '操作失败');
         }
     } catch (error) {
-        logger.error('保存超链接配置失败:', error);
+        console.error('保存超链接配置失败:', error);
         showErrorMessage('操作失败');
     }
 }
@@ -14487,7 +14471,7 @@ async function editHyperlinkConfig(id) {
             }
         }
     } catch (error) {
-        logger.error('获取配置失败:', error);
+        console.error('获取配置失败:', error);
         showErrorMessage('获取配置失败');
     }
 }
@@ -14508,7 +14492,7 @@ async function deleteHyperlinkConfig(id) {
             showErrorMessage(result.message || '删除失败');
         }
     } catch (error) {
-        logger.error('删除超链接配置失败:', error);
+        console.error('删除超链接配置失败:', error);
         showErrorMessage('删除失败');
     }
 }
@@ -14545,7 +14529,7 @@ async function sendTestEmail() {
             showToast(result.message || '发送失败', 'error');
         }
     } catch (error) {
-        logger.error('发送测试邮件失败:', error);
+        console.error('发送测试邮件失败:', error);
         showToast('发送失败', 'error');
     }
 }
@@ -14566,115 +14550,55 @@ document.addEventListener('click', function (e) {
 // 查看邮件发送日志
 async function viewEmailLogs() {
     try {
-        const result = await apiRequest('/email/logs?pageSize=50', { useCache: false });
+        const result = await apiRequest('/email/logs?pageSize=50');
         if (result.success) {
             const logs = result.logs;
             let logsHtml = `
-                <table style="width: 100%; border-collapse: collapse;">
-                    <thead>
-                        <tr style="background: #f5f5f5;">
-                            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd; white-space: nowrap;">收件人</th>
-                            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">主题</th>
-                            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd; white-space: nowrap;">类型</th>
-                            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd; white-space: nowrap;">状态</th>
-                            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd; white-space: nowrap;">时间</th>
+                <div style="max-height: 400px; overflow-y: auto;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="background: #f5f5f5;">
+                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">收件人</th>
+                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">主题</th>
+                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">类型</th>
+                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">状态</th>
+                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">时间</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+
+            if (logs.length === 0) {
+                logsHtml += '<tr><td colspan="5" style="padding: 20px; text-align: center; color: #999;">暂无发送记录</td></tr>';
+            } else {
+                logs.forEach(log => {
+                    const statusColor = log.status === 'sent' ? '#28a745' : (log.status === 'failed' ? '#dc3545' : '#ffc107');
+                    const statusText = log.status === 'sent' ? '成功' : (log.status === 'failed' ? '失败' : '待发送');
+                    logsHtml += `
+                        <tr>
+                            <td style="padding: 8px; border-bottom: 1px solid #eee;">${log.recipient_email}</td>
+                            <td style="padding: 8px; border-bottom: 1px solid #eee; max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${log.subject}</td>
+                            <td style="padding: 8px; border-bottom: 1px solid #eee;">${log.email_type || '-'}</td>
+                            <td style="padding: 8px; border-bottom: 1px solid #eee;"><span style="color: ${statusColor};">${statusText}</span></td>
+                            <td style="padding: 8px; border-bottom: 1px solid #eee;">${log.created_at || '-'}</td>
                         </tr>
-                    </thead>
-                    <tbody>
-        `;
+                    `;
+                });
+            }
 
-        if (logs.length === 0) {
-            logsHtml += '<tr><td colspan="5" style="padding: 30px; text-align: center; color: #999;">暂无发送记录</td></tr>';
-        } else {
-            logs.forEach(log => {
-                const statusColor = log.status === 'sent' ? '#28a745' : (log.status === 'failed' ? '#dc3545' : '#ffc107');
-                const statusText = log.status === 'sent' ? '成功' : (log.status === 'failed' ? '失败' : '待发送');
-                logsHtml += `
-                    <tr>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee;">${log.recipient_email}</td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee;">${log.subject}</td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee;">${log.email_type || '-'}</td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee;"><span style="color: ${statusColor}; font-weight: 500;">${statusText}</span></td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee; white-space: nowrap;">${log.created_at || '-'}</td>
-                    </tr>
-                `;
-            });
-        }
+            logsHtml += '</tbody></table></div>';
 
-        logsHtml += '</tbody></table>';
-
-            const modalBody = document.getElementById('email-logs-body');
-            modalBody.innerHTML = logsHtml;
-            
-            const modal = document.getElementById('email-logs-modal');
-            const content = document.getElementById('email-logs-content');
-            content.style.width = '800px';
-            content.style.height = 'auto';
-            content.style.left = '';
-            content.style.top = '';
-            content.style.position = 'relative';
+            // 使用确认模态框显示日志
+            const modal = document.getElementById('confirm-modal');
+            document.querySelector('#confirm-modal .modal-header h3').textContent = '📋 邮件发送日志';
+            document.getElementById('confirm-message').innerHTML = logsHtml;
+            document.querySelector('#confirm-modal .modal-footer').style.display = 'none';
             modal.style.display = 'flex';
-            
-            initEmailLogsDrag();
         }
     } catch (error) {
-        logger.error('获取邮件日志失败:', error);
+        console.error('获取邮件日志失败:', error);
         showToast('获取邮件日志失败', 'error');
     }
-}
-
-// 关闭邮件日志弹窗
-function closeEmailLogsModal() {
-    document.getElementById('email-logs-modal').style.display = 'none';
-}
-
-// 初始化邮件日志弹窗拖拽功能
-function initEmailLogsDrag() {
-    const header = document.getElementById('email-logs-header');
-    const content = document.getElementById('email-logs-content');
-    const modal = document.getElementById('email-logs-modal');
-    
-    let isDragging = false;
-    let startX, startY, startLeft, startTop;
-    
-    header.onmousedown = function(e) {
-        if (e.target.tagName === 'BUTTON') return;
-        
-        isDragging = true;
-        
-        const rect = content.getBoundingClientRect();
-        const modalRect = modal.getBoundingClientRect();
-        
-        if (content.style.position !== 'fixed') {
-            content.style.position = 'fixed';
-            content.style.left = rect.left + 'px';
-            content.style.top = rect.top + 'px';
-            content.style.margin = '0';
-        }
-        
-        startX = e.clientX;
-        startY = e.clientY;
-        startLeft = parseInt(content.style.left) || rect.left;
-        startTop = parseInt(content.style.top) || rect.top;
-        
-        document.onmousemove = function(e) {
-            if (!isDragging) return;
-            
-            const deltaX = e.clientX - startX;
-            const deltaY = e.clientY - startY;
-            
-            content.style.left = (startLeft + deltaX) + 'px';
-            content.style.top = (startTop + deltaY) + 'px';
-        };
-        
-        document.onmouseup = function() {
-            isDragging = false;
-            document.onmousemove = null;
-            document.onmouseup = null;
-        };
-        
-        e.preventDefault();
-    };
 }
 
 // 保存系统配置
@@ -14809,7 +14733,7 @@ async function loadProjects() {
                 }
             }
         } catch (error) {
-            logger.error('API调用失败，使用默认数据:', error);
+            console.error('API调用失败，使用默认数据:', error);
             // 即使API调用失败，也继续执行
             // 如果没有项目数据，使用默认项目
             if (projects.length === 0) {
@@ -14833,7 +14757,7 @@ async function loadProjects() {
 
         console.log('项目列表加载完成');
     } catch (error) {
-        logger.error('加载项目列表失败:', error);
+        console.error('加载项目列表失败:', error);
         // 加载失败时使用默认数据
         console.log('捕获到错误，使用默认数据');
         // 如果没有项目数据，使用默认项目
@@ -14882,7 +14806,7 @@ function updateProjectsTable() {
             `;
         }
     } else {
-        logger.error('项目管理页面表格元素未找到');
+        console.error('项目管理页面表格元素未找到');
     }
 }
 
@@ -14911,7 +14835,7 @@ async function saveSystemConfig() {
             showErrorMessage('系统配置保存失败: ' + (saveData.message || '保存失败，请稍后重试'));
         }
     } catch (error) {
-        logger.error('保存系统配置错误:', error);
+        console.error('保存系统配置错误:', error);
         showErrorMessage('系统配置保存失败: ' + error.message);
     } finally {
         hideLoading();
@@ -14943,7 +14867,7 @@ async function saveIntegrationConfig() {
             showErrorMessage('集成配置保存失败: ' + (saveData.message || '保存失败，请稍后重试'));
         }
     } catch (error) {
-        logger.error('保存集成配置错误:', error);
+        console.error('保存集成配置错误:', error);
         showErrorMessage('集成配置保存失败: ' + error.message);
     } finally {
         hideLoading();
@@ -15017,7 +14941,7 @@ async function deleteProject(projectName) {
             showErrorMessage('项目删除失败: ' + (deleteData.message || '删除失败，请稍后重试'));
         }
     } catch (error) {
-        logger.error('删除项目错误:', error);
+        console.error('删除项目错误:', error);
         showErrorMessage('项目删除失败: ' + error.message);
     } finally {
         hideLoading();
@@ -15077,7 +15001,7 @@ async function submitProjectForm() {
             } else {
                 // 检查是否是JSON解析错误或HTML响应错误
                 if (createData.message && (createData.message.includes('JSON') || createData.message.includes('DOCTYPE') || createData.message.includes('HTML') || createData.message.includes('token'))) {
-                    logger.error('API返回非JSON响应，使用模拟数据:', createData.message);
+                    console.error('API返回非JSON响应，使用模拟数据:', createData.message);
                     // 模拟成功创建项目
                     console.log('模拟项目创建成功，重新加载项目列表');
 
@@ -15106,7 +15030,7 @@ async function submitProjectForm() {
                 }
             }
         } catch (error) {
-            logger.error('API调用失败，使用模拟数据:', error);
+            console.error('API调用失败，使用模拟数据:', error);
             // 即使API调用失败，也模拟成功创建项目
             // 这样用户体验更好，后续后端实现后会自动使用真实API
 
@@ -15133,7 +15057,7 @@ async function submitProjectForm() {
             showSuccessMessage('项目创建成功');
         }
     } catch (error) {
-        logger.error('创建项目错误:', error);
+        console.error('创建项目错误:', error);
         showErrorMessage('创建项目失败: ' + error.message);
     } finally {
         hideLoading();
@@ -15150,11 +15074,11 @@ async function loadEnvironments() {
         if (response.success) {
             updateEnvironmentTable(response.environments);
         } else {
-            logger.error('加载环境列表失败:', response.message);
+            console.error('加载环境列表失败:', response.message);
             updateEnvironmentTable([]);
         }
     } catch (error) {
-        logger.error('加载环境列表错误:', error);
+        console.error('加载环境列表错误:', error);
         updateEnvironmentTable([]);
     } finally {
         hideLoading();
@@ -15230,7 +15154,7 @@ async function editEnvironment(environmentId) {
             showErrorMessage('加载环境信息失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('编辑环境错误:', error);
+        console.error('编辑环境错误:', error);
         showErrorMessage('加载环境信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -15269,7 +15193,7 @@ async function deleteEnvironment(environmentId) {
                 showErrorMessage('环境删除失败: ' + response.message);
             }
         } catch (error) {
-            logger.error('删除环境错误:', error);
+            console.error('删除环境错误:', error);
             showErrorMessage('环境删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -15503,7 +15427,7 @@ async function submitTestPlanForm() {
             showErrorMessage('创建测试计划失败: ' + (createData.message || '创建失败，请稍后重试'));
         }
     } catch (error) {
-        logger.error('创建测试计划错误:', error);
+        console.error('创建测试计划错误:', error);
         showErrorMessage('创建测试计划失败: ' + error.message);
     } finally {
         hideLoading();
@@ -15758,7 +15682,7 @@ async function submitTestReportForm() {
             showErrorMessage('创建测试报告失败: ' + (createData.message || '创建失败，请稍后重试'));
         }
     } catch (error) {
-        logger.error('创建测试报告错误:', error);
+        console.error('创建测试报告错误:', error);
         showErrorMessage('创建测试报告失败: ' + error.message);
     } finally {
         hideLoading();
@@ -15855,7 +15779,7 @@ async function login() {
                 settingsLink.style.display = 'block';
                 console.log('登录成功，显示配置中心链接');
             } else {
-                logger.error('未找到配置中心链接元素');
+                console.error('未找到配置中心链接元素');
             }
 
             // 显示登出按钮
@@ -15892,7 +15816,7 @@ async function login() {
             showErrorMessage('登录失败: ' + errorMsg);
         }
     } catch (error) {
-        logger.error('登录错误:', error);
+        console.error('登录错误:', error);
         showErrorMessage('登录失败: ' + error.message);
     } finally {
         hideLoading();
@@ -15933,7 +15857,7 @@ async function register() {
             showErrorMessage('注册失败: ' + (registerData.message || '注册失败，请稍后重试'));
         }
     } catch (error) {
-        logger.error('注册错误:', error);
+        console.error('注册错误:', error);
         showErrorMessage('注册失败: ' + error.message);
     } finally {
         hideLoading();
@@ -16075,7 +15999,7 @@ async function updateStats() {
         await loadDashboardTables();
 
     } catch (error) {
-        logger.error('更新统计数据错误:', error);
+        console.error('更新统计数据错误:', error);
     }
 }
 
@@ -16260,7 +16184,7 @@ async function loadDashboardFilters() {
         }
 
     } catch (error) {
-        logger.error('加载筛选器选项错误:', error);
+        console.error('加载筛选器选项错误:', error);
     }
 }
 
@@ -16318,7 +16242,7 @@ async function initDashboardCharts() {
         await initProgressTrendChart();
 
     } catch (error) {
-        logger.error('初始化图表错误:', error);
+        console.error('初始化图表错误:', error);
     }
 }
 
@@ -16357,7 +16281,7 @@ async function initPassRateTrendChart(days) {
 
         renderPassRateTrendChart(ctx, data.trendData);
     } catch (error) {
-        logger.error('初始化通过率趋势图表错误:', error);
+        console.error('初始化通过率趋势图表错误:', error);
         const mockData = generateMockTrendData(days);
         renderPassRateTrendChart(ctx, mockData);
     }
@@ -16421,7 +16345,7 @@ async function initExecutionTrendChart(days) {
 
         renderExecutionTrendChart(ctx, data.trendData);
     } catch (error) {
-        logger.error('初始化执行次数趋势图表错误:', error);
+        console.error('初始化执行次数趋势图表错误:', error);
         const mockData = generateMockTrendData(days);
         renderExecutionTrendChart(ctx, mockData);
     }
@@ -16561,7 +16485,7 @@ async function initProjectProgressChart() {
             }
         });
     } catch (error) {
-        logger.error('初始化项目测试进度图表错误:', error);
+        console.error('初始化项目测试进度图表错误:', error);
     }
 }
 
@@ -16617,7 +16541,7 @@ async function initStatusDistributionChart() {
             }
         });
     } catch (error) {
-        logger.error('初始化测试状态分布图表错误:', error);
+        console.error('初始化测试状态分布图表错误:', error);
     }
 }
 
@@ -16693,7 +16617,7 @@ async function initOwnerTasksChart() {
             }
         });
     } catch (error) {
-        logger.error('初始化负责人任务图表错误:', error);
+        console.error('初始化负责人任务图表错误:', error);
     }
 }
 
@@ -16750,7 +16674,7 @@ async function initOwnerPassRateChart() {
             }
         });
     } catch (error) {
-        logger.error('初始化负责人通过率图表错误:', error);
+        console.error('初始化负责人通过率图表错误:', error);
     }
 }
 
@@ -16814,7 +16738,7 @@ async function initProgressTrendChart() {
             }
         });
     } catch (error) {
-        logger.error('初始化测试进度趋势图表错误:', error);
+        console.error('初始化测试进度趋势图表错误:', error);
         ctx.parentElement.innerHTML = '<div class="no-data-message" style="display:flex;align-items:center;justify-content:center;height:100%;color:#999;">加载失败</div>';
     }
 }
@@ -16829,7 +16753,7 @@ async function loadDashboardTables() {
         await loadOwnerDetailsTable();
 
     } catch (error) {
-        logger.error('加载详细数据表格错误:', error);
+        console.error('加载详细数据表格错误:', error);
     }
 }
 
@@ -16866,7 +16790,7 @@ async function loadProjectDetailsTable() {
         `).join('');
 
     } catch (error) {
-        logger.error('加载项目测试详情表格错误:', error);
+        console.error('加载项目测试详情表格错误:', error);
         tbody.innerHTML = '<tr><td colspan="7" class="no-data">加载失败</td></tr>';
     }
 }
@@ -16900,7 +16824,7 @@ async function loadOwnerDetailsTable() {
         `).join('');
 
     } catch (error) {
-        logger.error('加载负责人任务详情表格错误:', error);
+        console.error('加载负责人任务详情表格错误:', error);
         tbody.innerHTML = '<tr><td colspan="6" class="no-data">加载失败</td></tr>';
     }
 }
@@ -17004,7 +16928,7 @@ async function exportProjectData() {
         exportToExcel('项目测试详情', headers, rows, '项目测试详情');
         showSuccessMessage('导出成功');
     } catch (error) {
-        logger.error('导出项目数据错误:', error);
+        console.error('导出项目数据错误:', error);
         showErrorMessage('导出失败: ' + error.message);
     }
 }
@@ -17034,7 +16958,7 @@ async function exportOwnerData() {
         exportToExcel('负责人任务详情', headers, rows, '负责人任务详情');
         showSuccessMessage('导出成功');
     } catch (error) {
-        logger.error('导出负责人数据错误:', error);
+        console.error('导出负责人数据错误:', error);
         showErrorMessage('导出失败: ' + error.message);
     }
 }
@@ -17335,7 +17259,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             await loadProjects();
             await loadCaseLibraries();
         } catch (e) {
-            logger.error('[页面加载] 恢复登录状态失败:', e);
+            console.error('[页面加载] 恢复登录状态失败:', e);
             localStorage.removeItem('authToken');
             localStorage.removeItem('currentUser');
         }
@@ -17376,7 +17300,7 @@ document.addEventListener('DOMContentLoaded', async function () {
                 
                 showSuccessMessage('已恢复之前的编辑内容');
             } catch (error) {
-                logger.error('恢复编辑状态失败:', error);
+                console.error('恢复编辑状态失败:', error);
                 TestCaseEditState.clear();
             }
         }, 100);
@@ -17733,7 +17657,7 @@ async function loadFilterData() {
         // 添加筛选器变化事件
         addFilterChangeEvents();
     } catch (error) {
-        logger.error('加载筛选器数据失败:', error);
+        console.error('加载筛选器数据失败:', error);
     }
 }
 
@@ -17812,7 +17736,7 @@ async function loadDashboardStats() {
         }
 
     } catch (error) {
-        logger.error('加载仪表盘统计数据失败:', error);
+        console.error('加载仪表盘统计数据失败:', error);
     }
 }
 
@@ -18555,7 +18479,7 @@ async function submitEnvironmentForm() {
             showErrorMessage((isEditing ? '环境编辑' : '环境添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('处理环境错误:', error);
+        console.error('处理环境错误:', error);
         showErrorMessage('环境处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -18595,7 +18519,7 @@ async function loadTestSources() {
             showErrorMessage('加载测试点来源列表失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('加载测试点来源列表错误:', error);
+        console.error('加载测试点来源列表错误:', error);
         showErrorMessage('加载测试点来源列表失败: ' + error.message);
     } finally {
         hideLoading();
@@ -18632,7 +18556,7 @@ async function editTestSource(sourceId) {
             showErrorMessage('加载测试点来源信息失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('加载测试点来源信息错误:', error);
+        console.error('加载测试点来源信息错误:', error);
         showErrorMessage('加载测试点来源信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -18659,7 +18583,7 @@ async function deleteTestSource(sourceId) {
             showErrorMessage('删除测试点来源失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('删除测试点来源错误:', error);
+        console.error('删除测试点来源错误:', error);
         showErrorMessage('删除测试点来源失败: ' + error.message);
     } finally {
         hideLoading();
@@ -18708,7 +18632,7 @@ async function submitTestSourceForm() {
             showErrorMessage((isEditing ? '测试点来源编辑' : '测试点来源添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('处理测试点来源错误:', error);
+        console.error('处理测试点来源错误:', error);
         showErrorMessage('测试点来源处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -18749,10 +18673,10 @@ async function loadTestMethods() {
                 }
             }
         } else {
-            logger.error('加载测试方式列表失败:', response.message);
+            console.error('加载测试方式列表失败:', response.message);
         }
     } catch (error) {
-        logger.error('加载测试方式列表错误:', error);
+        console.error('加载测试方式列表错误:', error);
     } finally {
         hideLoading();
     }
@@ -18788,7 +18712,7 @@ async function editTestMethod(methodId) {
             showErrorMessage('加载测试方式信息失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('编辑测试方式错误:', error);
+        console.error('编辑测试方式错误:', error);
         showErrorMessage('加载测试方式信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -18827,7 +18751,7 @@ async function deleteTestMethod(methodId) {
                 showErrorMessage('测试方式删除失败: ' + response.message);
             }
         } catch (error) {
-            logger.error('删除测试方式错误:', error);
+            console.error('删除测试方式错误:', error);
             showErrorMessage('测试方式删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -18878,7 +18802,7 @@ async function submitTestMethodForm() {
             showErrorMessage((isEditing ? '测试方式编辑' : '测试方式添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('处理测试方式错误:', error);
+        console.error('处理测试方式错误:', error);
         showErrorMessage('测试方式处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -18919,10 +18843,10 @@ async function loadTestTypes() {
                 }
             }
         } else {
-            logger.error('加载测试类型列表失败:', response.message);
+            console.error('加载测试类型列表失败:', response.message);
         }
     } catch (error) {
-        logger.error('加载测试类型列表错误:', error);
+        console.error('加载测试类型列表错误:', error);
     } finally {
         hideLoading();
     }
@@ -18968,7 +18892,7 @@ async function editTestType(typeId) {
             showErrorMessage('加载测试类型信息失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('编辑测试类型错误:', error);
+        console.error('编辑测试类型错误:', error);
         showErrorMessage('加载测试类型信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19007,7 +18931,7 @@ async function deleteTestType(typeId) {
                 showErrorMessage('测试类型删除失败: ' + response.message);
             }
         } catch (error) {
-            logger.error('删除测试类型错误:', error);
+            console.error('删除测试类型错误:', error);
             showErrorMessage('测试类型删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -19058,7 +18982,7 @@ async function submitTestTypeForm() {
             showErrorMessage((isEditing ? '测试类型编辑' : '测试类型添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('处理测试类型错误:', error);
+        console.error('处理测试类型错误:', error);
         showErrorMessage('测试类型处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19099,10 +19023,10 @@ async function loadTestSoftwares() {
                 }
             }
         } else {
-            logger.error('加载测试软件列表失败:', response.message);
+            console.error('加载测试软件列表失败:', response.message);
         }
     } catch (error) {
-        logger.error('加载测试软件列表错误:', error);
+        console.error('加载测试软件列表错误:', error);
     } finally {
         hideLoading();
     }
@@ -19148,7 +19072,7 @@ async function editTestSoftware(softwareId) {
             showErrorMessage('加载测试软件信息失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('编辑测试软件错误:', error);
+        console.error('编辑测试软件错误:', error);
         showErrorMessage('加载测试软件信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19187,7 +19111,7 @@ async function deleteTestSoftware(softwareId) {
                 showErrorMessage('测试软件删除失败: ' + response.message);
             }
         } catch (error) {
-            logger.error('删除测试软件错误:', error);
+            console.error('删除测试软件错误:', error);
             showErrorMessage('测试软件删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -19238,7 +19162,7 @@ async function submitTestSoftwareForm() {
             showErrorMessage((isEditing ? '测试软件编辑' : '测试软件添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('处理测试软件错误:', error);
+        console.error('处理测试软件错误:', error);
         showErrorMessage('测试软件处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19279,10 +19203,10 @@ async function loadTestPhases() {
                 }
             }
         } else {
-            logger.error('加载测试阶段列表失败:', response.message);
+            console.error('加载测试阶段列表失败:', response.message);
         }
     } catch (error) {
-        logger.error('加载测试阶段列表错误:', error);
+        console.error('加载测试阶段列表错误:', error);
     } finally {
         hideLoading();
     }
@@ -19328,7 +19252,7 @@ async function editTestPhase(phaseId) {
             showErrorMessage('加载测试阶段信息失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('编辑测试阶段错误:', error);
+        console.error('编辑测试阶段错误:', error);
         showErrorMessage('加载测试阶段信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19367,7 +19291,7 @@ async function deleteTestPhase(phaseId) {
                 showErrorMessage('测试阶段删除失败: ' + response.message);
             }
         } catch (error) {
-            logger.error('删除测试阶段错误:', error);
+            console.error('删除测试阶段错误:', error);
             showErrorMessage('测试阶段删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -19418,7 +19342,7 @@ async function submitTestPhaseForm() {
             showErrorMessage((isEditing ? '测试阶段编辑' : '测试阶段添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('处理测试阶段错误:', error);
+        console.error('处理测试阶段错误:', error);
         showErrorMessage('测试阶段处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19459,10 +19383,10 @@ async function loadTestProgressConfigs() {
                 }
             }
         } else {
-            logger.error('加载测试进度列表失败:', response.message);
+            console.error('加载测试进度列表失败:', response.message);
         }
     } catch (error) {
-        logger.error('加载测试进度列表错误:', error);
+        console.error('加载测试进度列表错误:', error);
     } finally {
         hideLoading();
     }
@@ -19508,7 +19432,7 @@ async function editTestProgress(progressId) {
             showErrorMessage('加载测试进度信息失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('编辑测试进度错误:', error);
+        console.error('编辑测试进度错误:', error);
         showErrorMessage('加载测试进度信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19541,7 +19465,7 @@ async function deleteTestProgress(progressId) {
                 showErrorMessage('测试进度删除失败: ' + response.message);
             }
         } catch (error) {
-            logger.error('删除测试进度错误:', error);
+            console.error('删除测试进度错误:', error);
             showErrorMessage('测试进度删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -19592,7 +19516,7 @@ async function submitTestProgressForm() {
             showErrorMessage((isEditing ? '测试进度编辑' : '测试进度添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('处理测试进度错误:', error);
+        console.error('处理测试进度错误:', error);
         showErrorMessage('测试进度处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19633,10 +19557,10 @@ async function loadTestStatusConfigs() {
                 }
             }
         } else {
-            logger.error('加载测试状态列表失败:', response.message);
+            console.error('加载测试状态列表失败:', response.message);
         }
     } catch (error) {
-        logger.error('加载测试状态列表错误:', error);
+        console.error('加载测试状态列表错误:', error);
     } finally {
         hideLoading();
     }
@@ -19682,7 +19606,7 @@ async function editTestStatus(statusId) {
             showErrorMessage('加载测试状态信息失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('编辑测试状态错误:', error);
+        console.error('编辑测试状态错误:', error);
         showErrorMessage('加载测试状态信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19715,7 +19639,7 @@ async function deleteTestStatus(statusId) {
                 showErrorMessage('测试状态删除失败: ' + response.message);
             }
         } catch (error) {
-            logger.error('删除测试状态错误:', error);
+            console.error('删除测试状态错误:', error);
             showErrorMessage('测试状态删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -19766,7 +19690,7 @@ async function submitTestStatusForm() {
             showErrorMessage((isEditing ? '测试状态编辑' : '测试状态添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('处理测试状态错误:', error);
+        console.error('处理测试状态错误:', error);
         showErrorMessage('测试状态处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19807,10 +19731,10 @@ async function loadPriorities() {
                 }
             }
         } else {
-            logger.error('加载优先级列表失败:', response.message);
+            console.error('加载优先级列表失败:', response.message);
         }
     } catch (error) {
-        logger.error('加载优先级列表错误:', error);
+        console.error('加载优先级列表错误:', error);
     } finally {
         hideLoading();
     }
@@ -19853,7 +19777,7 @@ async function editPriority(priorityId) {
             showErrorMessage('加载优先级信息失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('编辑优先级错误:', error);
+        console.error('编辑优先级错误:', error);
         showErrorMessage('加载优先级信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19888,7 +19812,7 @@ async function deletePriority(priorityId) {
                 showErrorMessage('优先级删除失败: ' + response.message);
             }
         } catch (error) {
-            logger.error('删除优先级错误:', error);
+            console.error('删除优先级错误:', error);
             showErrorMessage('优先级删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -19938,7 +19862,7 @@ async function submitPriorityForm() {
             showErrorMessage((isEditing ? '优先级编辑' : '优先级添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('处理优先级错误:', error);
+        console.error('处理优先级错误:', error);
         showErrorMessage('优先级处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19989,7 +19913,7 @@ async function loadLevel1PointsForSorting() {
         const countElement = document.getElementById('level1-sort-count');
 
         if (!sortableContainer) {
-            logger.error('未找到level1-points-sortable容器');
+            console.error('未找到level1-points-sortable容器');
             return;
         }
 
@@ -20061,7 +19985,7 @@ async function loadLevel1PointsForSorting() {
             // 数据加载完成后初始化拖拽功能
             initLevel1PointsSortable();
         } else {
-            logger.error('加载一级测试点数据失败:', response.message);
+            console.error('加载一级测试点数据失败:', response.message);
             if (countElement) countElement.textContent = '0';
             sortableContainer.innerHTML = `
                 <div class="level1-sort-error">
@@ -20075,8 +19999,8 @@ async function loadLevel1PointsForSorting() {
             `;
         }
     } catch (error) {
-        logger.error('加载一级测试点数据错误:', error);
-        logger.error('错误堆栈:', error.stack);
+        console.error('加载一级测试点数据错误:', error);
+        console.error('错误堆栈:', error.stack);
         const sortableContainer = document.getElementById('level1-points-sortable');
         const countElement = document.getElementById('level1-sort-count');
         if (countElement) countElement.textContent = '0';
@@ -20249,7 +20173,7 @@ async function saveLevel1PointsOrder() {
             showErrorMessage('一级测试点顺序调整失败: ' + response.message);
         }
     } catch (error) {
-        logger.error('保存一级测试点顺序错误:', error);
+        console.error('保存一级测试点顺序错误:', error);
         showErrorMessage('一级测试点顺序调整失败: ' + error.message);
     } finally {
         hideLoading();
@@ -20293,7 +20217,7 @@ async function openEditLevel1PointModal(pointId) {
                     `;
                 }
             } catch (error) {
-                logger.error('加载测试类型失败:', error);
+                console.error('加载测试类型失败:', error);
             }
             
             typeSelect.value = point.test_type || point.type || '功能测试';
@@ -20311,7 +20235,7 @@ async function openEditLevel1PointModal(pointId) {
             showErrorMessage('加载测试点数据失败: ' + (response.message || '未知错误'));
         }
     } catch (error) {
-        logger.error('打开编辑一级测试点模态框错误:', error);
+        console.error('打开编辑一级测试点模态框错误:', error);
         showErrorMessage('加载测试点数据失败: ' + error.message);
     } finally {
         hideLoading();
@@ -20377,13 +20301,13 @@ async function submitEditLevel1PointForm() {
             if (moduleIdToRefresh) {
                 await loadLevel1Points(moduleIdToRefresh);
             } else {
-                logger.warn('[编辑一级测试点] 无法确定要刷新的模块ID');
+                console.warn('[编辑一级测试点] 无法确定要刷新的模块ID');
             }
         } else {
             showErrorMessage('更新失败: ' + (response.message || '未知错误'));
         }
     } catch (error) {
-        logger.error('提交编辑一级测试点表单错误:', error);
+        console.error('提交编辑一级测试点表单错误:', error);
         showErrorMessage('更新失败: ' + error.message);
     } finally {
         hideLoading();
@@ -20437,7 +20361,7 @@ async function deleteLevel1Point(pointId) {
                 showErrorMessage('一级测试点删除失败: ' + response.message);
             }
         } catch (error) {
-            logger.error('删除一级测试点错误:', error);
+            console.error('删除一级测试点错误:', error);
             showErrorMessage('一级测试点删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -20464,7 +20388,7 @@ async function loadAIConfig() {
         }
         return null;
     } catch (error) {
-        logger.error('加载AI配置错误:', error);
+        console.error('加载AI配置错误:', error);
         return null;
     }
 }
@@ -20479,7 +20403,7 @@ async function loadAIModels() {
         }
         return [];
     } catch (error) {
-        logger.error('加载AI模型列表错误:', error);
+        console.error('加载AI模型列表错误:', error);
         return [];
     }
 }
@@ -20566,7 +20490,7 @@ async function loadAISkills() {
             tableBody.innerHTML = '<tr><td colspan="8" class="no-data">暂无AI技能，点击上方按钮新建</td></tr>';
         }
     } catch (error) {
-        logger.error('加载AI技能列表错误:', error);
+        console.error('加载AI技能列表错误:', error);
     }
 }
 
@@ -20584,7 +20508,7 @@ async function toggleSkillStatus(skillId) {
             showErrorMessage(response.message || '操作失败');
         }
     } catch (error) {
-        logger.error('切换技能状态错误:', error);
+        console.error('切换技能状态错误:', error);
         showErrorMessage('操作失败');
     }
 }
@@ -20665,7 +20589,7 @@ async function editAISkill(skillId) {
             showErrorMessage('获取技能详情失败');
         }
     } catch (error) {
-        logger.error('获取技能详情错误:', error);
+        console.error('获取技能详情错误:', error);
         showErrorMessage('获取技能详情失败');
     }
 }
@@ -20745,7 +20669,7 @@ async function saveAISkill() {
             showErrorMessage(response.message || '保存失败');
         }
     } catch (error) {
-        logger.error('保存AI技能错误:', error);
+        console.error('保存AI技能错误:', error);
         showErrorMessage('保存失败: ' + error.message);
     }
 }
@@ -20769,7 +20693,7 @@ async function deleteAISkill(skillId) {
             showErrorMessage(response.message || '删除失败');
         }
     } catch (error) {
-        logger.error('删除AI技能错误:', error);
+        console.error('删除AI技能错误:', error);
         showErrorMessage('删除失败: ' + error.message);
     }
 }
@@ -20831,7 +20755,7 @@ async function loadReportTemplates() {
             tableBody.innerHTML = '<tr><td colspan="6" class="no-data">暂无报告模板，点击上方按钮上传</td></tr>';
         }
     } catch (error) {
-        logger.error('加载报告模板列表错误:', error);
+        console.error('加载报告模板列表错误:', error);
     }
 }
 
@@ -20902,7 +20826,7 @@ async function uploadTemplate() {
             showErrorMessage(result.message || '上传失败');
         }
     } catch (error) {
-        logger.error('上传模板错误:', error);
+        console.error('上传模板错误:', error);
         showErrorMessage('上传失败: ' + error.message);
     } finally {
         hideLoading();
@@ -21010,7 +20934,7 @@ async function viewTemplateContent(templateId) {
             window.currentTemplateId = templateId;
         }
     } catch (error) {
-        logger.error('获取模板内容错误:', error);
+        console.error('获取模板内容错误:', error);
     }
 }
 
@@ -21077,7 +21001,7 @@ async function saveTemplateContent(templateId) {
             showErrorMessage(response.message || '保存失败');
         }
     } catch (error) {
-        logger.error('保存模板内容错误:', error);
+        console.error('保存模板内容错误:', error);
         showErrorMessage('保存失败: ' + error.message);
     } finally {
         hideLoading();
@@ -21090,7 +21014,7 @@ function copyTemplateContent() {
     navigator.clipboard.writeText(content).then(() => {
         showSuccessMessage('模板内容已复制到剪贴板');
     }).catch(err => {
-        logger.error('复制失败:', err);
+        console.error('复制失败:', err);
         showErrorMessage('复制失败');
     });
 }
@@ -21109,7 +21033,7 @@ async function setTemplateAsDefault(templateId) {
             showErrorMessage(response.message || '设置失败');
         }
     } catch (error) {
-        logger.error('设置默认模板错误:', error);
+        console.error('设置默认模板错误:', error);
         showErrorMessage('设置失败');
     }
 }
@@ -21132,7 +21056,7 @@ async function deleteReportTemplate(templateId) {
             showErrorMessage(response.message || '删除失败');
         }
     } catch (error) {
-        logger.error('删除报告模板错误:', error);
+        console.error('删除报告模板错误:', error);
         showErrorMessage('删除失败: ' + error.message);
     }
 }
@@ -21351,7 +21275,7 @@ async function editAIModel(modelId) {
             showErrorMessage('获取模型信息失败');
         }
     } catch (error) {
-        logger.error('编辑AI模型错误:', error);
+        console.error('编辑AI模型错误:', error);
         showErrorMessage('获取模型信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -21420,7 +21344,7 @@ async function saveAIModel() {
             showErrorMessage(response.message || '保存失败');
         }
     } catch (error) {
-        logger.error('保存AI模型错误:', error);
+        console.error('保存AI模型错误:', error);
         showErrorMessage('保存失败: ' + error.message);
     } finally {
         hideLoading();
@@ -21451,7 +21375,7 @@ async function deleteAIModel(modelId) {
             showErrorMessage(response.message || '删除失败');
         }
     } catch (error) {
-        logger.error('删除AI模型错误:', error);
+        console.error('删除AI模型错误:', error);
         showErrorMessage('删除失败: ' + error.message);
     } finally {
         hideLoading();
@@ -21478,7 +21402,7 @@ async function setDefaultAIModel(modelId) {
             showErrorMessage(response.message || '设置失败');
         }
     } catch (error) {
-        logger.error('设置默认AI模型错误:', error);
+        console.error('设置默认AI模型错误:', error);
         showErrorMessage('设置失败: ' + error.message);
     } finally {
         hideLoading();
@@ -21492,7 +21416,7 @@ async function getDefaultAIModel() {
         const defaultModel = models.find(m => m.is_default && m.is_enabled);
         return defaultModel || null;
     } catch (error) {
-        logger.error('获取默认AI模型错误:', error);
+        console.error('获取默认AI模型错误:', error);
         return null;
     }
 }
@@ -21576,7 +21500,7 @@ async function testAIModelConnection(modelId) {
             showErrorMessage('连接测试失败: ' + errorMessage);
         }
     } catch (error) {
-        logger.error('测试AI模型连接错误:', error);
+        console.error('测试AI模型连接错误:', error);
         const statusDiv = document.getElementById('ai-config-status');
         if (statusDiv) {
             statusDiv.className = 'config-status error';
@@ -21618,7 +21542,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     showSuccessMessage('AI功能状态已更新');
                 }
             } catch (error) {
-                logger.error('更新AI启用状态错误:', error);
+                console.error('更新AI启用状态错误:', error);
             }
         });
     }
@@ -21706,7 +21630,7 @@ async function loadAIConfigAndModels() {
         // 加载可用的AI模型列表
         await loadAvailableModels();
     } catch (error) {
-        logger.error('加载AI配置失败:', error);
+        console.error('加载AI配置失败:', error);
     }
 }
 
@@ -21719,7 +21643,7 @@ async function preloadAIModels() {
             console.log('[AI模型] 预加载成功，共', response.models.length, '个模型');
         }
     } catch (error) {
-        logger.error('[AI模型] 预加载失败:', error);
+        console.error('[AI模型] 预加载失败:', error);
     }
 }
 
@@ -21759,7 +21683,7 @@ async function loadAvailableModels(forceRefresh = false) {
             ).join('');
         }
     } catch (error) {
-        logger.error('加载AI模型列表错误:', error);
+        console.error('加载AI模型列表错误:', error);
         modelSelect.innerHTML = '<option value="">加载失败</option>';
     }
 }
@@ -21975,7 +21899,7 @@ async function sendAIQuery() {
         }
 
     } catch (error) {
-        logger.error('AI查询错误:', error);
+        console.error('AI查询错误:', error);
         removeChatMessage(loadingMessage);
         addChatMessage('assistant', `抱歉，处理您的问题时出现错误: ${error.message}`);
     }
@@ -22050,7 +21974,7 @@ async function gatherContextData(query) {
         }
 
     } catch (error) {
-        logger.error('收集上下文数据错误:', error);
+        console.error('收集上下文数据错误:', error);
     }
 
     return context;
@@ -22131,7 +22055,7 @@ ${JSON.stringify(contextData, null, 2)}
         return data.choices[0].message.content;
 
     } catch (error) {
-        logger.error('调用LLM API错误:', error);
+        console.error('调用LLM API错误:', error);
         throw error;
     }
 }
@@ -22370,7 +22294,7 @@ async function loadOwnersForTestPlan() {
             ownerSelect.appendChild(option);
         });
     } catch (error) {
-        logger.error('加载负责人列表失败:', error);
+        console.error('加载负责人列表失败:', error);
         const ownerSelect = document.getElementById('testplan-owner');
         if (ownerSelect) {
             ownerSelect.innerHTML = '<option value="">加载失败</option>';
@@ -22452,7 +22376,7 @@ async function loadStagesAndSoftwares() {
                 softwaresResponse.softwares.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
         }
     } catch (error) {
-        logger.error('加载配置失败:', error);
+        console.error('加载配置失败:', error);
     }
 }
 
@@ -22515,7 +22439,7 @@ async function loadFilterOptions() {
             });
         }
     } catch (error) {
-        logger.error('加载筛选器配置失败:', error);
+        console.error('加载筛选器配置失败:', error);
     }
 }
 
@@ -22543,7 +22467,7 @@ async function loadAIModelsForFilter() {
                     .join('');
         }
     } catch (error) {
-        logger.error('加载AI模型列表失败:', error);
+        console.error('加载AI模型列表失败:', error);
     }
 }
 
@@ -22585,7 +22509,7 @@ async function initAssetsTree() {
             treeContainer.innerHTML = '<div class="tree-loading"><span>加载失败: ' + (response.message || '未知错误') + '</span></div>';
         }
     } catch (error) {
-        logger.error('初始化资产树失败:', error);
+        console.error('初始化资产树失败:', error);
         const container = document.getElementById('test-assets-tree');
         if (container) {
             container.innerHTML = '<div class="tree-loading"><span>加载失败: ' + error.message + '</span></div>';
@@ -22795,7 +22719,7 @@ async function toggleLazyTreeNode(element) {
                     childrenContainer.innerHTML = '<div class="tree-loading"><span>加载失败</span></div>';
                 }
             } catch (error) {
-                logger.error('懒加载子节点失败:', error);
+                console.error('懒加载子节点失败:', error);
                 childrenContainer.innerHTML = '<div class="tree-loading"><span>加载失败</span></div>';
             }
         } else {
@@ -23120,7 +23044,7 @@ function countAllCases(node) {
 function bindAssetsTreeEvents() {
     const treeContainer = document.getElementById('test-assets-tree');
     if (!treeContainer) {
-        logger.warn('资产树容器不存在');
+        console.warn('资产树容器不存在');
         return;
     }
 
@@ -23421,7 +23345,7 @@ async function loadDirectChildrenOnly(nodeElement, isSelected) {
             }
         }
     } catch (error) {
-        logger.error('加载子节点失败:', error);
+        console.error('加载子节点失败:', error);
         childrenContainer.innerHTML = '<div class="tree-loading"><span>加载失败</span></div>';
     }
 }
@@ -23641,7 +23565,7 @@ async function expandAllAssets() {
                     }
                 }
             } catch (error) {
-                logger.error('展开节点失败:', error);
+                console.error('展开节点失败:', error);
             }
         }
 
@@ -24007,7 +23931,7 @@ async function initAssetsTreeWithFilters(filters) {
             treeContainer.innerHTML = '<div class="tree-loading"><span>加载失败: ' + (response.message || '未知错误') + '</span></div>';
         }
     } catch (error) {
-        logger.error('加载筛选资产树失败:', error);
+        console.error('加载筛选资产树失败:', error);
         const container = document.getElementById('test-assets-tree');
         if (container) {
             container.innerHTML = '<div class="tree-loading"><span>加载失败: ' + error.message + '</span></div>';
@@ -24059,7 +23983,7 @@ async function handleAIFilter() {
             showErrorMessage('AI解析失败: ' + (response.message || '未知错误'));
         }
     } catch (error) {
-        logger.error('AI筛选处理错误:', error);
+        console.error('AI筛选处理错误:', error);
         showErrorMessage('AI筛选处理失败: ' + error.message);
     } finally {
         // 恢复按钮状态
@@ -24398,7 +24322,7 @@ async function submitAdvancedTestPlan() {
 
     } catch (error) {
         hideLoading();
-        logger.error((isEditMode ? '更新测试计划失败:' : '创建测试计划失败:'), error);
+        console.error((isEditMode ? '更新测试计划失败:' : '创建测试计划失败:'), error);
         showErrorMessage((isEditMode ? '更新失败: ' : '创建失败: ') + error.message);
     }
 }
@@ -24470,7 +24394,7 @@ async function viewCaseReadonlyDetail(caseId) {
             showErrorMessage('获取用例详情失败: ' + (response.message || '未知错误'));
         }
     } catch (error) {
-        logger.error('获取用例详情错误:', error);
+        console.error('获取用例详情错误:', error);
         showErrorMessage('获取用例详情失败: ' + error.message);
     } finally {
         hideLoading();
@@ -24493,7 +24417,7 @@ async function loadProjectsForTestPlan() {
                 response.projects.map(p => `<option value="${p.name}">${p.name}</option>`).join('');
         }
     } catch (error) {
-        logger.error('加载项目列表失败:', error);
+        console.error('加载项目列表失败:', error);
     }
 }
 
@@ -24921,13 +24845,13 @@ function resetDrawerState() {
 async function loadDrawerData() {
     // 检查登录状态
     if (!authToken) {
-        logger.warn('[loadDrawerData] 未登录，尝试从 localStorage 恢复 token');
+        console.warn('[loadDrawerData] 未登录，尝试从 localStorage 恢复 token');
         const savedToken = localStorage.getItem('authToken');
         if (savedToken) {
             authToken = savedToken;
             console.log('[loadDrawerData] 已从 localStorage 恢复 token');
         } else {
-            logger.error('[loadDrawerData] 无法获取 token，请先登录');
+            console.error('[loadDrawerData] 无法获取 token，请先登录');
             showToast('请先登录', 'error');
             return false;
         }
@@ -24974,7 +24898,7 @@ async function loadDrawerData() {
             window.drawerLibraries = librariesRes.libraries || [];
             console.log('[loadDrawerData] 用例库加载成功:', window.drawerLibraries.length, '个');
         } else {
-            logger.error('[loadDrawerData] 用例库加载失败:', librariesRes.message);
+            console.error('[loadDrawerData] 用例库加载失败:', librariesRes.message);
         }
         
         // 标记数据已加载
@@ -24982,7 +24906,7 @@ async function loadDrawerData() {
         console.log('[loadDrawerData] 数据加载完成');
         return true;
     } catch (error) {
-        logger.error('加载抽屉数据失败:', error);
+        console.error('加载抽屉数据失败:', error);
         showToast('加载数据失败，请重试', 'error');
         return false;
     }
@@ -25210,7 +25134,7 @@ async function loadModulesByProject(projectId) {
             moduleSelect.innerHTML = '<option value="">暂无模块</option>';
         }
     } catch (error) {
-        logger.error('加载模块失败:', error);
+        console.error('加载模块失败:', error);
         moduleSelect.innerHTML = '<option value="">加载失败</option>';
     }
 }
@@ -25219,7 +25143,7 @@ async function loadModulesByProject(projectId) {
 async function loadModulesByLibrary(libraryId) {
     const moduleSelect = document.getElementById('target-select-module');
     if (!moduleSelect) {
-        logger.error('[loadModulesByLibrary] 找不到模块选择器元素');
+        console.error('[loadModulesByLibrary] 找不到模块选择器元素');
         return;
     }
 
@@ -25262,7 +25186,7 @@ async function loadModulesByLibrary(libraryId) {
             moduleSelect.innerHTML = `<option value="">${result.message || '暂无模块'}</option>`;
         }
     } catch (error) {
-        logger.error('[loadModulesByLibrary] 加载模块失败:', error);
+        console.error('[loadModulesByLibrary] 加载模块失败:', error);
         moduleSelect.innerHTML = '<option value="">加载失败</option>';
     }
 }
@@ -25441,7 +25365,7 @@ async function submitReportTask() {
             showToast('任务提交失败: ' + result.message, 'error');
         }
     } catch (error) {
-        logger.error('提交任务失败:', error);
+        console.error('提交任务失败:', error);
         updateAsyncTask(taskId, {
             progress: 100,
             status: '提交失败',
@@ -25638,7 +25562,7 @@ function startTaskPolling(taskId, jobId) {
                 }
             }
         } catch (error) {
-            logger.error('轮询任务状态失败:', error);
+            console.error('轮询任务状态失败:', error);
         }
     }, 2000);
 }
@@ -25648,7 +25572,7 @@ function cancelAsyncTask(taskId) {
     const task = asyncTasks.find(t => t.id === taskId);
     if (task && task.jobId) {
         apiRequest(`/reports/cancel-job/${task.jobId}`, { method: 'POST' })
-            .catch(err => logger.error('取消任务失败:', err));
+            .catch(err => console.error('取消任务失败:', err));
     }
 
     asyncTasks = asyncTasks.filter(t => t.id !== taskId);
@@ -25880,7 +25804,7 @@ async function loadReportsData(page = 1) {
             updateReportsStats(allReportsData);
         }
     } catch (error) {
-        logger.error('加载报告数据失败:', error);
+        console.error('加载报告数据失败:', error);
     }
 }
 
@@ -25951,7 +25875,7 @@ async function downloadReport(reportId) {
             showToast('获取报告内容失败', 'error');
         }
     } catch (error) {
-        logger.error('下载报告失败:', error);
+        console.error('下载报告失败:', error);
         showToast('下载失败', 'error');
     }
 }
@@ -26008,7 +25932,7 @@ async function deleteReport(reportId) {
             showErrorMessage(result.message || '删除失败');
         }
     } catch (error) {
-        logger.error('删除报告失败:', error);
+        console.error('删除报告失败:', error);
         showErrorMessage('删除失败');
     } finally {
         hideLoading();
@@ -26162,7 +26086,7 @@ async function openTestPlanDrawer(planId) {
     const drawer = document.getElementById('testplan-drawer');
 
     if (!overlay || !drawer) {
-        logger.error('抽屉元素不存在');
+        console.error('抽屉元素不存在');
         return;
     }
 
@@ -26216,7 +26140,7 @@ async function loadTestPlanDrawerData(planId) {
         await loadDrawerCases(planId);
 
     } catch (error) {
-        logger.error('加载抽屉数据失败:', error);
+        console.error('加载抽屉数据失败:', error);
         showToast('加载数据失败', 'error');
     }
 }
@@ -26438,7 +26362,7 @@ async function loadDrawerCases(planId) {
         }
 
     } catch (error) {
-        logger.error('加载用例失败:', error);
+        console.error('加载用例失败:', error);
         drawerCasesData = [];
         if (caseCount) {
             caseCount.textContent = '0';
@@ -26512,7 +26436,7 @@ async function openDrawerCaseDetail(caseId) {
             showToast('获取用例详情失败', 'error');
         }
     } catch (error) {
-        logger.error('加载用例详情失败:', error);
+        console.error('加载用例详情失败:', error);
         showToast('加载用例详情失败', 'error');
     } finally {
         hideLoading();
@@ -26686,7 +26610,7 @@ async function saveCaseStatus(caseId, planId) {
             console.log('saveCaseStatusDebug', { currentDrawerPlanId, numericPlanId, numericCaseId, drawerCasesDataLength: drawerCasesData.length });
 
             if (currentDrawerPlanId !== numericPlanId) {
-                logger.warn('抽屉已切换到其他计划，跳过UI更新');
+                console.warn('抽屉已切换到其他计划，跳过UI更新');
                 return;
             }
 
@@ -26728,7 +26652,7 @@ async function saveCaseStatus(caseId, planId) {
             showErrorMessage('更新失败: ' + (result.message || '未知错误'));
         }
     } catch (error) {
-        logger.error('保存状态失败:', error);
+        console.error('保存状态失败:', error);
         showErrorMessage('保存失败: ' + error.message);
     } finally {
         hideLoading();
@@ -27083,7 +27007,7 @@ function closeImportExcelModal() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ filePath: importFileInfo.path })
-        }).catch(e => logger.warn('清理临时文件失败:', e));
+        }).catch(e => console.warn('清理临时文件失败:', e));
     }
     
     resetImportForm();
@@ -27091,7 +27015,7 @@ function closeImportExcelModal() {
     
     // 异步刷新一级测试点，不阻塞关闭
     if (currentModuleId) {
-        loadLevel1Points(currentModuleId).catch(e => logger.warn('刷新一级测试点失败:', e));
+        loadLevel1Points(currentModuleId).catch(e => console.warn('刷新一级测试点失败:', e));
     }
     
     console.log('closeImportExcelModal done');
@@ -27571,7 +27495,7 @@ async function loadSystemSelectOptions() {
             importSystemSelectData = result.data;
         }
     } catch (error) {
-        logger.error('加载系统选项失败:', error);
+        console.error('加载系统选项失败:', error);
         importSystemSelectData = {};
     }
 }
@@ -27791,7 +27715,7 @@ async function loadExportModulesList() {
         if (result.success) {
             const listEl = document.getElementById('export-modules-list');
             if (!listEl) {
-                logger.error('[导出模块列表] 未找到export-modules-list元素');
+                console.error('[导出模块列表] 未找到export-modules-list元素');
                 return;
             }
             
@@ -27831,10 +27755,10 @@ async function loadExportModulesList() {
             // 默认全选
             selectAllExportModules(true);
         } else {
-            logger.error('[导出模块列表] API返回失败:', result.message);
+            console.error('[导出模块列表] API返回失败:', result.message);
         }
     } catch (error) {
-        logger.error('[导出模块列表] 加载失败:', error);
+        console.error('[导出模块列表] 加载失败:', error);
         showErrorMessage('加载模块列表失败');
     }
 }
@@ -27990,7 +27914,7 @@ async function openSubmitReviewModal(caseId) {
         updateSelectedReviewersDisplay();
         document.getElementById('submit-review-modal').style.display = 'block';
     } catch (error) {
-        logger.error('加载用户列表失败:', error);
+        console.error('加载用户列表失败:', error);
         showErrorMessage('加载用户列表失败');
     }
 }
@@ -28190,7 +28114,7 @@ async function confirmSubmitReview() {
             showErrorMessage(response.message || '提交失败');
         }
     } catch (error) {
-        logger.error('提交评审失败:', error);
+        console.error('提交评审失败:', error);
         showErrorMessage('提交失败: ' + error.message);
     }
 }
@@ -28282,7 +28206,7 @@ async function confirmApproveReview() {
             showErrorMessage(response.message || '评审失败');
         }
     } catch (error) {
-        logger.error('通过评审失败:', error);
+        console.error('通过评审失败:', error);
         showErrorMessage('评审失败: ' + error.message);
     }
 }
@@ -28371,7 +28295,7 @@ async function confirmRejectReview() {
             showErrorMessage(response.message || '评审失败');
         }
     } catch (error) {
-        logger.error('驳回评审失败:', error);
+        console.error('驳回评审失败:', error);
         showErrorMessage('评审失败: ' + error.message);
     }
 }
@@ -28406,7 +28330,7 @@ async function loadReviewHistory(caseId) {
             updateReviewStatus(response.data);
         }
     } catch (error) {
-        logger.error('加载评审历史失败:', error);
+        console.error('加载评审历史失败:', error);
     }
 }
 
@@ -28498,7 +28422,7 @@ function renderReviewHistory(records) {
     const container = document.getElementById('review-history-timeline');
     
     if (!container) {
-        logger.error('renderReviewHistory: 找不到 review-history-timeline 元素');
+        console.error('renderReviewHistory: 找不到 review-history-timeline 元素');
         return;
     }
     
@@ -28606,7 +28530,7 @@ function toggleReviewHistory(btn) {
     const container = document.getElementById('review-history-timeline');
     
     if (!container || !btn) {
-        logger.error('toggleReviewHistory: 找不到必要的DOM元素');
+        console.error('toggleReviewHistory: 找不到必要的DOM元素');
         return;
     }
     
@@ -28629,7 +28553,7 @@ function initReviewSocketListeners() {
     const socket = io();
 
     if (!socket) {
-        logger.error('WebSocket not connected');
+        console.error('WebSocket not connected');
         return;
     }
 
@@ -28734,7 +28658,7 @@ async function loadWorkspaceData() {
         updateWorkspaceBadges();
         console.log('[Workspace] 工作台数据加载完成');
     } catch (error) {
-        logger.error('[Workspace] 加载数据失败:', error);
+        console.error('[Workspace] 加载数据失败:', error);
     }
 }
 
@@ -28746,7 +28670,7 @@ async function loadWorkspaceSummary() {
             renderWorkspaceSummary(response.data);
         }
     } catch (error) {
-        logger.error('[Workspace] 加载概览数据失败:', error);
+        console.error('[Workspace] 加载概览数据失败:', error);
     }
 }
 
@@ -28774,7 +28698,7 @@ async function loadPendingReviews() {
             }
         }
     } catch (error) {
-        logger.error('[Workspace] 加载待评审列表失败:', error);
+        console.error('[Workspace] 加载待评审列表失败:', error);
     }
 }
 
@@ -28872,7 +28796,7 @@ async function loadPendingExecutions() {
             }
         }
     } catch (error) {
-        logger.error('[Workspace] 加载待执行列表失败:', error);
+        console.error('[Workspace] 加载待执行列表失败:', error);
     }
 }
 
@@ -28925,7 +28849,7 @@ async function loadMyPlans() {
             }
         }
     } catch (error) {
-        logger.error('[Workspace] 加载我的计划失败:', error);
+        console.error('[Workspace] 加载我的计划失败:', error);
     }
 }
 
@@ -28984,7 +28908,7 @@ async function loadRecentActivities() {
             }
         }
     } catch (error) {
-        logger.error('[Workspace] 加载最近活动失败:', error);
+        console.error('[Workspace] 加载最近活动失败:', error);
     }
 }
 
@@ -29180,7 +29104,7 @@ async function loadAllPendingReviews(showLoadingOverlay = false) {
         if (showLoadingOverlay) {
             hideLoading();
         }
-        logger.error('加载待评审用例失败:', error);
+        console.error('加载待评审用例失败:', error);
         showErrorMessage('加载待评审用例失败: ' + error.message);
     }
 }
@@ -29193,7 +29117,7 @@ function renderAllPendingReviewsList() {
     console.log('[renderAllPendingReviewsList] 开始渲染, container存在:', !!container, '数据数量:', allPendingReviewsData.length);
     
     if (!container) {
-        logger.error('[renderAllPendingReviewsList] container不存在!');
+        console.error('[renderAllPendingReviewsList] container不存在!');
         return;
     }
     
@@ -29436,7 +29360,7 @@ async function batchApproveAllPendingReviews() {
         }
     } catch (error) {
         hideLoading();
-        logger.error('批量评审失败:', error);
+        console.error('批量评审失败:', error);
         showErrorMessage('批量评审失败: ' + error.message);
     }
 }
@@ -29492,7 +29416,7 @@ async function batchRejectAllPendingReviews() {
         }
     } catch (error) {
         hideLoading();
-        logger.error('批量评审失败:', error);
+        console.error('批量评审失败:', error);
         showErrorMessage('批量评审失败: ' + error.message);
     }
 }
@@ -29526,7 +29450,7 @@ async function viewCaseDetail(caseId) {
         }
     } catch (error) {
         hideLoading();
-        logger.error('加载用例详情失败:', error);
+        console.error('加载用例详情失败:', error);
         showErrorMessage('加载用例详情失败');
     }
 }
@@ -29572,7 +29496,7 @@ async function openQuickReviewModal(caseId) {
             showErrorMessage('获取用例信息失败');
         }
     } catch (error) {
-        logger.error('获取用例信息失败:', error);
+        console.error('获取用例信息失败:', error);
         showErrorMessage('获取用例信息失败');
     }
 }
@@ -29625,24 +29549,25 @@ async function quickApproveReview() {
             apiCache.deleteByPrefix('/workspace');
             apiCache.deleteByPrefix('/testcases/review/pending');
             
-            // 非阻塞刷新工作台数据（如果用户在工作台页面）
             if (typeof loadWorkspaceData === 'function') {
-                loadWorkspaceData().catch(err => console.error('[快速评审] 工作台数据刷新失败:', err));
+                await loadWorkspaceData();
+                console.log('[快速评审] 工作台数据刷新完成');
+            } else {
+                console.error('[快速评审] loadWorkspaceData 函数不存在');
             }
             
-            // 阻塞刷新当前页面的待评审列表
             if (typeof loadAllPendingReviews === 'function') {
                 console.log('[快速评审] 调用 loadAllPendingReviews...');
                 await loadAllPendingReviews();
                 console.log('[快速评审] 所有待评审用例刷新完成');
             } else {
-                logger.error('[快速评审] loadAllPendingReviews 函数不存在!');
+                console.error('[快速评审] loadAllPendingReviews 函数不存在!');
             }
         } else {
             showErrorMessage(response.message || '评审失败');
         }
     } catch (error) {
-        logger.error('[快速评审] 评审失败:', error);
+        console.error('[快速评审] 评审失败:', error);
         showErrorMessage('评审失败: ' + error.message);
     }
 }
@@ -29679,14 +29604,14 @@ async function quickRejectReview() {
             apiCache.deleteByPrefix('/workspace');
             apiCache.deleteByPrefix('/testcases/review/pending');
             
-            // 非阻塞刷新工作台数据（如果用户在工作台页面）
             if (typeof loadWorkspaceData === 'function') {
-                loadWorkspaceData().catch(err => console.error('[快速评审] 工作台数据刷新失败:', err));
+                await loadWorkspaceData();
+                console.log('[快速评审] 工作台数据刷新完成');
+            } else {
+                console.error('[快速评审] loadWorkspaceData 函数不存在');
             }
             
-            // 阻塞刷新当前页面的待评审列表
             if (typeof loadAllPendingReviews === 'function') {
-                console.log('[快速评审] 调用 loadAllPendingReviews...');
                 await loadAllPendingReviews();
                 console.log('[快速评审] 所有待评审用例刷新完成');
             }
@@ -29694,7 +29619,7 @@ async function quickRejectReview() {
             showErrorMessage(response.message || '评审失败');
         }
     } catch (error) {
-        logger.error('[快速评审] 驳回失败:', error);
+        console.error('[快速评审] 驳回失败:', error);
         showErrorMessage('评审失败: ' + error.message);
     }
 }
@@ -29737,7 +29662,7 @@ async function viewPendingExecutionPlan(planId) {
         if (typeof openTestPlanDrawer === 'function') {
             await openTestPlanDrawer(planId);
         } else {
-            logger.warn('openTestPlanDrawer function not found');
+            console.warn('openTestPlanDrawer function not found');
         }
     }, 500);
 }
@@ -29931,7 +29856,7 @@ async function openBatchSubmitReviewModal(caseIds) {
         }
         
     } catch (error) {
-        logger.error('[批量提交评审] 打开对话框失败:', error);
+        console.error('[批量提交评审] 打开对话框失败:', error);
         showErrorMessage('打开对话框失败: ' + error.message);
     }
 }
@@ -30041,7 +29966,7 @@ async function confirmBatchSubmitReview() {
             showErrorMessage(response.message || '批量提交失败');
         }
     } catch (error) {
-        logger.error('批量提交评审失败:', error);
+        console.error('批量提交评审失败:', error);
         showErrorMessage('批量提交失败: ' + error.message);
     } finally {
         if (confirmBtn) {
@@ -30190,7 +30115,7 @@ async function confirmBatchApproveReview() {
             showErrorMessage(response.message || '批量评审失败');
         }
     } catch (error) {
-        logger.error('批量通过评审失败:', error);
+        console.error('批量通过评审失败:', error);
         showErrorMessage('批量通过失败: ' + error.message);
     } finally {
         if (confirmBtn) {
@@ -30367,7 +30292,7 @@ async function confirmBatchRejectReview() {
             showErrorMessage(response.message || '批量驳回失败');
         }
     } catch (error) {
-        logger.error('批量驳回评审失败:', error);
+        console.error('批量驳回评审失败:', error);
         showErrorMessage('批量驳回失败: ' + error.message);
     } finally {
         if (confirmBtn) {
@@ -30407,7 +30332,7 @@ async function loadScripts(testCaseId) {
         }
         renderScripts();
     } catch (error) {
-        logger.error('加载关联脚本失败:', error);
+        console.error('加载关联脚本失败:', error);
         currentScripts = [];
         renderScripts();
     }
@@ -30621,7 +30546,7 @@ async function handleScriptFileUpload(file) {
             showErrorMessage(data.message || '文件上传失败');
         }
     } catch (error) {
-        logger.error('文件上传失败:', error);
+        console.error('文件上传失败:', error);
         showErrorMessage('文件上传失败: ' + error.message);
     }
 }
@@ -30696,7 +30621,7 @@ async function saveScript() {
             showErrorMessage(data.message || '保存失败');
         }
     } catch (error) {
-        logger.error('保存脚本失败:', error);
+        console.error('保存脚本失败:', error);
         showErrorMessage('保存脚本失败: ' + error.message);
     }
 }
@@ -30723,7 +30648,7 @@ async function deleteScript(scriptId) {
             showErrorMessage(data.message || '删除失败');
         }
     } catch (error) {
-        logger.error('删除脚本失败:', error);
+        console.error('删除脚本失败:', error);
         showErrorMessage('删除脚本失败: ' + error.message);
     }
 }

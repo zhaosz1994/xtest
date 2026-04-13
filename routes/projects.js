@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { authenticateToken, requireAdmin } = require('../middleware');
+const logger = require('../services/logger');
 const router = express.Router();
 
 router.get('/list', authenticateToken, async (req, res) => {

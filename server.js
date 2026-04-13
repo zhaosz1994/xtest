@@ -1,10 +1,13 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const crypto = require('crypto');
 const pool = require('./db');
 const { authenticateToken, requireAdmin } = require('./middleware');
 const usersRouter = require('./routes/users');
 const logger = require('./services/logger');
+const { loginLimiter, apiLimiter, writeLimiter, aiLimiter } = require('./services/rateLimiter');
+const AuditLogService = require('./services/auditLogService');
 const { getUserAIConfig } = require('./services/aiService');
 // 暂时注释掉模块路由，直接在server.js中实现
 // const modulesRouter = require('./routes/modules');
@@ -83,6 +86,8 @@ app.use(cors(cors_config));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+app.use('/api/', apiLimiter);
+
 // 静态文件服务 - 暴露 public 目录
 app.use(express.static(path.join(__dirname, 'public')));
 // 额外暴露根目录的 CSS 和 JS 文件
@@ -126,8 +131,27 @@ app.use('/api', require('./routes/scripts'));
 app.use('/api/workspace', require('./routes/workspace'));
 app.use('/api', require('./routes/search'));
 
-// 配置数据 API 端点（不带认证，供前端下拉框使用）
-app.get('/priorities/list', async (req, res) => {
+app.get('/api/audit-logs', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { page, pageSize, action, targetType, userId, startDate, endDate } = req.query;
+        const result = await AuditLogService.getLogs({
+            page: parseInt(page) || 1,
+            pageSize: parseInt(pageSize) || 20,
+            action,
+            targetType,
+            userId: userId ? parseInt(userId) : null,
+            startDate,
+            endDate
+        });
+        res.json({ success: true, data: result });
+    } catch (error) {
+        logger.error('获取审计日志错误:', { error: error.message });
+        res.status(500).json({ success: false, message: '获取审计日志失败' });
+    }
+});
+
+// 配置数据 API 端点（需要认证，供前端下拉框使用）
+app.get('/priorities/list', authenticateToken, async (req, res) => {
   try {
     const [priorities] = await pool.execute('SELECT id, name FROM test_priorities ORDER BY id');
     res.json({ success: true, priorities });
@@ -137,7 +161,7 @@ app.get('/priorities/list', async (req, res) => {
   }
 });
 
-app.get('/test-types/list', async (req, res) => {
+app.get('/test-types/list', authenticateToken, async (req, res) => {
   try {
     const [testTypes] = await pool.execute('SELECT id, name FROM test_types ORDER BY id');
     res.json({ success: true, testTypes });
@@ -147,7 +171,7 @@ app.get('/test-types/list', async (req, res) => {
   }
 });
 
-app.get('/test-phases/list', async (req, res) => {
+app.get('/test-phases/list', authenticateToken, async (req, res) => {
   try {
     const [testPhases] = await pool.execute('SELECT id, name FROM test_phases ORDER BY id');
     res.json({ success: true, testPhases });
@@ -157,7 +181,7 @@ app.get('/test-phases/list', async (req, res) => {
   }
 });
 
-app.get('/environments/list', async (req, res) => {
+app.get('/environments/list', authenticateToken, async (req, res) => {
   try {
     const [environments] = await pool.execute('SELECT id, name FROM environments ORDER BY id');
     res.json({ success: true, environments });
@@ -167,8 +191,8 @@ app.get('/environments/list', async (req, res) => {
   }
 });
 
-// 用户列表 API（供前端负责人下拉框使用）
-app.get('/users/list', async (req, res) => {
+// 用户列表 API（供前端负责人下拉框使用，需要认证）
+app.get('/users/list', authenticateToken, async (req, res) => {
   try {
     const [users] = await pool.execute('SELECT id, username FROM users ORDER BY username');
     res.json({ success: true, users });
@@ -178,8 +202,8 @@ app.get('/users/list', async (req, res) => {
   }
 });
 
-// 一级测试点列表 API（供批量创建用例页面使用）
-app.post('/testpoints/level1/all', async (req, res) => {
+// 一级测试点列表 API（供批量创建用例页面使用，需要认证）
+app.post('/testpoints/level1/all', authenticateToken, async (req, res) => {
   const { libraryId, keyword } = req.body;
 
   try {
@@ -221,7 +245,7 @@ app.post('/testpoints/level1/all', async (req, res) => {
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
 
 // 直接在server.js中实现模块路由
-app.post('/api/modules/list', async (req, res) => {
+app.post('/api/modules/list', authenticateToken, async (req, res) => {
   try {
     console.log('接收到模块列表请求:', req.body);
     const { libraryId, page = 1, pageSize = 32 } = req.body;
@@ -275,7 +299,7 @@ app.post('/api/modules/list', async (req, res) => {
   }
 });
 
-app.post('/api/modules/create', async (req, res) => {
+app.post('/api/modules/create', authenticateToken, async (req, res) => {
   try {
     console.log('接收到创建模块请求:', req.body);
     const { name, libraryId, parentId } = req.body;
@@ -296,7 +320,7 @@ app.post('/api/modules/create', async (req, res) => {
     }
     
     // 生成唯一的module_id
-    const moduleId = 'MODULE_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const moduleId = 'MODULE_' + crypto.randomUUID();
     
     // 获取当前最大的order_index
     let orderIndex = 0;
@@ -317,6 +341,18 @@ app.post('/api/modules/create', async (req, res) => {
       [moduleId, name, libraryId, orderIndex, parentId || null]
     );
     
+    AuditLogService.logModuleAction({
+        userId: req.user.id,
+        username: req.user.username,
+        userRole: req.user.role,
+        action: 'create',
+        moduleId: moduleId,
+        moduleName: name,
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent'),
+        afterData: { moduleId, name, libraryId, orderIndex, parentId }
+    });
+    
     res.json({ success: true, message: '模块添加成功' });
   } catch (error) {
     logger.error('添加模块错误:', { error: error.message });
@@ -325,7 +361,7 @@ app.post('/api/modules/create', async (req, res) => {
   }
 });
 
-app.post('/api/modules/update', async (req, res) => {
+app.post('/api/modules/update', authenticateToken, async (req, res) => {
   try {
     console.log('接收到更新模块请求:', req.body);
     const { id, name, libraryId } = req.body;
@@ -360,17 +396,33 @@ app.post('/api/modules/update', async (req, res) => {
   }
 });
 
-app.post('/api/modules/delete', async (req, res) => {
+app.post('/api/modules/delete', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到删除模块请求:', req.body);
     const { id, libraryId } = req.body;
     
-    console.log('删除模块:', { id, libraryId });
+    const [modules] = await pool.execute(
+      'SELECT module_id, name FROM modules WHERE id = ? AND library_id = ?',
+      [id, libraryId]
+    );
     
     await pool.execute(
       'DELETE FROM modules WHERE id = ? AND library_id = ?',
       [id, libraryId]
     );
+    
+    if (modules.length > 0) {
+        AuditLogService.logModuleAction({
+            userId: req.user.id,
+            username: req.user.username,
+            userRole: req.user.role,
+            action: 'delete',
+            moduleId: modules[0].module_id,
+            moduleName: modules[0].name,
+            ipAddress: req.ip,
+            userAgent: req.get('User-Agent'),
+            beforeData: { id, libraryId, name: modules[0].name }
+        });
+    }
     
     res.json({ success: true, message: '模块删除成功' });
   } catch (error) {
@@ -380,7 +432,7 @@ app.post('/api/modules/delete', async (req, res) => {
   }
 });
 
-app.post('/api/modules/search', async (req, res) => {
+app.post('/api/modules/search', authenticateToken, async (req, res) => {
   try {
     console.log('接收到模块搜索请求:', req.body);
     const { libraryId, searchTerm, page = 1, pageSize = 32 } = req.body;
@@ -439,7 +491,7 @@ app.post('/api/modules/search', async (req, res) => {
   }
 });
 
-app.post('/api/modules/reorder', async (req, res) => {
+app.post('/api/modules/reorder', authenticateToken, async (req, res) => {
   try {
     console.log('接收到模块重排序请求:', req.body);
     const { modules, libraryId } = req.body;
@@ -476,7 +528,7 @@ app.post('/api/modules/reorder', async (req, res) => {
   }
 });
 
-app.post('/api/modules/batchCreate', async (req, res) => {
+app.post('/api/modules/batchCreate', authenticateToken, async (req, res) => {
   try {
     console.log('接收到批量创建模块请求:', req.body);
     const { modules } = req.body;
@@ -486,7 +538,7 @@ app.post('/api/modules/batchCreate', async (req, res) => {
     }
     
     for (const module of modules) {
-      const moduleId = 'MODULE_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+      const moduleId = 'MODULE_' + crypto.randomUUID();
       await pool.execute(
         'INSERT INTO modules (module_id, name, library_id) VALUES (?, ?, ?)',
         [moduleId, module.name, module.libraryId]
@@ -502,7 +554,7 @@ app.post('/api/modules/batchCreate', async (req, res) => {
 });
 
 // 获取指定项目关联的模块列表（通过测试用例关联）
-app.get('/api/modules/by-project/:projectId', async (req, res) => {
+app.get('/api/modules/by-project/:projectId', authenticateToken, async (req, res) => {
   try {
     const { projectId } = req.params;
     
@@ -571,7 +623,7 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
     const sourceModule = sourceModules[0];
     
     // 2. 创建新模块
-    const newModuleId = 'MODULE_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+    const newModuleId = 'MODULE_' + crypto.randomUUID();
     const [moduleResult] = await connection.execute(
       'INSERT INTO modules (module_id, name, library_id, order_index) VALUES (?, ?, ?, ?)',
       [newModuleId, newModuleName, targetLibraryId, 0]
@@ -618,7 +670,7 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
       for (let i = 0; i < testCases.length; i++) {
         const tc = testCases[i];
         // 生成新的case_id - 使用时间戳+索引+随机数确保唯一性
-        const newCaseId = `CASE-${Date.now()}-${i}-${Math.floor(Math.random() * 100000)}`;
+        const newCaseId = `CASE-${crypto.randomUUID()}`;
         
         // 确定level1_id的映射
         let newLevel1Id = null;
@@ -827,7 +879,7 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
 });
 
 // 获取指定用例库下的模块列表（用于克隆选择）
-app.get('/api/modules/by-library/:libraryId', async (req, res) => {
+app.get('/api/modules/by-library/:libraryId', authenticateToken, async (req, res) => {
   try {
     const { libraryId } = req.params;
     
@@ -899,7 +951,7 @@ app.post('/api/testpoints/level1/add', authenticateToken, async (req, res) => {
 });
 
 // 获取模块下的一级测试点列表
-app.get('/api/testpoints/level1/:moduleId', async (req, res) => {
+app.get('/api/testpoints/level1/:moduleId', authenticateToken, async (req, res) => {
   try {
     const { moduleId } = req.params;
     const numericModuleId = parseInt(moduleId);
@@ -944,7 +996,7 @@ app.get('/api/test', (req, res) => {
 });
 
 // 测试用例管理路由
-app.post('/api/cases/create', async (req, res) => {
+app.post('/api/cases/create', authenticateToken, async (req, res) => {
   try {
     console.log('接收到创建测试用例请求:', req.body);
     const { 
@@ -1233,7 +1285,7 @@ app.post('/api/cases/create', async (req, res) => {
   }
 });
 
-app.post('/api/cases/list', async (req, res) => {
+app.post('/api/cases/list', authenticateToken, async (req, res) => {
   try {
     console.log('接收到测试用例列表请求:', req.body);
     const { libraryId, moduleId, level1Id, page = 1, pageSize = 32 } = req.body;
@@ -1445,7 +1497,7 @@ app.post('/api/cases/list', async (req, res) => {
 });
 
 // 更新测试用例
-app.post('/api/cases/update', async (req, res) => {
+app.post('/api/cases/update', authenticateToken, async (req, res) => {
   try {
     console.log('接收到更新测试用例请求:', req.body);
     const { 
@@ -1943,7 +1995,7 @@ app.post('/api/environments/create', async (req, res) => {
     }
     
     // 生成唯一的env_id
-    const envId = 'ENV-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const envId = 'ENV-' + crypto.randomUUID();
     
     // 插入环境记录
     await pool.execute(
@@ -2070,7 +2122,7 @@ app.post('/api/test-sources/create', async (req, res) => {
       return res.json({ success: false, message: '测试点来源名称和创建者不能为空' });
     }
     
-    const sourceId = 'SRC-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const sourceId = 'SRC-' + crypto.randomUUID();
     
     await pool.execute(
       `INSERT INTO test_sources (source_id, name, description, creator) VALUES (?, ?, ?, ?)`,
@@ -2172,7 +2224,7 @@ app.post('/api/test-types/create', async (req, res) => {
     }
     
     // 生成唯一的type_id
-    const typeId = 'TYPE-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const typeId = 'TYPE-' + crypto.randomUUID();
     
     // 插入测试类型记录
     await pool.execute(
@@ -2301,7 +2353,7 @@ app.post('/api/test-softwares/create', async (req, res) => {
     }
     
     // 生成唯一的software_id
-    const softwareId = 'SOFTWARE-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const softwareId = 'SOFTWARE-' + crypto.randomUUID();
     
     // 插入测试软件记录
     await pool.execute(
@@ -2414,7 +2466,7 @@ app.post('/api/test-phases/create', async (req, res) => {
     }
     
     // 生成唯一的phase_id
-    const phaseId = 'PHASE-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const phaseId = 'PHASE-' + crypto.randomUUID();
     
     // 插入测试阶段记录
     await pool.execute(
@@ -2543,7 +2595,7 @@ app.post('/api/test-progresses/create', async (req, res) => {
     }
     
     // 生成唯一的progress_id
-    const progressId = 'PROGRESS-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const progressId = 'PROGRESS-' + crypto.randomUUID();
     
     // 插入测试进度记录
     await pool.execute(
@@ -3495,7 +3547,7 @@ app.post('/api/test-statuses/create', async (req, res) => {
     }
     
     // 生成唯一的status_id
-    const statusId = 'STATUS-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const statusId = 'STATUS-' + crypto.randomUUID();
     
     // 插入测试状态记录
     await pool.execute(
@@ -3760,7 +3812,7 @@ app.post('/api/priorities/create', async (req, res) => {
       return res.json({ success: false, message: '优先级名称和创建者不能为空' });
     }
     
-    const priorityId = 'PRIORITY-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const priorityId = 'PRIORITY-' + crypto.randomUUID();
     
     await pool.execute(
       `INSERT INTO test_priorities (priority_id, name, description, creator) 
@@ -3871,7 +3923,7 @@ app.post('/api/test-methods/create', async (req, res) => {
     }
     
     // 生成唯一的method_id
-    const methodId = 'METHOD-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const methodId = 'METHOD-' + crypto.randomUUID();
     
     // 插入测试方式记录
     await pool.execute(
@@ -3987,7 +4039,7 @@ app.delete('/api/test-methods/delete', async (req, res) => {
 });
 
 // 根据library_id、module_id和level1_id获取匹配的测试用例
-app.get('/api/cases/match/:libraryId/:moduleId/:level1Id', async (req, res) => {
+app.get('/api/cases/match/:libraryId/:moduleId/:level1Id', authenticateToken, async (req, res) => {
   try {
     const { libraryId, moduleId, level1Id } = req.params;
     const { keyword } = req.query; // 获取搜索关键词
@@ -4521,20 +4573,27 @@ app.get('/api/dashboard/project-progress', async (req, res) => {
     // 通过率分母：pass + fail + asic_hang + core_dump + traffic_drop（不包含 blocked 和 paused）
     // 进度分母：所有非 pending 的用例
     const projectProgress = projectStats.map(project => {
-      const validTested = (project.passed_count || 0) + (project.failed_count || 0);
-      const testedForProgress = (project.passed_count || 0) + (project.failed_count || 0) + (project.blocked_count || 0) + (project.paused_count || 0);
-      const passRate = validTested > 0 ? ((project.passed_count || 0) / validTested * 100).toFixed(1) : 0;
-      const progress = project.total_cases > 0 ? (testedForProgress / project.total_cases * 100).toFixed(1) : 0;
+      const passedCount = Number(project.passed_count) || 0;
+      const failedCount = Number(project.failed_count) || 0;
+      const blockedCount = Number(project.blocked_count) || 0;
+      const pausedCount = Number(project.paused_count) || 0;
+      const totalCases = Number(project.total_cases) || 0;
+      const pendingCount = Number(project.pending_count) || 0;
+      
+      const validTested = passedCount + failedCount;
+      const testedForProgress = passedCount + failedCount + blockedCount + pausedCount;
+      const passRate = validTested > 0 ? (passedCount / validTested * 100).toFixed(1) : 0;
+      const progress = totalCases > 0 ? (testedForProgress / totalCases * 100).toFixed(1) : 0;
       
       return {
         projectId: project.id,
         projectName: project.project_name,
-        totalCases: project.total_cases || 0,
-        passedCount: project.passed_count || 0,
-        failedCount: project.failed_count || 0,
-        blockedCount: project.blocked_count || 0,
-        pausedCount: project.paused_count || 0,
-        pendingCount: project.pending_count || 0,
+        totalCases: totalCases,
+        passedCount: passedCount,
+        failedCount: failedCount,
+        blockedCount: blockedCount,
+        pausedCount: pausedCount,
+        pendingCount: pendingCount,
         passRate: passRate + '%',
         progress: progress + '%'
       };
@@ -4611,20 +4670,30 @@ app.get('/api/dashboard/owner-analysis', async (req, res) => {
     // 计算每个负责人的通过率
     // 通过率分母：pass + fail + asic_hang + core_dump + traffic_drop（不包含 blocked 和 paused）
     const ownerAnalysis = ownerStats.map(owner => {
-      const validTested = (owner.passed_count || 0) + (owner.failed_count || 0);
-      const passRate = validTested > 0 ? ((owner.passed_count || 0) / validTested * 100).toFixed(1) : 0;
+      const passedCount = Number(owner.passed_count) || 0;
+      const failedCount = Number(owner.failed_count) || 0;
+      const blockedCount = Number(owner.blocked_count) || 0;
+      const pausedCount = Number(owner.paused_count) || 0;
+      const pendingCount = Number(owner.pending_count) || 0;
+      const totalTasks = Number(owner.total_tasks) || 0;
+      const completedCount = Number(owner.completed_count) || 0;
+      const inProgressCount = Number(owner.in_progress_count) || 0;
+      const notStartedCount = Number(owner.not_started_count) || 0;
+      
+      const validTested = passedCount + failedCount;
+      const passRate = validTested > 0 ? (passedCount / validTested * 100).toFixed(1) : 0;
       
       return {
         owner: owner.owner,
-        totalTasks: owner.total_tasks || 0,
-        passedCount: owner.passed_count || 0,
-        failedCount: owner.failed_count || 0,
-        blockedCount: owner.blocked_count || 0,
-        pausedCount: owner.paused_count || 0,
-        pendingCount: owner.pending_count || 0,
-        completedCount: owner.completed_count || 0,
-        inProgressCount: owner.in_progress_count || 0,
-        notStartedCount: owner.not_started_count || 0,
+        totalTasks: totalTasks,
+        passedCount: passedCount,
+        failedCount: failedCount,
+        blockedCount: blockedCount,
+        pausedCount: pausedCount,
+        pendingCount: pendingCount,
+        completedCount: completedCount,
+        inProgressCount: inProgressCount,
+        notStartedCount: notStartedCount,
         passRate: passRate + '%'
       };
     });
@@ -4831,10 +4900,12 @@ app.get('/api/dashboard/trend/pass-rate', async (req, res) => {
         return dbDateStr === dateStr;
       });
       if (dayData) {
-        const validTested = (dayData.passed || 0) + (dayData.failed || 0);
-        passRates.push(validTested > 0 ? ((dayData.passed / validTested) * 100).toFixed(1) : 0);
-        passedCounts.push(dayData.passed || 0);
-        failedCounts.push(dayData.failed || 0);
+        const passedVal = Number(dayData.passed) || 0;
+        const failedVal = Number(dayData.failed) || 0;
+        const validTested = passedVal + failedVal;
+        passRates.push(validTested > 0 ? ((passedVal / validTested) * 100).toFixed(1) : 0);
+        passedCounts.push(passedVal);
+        failedCounts.push(failedVal);
       } else {
         passRates.push(0);
         passedCounts.push(0);
@@ -7318,7 +7389,7 @@ app.get('/api/testassets/tree', async (req, res) => {
 });
 
 // 获取单个测试用例详情
-app.get('/api/testpoints/detail/:id', async (req, res) => {
+app.get('/api/testpoints/detail/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     

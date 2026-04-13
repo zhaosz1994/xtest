@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
+const logger = require('../services/logger');
 
 // 创建历史快照
 router.post('/create', async (req, res) => {

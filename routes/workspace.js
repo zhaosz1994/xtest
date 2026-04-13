@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 const { authenticateToken } = require('../middleware');
+const logger = require('../services/logger');
 
 router.get('/summary', authenticateToken, async (req, res) => {
     try {

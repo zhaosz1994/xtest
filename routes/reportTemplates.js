@@ -4,6 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const pool = require('../db');
+const logger = require('../services/logger');
 
 // 配置 Multer 存储
 const storage = multer.diskStorage({

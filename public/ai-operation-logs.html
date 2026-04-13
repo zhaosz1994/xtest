@@ -136,19 +136,25 @@
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             margin-bottom: 20px;
-            min-height: 500px;
+            height: 400px;
         }
         
         .chart-container canvas {
-            max-height: 450px;
+            width: 100% !important;
+            height: 100% !important;
         }
         
-        .chart-container h3 {
-            margin-top: 0;
-            margin-bottom: 20px;
+        .chart-title {
+            margin: 0 0 15px 0;
             color: #333;
             font-size: 18px;
             font-weight: bold;
+        }
+        
+        .charts-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
         }
         
         .logs-table {
@@ -504,20 +510,24 @@
             
             <!-- 概览标签页 -->
             <div class="tab-content active" id="overview-tab">
+                <h3 class="chart-title">📈 每日操作趋势</h3>
                 <div class="chart-container">
-                    <h3>每日操作趋势</h3>
                     <canvas id="daily-chart"></canvas>
                 </div>
                 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                    <div class="chart-container">
-                        <h3>Top 10 热门技能</h3>
-                        <canvas id="top-skills-chart"></canvas>
+                <div class="charts-row">
+                    <div>
+                        <h3 class="chart-title">🔥 Top 10 热门技能</h3>
+                        <div class="chart-container">
+                            <canvas id="top-skills-chart"></canvas>
+                        </div>
                     </div>
                     
-                    <div class="chart-container">
-                        <h3>Top 10 活跃用户</h3>
-                        <canvas id="top-users-chart"></canvas>
+                    <div>
+                        <h3 class="chart-title">👥 Top 10 活跃用户</h3>
+                        <div class="chart-container">
+                            <canvas id="top-users-chart"></canvas>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -729,6 +739,19 @@
             return num.toString();
         }
         
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            try {
+                const date = new Date(dateStr);
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                return `${year}/${month}/${day}`;
+            } catch (e) {
+                return dateStr;
+            }
+        }
+        
         function updateDailyChart(dailyData) {
             const ctx = document.getElementById('daily-chart').getContext('2d');
             
@@ -736,7 +759,7 @@
                 dailyChart.destroy();
             }
             
-            const labels = dailyData.map(d => d.date).reverse();
+            const labels = dailyData.map(d => formatDate(d.date)).reverse();
             const successData = dailyData.map(d => d.success_count).reverse();
             const failedData = dailyData.map(d => d.failed_count).reverse();
             
@@ -775,7 +798,8 @@
                 },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: true,
+                    maintainAspectRatio: false,
+                    devicePixelRatio: window.devicePixelRatio || 2,
                     plugins: {
                         legend: {
                             position: 'top',
@@ -879,7 +903,8 @@
                 },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: true,
+                    maintainAspectRatio: false,
+                    devicePixelRatio: window.devicePixelRatio || 2,
                     plugins: {
                         legend: {
                             display: false
@@ -995,7 +1020,8 @@
                 },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: true,
+                    maintainAspectRatio: false,
+                    devicePixelRatio: window.devicePixelRatio || 2,
                     plugins: {
                         legend: {
                             display: false

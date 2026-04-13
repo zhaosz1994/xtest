@@ -5,6 +5,7 @@ const XLSX = require('xlsx');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const logger = require('../services/logger');
 
 // 配置multer用于Excel文件上传
 const storage = multer.diskStorage({

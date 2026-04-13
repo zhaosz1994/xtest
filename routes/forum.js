@@ -10,6 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const pool = require('../db');
+const { authenticateToken: authMiddleware, isAdmin: isAdminCheck } = require('../middleware');
 const jwt = require('jsonwebtoken');
 const notificationService = require('../services/notificationService');
 const logger = require('../services/logger');
@@ -120,22 +121,7 @@ const FILE_TYPES = {
 
 // ==================== 中间件配置 ====================
 
-const authenticateToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    
-    if (!token) {
-        return res.status(401).json({ success: false, message: '未登录，请先登录' });
-    }
-    
-    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-        if (err) {
-            return res.status(403).json({ success: false, message: 'Token无效或已过期' });
-        }
-        req.user = user;
-        next();
-    });
-};
+const authenticateToken = authMiddleware;
 
 const optionalAuth = (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -745,7 +731,7 @@ router.get('/posts/:id', async (req, res) => {
         if (authHeader && authHeader.startsWith('Bearer ')) {
             try {
                 const token = authHeader.substring(7);
-                const decoded = jwt.verify(token, process.env.JWT_SECRET || 'xtest-secret-key-2024');
+                const decoded = jwt.verify(token, process.env.JWT_SECRET);
                 const userId = decoded.id || decoded.userId;
                 
                 if (userId) {
@@ -959,11 +945,6 @@ router.delete('/posts/:id', authenticateToken, async (req, res) => {
                 [pt.tag_id]
             );
         }
-        
-        await connection.execute(
-            `DELETE FROM forum_post_tags WHERE post_id = ?`,
-            [actualPostId]
-        );
         
         await connection.execute(
             `UPDATE forum_posts SET status = 'deleted' WHERE id = ?`,
@@ -1280,6 +1261,18 @@ router.post('/posts/:id/restore', authenticateToken, async (req, res) => {
             `UPDATE forum_posts SET status = 'normal', updated_at = NOW() WHERE id = ?`,
             [postId]
         );
+        
+        const [postTags] = await pool.execute(
+            `SELECT tag_id FROM forum_post_tags WHERE post_id = ?`,
+            [postId]
+        );
+        
+        for (const pt of postTags) {
+            await pool.execute(
+                `UPDATE forum_tags SET post_count = post_count + 1 WHERE id = ?`,
+                [pt.tag_id]
+            );
+        }
         
         res.json({ success: true, message: '帖子已恢复' });
     } catch (error) {

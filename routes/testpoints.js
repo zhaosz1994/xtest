@@ -6,6 +6,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const logger = require('../services/logger');
 
 // 安全解析 JSON 字段（处理 MySQL2 可能已自动解析的情况）
 function safeParseJSON(value) {

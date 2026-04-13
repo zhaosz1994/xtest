@@ -120,6 +120,18 @@ async function logEmail(configId, recipientEmail, recipientName, subject, emailT
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [configId, recipientEmail, recipientName, subject, emailType, status, errorMessage, status === 'sent' ? new Date() : null]
   );
+  
+  // 只保留最新的100条日志
+  await pool.execute(`
+    DELETE FROM email_logs 
+    WHERE id NOT IN (
+      SELECT id FROM (
+        SELECT id FROM email_logs 
+        ORDER BY created_at DESC 
+        LIMIT 100
+      ) AS latest
+    )
+  `);
 }
 
 // 发送邮件主函数

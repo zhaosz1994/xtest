@@ -3,6 +3,9 @@ const router = express.Router();
 const pool = require('../db');
 const { authenticateToken } = require('../middleware');
 const { logActivity } = require('./history');
+const logger = require('../services/logger');
+
+const errorResp = (res, status, message) => res.status(status).json({ success: false, message });
 
 router.post('/batch-create', authenticateToken, async (req, res) => {
     const connection = await pool.getConnection();
@@ -15,17 +18,17 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
 
         // ── 参数校验 ─────────────────────────────────────────────
         if (!moduleId) {
-            return res.json({ success: false, message: '缺少必要参数：moduleId' });
+            return errorResp(res, 400, '缺少必要参数：moduleId');
         }
         if (!Array.isArray(cases) || cases.length === 0) {
-            return res.json({ success: false, message: '测试用例数据不能为空' });
+            return errorResp(res, 400, '测试用例数据不能为空');
         }
         if (cases.length > 200) {
-            return res.json({ success: false, message: '单次批量创建不能超过200条，请分批提交' });
+            return errorResp(res, 400, '单次批量创建不能超过200条，请分批提交');
         }
         const invalidCases = cases.filter(c => !c.name || c.name.trim() === '');
         if (invalidCases.length > 0) {
-            return res.json({ success: false, message: '存在用例名称为空的数据，请检查后重试' });
+            return errorResp(res, 400, '存在用例名称为空的数据，请检查后重试');
         }
 
         await connection.beginTransaction();
@@ -37,7 +40,7 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
         );
         if (moduleRows.length === 0) {
             await connection.rollback();
-            return res.json({ success: false, message: '指定的模块不存在' });
+            return errorResp(res, 404, '指定的模块不存在');
         }
         const moduleName = moduleRows[0].name;
 
@@ -343,7 +346,7 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
         await connection.rollback();
         logger.error('批量创建测试用例错误:', { error: error.message });
         console.error('错误堆栈:', error.stack);
-        res.json({ success: false, message: '批量创建失败: ' + error.message });
+        errorResp(res, 500, '批量创建失败: ' + error.message);
     } finally {
         connection.release();
     }
@@ -362,7 +365,7 @@ router.post('/:id/submit-review', authenticateToken, async (req, res) => {
         const reviewerIdList = reviewer_ids || (reviewer_id ? [reviewer_id] : []);
         
         if (!reviewerIdList || reviewerIdList.length === 0) {
-            return res.json({ success: false, message: '请选择至少一位评审人' });
+            return errorResp(res, 400, '请选择至少一位评审人');
         }
 
         await connection.beginTransaction();
@@ -374,14 +377,14 @@ router.post('/:id/submit-review', authenticateToken, async (req, res) => {
 
         if (caseRows.length === 0) {
             await connection.rollback();
-            return res.json({ success: false, message: '测试用例不存在' });
+            return errorResp(res, 404, '测试用例不存在');
         }
 
         const caseData = caseRows[0];
 
         if (caseData.review_status !== 'draft' && caseData.review_status !== 'rejected') {
             await connection.rollback();
-            return res.json({ success: false, message: '当前用例状态不允许提交评审' });
+            return errorResp(res, 400, '当前用例状态不允许提交评审');
         }
 
         const isAdmin = currentUser.role === '管理员' || currentUser.role === 'admin' || currentUser.role === 'Administrator';
@@ -390,7 +393,7 @@ router.post('/:id/submit-review', authenticateToken, async (req, res) => {
         
         if (!isAdmin && !isCreator && !isOwner) {
             await connection.rollback();
-            return res.json({ success: false, message: '只有用例创建者、负责人或管理员才能提交评审' });
+            return errorResp(res, 403, '只有用例创建者、负责人或管理员才能提交评审');
         }
 
         const placeholders = reviewerIdList.map(() => '?').join(',');
@@ -401,7 +404,7 @@ router.post('/:id/submit-review', authenticateToken, async (req, res) => {
 
         if (reviewerRows.length !== reviewerIdList.length) {
             await connection.rollback();
-            return res.json({ success: false, message: '部分评审人不存在' });
+            return errorResp(res, 400, '部分评审人不存在');
         }
 
         const reviewerNames = reviewerRows.map(r => r.username).join('、');
@@ -477,7 +480,7 @@ router.post('/:id/submit-review', authenticateToken, async (req, res) => {
     } catch (error) {
         await connection.rollback();
         logger.error('提交评审失败:', { error: error.message });
-        res.json({ success: false, message: '提交评审失败: ' + error.message });
+        errorResp(res, 500, '提交评审失败: ' + error.message);
     } finally {
         connection.release();
     }
@@ -494,20 +497,20 @@ router.post('/:id/review', authenticateToken, async (req, res) => {
         const userAgent = req.get('User-Agent');
 
         if (!action || !['approve', 'reject'].includes(action)) {
-            return res.json({ success: false, message: '无效的评审操作' });
+            return errorResp(res, 400, '无效的评审操作');
         }
 
         if (action === 'reject') {
             if (!comment || comment.trim().length < 1) {
-                return res.json({ success: false, message: '驳回原因不能为空' });
+                return errorResp(res, 400, '驳回原因不能为空');
             }
             if (comment.length > 500) {
-                return res.json({ success: false, message: '评审意见不能超过500个字符' });
+                return errorResp(res, 400, '评审意见不能超过500个字符');
             }
         }
 
         if (comment && comment.length > 500) {
-            return res.json({ success: false, message: '评审意见不能超过500个字符' });
+            return errorResp(res, 400, '评审意见不能超过500个字符');
         }
 
         await connection.beginTransaction();
@@ -523,14 +526,14 @@ router.post('/:id/review', authenticateToken, async (req, res) => {
 
         if (caseRows.length === 0) {
             await connection.rollback();
-            return res.json({ success: false, message: '测试用例不存在' });
+            return errorResp(res, 404, '测试用例不存在');
         }
 
         const caseData = caseRows[0];
 
         if (caseData.review_status !== 'pending') {
             await connection.rollback();
-            return res.json({ success: false, message: '当前用例不在待评审状态' });
+            return errorResp(res, 400, '当前用例不在待评审状态');
         }
 
         const [reviewerRows] = await connection.execute(
@@ -540,12 +543,12 @@ router.post('/:id/review', authenticateToken, async (req, res) => {
 
         if (reviewerRows.length === 0) {
             await connection.rollback();
-            return res.json({ success: false, message: '您不是该用例的评审人' });
+            return errorResp(res, 403, '您不是该用例的评审人');
         }
 
         if (reviewerRows[0].status !== 'pending') {
             await connection.rollback();
-            return res.json({ success: false, message: '您已完成评审，请勿重复操作' });
+            return errorResp(res, 400, '您已完成评审，请勿重复操作');
         }
 
         const reviewerAction = action === 'approve' ? 'approved' : 'rejected';
@@ -656,7 +659,7 @@ router.post('/:id/review', authenticateToken, async (req, res) => {
     } catch (error) {
         await connection.rollback();
         logger.error('执行评审失败:', { error: error.message });
-        res.json({ success: false, message: '评审失败: ' + error.message });
+        errorResp(res, 500, '评审失败: ' + error.message);
     } finally {
         connection.release();
     }
@@ -674,7 +677,7 @@ router.get('/:id/review-history', authenticateToken, async (req, res) => {
         );
 
         if (caseRows.length === 0) {
-            return res.json({ success: false, message: '测试用例不存在' });
+            return errorResp(res, 404, '测试用例不存在');
         }
 
         const caseInfo = caseRows[0];
@@ -726,7 +729,7 @@ router.get('/:id/review-history', authenticateToken, async (req, res) => {
 
     } catch (error) {
         logger.error('获取评审历史失败:', { error: error.message });
-        res.json({ success: false, message: '获取评审历史失败: ' + error.message });
+        errorResp(res, 500, '获取评审历史失败: ' + error.message);
     }
 });
 
@@ -783,7 +786,7 @@ router.get('/review/pending', authenticateToken, async (req, res) => {
 
     } catch (error) {
         logger.error('获取待评审列表失败:', { error: error.message });
-        res.json({ success: false, message: '获取待评审列表失败: ' + error.message });
+        errorResp(res, 500, '获取待评审列表失败: ' + error.message);
     }
 });
 
@@ -797,7 +800,7 @@ router.get('/:id/review-progress', authenticateToken, async (req, res) => {
         );
 
         if (caseRows.length === 0) {
-            return res.json({ success: false, message: '测试用例不存在' });
+            return errorResp(res, 404, '测试用例不存在');
         }
 
         const [reviewers] = await pool.execute(
@@ -839,7 +842,7 @@ router.get('/:id/review-progress', authenticateToken, async (req, res) => {
 
     } catch (error) {
         logger.error('获取评审进度失败:', { error: error.message });
-        res.json({ success: false, message: '获取评审进度失败: ' + error.message });
+        errorResp(res, 500, '获取评审进度失败: ' + error.message);
     }
 });
 
@@ -855,19 +858,19 @@ router.post('/batch-submit-review', authenticateToken, async (req, res) => {
         const userAgent = req.get('User-Agent');
         
         if (!case_ids || !Array.isArray(case_ids) || case_ids.length === 0) {
-            return res.json({ success: false, message: '请选择要提交评审的用例' });
+            return errorResp(res, 400, '请选择要提交评审的用例');
         }
         
         if (case_ids.length > 50) {
-            return res.json({ success: false, message: '单次最多提交50个用例' });
+            return errorResp(res, 400, '单次最多提交50个用例');
         }
         
         if (!reviewer_ids || !Array.isArray(reviewer_ids) || reviewer_ids.length === 0) {
-            return res.json({ success: false, message: '请选择至少一位评审人' });
+            return errorResp(res, 400, '请选择至少一位评审人');
         }
         
         if (comment && comment.length > 500) {
-            return res.json({ success: false, message: '评审说明不能超过500个字符' });
+            return errorResp(res, 400, '评审说明不能超过500个字符');
         }
         
         const placeholders = reviewer_ids.map(() => '?').join(',');
@@ -877,7 +880,7 @@ router.post('/batch-submit-review', authenticateToken, async (req, res) => {
         );
         
         if (reviewers.length !== reviewer_ids.length) {
-            return res.json({ success: false, message: '部分评审人不存在或已禁用' });
+            return errorResp(res, 400, '部分评审人不存在或已禁用');
         }
         
         const casePlaceholders = case_ids.map(() => '?').join(',');
@@ -1000,7 +1003,7 @@ router.post('/batch-submit-review', authenticateToken, async (req, res) => {
     } catch (error) {
         await connection.rollback();
         logger.error('批量提交评审错误:', { error: error.message });
-        res.json({ success: false, message: '批量提交评审失败: ' + error.message });
+        errorResp(res, 500, '批量提交评审失败: ' + error.message);
     } finally {
         connection.release();
     }
@@ -1018,23 +1021,23 @@ router.post('/batch-review', authenticateToken, async (req, res) => {
         const userAgent = req.get('User-Agent');
         
         if (!case_ids || !Array.isArray(case_ids) || case_ids.length === 0) {
-            return res.json({ success: false, message: '请选择要评审的用例' });
+            return errorResp(res, 400, '请选择要评审的用例');
         }
         
         if (case_ids.length > 50) {
-            return res.json({ success: false, message: '单次最多评审50个用例' });
+            return errorResp(res, 400, '单次最多评审50个用例');
         }
         
         if (!action || !['approve', 'reject'].includes(action)) {
-            return res.json({ success: false, message: '无效的评审操作' });
+            return errorResp(res, 400, '无效的评审操作');
         }
         
         if (action === 'reject' && (!comment || comment.trim().length < 1)) {
-            return res.json({ success: false, message: '驳回原因不能为空' });
+            return errorResp(res, 400, '驳回原因不能为空');
         }
         
         if (comment && comment.length > 500) {
-            return res.json({ success: false, message: '评审意见不能超过500个字符' });
+            return errorResp(res, 400, '评审意见不能超过500个字符');
         }
         
         const placeholders = case_ids.map(() => '?').join(',');
@@ -1183,7 +1186,7 @@ router.post('/batch-review', authenticateToken, async (req, res) => {
     } catch (error) {
         await connection.rollback();
         logger.error('批量评审错误:', { error: error.message });
-        res.json({ success: false, message: '批量评审失败: ' + error.message });
+        errorResp(res, 500, '批量评审失败: ' + error.message);
     } finally {
         connection.release();
     }
@@ -1228,7 +1231,7 @@ router.get('/pending-submit', authenticateToken, async (req, res) => {
         
     } catch (error) {
         logger.error('获取待提交评审用例列表失败:', { error: error.message });
-        res.json({ success: false, message: '获取待提交评审用例列表失败: ' + error.message });
+        errorResp(res, 500, '获取待提交评审用例列表失败: ' + error.message);
     }
 });
 
@@ -1242,7 +1245,7 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
         const userAgent = req.get('User-Agent');
 
         if (!moduleId) {
-            return res.json({ success: false, message: '缺少必要参数：moduleId' });
+            return errorResp(res, 400, '缺少必要参数：moduleId');
         }
 
         await connection.beginTransaction();
@@ -1581,7 +1584,7 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
     } catch (error) {
         await connection.rollback();
         logger.error('批量更新错误:', { error: error.message });
-        res.json({ success: false, message: '批量更新失败: ' + error.message });
+        errorResp(res, 500, '批量更新失败: ' + error.message);
     } finally {
         connection.release();
     }

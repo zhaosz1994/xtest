@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../db');
 const { authenticateToken, requireAdmin } = require('../middleware');
 const emailService = require('../services/emailService');
+const logger = require('../services/logger');
 
 // 获取邮件配置列表
 router.get('/configs', authenticateToken, requireAdmin, async (req, res) => {

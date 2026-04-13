@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 const { authenticateToken, requireAdmin } = require('../middleware');
+const logger = require('../services/logger');
 
 // 获取芯片列表
 router.get('/list', authenticateToken, async (req, res) => {

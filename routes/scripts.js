@@ -6,6 +6,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const logger = require('../services/logger');
 
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads', 'scripts');
 

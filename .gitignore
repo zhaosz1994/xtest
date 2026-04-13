@@ -74,3 +74,6 @@ uploads/reports/*.pdf
 *.zip
 *.tar.gz
 *.rar
+
+# Docker 镜像文件（超过 GitHub 限制）
+deploy-offline/images/*.tar
