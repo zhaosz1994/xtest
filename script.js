@@ -16440,7 +16440,8 @@ function navigateToPlans() {
 // 加载筛选器选项
 async function loadDashboardFilters() {
     try {
-        // 加载项目列表
+        const currentFilters = getCurrentFilters();
+
         const projectsData = await apiRequest('/projects/list');
         if (projectsData.success && projectsData.projects) {
             const projectFilter = document.getElementById('project-filter');
@@ -16452,13 +16453,15 @@ async function loadDashboardFilters() {
                     option.textContent = project.name;
                     projectFilter.appendChild(option);
                 });
+                if (currentFilters.projectId && currentFilters.projectId !== 'all') {
+                    projectFilter.value = currentFilters.projectId;
+                }
             }
         }
 
-        // 加载用户列表（负责人）
         const usersData = await apiRequest('/users/list');
-        if (Array.isArray(usersData)) {
-            const filteredUsers = filterOwners(usersData);
+        if (usersData.success && usersData.users) {
+            const filteredUsers = filterOwners(usersData.users);
             const ownerFilter = document.getElementById('owner-filter');
             if (ownerFilter) {
                 ownerFilter.innerHTML = '<option value="all">所有负责人</option>';
@@ -16468,10 +16471,12 @@ async function loadDashboardFilters() {
                     option.textContent = user.username;
                     ownerFilter.appendChild(option);
                 });
+                if (currentFilters.owner && currentFilters.owner !== 'all') {
+                    ownerFilter.value = currentFilters.owner;
+                }
             }
         }
 
-        // 加载测试状态列表
         const statusData = await apiRequest('/test-statuses/list');
         if (statusData.success && statusData.testStatuses) {
             const statusFilter = document.getElementById('status-filter');
@@ -16483,10 +16488,12 @@ async function loadDashboardFilters() {
                     option.textContent = status.name;
                     statusFilter.appendChild(option);
                 });
+                if (currentFilters.statusId && currentFilters.statusId !== 'all') {
+                    statusFilter.value = currentFilters.statusId;
+                }
             }
         }
 
-        // 加载测试进度列表
         const progressData = await apiRequest('/test-progresses/list');
         if (progressData.success && progressData.testProgresses) {
             const progressFilter = document.getElementById('progress-filter');
@@ -16498,10 +16505,12 @@ async function loadDashboardFilters() {
                     option.textContent = progress.name;
                     progressFilter.appendChild(option);
                 });
+                if (currentFilters.progressId && currentFilters.progressId !== 'all') {
+                    progressFilter.value = currentFilters.progressId;
+                }
             }
         }
 
-        // 加载用例库列表
         const librariesData = await apiRequest('/libraries/list');
         if (librariesData.success && librariesData.libraries) {
             const libraryFilter = document.getElementById('library-filter');
@@ -16513,6 +16522,9 @@ async function loadDashboardFilters() {
                     option.textContent = library.name;
                     libraryFilter.appendChild(option);
                 });
+                if (currentFilters.libraryId && currentFilters.libraryId !== 'all') {
+                    libraryFilter.value = currentFilters.libraryId;
+                }
             }
         }
 
