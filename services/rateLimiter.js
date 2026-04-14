@@ -24,7 +24,7 @@ const loginLimiter = rateLimit({
 
 const apiLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 60,
+    max: 120,
     message: {
         success: false,
         message: '请求过于频繁，请稍后再试'
@@ -40,6 +40,28 @@ const apiLimiter = rateLimit({
         res.status(429).json({
             success: false,
             message: '请求过于频繁，请稍后再试'
+        });
+    }
+});
+
+const dashboardLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 200,
+    message: {
+        success: false,
+        message: 'Dashboard请求过于频繁，请稍后再试'
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (req, res) => {
+        logger.warn('Dashboard速率限制触发', {
+            ip: req.ip,
+            userId: req.user ? req.user.id : 'anonymous',
+            path: req.path
+        });
+        res.status(429).json({
+            success: false,
+            message: 'Dashboard请求过于频繁，请稍后再试'
         });
     }
 });
@@ -91,6 +113,7 @@ const aiLimiter = rateLimit({
 module.exports = {
     loginLimiter,
     apiLimiter,
+    dashboardLimiter,
     writeLimiter,
     aiLimiter
 };

@@ -1026,7 +1026,7 @@ router.post('/comments', authenticateToken, checkMuted, async (req, res) => {
                 const op = originalPosts[0];
                 if (op.is_anonymous !== 1) { // 只有非匿名帖子才发被互动通知
                     const preview = notificationService.generatePreview(content);
-                    notificationService.notifyInteraction(op.author_id, authorId, 'comment', actualPostId, preview, `/forum/post/${postId}`).catch(e => logger.error('操作失败', { error: e.message }));
+                    notificationService.notifyInteraction(op.author_id, authorId, 'comment', actualPostId, preview, `${process.env.APP_URL || 'http://localhost:3000'}/?action=forum_post&id=${postId}`).catch(e => logger.error('操作失败', { error: e.message }));
                 }
             }
         } catch (notifErr) {
@@ -1565,7 +1565,7 @@ router.post('/posts/:id/like', authenticateToken, async (req, res) => {
                 if (originalPosts.length > 0) {
                     const op = originalPosts[0];
                     if (op.is_anonymous !== 1) { 
-                        notificationService.notifyInteraction(op.author_id, userId, 'like', actualPostId, '', `/forum/post/${op.post_id}`).catch(e => logger.error('操作失败', { error: e.message }));
+                        notificationService.notifyInteraction(op.author_id, userId, 'like', actualPostId, '', `${process.env.APP_URL || 'http://localhost:3000'}/?action=forum_post&id=${op.post_id}`).catch(e => logger.error('操作失败', { error: e.message }));
                     }
                 }
             } catch (notifErr) {

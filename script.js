@@ -597,6 +597,103 @@ function debounce(func, wait) {
     };
 }
 
+// ========================================
+// 全局请求队列（限制并发数，防止429错误）
+// ========================================
+const RequestQueue = {
+    maxConcurrent: 5,
+    currentCount: 0,
+    queue: [],
+
+    async execute(requestFn) {
+        if (this.currentCount < this.maxConcurrent) {
+            this.currentCount++;
+            try {
+                return await requestFn();
+            } finally {
+                this.currentCount--;
+                this.processQueue();
+            }
+        } else {
+            return new Promise((resolve) => {
+                this.queue.push(() => {
+                    this.currentCount++;
+                    requestFn().then(resolve).finally(() => {
+                        this.currentCount--;
+                        this.processQueue();
+                    });
+                });
+            });
+        }
+    },
+
+    processQueue() {
+        while (this.queue.length > 0 && this.currentCount < this.maxConcurrent) {
+            const nextRequest = this.queue.shift();
+            nextRequest();
+        }
+    }
+};
+
+// Dashboard 数据缓存（避免重复请求）
+const dashboardDataCache = {
+    libraries: null,
+    projects: null,
+    cases: null,
+    testPlans: null,
+    reports: null,
+    timestamp: null,
+    TTL: 10000,
+
+    isExpired() {
+        return !this.timestamp || (Date.now() - this.timestamp) > this.TTL;
+    },
+
+    set(key, data) {
+        this[key] = data;
+        this.timestamp = Date.now();
+    },
+
+    get(key) {
+        if (this.isExpired()) {
+            this.clear();
+            return null;
+        }
+        return this[key];
+    },
+
+    clear() {
+        Object.keys(this).forEach(k => {
+            if (k !== 'isExpired' && k !== 'set' && k !== 'get' && k !== 'timestamp' && k !== 'TTL' && k !== 'invalidateKey') {
+                this[k] = null;
+            }
+        });
+        this.timestamp = null;
+    },
+
+    invalidateKey(key) {
+        this[key] = null;
+    },
+
+    invalidateOnDataChange(changeType) {
+        const keyMapping = {
+            'library': 'libraries',
+            'project': 'projects',
+            'case': 'cases',
+            'testPlan': 'testPlans',
+            'report': 'reports'
+        };
+
+        if (changeType === 'any') {
+            this.clear();
+            console.log('[缓存失效] 数据已变更，清除所有缓存');
+        } else if (keyMapping[changeType]) {
+            this.invalidateKey(keyMapping[changeType]);
+            console.log(`[缓存失效] ${changeType} 数据已变更，清除对应缓存`);
+        }
+    }
+};
+
 // 节流函数
 // ========================================
 function throttle(func, limit) {
@@ -3598,6 +3695,7 @@ async function deleteTestPlan(planId) {
 
                 if (response.success) {
                     showSuccessMessage('测试计划删除成功');
+                    dashboardDataCache.invalidateOnDataChange('testPlan');
                     apiCache.delete(`/testplans/detail/${planId}`);
                     apiCache.deleteByPrefix('/workspace');
                     await loadTestPlans();
@@ -6931,6 +7029,9 @@ async function openTestCaseDetailModal(testCase) {
 
         // 加载关联脚本
         loadScripts(testCase.id);
+        
+        // 加载关联项目
+        loadTestCaseProjects(testCase.id);
 
         // 显示模态框
         const modal = document.getElementById('test-case-detail-modal');
@@ -8702,6 +8803,7 @@ async function saveTestCaseDetail() {
             }
 
             showSuccessMessage('测试用例保存成功');
+            dashboardDataCache.invalidateOnDataChange('case');
         } else {
             showErrorMessage('测试用例保存失败: ' + (saveData.message || '保存失败，请稍后重试'));
         }
@@ -8770,6 +8872,7 @@ async function deleteTestCase() {
             apiCache.deleteByPrefix('/testcases/review/pending');
 
             showSuccessMessage('测试用例删除成功');
+            dashboardDataCache.invalidateOnDataChange('case');
         } else {
             showErrorMessage('测试用例删除失败: ' + (deleteData.message || '删除失败，请稍后重试'));
         }
@@ -13655,6 +13758,7 @@ async function confirmDeleteLibrary(libraryId, libraryName) {
 
             // 显示成功提示
             showSuccessMessage('用例库删除成功');
+            dashboardDataCache.invalidateOnDataChange('library');
 
             // 重新加载用例库列表
             await loadCaseLibraries();
@@ -14048,75 +14152,219 @@ async function submitPasswordChange() {
 // 消息提醒设置功能
 // ========================================
 
+let _notificationPrefsData = null;
+
 async function loadNotificationPrefs() {
+    const container = document.getElementById('notification-settings-container');
+    if (!container) return;
+
+    container.innerHTML = '<div style="text-align:center;padding:40px;color:#999;"><span style="font-size:24px;">⏳</span><p>加载通知设置中...</p></div>';
+
     try {
-        const result = await apiRequest('/users/preferences');
+        const result = await apiRequest('/notification-prefs/preferences');
         if (result.success && result.data) {
-            const prefs = result.data;
-            const mentionsCheckbox = document.getElementById('pref-email-mentions');
-            const commentsCheckbox = document.getElementById('pref-email-comments');
-            const likesCheckbox = document.getElementById('pref-email-likes');
-            
-            if (mentionsCheckbox) {
-                mentionsCheckbox.checked = prefs.email_notify_mentions === 1 || prefs.email_notify_mentions === true;
-            }
-            if (commentsCheckbox) {
-                commentsCheckbox.checked = prefs.email_notify_comments === 1 || prefs.email_notify_comments === true;
-            }
-            if (likesCheckbox) {
-                likesCheckbox.checked = prefs.email_notify_likes === 1 || prefs.email_notify_likes === true;
-            }
+            _notificationPrefsData = result.data;
+            renderNotificationPrefs(result.data);
+        } else {
+            container.innerHTML = '<div style="text-align:center;padding:40px;color:#dc3545;"><span style="font-size:24px;">❌</span><p>加载通知设置失败</p></div>';
         }
     } catch (error) {
-        logger.error('加载消息提醒配置失败:', error);
-        showErrorMessage('加载提醒配置失败');
+        console.error('加载消息提醒配置失败:', error);
+        container.innerHTML = '<div style="text-align:center;padding:40px;color:#dc3545;"><span style="font-size:24px;">❌</span><p>加载通知设置失败</p></div>';
+    }
+}
+
+function renderNotificationPrefs(data) {
+    const container = document.getElementById('notification-settings-container');
+    if (!container) return;
+
+    let html = '';
+
+    html += `<div class="settings-section" style="margin-bottom:20px;">
+        <div class="settings-section-header">
+            <span class="section-icon">🌐</span>
+            <div class="section-title-group">
+                <h4 class="settings-section-title">全局设置</h4>
+                <p class="settings-section-desc">控制所有邮件通知的总开关和免打扰时段</p>
+            </div>
+        </div>
+        <div class="settings-items">
+            <div class="setting-item-card">
+                <div class="setting-item-info">
+                    <h5>全局邮件通知</h5>
+                    <p>关闭后所有邮件通知将停止发送</p>
+                </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="pref-global-email" ${data.global.emailEnabled ? 'checked' : ''}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="setting-item-card" style="flex-direction:column;align-items:flex-start;gap:12px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
+                    <div class="setting-item-info">
+                        <h5>免打扰时段</h5>
+                        <p>设置时段内不发送邮件通知（紧急通知除外）</p>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="pref-quiet-hours-enabled" ${data.global.quietHoursStart ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div id="quiet-hours-inputs" style="display:flex;align-items:center;gap:8px;padding-left:12px;${data.global.quietHoursStart ? '' : 'opacity:0.5;pointer-events:none;'}">
+                    <input type="time" id="pref-quiet-start" value="${data.global.quietHoursStart || '22:00'}" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
+                    <span style="color:#666;">至</span>
+                    <input type="time" id="pref-quiet-end" value="${data.global.quietHoursEnd || '08:00'}" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
+                </div>
+            </div>
+        </div>
+    </div>`;
+
+    data.categories.forEach(category => {
+        html += `<div class="settings-section" style="margin-bottom:20px;">
+            <div class="settings-section-header">
+                <span class="section-icon">${category.icon}</span>
+                <div class="section-title-group">
+                    <h4 class="settings-section-title">${category.name}</h4>
+                </div>
+                <div style="display:flex;gap:24px;color:#666;font-size:13px;font-weight:500;">
+                    <span style="min-width:40px;text-align:center;">邮件</span>
+                    ${category.types.some(t => t.supportsInApp) ? '<span style="min-width:40px;text-align:center;">站内</span>' : ''}
+                </div>
+            </div>
+            <div class="settings-items">`;
+
+        category.types.forEach(type => {
+            html += `<div class="setting-item-card">
+                <div class="setting-item-info" style="flex:1;">
+                    <h5>${type.typeName}${type.isRequired ? ' <span style="color:#dc3545;font-size:11px;font-weight:normal;">(强制)</span>' : ''}</h5>
+                    <p>${type.description}</p>
+                </div>
+                <div style="display:flex;gap:24px;align-items:center;">
+                    <label class="toggle-switch" style="margin-bottom:0;">
+                        <input type="checkbox" data-type-code="${type.typeCode}" data-pref-type="email" ${type.emailEnabled ? 'checked' : ''} ${type.canToggleEmail ? '' : 'disabled'}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                    ${type.supportsInApp ? `<label class="toggle-switch" style="margin-bottom:0;">
+                        <input type="checkbox" data-type-code="${type.typeCode}" data-pref-type="inApp" ${type.inAppEnabled ? 'checked' : ''} ${type.canToggleInApp ? '' : 'disabled'}>
+                        <span class="toggle-slider"></span>
+                    </label>` : ''}
+                </div>
+            </div>`;
+        });
+
+        html += `</div></div>`;
+    });
+
+    container.innerHTML = html;
+
+    const quietHoursToggle = document.getElementById('pref-quiet-hours-enabled');
+    const quietHoursInputs = document.getElementById('quiet-hours-inputs');
+    if (quietHoursToggle && quietHoursInputs) {
+        quietHoursToggle.addEventListener('change', function() {
+            if (this.checked) {
+                quietHoursInputs.style.opacity = '1';
+                quietHoursInputs.style.pointerEvents = 'auto';
+            } else {
+                quietHoursInputs.style.opacity = '0.5';
+                quietHoursInputs.style.pointerEvents = 'none';
+            }
+        });
     }
 }
 
 async function saveNotificationPrefs() {
     const btn = document.getElementById('save-notification-prefs-btn');
-    const btnText = btn.querySelector('.btn-text') || btn;
-    const originalText = btnText.textContent;
-    
+    const originalHtml = btn.innerHTML;
+
     btn.disabled = true;
-    if (btnText !== btn) {
-        btnText.textContent = '保存中...';
-    } else {
-        btn.innerHTML = '<span class="btn-icon">⏳</span> 保存中...';
-    }
-    
-    const prefs = {
-        email_notify_mentions: document.getElementById('pref-email-mentions').checked,
-        email_notify_comments: document.getElementById('pref-email-comments').checked,
-        email_notify_likes: document.getElementById('pref-email-likes').checked
-    };
-    
+    btn.innerHTML = '<span class="btn-icon">⏳</span> 保存中...';
+
     try {
-        const result = await apiRequest('/users/preferences', {
+        const globalEmailEnabled = document.getElementById('pref-global-email')?.checked ?? true;
+        const quietHoursEnabled = document.getElementById('pref-quiet-hours-enabled')?.checked ?? false;
+        const quietStart = quietHoursEnabled ? (document.getElementById('pref-quiet-start')?.value || null) : null;
+        const quietEnd = quietHoursEnabled ? (document.getElementById('pref-quiet-end')?.value || null) : null;
+
+        const globalResult = await apiRequest('/notification-prefs/preferences/global', {
             method: 'PUT',
-            body: JSON.stringify(prefs)
+            body: JSON.stringify({
+                emailEnabled: globalEmailEnabled,
+                quietHoursStart: quietStart,
+                quietHoursEnd: quietEnd
+            })
         });
-        
-        if (result.success) {
-            showSuccessMessage('消息提醒配置已保存');
-            await loadNotificationPrefs();
-        } else {
-            showErrorMessage(result.message || '保存失败');
+
+        if (!globalResult.success) {
+            showErrorMessage(globalResult.message || '保存全局设置失败');
+            return;
         }
+
+        const preferences = [];
+        document.querySelectorAll('[data-type-code]').forEach(el => {
+            const typeCode = el.getAttribute('data-type-code');
+            const prefType = el.getAttribute('data-pref-type');
+            const existing = preferences.find(p => p.typeCode === typeCode);
+            if (existing) {
+                if (prefType === 'email') existing.emailEnabled = el.checked;
+                else existing.inAppEnabled = el.checked;
+            } else {
+                preferences.push({
+                    typeCode: typeCode,
+                    emailEnabled: prefType === 'email' ? el.checked : true,
+                    inAppEnabled: prefType === 'inApp' ? el.checked : true
+                });
+            }
+        });
+
+        if (preferences.length > 0) {
+            const batchResult = await apiRequest('/notification-prefs/preferences/batch', {
+                method: 'PUT',
+                body: JSON.stringify({ preferences })
+            });
+            if (!batchResult.success) {
+                showErrorMessage(batchResult.message || '保存偏好设置失败');
+                return;
+            }
+        }
+
+        showSuccessMessage('消息提醒配置已保存');
+        await loadNotificationPrefs();
     } catch (error) {
-        logger.error('保存消息提醒配置失败:', error);
+        console.error('保存消息提醒配置失败:', error);
         showErrorMessage('保存配置失败');
     } finally {
         btn.disabled = false;
-        btn.innerHTML = '<span class="btn-icon">💾</span> 保存设置';
+        btn.innerHTML = originalHtml;
     }
 }
 
-// 绑定保存按钮事件
+async function resetNotificationPrefs() {
+    if (!confirm('确定要恢复所有通知设置为默认值吗？此操作不可撤销。')) return;
+
+    try {
+        const result = await apiRequest('/notification-prefs/preferences/reset', {
+            method: 'POST'
+        });
+        if (result.success) {
+            showSuccessMessage('已恢复默认设置');
+            await loadNotificationPrefs();
+        } else {
+            showErrorMessage(result.message || '恢复默认设置失败');
+        }
+    } catch (error) {
+        console.error('恢复默认设置失败:', error);
+        showErrorMessage('恢复默认设置失败');
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     const saveBtn = document.getElementById('save-notification-prefs-btn');
     if (saveBtn) {
         saveBtn.addEventListener('click', saveNotificationPrefs);
+    }
+    const resetBtn = document.getElementById('reset-notification-prefs-btn');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', resetNotificationPrefs);
     }
 });
 
@@ -15013,6 +15261,7 @@ async function deleteProject(projectName) {
             // 重新加载项目列表
             await loadProjects();
             showSuccessMessage('项目删除成功');
+            dashboardDataCache.invalidateOnDataChange('project');
         } else {
             showErrorMessage('项目删除失败: ' + (deleteData.message || '删除失败，请稍后重试'));
         }
@@ -15074,6 +15323,7 @@ async function submitProjectForm() {
                 addHistoryRecord('创建项目', `创建了项目 ${formData.name}`);
 
                 showSuccessMessage('项目创建成功');
+                dashboardDataCache.invalidateOnDataChange('project');
             } else {
                 // 检查是否是JSON解析错误或HTML响应错误
                 if (createData.message && (createData.message.includes('JSON') || createData.message.includes('DOCTYPE') || createData.message.includes('HTML') || createData.message.includes('token'))) {
@@ -15101,6 +15351,7 @@ async function submitProjectForm() {
                     addHistoryRecord('创建项目', `创建了项目 ${formData.name}`);
 
                     showSuccessMessage('项目创建成功');
+                    dashboardDataCache.invalidateOnDataChange('project');
                 } else {
                     showErrorMessage('创建项目失败: ' + (createData.message || '创建失败，请稍后重试'));
                 }
@@ -15131,6 +15382,7 @@ async function submitProjectForm() {
             addHistoryRecord('创建项目', `创建了项目 ${formData.name}`);
 
             showSuccessMessage('项目创建成功');
+            dashboardDataCache.invalidateOnDataChange('project');
         }
     } catch (error) {
         logger.error('创建项目错误:', error);
@@ -15371,6 +15623,7 @@ async function submitCaseLibraryForm() {
             }
 
             showSuccessMessage('用例库创建成功');
+            dashboardDataCache.invalidateOnDataChange('library');
         } else {
             showErrorMessage('创建用例库失败: ' + (createData.message || '创建失败'));
         }
@@ -15499,6 +15752,7 @@ async function submitTestPlanForm() {
             apiCache.deleteByPrefix('/workspace');
 
             showSuccessMessage('测试计划创建成功');
+            dashboardDataCache.invalidateOnDataChange('testPlan');
         } else {
             showErrorMessage('创建测试计划失败: ' + (createData.message || '创建失败，请稍后重试'));
         }
@@ -16088,6 +16342,9 @@ function updateLastRefreshTime() {
 }
 
 async function refreshDashboardData() {
+    dashboardDataCache.clear();
+    console.log('[缓存清除] 用户手动刷新，清除所有缓存');
+
     const refreshBtn = document.querySelector('.btn-refresh-data');
     if (refreshBtn) {
         refreshBtn.disabled = true;
@@ -16267,15 +16524,11 @@ async function loadDashboardFilters() {
 // 初始化仪表板图表
 async function initDashboardCharts() {
     try {
-        // 销毁之前的图表实例
         Object.values(chartInstances).forEach(chart => {
-            if (chart) {
-                chart.destroy();
-            }
+            if (chart) chart.destroy();
         });
         chartInstances = {};
 
-        // 额外销毁所有 canvas 上的图表实例
         const chartIds = [
             'pass-rate-trend-chart',
             'execution-trend-chart',
@@ -16285,40 +16538,65 @@ async function initDashboardCharts() {
             'owner-pass-rate-chart',
             'progress-trend-chart'
         ];
-        
+
         chartIds.forEach(id => {
             const canvas = document.getElementById(id);
             if (canvas) {
                 const existingChart = Chart.getChart(canvas);
-                if (existingChart) {
-                    existingChart.destroy();
-                }
+                if (existingChart) existingChart.destroy();
             }
         });
 
-        // 初始化通过率趋势图表
         await initPassRateTrendChart(7);
-
-        // 初始化执行次数趋势图表
         await initExecutionTrendChart(7);
-
-        // 初始化项目测试进度图表
         await initProjectProgressChart();
-
-        // 初始化测试状态分布图表
         await initStatusDistributionChart();
-
-        // 初始化负责人任务图表
         await initOwnerTasksChart();
-
-        // 初始化负责人通过率图表
         await initOwnerPassRateChart();
-
-        // 初始化测试进度趋势图表
         await initProgressTrendChart();
-
     } catch (error) {
         logger.error('初始化图表错误:', error);
+    }
+}
+
+async function initDashboardChartsParallel() {
+    try {
+        Object.values(chartInstances).forEach(chart => {
+            if (chart) chart.destroy();
+        });
+        chartInstances = {};
+
+        const chartIds = [
+            'pass-rate-trend-chart',
+            'execution-trend-chart',
+            'project-progress-chart',
+            'status-distribution-chart',
+            'owner-tasks-chart',
+            'owner-pass-rate-chart',
+            'progress-trend-chart'
+        ];
+
+        chartIds.forEach(id => {
+            const canvas = document.getElementById(id);
+            if (canvas) {
+                const existingChart = Chart.getChart(canvas);
+                if (existingChart) existingChart.destroy();
+            }
+        });
+
+        const filters = getCurrentFilters();
+
+        await Promise.all([
+            RequestQueue.execute(() => initPassRateTrendChart(7)),
+            RequestQueue.execute(() => initExecutionTrendChart(7)),
+            RequestQueue.execute(() => initProjectProgressChart()),
+            RequestQueue.execute(() => initStatusDistributionChart()),
+            RequestQueue.execute(() => initOwnerTasksChart()),
+            RequestQueue.execute(() => initOwnerPassRateChart()),
+            RequestQueue.execute(() => initProgressTrendChart())
+        ]);
+    } catch (error) {
+        logger.error('并行初始化图表错误:', error);
     }
 }
 
@@ -17334,11 +17612,17 @@ document.addEventListener('DOMContentLoaded', async function () {
             await loadData();
             await loadProjects();
             await loadCaseLibraries();
+            
+            // 处理URL参数中的action
+            handleUrlAction();
         } catch (e) {
             logger.error('[页面加载] 恢复登录状态失败:', e);
             localStorage.removeItem('authToken');
             localStorage.removeItem('currentUser');
         }
+    } else {
+        // 未登录用户也检查URL参数
+        handleUrlAction();
     }
 
     const rememberedUsername = localStorage.getItem('rememberedUsername');
@@ -17693,16 +17977,114 @@ document.addEventListener('DOMContentLoaded', async function () {
 
 // 初始化测试管理页面数据
 function initDashboardData() {
-    console.log('初始化测试管理页面数据');
+    console.log('初始化测试管理页面数据（优化版：减少重复请求）');
 
-    // 加载筛选器数据
-    loadFilterData();
+    dashboardDataCache.clear();
 
-    // 加载统计数据
-    loadDashboardStats();
+    loadDashboardDataUnified();
+}
 
-    // 渲染图表
-    renderAllCharts();
+async function loadDashboardDataUnified() {
+    try {
+        const filters = getCurrentFilters();
+
+        const results = await Promise.all([
+            RequestQueue.execute(() => loadFilterDataWithCache()),
+            RequestQueue.execute(() => loadDashboardStatsWithCache(filters)),
+            RequestQueue.execute(() => initDashboardChartsParallel())
+        ]);
+
+        updateLastRefreshTime();
+    } catch (error) {
+        logger.error('统一加载数据错误:', error);
+    }
+}
+
+async function loadFilterDataWithCache() {
+    try {
+        let libraryData = dashboardDataCache.get('libraries');
+        if (!libraryData) {
+            libraryData = await apiRequest('/libraries/list');
+            if (libraryData.success) dashboardDataCache.set('libraries', libraryData);
+        }
+        if (libraryData && libraryData.success) {
+            populateSelectOptions('library-filter', libraryData.libraries, 'name', 'id');
+        }
+
+        let projectData = dashboardDataCache.get('projects');
+        if (!projectData) {
+            projectData = await apiRequest('/projects/list');
+            if (projectData.success) dashboardDataCache.set('projects', projectData);
+        }
+        if (projectData && projectData.success) {
+            populateSelectOptions('project-filter', projectData.projects, 'name', 'id');
+        }
+
+        let casesData = dashboardDataCache.get('cases');
+        if (!casesData) {
+            casesData = await apiRequest('/cases/list', {
+                method: 'POST',
+                body: JSON.stringify({ page: 1, pageSize: 100 })
+            });
+            if (casesData.success) dashboardDataCache.set('cases', casesData);
+        }
+        if (casesData && casesData.success) {
+            const owners = [...new Set(casesData.testCases.map(c => c.owner))];
+            populateSelectOptions('owner-filter', owners.map(owner => ({ name: owner, id: owner })), 'name', 'id');
+        }
+
+        addFilterChangeEventsDebounced();
+    } catch (error) {
+        logger.error('加载筛选器数据失败:', error);
+    }
+}
+
+async function loadDashboardStatsWithCache(filters) {
+    try {
+        const testcaseCountEl = document.getElementById('testcase-count');
+        const testplanCountEl = document.getElementById('testplan-count');
+        const testreportCountEl = document.getElementById('testreport-count');
+
+        if (!testcaseCountEl && !testplanCountEl && !testreportCountEl) return;
+
+        if (testcaseCountEl) {
+            let casesData = dashboardDataCache.get('cases');
+            if (!casesData) {
+                casesData = await apiRequest('/cases/list', {
+                    method: 'POST',
+                    body: JSON.stringify({ ...filters, page: 1, pageSize: 100 })
+                });
+                if (casesData.success) dashboardDataCache.set('cases', casesData);
+            }
+            if (casesData && casesData.success) {
+                testcaseCountEl.textContent = casesData.testCases?.length || 0;
+            }
+        }
+
+        if (testplanCountEl) {
+            let plansData = dashboardDataCache.get('testPlans');
+            if (!plansData) {
+                plansData = await apiRequest('/testplans/list');
+                if (plansData.success) dashboardDataCache.set('testPlans', plansData);
+            }
+            if (plansData && plansData.success) {
+                testplanCountEl.textContent = plansData.testPlans?.length || 0;
+            }
+        }
+
+        if (testreportCountEl) {
+            let reportsData = dashboardDataCache.get('reports');
+            if (!reportsData) {
+                reportsData = await apiRequest('/reports/list');
+                if (reportsData.success) dashboardDataCache.set('reports', reportsData);
+            }
+            if (reportsData && reportsData.success) {
+                testreportCountEl.textContent = reportsData.reports?.length || 0;
+            }
+        }
+    } catch (error) {
+        logger.error('加载仪表盘统计数据失败:', error);
+    }
 }
 
 // 加载筛选器数据
@@ -17765,10 +18147,29 @@ function addFilterChangeEvents() {
     [libraryFilter, projectFilter, ownerFilter].forEach(filter => {
         if (filter) {
             filter.addEventListener('change', () => {
-                console.log('筛选器变化，重新加载数据');
+                console.log('筛选器变化，重新加载数据（无防抖）');
                 loadDashboardStats();
                 renderAllCharts();
             });
+        }
+    });
+}
+
+function addFilterChangeEventsDebounced() {
+    const debouncedReload = debounce(() => {
+        console.log('筛选器变化（防抖后），重新加载数据');
+        dashboardDataCache.clear();
+        loadDashboardDataUnified();
+    }, 300);
+
+    const libraryFilter = document.getElementById('library-filter');
+    const projectFilter = document.getElementById('project-filter');
+    const ownerFilter = document.getElementById('owner-filter');
+
+    [libraryFilter, projectFilter, ownerFilter].forEach(filter => {
+        if (filter) {
+            filter.removeEventListener('change', debouncedReload);
+            filter.addEventListener('change', debouncedReload);
         }
     });
 }
@@ -24381,16 +24782,26 @@ async function submitAdvancedTestPlan() {
         hideLoading();
 
         if (response.success) {
-            showSuccessMessage(isEditMode ? '测试计划更新成功' : `测试计划创建成功，共选择 ${response.caseCount || window.selectedCases.size} 条用例`);
-            closeAdvancedTestPlanModal();
+            // 检查是否有需要确认的项目关联移除
+            if (isEditMode && response.projectUnlinkConfirmations && response.projectUnlinkConfirmations.length > 0) {
+                closeAdvancedTestPlanModal();
+                window.currentEditingPlanId = null;
+                apiCache.deleteByPrefix('/workspace');
+                
+                // 显示项目关联确认弹窗
+                showProjectUnlinkConfirmation(response.projectUnlinkConfirmations, name);
+            } else {
+                showSuccessMessage(isEditMode ? '测试计划更新成功' : `测试计划创建成功，共选择 ${response.caseCount || window.selectedCases.size} 条用例`);
+                closeAdvancedTestPlanModal();
 
-            // 清除编辑模式标记
-            window.currentEditingPlanId = null;
+                // 清除编辑模式标记
+                window.currentEditingPlanId = null;
 
-            apiCache.deleteByPrefix('/workspace');
+                apiCache.deleteByPrefix('/workspace');
 
-            if (typeof loadTestPlans === 'function') {
-                loadTestPlans();
+                if (typeof loadTestPlans === 'function') {
+                    loadTestPlans();
+                }
             }
         } else {
             showErrorMessage((isEditMode ? '更新失败: ' : '创建失败: ') + response.message);
@@ -24407,6 +24818,247 @@ async function submitAdvancedTestPlan() {
 function closeTestPlanReportModal() {
     document.getElementById('testplan-report-modal').style.display = 'none';
 }
+
+// ==================== 项目关联确认弹窗 ====================
+
+// 存储当前需要确认的项目关联数据
+let currentProjectUnlinks = [];
+
+// 显示项目关联确认弹窗
+function showProjectUnlinkConfirmation(confirmations, planName) {
+    currentProjectUnlinks = confirmations.map(item => ({
+        ...item,
+        selected: true
+    }));
+    
+    const modal = document.getElementById('project-unlink-modal');
+    if (!modal) {
+        createProjectUnlinkModal();
+    }
+    
+    // 更新弹窗内容
+    document.getElementById('project-unlink-plan-name').textContent = planName || '测试计划';
+    document.getElementById('project-unlink-project-name').textContent = 
+        confirmations.length > 0 ? confirmations[0].projectName : '';
+    
+    // 渲染测试用例列表
+    renderProjectUnlinkList();
+    
+    // 显示弹窗
+    document.getElementById('project-unlink-modal').style.display = 'flex';
+}
+
+// 创建项目关联确认弹窗HTML
+function createProjectUnlinkModal() {
+    const modalHTML = `
+        <div id="project-unlink-modal" class="modal" style="display: none;">
+            <div class="modal-content" style="max-width: 800px; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column;">
+                <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-bottom: 1px solid #e8e8e8;">
+                    <h3 style="margin: 0; font-size: 18px; color: #1890ff;">
+                        <i class="fas fa-exclamation-triangle" style="margin-right: 8px; color: #faad14;"></i>
+                        项目关联确认
+                    </h3>
+                    <button onclick="closeProjectUnlinkModal()" style="background: none; border: none; font-size: 20px; cursor: pointer; color: #999;">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
+                <div class="modal-body" style="padding: 20px 24px; flex: 1; overflow-y: auto;">
+                    <div class="alert-box" style="background: #fffbe6; border: 1px solid #ffe58f; border-radius: 4px; padding: 12px 16px; margin-bottom: 16px;">
+                        <div style="display: flex; align-items: flex-start;">
+                            <i class="fas fa-info-circle" style="color: #faad14; margin-right: 8px; margin-top: 2px;"></i>
+                            <div>
+                                <div style="font-weight: 500; color: #d48806; margin-bottom: 4px;">测试计划已更新成功</div>
+                                <div style="color: #666; font-size: 13px;">
+                                    以下测试用例已从测试计划「<span id="project-unlink-plan-name" style="font-weight: 500;"></span>」中移除，
+                                    且这些用例关联了项目「<span id="project-unlink-project-name" style="font-weight: 500;"></span>」。
+                                    请选择是否取消这些用例与项目的关联关系。
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="action-bar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 8px 12px; background: #f5f5f5; border-radius: 4px;">
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <label style="display: flex; align-items: center; cursor: pointer; font-size: 13px;">
+                                <input type="checkbox" id="project-unlink-select-all" onchange="toggleProjectUnlinkSelectAll()" checked style="margin-right: 6px;">
+                                全选
+                            </label>
+                            <span id="project-unlink-selected-count" style="color: #1890ff; font-weight: 500;">已选择 0 项</span>
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button onclick="selectAllProjectUnlinks()" style="padding: 4px 12px; font-size: 12px; border: 1px solid #d9d9d9; background: #fff; border-radius: 4px; cursor: pointer;">
+                                全部选择
+                            </button>
+                            <button onclick="deselectAllProjectUnlinks()" style="padding: 4px 12px; font-size: 12px; border: 1px solid #d9d9d9; background: #fff; border-radius: 4px; cursor: pointer;">
+                                全部取消
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div id="project-unlink-list" style="border: 1px solid #e8e8e8; border-radius: 4px; max-height: 300px; overflow-y: auto;">
+                    </div>
+                </div>
+                
+                <div class="modal-footer" style="padding: 16px 24px; border-top: 1px solid #e8e8e8; display: flex; justify-content: flex-end; gap: 12px;">
+                    <button onclick="closeProjectUnlinkModal()" style="padding: 8px 24px; border: 1px solid #d9d9d9; background: #fff; border-radius: 4px; cursor: pointer; font-size: 14px;">
+                        保留关联
+                    </button>
+                    <button id="project-unlink-confirm-btn" onclick="confirmProjectUnlink()" style="padding: 8px 24px; border: none; background: #1890ff; color: #fff; border-radius: 4px; cursor: pointer; font-size: 14px;">
+                        确认移除关联
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+}
+
+// 渲染项目关联列表
+function renderProjectUnlinkList() {
+    const listContainer = document.getElementById('project-unlink-list');
+    
+    if (currentProjectUnlinks.length === 0) {
+        listContainer.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">暂无需要确认的关联</div>';
+        return;
+    }
+    
+    listContainer.innerHTML = currentProjectUnlinks.map((item, index) => `
+        <div class="project-unlink-item" style="display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid #f0f0f0; ${index === currentProjectUnlinks.length - 1 ? 'border-bottom: none;' : ''} ${item.selected ? 'background: #e6f7ff;' : ''}">
+            <input type="checkbox" 
+                   id="project-unlink-check-${index}" 
+                   ${item.selected ? 'checked' : ''} 
+                   onchange="toggleProjectUnlinkItem(${index})"
+                   style="margin-right: 12px; width: 16px; height: 16px; cursor: pointer;">
+            <div style="flex: 1;">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                    <span style="font-weight: 500; color: #333;">${item.caseName}</span>
+                    <span style="font-size: 12px; color: #999; background: #f5f5f5; padding: 2px 6px; border-radius: 3px;">${item.caseCode}</span>
+                </div>
+                <div style="font-size: 12px; color: #666;">
+                    ${item.hasOtherPlans 
+                        ? `<span style="color: #faad14;"><i class="fas fa-info-circle" style="margin-right: 4px;"></i>该用例还被其他测试计划关联到此项目：${item.otherPlans.map(p => p.name).join('、')}</span>` 
+                        : `<span style="color: #52c41a;"><i class="fas fa-check-circle" style="margin-right: 4px;"></i>该用例仅被当前测试计划关联到此项目</span>`
+                    }
+                </div>
+            </div>
+            <div style="display: flex; gap: 8px;">
+                <button onclick="toggleProjectUnlinkItemSelection(${index}, true)" 
+                        style="padding: 4px 8px; font-size: 12px; border: 1px solid ${item.selected ? '#1890ff' : '#d9d9d9'}; background: ${item.selected ? '#1890ff' : '#fff'}; color: ${item.selected ? '#fff' : '#333'}; border-radius: 3px; cursor: pointer;">
+                    移除
+                </button>
+                <button onclick="toggleProjectUnlinkItemSelection(${index}, false)" 
+                        style="padding: 4px 8px; font-size: 12px; border: 1px solid ${!item.selected ? '#52c41a' : '#d9d9d9'}; background: ${!item.selected ? '#52c41a' : '#fff'}; color: ${!item.selected ? '#fff' : '#333'}; border-radius: 3px; cursor: pointer;">
+                    保留
+                </button>
+            </div>
+        </div>
+    `).join('');
+    
+    updateProjectUnlinkSelectedCount();
+}
+
+// 切换单个项目的选择状态
+function toggleProjectUnlinkItem(index) {
+    currentProjectUnlinks[index].selected = !currentProjectUnlinks[index].selected;
+    renderProjectUnlinkList();
+}
+
+// 设置单个项目的选择状态
+function toggleProjectUnlinkItemSelection(index, selected) {
+    currentProjectUnlinks[index].selected = selected;
+    renderProjectUnlinkList();
+}
+
+// 切换全选
+function toggleProjectUnlinkSelectAll() {
+    const selectAll = document.getElementById('project-unlink-select-all').checked;
+    currentProjectUnlinks.forEach(item => item.selected = selectAll);
+    renderProjectUnlinkList();
+}
+
+// 全部选择
+function selectAllProjectUnlinks() {
+    currentProjectUnlinks.forEach(item => item.selected = true);
+    document.getElementById('project-unlink-select-all').checked = true;
+    renderProjectUnlinkList();
+}
+
+// 全部取消
+function deselectAllProjectUnlinks() {
+    currentProjectUnlinks.forEach(item => item.selected = false);
+    document.getElementById('project-unlink-select-all').checked = false;
+    renderProjectUnlinkList();
+}
+
+// 更新选中数量
+function updateProjectUnlinkSelectedCount() {
+    const selectedCount = currentProjectUnlinks.filter(item => item.selected).length;
+    document.getElementById('project-unlink-selected-count').textContent = `已选择 ${selectedCount} 项`;
+    
+    // 更新确认按钮状态
+    const confirmBtn = document.getElementById('project-unlink-confirm-btn');
+    if (selectedCount === 0) {
+        confirmBtn.disabled = true;
+        confirmBtn.style.background = '#d9d9d9';
+        confirmBtn.style.cursor = 'not-allowed';
+    } else {
+        confirmBtn.disabled = false;
+        confirmBtn.style.background = '#1890ff';
+        confirmBtn.style.cursor = 'pointer';
+    }
+}
+
+// 关闭项目关联确认弹窗
+function closeProjectUnlinkModal() {
+    document.getElementById('project-unlink-modal').style.display = 'none';
+    currentProjectUnlinks = [];
+    
+    // 刷新测试计划列表
+    if (typeof loadTestPlans === 'function') {
+        loadTestPlans();
+    }
+}
+
+// 确认移除项目关联
+async function confirmProjectUnlink() {
+    const selectedItems = currentProjectUnlinks.filter(item => item.selected);
+    
+    if (selectedItems.length === 0) {
+        showWarningMessage('请至少选择一项要移除的关联');
+        return;
+    }
+    
+    showLoading('正在移除项目关联...');
+    
+    try {
+        const unlinks = selectedItems.map(item => ({
+            caseId: item.caseId,
+            projectId: item.projectId
+        }));
+        
+        const response = await apiRequest('/testplans/unlink-cases-projects', {
+            method: 'POST',
+            body: JSON.stringify({ unlinks })
+        });
+        
+        hideLoading();
+        
+        if (response.success) {
+            showSuccessMessage(response.message || `成功移除 ${response.removedCount} 条关联关系`);
+            closeProjectUnlinkModal();
+        } else {
+            showErrorMessage(response.message || '移除关联失败');
+        }
+    } catch (error) {
+        hideLoading();
+        logger.error('移除项目关联失败:', error);
+        showErrorMessage('移除关联失败: ' + error.message);
+    }
+}
+
+
 
 // 导出测试计划报告
 function exportTestPlanReport() {
@@ -25996,8 +26648,8 @@ async function deleteReport(reportId) {
 
         if (result.success) {
             showSuccessMessage('报告删除成功');
+            dashboardDataCache.invalidateOnDataChange('report');
             console.log('开始重新加载报告列表...');
-            // 重新加载报告列表和统计数据
             await loadReportsData();
             console.log('报告列表重新加载完成');
             // 同时更新Dashboard统计
@@ -29092,6 +29744,112 @@ function getActivityDotClass(action) {
     return 'execution';
 }
 
+// 处理URL参数中的action
+function handleUrlAction() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const action = urlParams.get('action');
+    const returnUrl = urlParams.get('returnUrl');
+    const caseId = urlParams.get('id');
+    
+    if (action === 'pending_reviews') {
+        // 清除URL参数，避免刷新时重复执行
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        
+        // 延迟执行，确保页面完全加载
+        setTimeout(() => {
+            if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
+                // 已登录，直接打开待评审列表
+                viewAllPendingReviews();
+            } else {
+                // 未登录，不做任何操作，用户会看到登录页面
+                console.log('[URL Action] 用户未登录，等待登录后再执行操作');
+            }
+        }, 1000);
+    } else if (action === 'review_case' && caseId) {
+        // 处理单个用例评审
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        
+        setTimeout(() => {
+            if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
+                // 已登录，打开用例详情页面
+                openTestCaseDetailModal({ id: parseInt(caseId) });
+            } else {
+                console.log('[URL Action] 用户未登录，等待登录后再执行操作');
+            }
+        }, 1000);
+    } else if (action === 'view_case' && caseId) {
+        // 查看用例详情
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        
+        setTimeout(() => {
+            if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
+                openTestCaseDetailModal({ id: parseInt(caseId) });
+            } else {
+                console.log('[URL Action] 用户未登录，等待登录后再执行操作');
+            }
+        }, 1000);
+    } else if (action === 'testcases') {
+        // 查看用例列表
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        
+        setTimeout(() => {
+            if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
+                Router.navigateTo('testcases');
+            }
+        }, 1000);
+    } else if (action === 'view_plan' && caseId) {
+        // 查看测试计划
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        
+        setTimeout(() => {
+            if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
+                Router.navigateTo('testplans');
+                setTimeout(() => {
+                    openPlanDetailModal(parseInt(caseId));
+                }, 500);
+            }
+        }, 1000);
+    } else if (action === 'testplans') {
+        // 查看测试计划列表
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        
+        setTimeout(() => {
+            if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
+                Router.navigateTo('testplans');
+            }
+        }, 1000);
+    } else if (action === 'users_config') {
+        // 用户管理
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        
+        setTimeout(() => {
+            if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
+                Router.navigateTo('users-config');
+            }
+        }, 1000);
+    } else if (action === 'forum_post' && caseId) {
+        // 论坛帖子
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        
+        setTimeout(() => {
+            if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
+                window.open(`/forum/post-detail.html?postId=${caseId}`, '_blank');
+            }
+        }, 1000);
+    } else if (returnUrl) {
+        // 处理returnUrl参数（用于登录后跳转）
+        console.log('[URL Action] 检测到returnUrl:', returnUrl);
+    }
+}
+
 // 导航函数
 function navigateToPendingExecutions() {
     Router.navigateTo('testplans');
@@ -29219,7 +29977,7 @@ function renderAllPendingReviewsList() {
             <thead>
                 <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0;">
                     <th style="width: 40px; padding: 12px 8px; text-align: center;">
-                        <input type="checkbox" id="select-all-pending-reviews" onchange="toggleSelectAllPendingReviews()" style="cursor: pointer;">
+                        <input type="checkbox" id="select-all-pending-reviews" onchange="toggleSelectAllPendingReviews()" style="cursor: pointer;" ${allPendingReviewsData.length > 0 && selectedAllPendingReviews.size === allPendingReviewsData.length ? 'checked' : ''}>
                     </th>
                     <th style="padding: 12px 16px; text-align: left; font-size: 13px; font-weight: 600; color: #64748b;">用例名称</th>
                     <th style="width: 120px; padding: 12px 16px; text-align: left; font-size: 13px; font-weight: 600; color: #64748b;">用例库</th>

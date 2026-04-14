@@ -299,10 +299,10 @@ router.get('/recent-activities', authenticateToken, async (req, res) => {
                 created_at
              FROM activity_logs
              WHERE user_id = ?
-             AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+             AND created_at >= DATE_SUB(NOW(), INTERVAL ${daysNum} DAY)
              ORDER BY created_at DESC
-             LIMIT ?`,
-            [currentUser.id, daysNum, limitNum]
+             LIMIT ${limitNum}`,
+            [currentUser.id]
         );
 
         const activitiesWithTimeAgo = activities.map(a => ({

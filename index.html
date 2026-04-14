@@ -2050,6 +2050,10 @@
                                             </div>
                                         </div>
                                         <div class="panel-header-actions">
+                                            <button class="btn btn-secondary" id="reset-notification-prefs-btn" style="margin-right:8px;">
+                                                <span class="btn-icon">🔄</span>
+                                                恢复默认
+                                            </button>
                                             <button class="btn btn-primary" id="save-notification-prefs-btn">
                                                 <span class="btn-icon">💾</span>
                                                 保存设置
@@ -2058,53 +2062,10 @@
                                     </div>
                                 </div>
                                 <div class="panel-content">
-                                    <div class="notification-settings-container">
-                                        <div class="settings-section">
-                                            <div class="settings-section-header">
-                                                <span class="section-icon">📧</span>
-                                                <div class="section-title-group">
-                                                    <h4 class="settings-section-title">邮件提醒</h4>
-                                                    <p class="settings-section-desc">当发生以下事件时，是否向您的注册邮箱发送通知邮件</p>
-                                                </div>
-                                            </div>
-                                            
-                                            <div class="settings-items">
-                                                <div class="setting-item-card">
-                                                    <div class="setting-item-icon mention-icon">@</div>
-                                                    <div class="setting-item-info">
-                                                        <h5>提到我</h5>
-                                                        <p>当有人在帖子或评论中@您时发送邮件通知</p>
-                                                    </div>
-                                                    <label class="toggle-switch">
-                                                        <input type="checkbox" id="pref-email-mentions" checked>
-                                                        <span class="toggle-slider"></span>
-                                                    </label>
-                                                </div>
-                                                
-                                                <div class="setting-item-card">
-                                                    <div class="setting-item-icon comment-icon">💬</div>
-                                                    <div class="setting-item-info">
-                                                        <h5>评论我的帖子</h5>
-                                                        <p>当有人评论您发布的帖子时发送邮件通知</p>
-                                                    </div>
-                                                    <label class="toggle-switch">
-                                                        <input type="checkbox" id="pref-email-comments" checked>
-                                                        <span class="toggle-slider"></span>
-                                                    </label>
-                                                </div>
-                                                
-                                                <div class="setting-item-card">
-                                                    <div class="setting-item-icon like-icon">❤️</div>
-                                                    <div class="setting-item-info">
-                                                        <h5>赞我的帖子</h5>
-                                                        <p>当有人点赞您发布的帖子时发送邮件通知</p>
-                                                    </div>
-                                                    <label class="toggle-switch">
-                                                        <input type="checkbox" id="pref-email-likes">
-                                                        <span class="toggle-slider"></span>
-                                                    </label>
-                                                </div>
-                                            </div>
+                                    <div class="notification-settings-container" id="notification-settings-container">
+                                        <div style="text-align:center;padding:40px;color:#999;">
+                                            <span style="font-size:24px;">⏳</span>
+                                            <p>加载通知设置中...</p>
                                         </div>
                                     </div>
                                 </div>

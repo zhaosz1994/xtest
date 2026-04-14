@@ -159,6 +159,7 @@ execute_migrations() {
         "add_multi_reviewer.sql"
         "add_anonymous_field.sql"
         "add_test_case_scripts.sql"
+        "add_email_notification_system.sql"
     )
     
     for migration in "${migrations[@]}"; do

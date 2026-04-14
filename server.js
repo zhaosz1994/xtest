@@ -6,7 +6,7 @@ const pool = require('./db');
 const { authenticateToken, requireAdmin } = require('./middleware');
 const usersRouter = require('./routes/users');
 const logger = require('./services/logger');
-const { loginLimiter, apiLimiter, writeLimiter, aiLimiter } = require('./services/rateLimiter');
+const { loginLimiter, apiLimiter, dashboardLimiter, writeLimiter, aiLimiter } = require('./services/rateLimiter');
 const AuditLogService = require('./services/auditLogService');
 const { getUserAIConfig } = require('./services/aiService');
 // 暂时注释掉模块路由，直接在server.js中实现
@@ -87,6 +87,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 app.use('/api/', apiLimiter);
+app.use('/api/dashboard', dashboardLimiter);
 
 // 静态文件服务 - 暴露 public 目录
 app.use(express.static(path.join(__dirname, 'public')));
@@ -126,6 +127,7 @@ app.use('/api/email', require('./routes/email'));
 app.use('/api/templates', require('./routes/reportTemplates'));
 app.use('/api/forum', forumRouter);
 app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/notification-prefs', require('./routes/notificationPrefs'));
 app.use('/api/testcases', require('./routes/testcases'));
 app.use('/api', require('./routes/scripts'));
 app.use('/api/workspace', require('./routes/workspace'));
@@ -5241,6 +5243,14 @@ async function initDatabase() {
           logger.info('用户表邮件偏好通知字段添加成功');
         }
         
+        // 添加全局邮件偏好字段
+        if (!columnNames.includes('email_global_enabled')) {
+          await connection.execute("ALTER TABLE users ADD COLUMN email_global_enabled BOOLEAN DEFAULT TRUE COMMENT '全局邮件开关'");
+          await connection.execute("ALTER TABLE users ADD COLUMN email_quiet_hours_start TIME DEFAULT NULL COMMENT '免打扰开始时间'");
+          await connection.execute("ALTER TABLE users ADD COLUMN email_quiet_hours_end TIME DEFAULT NULL COMMENT '免打扰结束时间'");
+          logger.info('用户表全局邮件偏好字段添加成功');
+        }
+        
         // 添加 muted_until 字段（用户禁言到期时间）
         if (!columnNames.includes('muted_until')) {
           await connection.execute("ALTER TABLE users ADD COLUMN muted_until TIMESTAMP NULL COMMENT '禁言到期时间'");
@@ -5471,6 +5481,27 @@ async function initDatabase() {
       }
       logger.info('测试报告表字段检查完成');
       
+      // 创建报告生成任务表
+      await connection.execute(`
+        CREATE TABLE IF NOT EXISTS report_jobs (
+          id VARCHAR(100) PRIMARY KEY COMMENT '任务ID',
+          user_id INT NOT NULL COMMENT '用户ID',
+          username VARCHAR(50) NOT NULL COMMENT '用户名',
+          status VARCHAR(20) NOT NULL DEFAULT 'pending' COMMENT '任务状态: pending, processing, completed, failed, cancelled',
+          progress INT NOT NULL DEFAULT 0 COMMENT '进度百分比 0-100',
+          message VARCHAR(500) DEFAULT '' COMMENT '进度消息',
+          error_message TEXT DEFAULT NULL COMMENT '错误信息',
+          config JSON DEFAULT NULL COMMENT '任务配置',
+          report_id INT DEFAULT NULL COMMENT '生成的报告ID',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+          INDEX idx_user_id (user_id),
+          INDEX idx_status (status),
+          INDEX idx_created_at (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='报告生成任务表'
+      `);
+      logger.info('报告生成任务表创建成功');
+      
       // 创建项目表
       await connection.execute(`
         CREATE TABLE IF NOT EXISTS projects (
@@ -5653,6 +5684,32 @@ async function initDatabase() {
       } catch (error) {
         logger.error('检查或添加测试用例表软删除字段错误:', { error: error.message });
       }
+      
+      // 创建测试用例关联脚本表
+      await connection.execute(`
+        CREATE TABLE IF NOT EXISTS test_case_scripts (
+          id INT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+          test_case_id INT NOT NULL COMMENT '测试用例ID',
+          script_name VARCHAR(255) NOT NULL COMMENT '脚本名称',
+          script_type VARCHAR(50) DEFAULT 'tcl' COMMENT '脚本类型：tcl/py/sh/other',
+          description TEXT COMMENT '脚本描述',
+          file_path VARCHAR(500) COMMENT '上传文件的存储路径',
+          file_size BIGINT COMMENT '文件大小（字节）',
+          file_hash VARCHAR(64) COMMENT '文件MD5哈希值',
+          original_filename VARCHAR(255) COMMENT '原始文件名',
+          link_url VARCHAR(1000) COMMENT '外部链接URL',
+          link_title VARCHAR(255) COMMENT '链接显示标题',
+          link_type VARCHAR(20) DEFAULT 'external' COMMENT '链接类型',
+          order_index INT DEFAULT 0 COMMENT '排序序号',
+          creator VARCHAR(50) NOT NULL COMMENT '创建人',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+          INDEX idx_test_case_id (test_case_id),
+          INDEX idx_script_type (script_type),
+          INDEX idx_script_name (script_name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例关联脚本表'
+      `);
+      logger.info('测试用例关联脚本表创建成功');
       
       // ==================== 先创建配置表（被其他表外键引用） ====================
       
@@ -6105,6 +6162,33 @@ async function initDatabase() {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
       logger.info('论坛帖子表创建成功');
+      
+      // 创建论坛帖子全文索引（用于搜索）
+      try {
+        await connection.execute(`
+          ALTER TABLE forum_posts 
+          ADD FULLTEXT INDEX ft_title_content (title, content) WITH PARSER ngram
+        `);
+        logger.info('论坛帖子全文索引创建成功');
+      } catch (indexError) {
+        if (indexError.code === 'ER_DUP_KEYNAME') {
+          logger.info('论坛帖子全文索引已存在');
+        } else if (indexError.message.includes('ngram')) {
+          try {
+            await connection.execute(`
+              ALTER TABLE forum_posts 
+              ADD FULLTEXT INDEX ft_title_content (title, content)
+            `);
+            logger.info('论坛帖子全文索引创建成功（无ngram解析器）');
+          } catch (fallbackError) {
+            if (fallbackError.code !== 'ER_DUP_KEYNAME') {
+              logger.warn('论坛帖子全文索引创建失败:', { error: fallbackError.message });
+            }
+          }
+        } else {
+          logger.warn('论坛帖子全文索引创建失败:', { error: indexError.message });
+        }
+      }
       
       // 创建论坛评论表
       await connection.execute(`
@@ -6758,6 +6842,82 @@ async function initDatabase() {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
       logger.info('通知记录表创建成功');
+      
+      // 创建邮件类型定义表
+      await connection.execute(`
+        CREATE TABLE IF NOT EXISTS email_types (
+          id INT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+          type_code VARCHAR(50) UNIQUE NOT NULL COMMENT '类型代码',
+          type_name VARCHAR(100) NOT NULL COMMENT '类型名称',
+          category ENUM('account', 'social', 'business', 'approval', 'announcement', 'digest') NOT NULL COMMENT '所属分类',
+          description TEXT COMMENT '详细描述说明',
+          is_required BOOLEAN DEFAULT FALSE COMMENT '是否强制发送',
+          default_email_enabled BOOLEAN DEFAULT TRUE COMMENT '默认邮件开关',
+          default_in_app_enabled BOOLEAN DEFAULT TRUE COMMENT '默认站内通知开关',
+          template_subject VARCHAR(255) COMMENT '邮件主题模板',
+          template_path VARCHAR(255) COMMENT '邮件模板文件路径',
+          supports_in_app BOOLEAN DEFAULT TRUE COMMENT '是否支持站内通知',
+          role_restriction VARCHAR(50) DEFAULT NULL COMMENT '角色限制',
+          sort_order INT DEFAULT 0 COMMENT '排序权重',
+          is_active BOOLEAN DEFAULT TRUE COMMENT '是否启用',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+          INDEX idx_category (category),
+          INDEX idx_is_active (is_active),
+          INDEX idx_sort_order (sort_order)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='邮件类型定义表'
+      `);
+      logger.info('邮件类型定义表创建成功');
+      
+      // 创建用户通知偏好表
+      await connection.execute(`
+        CREATE TABLE IF NOT EXISTS user_notification_prefs (
+          id INT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+          user_id INT NOT NULL COMMENT '用户ID',
+          type_code VARCHAR(50) NOT NULL COMMENT '邮件类型代码',
+          email_enabled BOOLEAN DEFAULT TRUE COMMENT '是否接收邮件通知',
+          in_app_enabled BOOLEAN DEFAULT TRUE COMMENT '是否接收站内通知',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+          UNIQUE KEY uk_user_type (user_id, type_code),
+          INDEX idx_user_id (user_id),
+          INDEX idx_type_code (type_code)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户通知偏好表'
+      `);
+      logger.info('用户通知偏好表创建成功');
+      
+      // 插入默认邮件类型数据
+      const [existingEmailTypes] = await connection.execute('SELECT COUNT(*) as count FROM email_types');
+      if (existingEmailTypes[0].count === 0) {
+        await connection.execute(`
+          INSERT INTO email_types (type_code, type_name, category, description, is_required, default_email_enabled, default_in_app_enabled, template_subject, template_path, supports_in_app, role_restriction, sort_order) VALUES
+          ('mention', '@提及提醒', 'social', '有人在论坛帖子中@你', FALSE, TRUE, TRUE, '【xTest 社区】{senderName} 在论坛中@了你', 'mention', TRUE, NULL, 101),
+          ('comment', '评论提醒', 'social', '有人评论了你的帖子', FALSE, TRUE, TRUE, '【xTest 社区】{senderName} 评论了您的帖子', 'comment', TRUE, NULL, 102),
+          ('like', '点赞提醒', 'social', '有人点赞了你的帖子', FALSE, FALSE, TRUE, '【xTest 社区】{senderName} 赞了您的帖子', 'like', TRUE, NULL, 103),
+          ('follow_post', '关注发帖提醒', 'social', '你关注的人发布了新帖子', FALSE, FALSE, TRUE, '【xTest 社区】{followedUser} 发布了新帖子', 'follow_post', TRUE, NULL, 104),
+          ('plan_assigned', '测试计划分配', 'business', '你被分配了新的测试计划', FALSE, TRUE, TRUE, '【xTest】您被分配了新的测试计划 - {planName}', 'plan_assigned', TRUE, NULL, 201),
+          ('plan_status', '计划状态变更', 'business', '测试计划状态发生变更', FALSE, TRUE, TRUE, '【xTest】测试计划状态变更 - {planName}', 'plan_status', TRUE, NULL, 202),
+          ('case_review', '用例审核结果', 'business', '你提交的用例审核结果通知', FALSE, TRUE, TRUE, '【xTest】用例审核结果 - {caseName}', 'case_review', TRUE, NULL, 203),
+          ('case_review_submit', '用例评审提交通知', 'business', '测试用例提交评审时通知评审人', FALSE, TRUE, TRUE, '【xTest】您有新的测试用例待评审 - {caseName}', 'case_review_submit', TRUE, NULL, 204),
+          ('report_ready', '报告生成完成', 'business', '测试报告生成完成通知', FALSE, TRUE, TRUE, '【xTest】测试报告已生成 - {reportName}', 'report_ready', TRUE, NULL, 205),
+          ('plan_deadline', '测试计划到期提醒', 'business', '测试计划即将到期时提醒负责人', FALSE, TRUE, TRUE, '【xTest】测试计划即将到期 - {planName}', 'plan_deadline', TRUE, NULL, 206),
+          ('plan_progress_alert', '测试计划进度预警', 'business', '测试计划进度异常时预警', FALSE, TRUE, TRUE, '【xTest】测试计划进度预警 - {planName}', 'plan_progress_alert', TRUE, NULL, 207),
+          ('defect_created', '缺陷创建通知', 'business', '新缺陷创建时通知相关人员', FALSE, TRUE, TRUE, '【xTest】新缺陷记录 - {defectTitle}', 'defect_created', TRUE, NULL, 208),
+          ('defect_status', '缺陷状态变更通知', 'business', '缺陷状态变更时通知相关人员', FALSE, TRUE, TRUE, '【xTest】缺陷状态更新 - {defectTitle}', 'defect_status', TRUE, NULL, 210),
+          ('task_assigned', '任务分配通知', 'business', '新任务分配时通知被分配人', FALSE, TRUE, TRUE, '【xTest】您有新的任务 - {taskTitle}', 'task_assigned', TRUE, NULL, 211),
+          ('task_deadline', '任务到期提醒', 'business', '任务即将到期时提醒负责人', FALSE, TRUE, TRUE, '【xTest】任务即将到期 - {taskTitle}', 'task_deadline', TRUE, NULL, 212),
+          ('user_audit', '新用户待审核', 'approval', '有新用户注册等待审核', FALSE, TRUE, TRUE, '【xTest】新用户注册待审核 - {username}', 'user_audit', TRUE, 'admin', 301),
+          ('audit_result', '审核结果通知', 'approval', '账号审核结果通知', FALSE, TRUE, TRUE, '【xTest】您的账号审核结果', 'audit_result', TRUE, NULL, 302),
+          ('role_change', '角色变更通知', 'approval', '用户角色权限变更通知', FALSE, TRUE, TRUE, '【xTest】您的角色权限已变更', 'role_change', TRUE, NULL, 303),
+          ('maintenance', '系统维护通知', 'announcement', '系统维护公告通知', FALSE, TRUE, TRUE, '【xTest 系统公告】系统维护通知', 'maintenance', TRUE, NULL, 401),
+          ('version_update', '版本更新公告', 'announcement', '系统版本更新公告', FALSE, TRUE, TRUE, '【xTest 系统公告】版本更新 - v{version}', 'version_update', TRUE, NULL, 402),
+          ('urgent', '紧急通知', 'announcement', '管理员发送的紧急通知', FALSE, TRUE, TRUE, '【xTest 紧急通知】{title}', 'urgent', TRUE, NULL, 403),
+          ('daily_digest', '每日进度汇总', 'digest', '每日测试进度汇总邮件', FALSE, FALSE, FALSE, '【xTest】每日测试进度汇总 - {date}', 'daily_digest', FALSE, NULL, 501),
+          ('weekly_report', '每周工作报告', 'digest', '每周工作报告邮件', FALSE, FALSE, FALSE, '【xTest】每周工作报告 - {week}', 'weekly_report', FALSE, NULL, 502),
+          ('monthly_stats', '月度统计数据', 'digest', '月度统计数据邮件（仅管理员）', FALSE, FALSE, FALSE, '【xTest】月度统计数据 - {month}', 'monthly_stats', FALSE, 'admin', 503)
+        `);
+        logger.info('默认邮件类型数据插入成功');
+      }
       
       // 插入默认邮件配置模板
       const [existingConfigs] = await connection.execute('SELECT COUNT(*) as count FROM email_config');

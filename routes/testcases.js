@@ -4,6 +4,7 @@ const pool = require('../db');
 const { authenticateToken } = require('../middleware');
 const { logActivity } = require('./history');
 const logger = require('../services/logger');
+const emailNotificationService = require('../services/emailNotificationService');
 
 const errorResp = (res, status, message) => res.status(status).json({ success: false, message });
 
@@ -452,6 +453,22 @@ router.post('/:id/submit-review', authenticateToken, async (req, res) => {
 
         await connection.commit();
 
+        emailNotificationService.send({
+            emailType: 'case_review_submit',
+            to: reviewerIdList,
+            data: {
+                caseName: caseData.name,
+                caseId: caseData.case_id,
+                priority: '',
+                moduleName: '',
+                submitterName: currentUser.username,
+                submittedAt: new Date().toLocaleString('zh-CN'),
+                comment: comment || '',
+                reviewerName: reviewerNames,
+                reviewLink: `${process.env.APP_URL || 'http://localhost:3000'}/?action=review_case&id=${id}`
+            }
+        }).catch(err => logger.error('评审提交邮件通知失败:', { error: err.message }));
+
         const io = req.app.get('io');
         if (io) {
             for (const reviewerId of reviewerIdList) {
@@ -621,6 +638,44 @@ router.post('/:id/review', authenticateToken, async (req, res) => {
         );
 
         await connection.commit();
+
+        if (newCaseStatus !== 'pending') {
+            const recipientIds = [];
+            if (caseData.creator) {
+                const [creatorResult] = await pool.execute(
+                    'SELECT id FROM users WHERE username = ?',
+                    [caseData.creator]
+                );
+                if (creatorResult.length > 0 && creatorResult[0].id) {
+                    recipientIds.push(creatorResult[0].id);
+                }
+            }
+            if (caseData.owner && caseData.owner !== caseData.creator) {
+                const [ownerResult] = await pool.execute(
+                    'SELECT id FROM users WHERE username = ?',
+                    [caseData.owner]
+                );
+                if (ownerResult.length > 0 && ownerResult[0].id && !recipientIds.includes(ownerResult[0].id)) {
+                    recipientIds.push(ownerResult[0].id);
+                }
+            }
+            if (recipientIds.length > 0) {
+                emailNotificationService.send({
+                    emailType: 'case_review',
+                    to: recipientIds,
+                    data: {
+                        caseName: caseData.name,
+                        caseId: caseData.case_id,
+                        result: newCaseStatus === 'approved' ? '通过' : '驳回',
+                        reviewerName: currentUser.username,
+                        reviewedAt: new Date().toLocaleString('zh-CN'),
+                        comment: comment || '',
+                        suggestion: suggestion || '',
+                        caseLink: `${process.env.APP_URL || 'http://localhost:3000'}/?action=view_case&id=${id}`
+                    }
+                }).catch(err => logger.error('评审结果邮件通知失败:', { error: err.message }));
+            }
+        }
 
         const io = req.app.get('io');
         if (io && caseData.creator) {
@@ -974,6 +1029,20 @@ router.post('/batch-submit-review', authenticateToken, async (req, res) => {
         await connection.commit();
         
         if (successCases.length > 0) {
+            emailNotificationService.send({
+                emailType: 'case_review_submit',
+                to: reviewer_ids,
+                data: {
+                    submitterName: currentUser.username,
+                    submittedAt: new Date().toLocaleString('zh-CN'),
+                    comment: comment || '',
+                    reviewerName: reviewers.map(r => r.username).join('、'),
+                    caseCount: successCases.length,
+                    caseList: successCases.map(c => ({ caseName: c.name, caseId: c.case_id, priority: '' })),
+                    reviewListLink: `${process.env.APP_URL || 'http://localhost:3000'}/?action=pending_reviews`
+                }
+            }).catch(err => logger.error('批量评审提交邮件通知失败:', { error: err.message }));
+
             const io = req.app.get('io');
             if (io) {
                 const reviewerNames = reviewers.map(r => r.username);
@@ -1143,24 +1212,37 @@ router.post('/batch-review', authenticateToken, async (req, res) => {
         await connection.commit();
         
         if (successCases.length > 0) {
+            const creatorNotifications = {};
+            successCases.forEach(c => {
+                if (c.creator_id && !creatorNotifications[c.creator_id]) {
+                    creatorNotifications[c.creator_id] = [];
+                }
+                if (c.creator_id) {
+                    creatorNotifications[c.creator_id].push(c);
+                }
+            });
+            
+            Object.entries(creatorNotifications).forEach(([creatorId, cases]) => {
+                emailNotificationService.send({
+                    emailType: 'case_review',
+                    to: parseInt(creatorId),
+                    data: {
+                        result: newStatus === 'approved' ? '通过' : '驳回',
+                        reviewerName: currentUser.username,
+                        reviewedAt: new Date().toLocaleString('zh-CN'),
+                        comment: comment || '',
+                        caseCount: cases.length,
+                        caseList: cases.map(c => ({ caseName: c.name, caseId: c.case_id })),
+                        caseLink: `${process.env.APP_URL || 'http://localhost:3000'}/?action=testcases`
+                    }
+                }).catch(err => logger.error('批量评审结果邮件通知失败:', { error: err.message }));
+            });
+
             const io = req.app.get('io');
             if (io) {
-                const creatorNotifications = {};
-                successCases.forEach(c => {
-                    if (c.creator_id && !creatorNotifications[c.creator_id]) {
-                        creatorNotifications[c.creator_id] = {
-                            count: 0,
-                            creator_name: c.creator_name
-                        };
-                    }
-                    if (c.creator_id) {
-                        creatorNotifications[c.creator_id].count++;
-                    }
-                });
-                
-                Object.entries(creatorNotifications).forEach(([creatorId, data]) => {
+                Object.entries(creatorNotifications).forEach(([creatorId, cases]) => {
                     io.emit('review:batch_completed', {
-                        count: data.count,
+                        count: cases.length,
                         action: action,
                         reviewerName: currentUser.username,
                         creatorId: parseInt(creatorId),

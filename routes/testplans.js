@@ -4,6 +4,7 @@ const pool = require('../db');
 const { authenticateToken } = require('../middleware');
 const { logActivity } = require('./history');
 const logger = require('../services/logger');
+const emailNotificationService = require('../services/emailNotificationService');
 require('dotenv').config();
 
 // 获取测试计划列表（支持分页）
@@ -150,12 +151,11 @@ router.post('/create_with_rules', authenticateToken, async (req, res) => {
   try {
     await connection.beginTransaction();
     
-    // 获取测试阶段名称（如果有 stage_id）
     let testPhase = '未指定';
     if (stage_id) {
       try {
         const [stageRows] = await connection.execute(
-          'SELECT name FROM test_stages WHERE id = ?',
+          'SELECT name FROM test_phases WHERE id = ?',
           [stage_id]
         );
         if (stageRows.length > 0) {
@@ -199,10 +199,125 @@ router.post('/create_with_rules', authenticateToken, async (req, res) => {
       await connection.execute(`
         UPDATE test_plans SET total_cases = ? WHERE id = ?
       `, [selectedCases.length, planId]);
+      
+      // 自动关联项目到测试用例
+      if (project && project !== '未指定') {
+        try {
+          logger.info('开始自动关联项目到测试用例', { project, caseCount: selectedCases.length });
+          
+          // 先尝试用 code 查询，如果没有再用 name 查询
+          let projectRows = [];
+          const [codeRows] = await connection.execute(
+            'SELECT id, name, code FROM projects WHERE code = ?',
+            [project]
+          );
+          
+          if (codeRows.length > 0) {
+            projectRows = codeRows;
+          } else {
+            // 如果 code 查不到，用 name 查询
+            const [nameRows] = await connection.execute(
+              'SELECT id, name, code FROM projects WHERE name = ?',
+              [project]
+            );
+            projectRows = nameRows;
+          }
+          
+          logger.info('查询项目结果', { projectInput: project, found: projectRows.length, matchedBy: codeRows.length > 0 ? 'code' : 'name' });
+          
+          if (projectRows.length > 0) {
+            const projectId = projectRows[0].id;
+            const projectName = projectRows[0].name;
+            
+            // 查询哪些测试用例还没有关联该项目
+            const placeholders = selectedCases.map(() => '?').join(',');
+            const [existingRelations] = await connection.execute(`
+              SELECT test_case_id FROM test_case_projects 
+              WHERE test_case_id IN (${placeholders}) AND project_id = ?
+            `, [...selectedCases, projectId]);
+            
+            logger.info('查询已存在关联结果', { 
+              existingCount: existingRelations.length,
+              projectId,
+              caseIds: selectedCases.slice(0, 5)
+            });
+            
+            const existingCaseIds = new Set(existingRelations.map(r => r.test_case_id));
+            const casesToLink = selectedCases.filter(caseId => !existingCaseIds.has(caseId));
+            
+            logger.info('需要关联的测试用例', { casesToLinkCount: casesToLink.length });
+            
+            if (casesToLink.length > 0) {
+              const caseOwner = owner || currentUser.username;
+              const linkValues = casesToLink.flatMap(caseId => [
+                caseId, 
+                projectId, 
+                caseOwner,
+                null,
+                null,
+                `由测试计划"${name}"自动关联`
+              ]);
+              const linkPlaceholders = casesToLink.map(() => '(?, ?, ?, ?, ?, ?)').join(',');
+              
+              logger.info('准备插入项目关联', { 
+                linkPlaceholders: linkPlaceholders.substring(0, 100),
+                valuesCount: linkValues.length,
+                caseOwner
+              });
+              
+              const [insertResult] = await connection.execute(`
+                INSERT INTO test_case_projects (test_case_id, project_id, owner, progress_id, status_id, remark)
+                VALUES ${linkPlaceholders}
+              `, linkValues);
+              
+              logger.info('自动关联项目到测试用例成功', { 
+                planId, 
+                projectName, 
+                projectId,
+                linkedCaseCount: casesToLink.length,
+                affectedRows: insertResult.affectedRows
+              });
+            } else {
+              logger.info('所有测试用例已关联该项目，无需重复关联');
+            }
+          } else {
+            logger.warn('未找到项目', { projectCode: project });
+          }
+        } catch (e) {
+          logger.error('自动关联项目到测试用例失败', { error: e.message, stack: e.stack, project, planId });
+        }
+      } else {
+        logger.info('跳过项目关联', { project, reason: project === '未指定' ? '项目未指定' : '项目为空' });
+      }
     }
     
     await connection.commit();
     
+    if (owner) {
+        const [ownerInfo] = await pool.execute(
+            'SELECT id FROM users WHERE username = ?',
+            [owner]
+        );
+        if (ownerInfo.length > 0) {
+            emailNotificationService.send({
+                emailType: 'plan_assigned',
+                to: ownerInfo[0].id,
+                data: {
+                    planName: name,
+                    projectName: project || '',
+                    iteration: iteration || '',
+                    testPhase: testPhase || '',
+                    caseCount: selectedCases ? selectedCases.length : 0,
+                    startDate: start_date || '',
+                    endDate: end_date || '',
+                    description: description || '',
+                    assignerName: currentUser.username,
+                    planLink: `${process.env.APP_URL || 'http://localhost:3000'}/?action=view_plan&id=${planId}`
+                }
+            }).catch(err => logger.error('计划分配邮件通知失败:', { error: err.message }));
+        }
+    }
+
     await logActivity(currentUser.id, currentUser.username, currentUser.role, '创建测试计划', `创建了测试计划 ${name}，关联 ${selectedCases ? selectedCases.length : 0} 条用例`, 'test_plan', planId, ipAddress, userAgent);
     
     res.json({ 
@@ -262,12 +377,27 @@ router.put('/:id', authenticateToken, async (req, res) => {
   try {
     await connection.beginTransaction();
     
-    // 获取测试阶段名称（如果有 stage_id）
+    const [oldPlanRows] = await connection.execute(
+      'SELECT name, owner, status, project FROM test_plans WHERE id = ?',
+      [id]
+    );
+    const oldPlan = oldPlanRows.length > 0 ? oldPlanRows[0] : null;
+    
+    // 获取原有的测试用例列表
+    let oldCaseIds = [];
+    if (selectedCases && Array.isArray(selectedCases)) {
+      const [oldCases] = await connection.execute(
+        'SELECT case_id FROM test_plan_cases WHERE plan_id = ?',
+        [id]
+      );
+      oldCaseIds = oldCases.map(c => c.case_id);
+    }
+    
     let testPhase = '未指定';
     if (stage_id) {
       try {
         const [stageRows] = await connection.execute(
-          'SELECT name FROM test_stages WHERE id = ?',
+          'SELECT name FROM test_phases WHERE id = ?',
           [stage_id]
         );
         if (stageRows.length > 0) {
@@ -297,7 +427,15 @@ router.put('/:id', authenticateToken, async (req, res) => {
       id
     ]);
     
+    // 用于存储需要确认移除项目关联的测试用例
+    let projectUnlinkConfirmations = [];
+    
     if (selectedCases && Array.isArray(selectedCases)) {
+      // 找出新增的和移除的测试用例
+      const newCaseIds = selectedCases;
+      const addedCaseIds = newCaseIds.filter(caseId => !oldCaseIds.includes(caseId));
+      const removedCaseIds = oldCaseIds.filter(caseId => !newCaseIds.includes(caseId));
+      
       await connection.execute('DELETE FROM test_plan_cases WHERE plan_id = ?', [id]);
       
       if (selectedCases.length > 0) {
@@ -315,20 +453,294 @@ router.put('/:id', authenticateToken, async (req, res) => {
       await connection.execute(`
         UPDATE test_plans SET total_cases = ? WHERE id = ?
       `, [selectedCases.length, id]);
+      
+      // 自动关联项目到新增的测试用例
+      if (project && project !== '未指定' && addedCaseIds.length > 0) {
+        try {
+          logger.info('更新计划：开始自动关联项目到新增测试用例', { 
+            project, 
+            addedCaseCount: addedCaseIds.length,
+            planId: id 
+          });
+          
+          // 先尝试用 code 查询，如果没有再用 name 查询
+          let projectRows = [];
+          const [codeRows] = await connection.execute(
+            'SELECT id, name, code FROM projects WHERE code = ?',
+            [project]
+          );
+          
+          if (codeRows.length > 0) {
+            projectRows = codeRows;
+          } else {
+            const [nameRows] = await connection.execute(
+              'SELECT id, name, code FROM projects WHERE name = ?',
+              [project]
+            );
+            projectRows = nameRows;
+          }
+          
+          logger.info('更新计划：查询项目结果', { projectInput: project, found: projectRows.length, matchedBy: codeRows.length > 0 ? 'code' : 'name' });
+          
+          if (projectRows.length > 0) {
+            const projectId = projectRows[0].id;
+            const projectName = projectRows[0].name;
+            
+            // 查询哪些新增的测试用例还没有关联该项目
+            const placeholders = addedCaseIds.map(() => '?').join(',');
+            const [existingRelations] = await connection.execute(`
+              SELECT test_case_id FROM test_case_projects 
+              WHERE test_case_id IN (${placeholders}) AND project_id = ?
+            `, [...addedCaseIds, projectId]);
+            
+            const existingCaseIds = new Set(existingRelations.map(r => r.test_case_id));
+            const casesToLink = addedCaseIds.filter(caseId => !existingCaseIds.has(caseId));
+            
+            logger.info('更新计划：需要关联的新增测试用例', { 
+              casesToLinkCount: casesToLink.length,
+              projectId,
+              projectName
+            });
+            
+            if (casesToLink.length > 0) {
+              const caseOwner = owner || currentUser.username;
+              const linkValues = casesToLink.flatMap(caseId => [
+                caseId, 
+                projectId, 
+                caseOwner,
+                null,
+                null,
+                `由测试计划"${name}"自动关联`
+              ]);
+              const linkPlaceholders = casesToLink.map(() => '(?, ?, ?, ?, ?, ?)').join(',');
+              
+              const [insertResult] = await connection.execute(`
+                INSERT INTO test_case_projects (test_case_id, project_id, owner, progress_id, status_id, remark)
+                VALUES ${linkPlaceholders}
+              `, linkValues);
+              
+              logger.info('更新计划：自动关联项目到新增测试用例成功', { 
+                planId: id, 
+                projectName, 
+                projectId,
+                linkedCaseCount: casesToLink.length,
+                affectedRows: insertResult.affectedRows,
+                caseOwner
+              });
+            }
+          } else {
+            logger.warn('更新计划：未找到项目', { projectCode: project });
+          }
+        } catch (e) {
+          logger.error('更新计划：自动关联项目到新增测试用例失败', { error: e.message, stack: e.stack, project, planId: id });
+        }
+      }
+      
+      // 检测移除的测试用例是否有项目关联需要处理
+      if (removedCaseIds.length > 0 && project && project !== '未指定') {
+        try {
+          // 先尝试用 code 查询，如果没有再用 name 查询
+          let projectRows = [];
+          const [codeRows] = await connection.execute(
+            'SELECT id, name, code FROM projects WHERE code = ?',
+            [project]
+          );
+          
+          if (codeRows.length > 0) {
+            projectRows = codeRows;
+          } else {
+            const [nameRows] = await connection.execute(
+              'SELECT id, name, code FROM projects WHERE name = ?',
+              [project]
+            );
+            projectRows = nameRows;
+          }
+          
+          if (projectRows.length > 0) {
+            const projectId = projectRows[0].id;
+            const projectName = projectRows[0].name;
+            
+            // 查询移除的测试用例是否关联了该项目
+            const placeholders = removedCaseIds.map(() => '?').join(',');
+            const [casesWithProject] = await connection.execute(`
+              SELECT tcp.test_case_id, tc.case_id, tc.name as case_name, tcp.remark
+              FROM test_case_projects tcp
+              JOIN test_cases tc ON tcp.test_case_id = tc.id
+              WHERE tcp.test_case_id IN (${placeholders}) AND tcp.project_id = ?
+            `, [...removedCaseIds, projectId]);
+            
+            if (casesWithProject.length > 0) {
+              // 检查这些测试用例是否还被其他测试计划关联到同一个项目
+              for (const caseInfo of casesWithProject) {
+                const [otherPlans] = await connection.execute(`
+                  SELECT DISTINCT tp.id, tp.name
+                  FROM test_plan_cases tpc
+                  JOIN test_plans tp ON tpc.plan_id = tp.id
+                  WHERE tpc.case_id = ? AND tp.project = ? AND tp.id != ?
+                `, [caseInfo.test_case_id, project, id]);
+                
+                projectUnlinkConfirmations.push({
+                  caseId: caseInfo.test_case_id,
+                  caseCode: caseInfo.case_id,
+                  caseName: caseInfo.case_name,
+                  projectId: projectId,
+                  projectName: projectName,
+                  projectCode: project,
+                  remark: caseInfo.remark,
+                  otherPlans: otherPlans.map(p => ({ id: p.id, name: p.name })),
+                  hasOtherPlans: otherPlans.length > 0
+                });
+              }
+            }
+          }
+        } catch (e) {
+          logger.warn('检测移除测试用例的项目关联失败', { error: e.message, project, planId: id });
+        }
+      }
     }
     
     await connection.commit();
     
+    if (oldPlan) {
+        if (owner && owner !== oldPlan.owner) {
+            const [newOwnerInfo] = await pool.execute(
+                'SELECT id FROM users WHERE username = ?',
+                [owner]
+            );
+            if (newOwnerInfo.length > 0) {
+                emailNotificationService.send({
+                    emailType: 'plan_assigned',
+                    to: newOwnerInfo[0].id,
+                    data: {
+                        planName: name,
+                        projectName: project || '',
+                        iteration: iteration || '',
+                        testPhase: testPhase || '',
+                        caseCount: selectedCases ? selectedCases.length : 0,
+                        startDate: start_date || '',
+                        endDate: end_date || '',
+                        description: description || '',
+                        assignerName: currentUser.username,
+                        planLink: `${process.env.APP_URL || 'http://localhost:3000'}/?action=view_plan&id=${id}`
+                    }
+                }).catch(err => logger.error('计划负责人变更邮件通知失败:', { error: err.message }));
+            }
+        }
+
+        const newStatus = req.body.status;
+        if (newStatus && newStatus !== oldPlan.status) {
+            const recipientIds = [];
+            if (owner) {
+                const [ownerInfo] = await pool.execute('SELECT id FROM users WHERE username = ?', [owner]);
+                if (ownerInfo.length > 0) recipientIds.push(ownerInfo[0].id);
+            }
+            if (oldPlan.owner && oldPlan.owner !== owner) {
+                const [oldOwnerInfo] = await pool.execute('SELECT id FROM users WHERE username = ?', [oldPlan.owner]);
+                if (oldOwnerInfo.length > 0 && !recipientIds.includes(oldOwnerInfo[0].id)) recipientIds.push(oldOwnerInfo[0].id);
+            }
+            if (recipientIds.length > 0) {
+                emailNotificationService.send({
+                    emailType: 'plan_status',
+                    to: recipientIds,
+                    data: {
+                        planName: name,
+                        oldStatus: oldPlan.status,
+                        newStatus: newStatus,
+                        changedAt: new Date().toLocaleString('zh-CN'),
+                        changedBy: currentUser.username,
+                        planLink: `${process.env.APP_URL || 'http://localhost:3000'}/?action=view_plan&id=${id}`
+                    }
+                }).catch(err => logger.error('计划状态变更邮件通知失败:', { error: err.message }));
+            }
+        }
+    }
+
     await logActivity(currentUser.id, currentUser.username, currentUser.role, '更新测试计划', `更新了测试计划 ${name}`, 'test_plan', parseInt(id), ipAddress, userAgent);
     
     res.json({ 
       success: true, 
       message: '测试计划更新成功',
-      caseCount: selectedCases ? selectedCases.length : 0
+      caseCount: selectedCases ? selectedCases.length : 0,
+      projectUnlinkConfirmations: projectUnlinkConfirmations
     });
   } catch (error) {
     await connection.rollback();
     logger.error('更新测试计划失败', { error: error.message, id });
+    res.status(500).json({ success: false, message: '服务器错误: ' + error.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// 批量移除测试用例与项目的关联
+router.post('/unlink-cases-projects', authenticateToken, async (req, res) => {
+  const { unlinks } = req.body;
+  const currentUser = req.user;
+  const ipAddress = req.ip || req.connection.remoteAddress;
+  const userAgent = req.get('User-Agent');
+  
+  if (!unlinks || !Array.isArray(unlinks) || unlinks.length === 0) {
+    return res.status(400).json({ success: false, message: '请提供要移除的关联信息' });
+  }
+  
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+    
+    let removedCount = 0;
+    const errors = [];
+    
+    for (const item of unlinks) {
+      const { caseId, projectId } = item;
+      
+      if (!caseId || !projectId) {
+        errors.push({ caseId, projectId, error: '缺少必要参数' });
+        continue;
+      }
+      
+      try {
+        const [result] = await connection.execute(`
+          DELETE FROM test_case_projects 
+          WHERE test_case_id = ? AND project_id = ?
+        `, [caseId, projectId]);
+        
+        if (result.affectedRows > 0) {
+          removedCount++;
+        }
+      } catch (e) {
+        errors.push({ caseId, projectId, error: e.message });
+      }
+    }
+    
+    await connection.commit();
+    
+    await logActivity(
+      currentUser.id, 
+      currentUser.username, 
+      currentUser.role, 
+      '移除测试用例项目关联', 
+      `批量移除了 ${removedCount} 条测试用例与项目的关联关系`, 
+      'test_case_project', 
+      null, 
+      ipAddress, 
+      userAgent
+    );
+    
+    if (errors.length > 0) {
+      logger.warn('部分项目关联移除失败', { errors });
+    }
+    
+    res.json({ 
+      success: true, 
+      message: `成功移除 ${removedCount} 条关联关系`,
+      removedCount,
+      errorCount: errors.length,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (error) {
+    await connection.rollback();
+    logger.error('批量移除项目关联失败', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误: ' + error.message });
   } finally {
     connection.release();
