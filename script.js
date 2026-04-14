@@ -17217,23 +17217,8 @@ function renderProgressBar(value, type = 'progress') {
 
 // 应用仪表板筛选器
 async function applyDashboardFilters() {
-    const projectFilter = document.getElementById('project-filter');
-    const ownerFilter = document.getElementById('owner-filter');
-    const statusFilter = document.getElementById('status-filter');
-    const progressFilter = document.getElementById('progress-filter');
-    const libraryFilter = document.getElementById('library-filter');
-
-    const filters = {
-        projectId: projectFilter ? projectFilter.value : 'all',
-        owner: ownerFilter ? ownerFilter.value : 'all',
-        statusId: statusFilter ? statusFilter.value : 'all',
-        progressId: progressFilter ? progressFilter.value : 'all',
-        libraryId: libraryFilter ? libraryFilter.value : 'all'
-    };
-
+    const filters = getCurrentFilters();
     console.log('应用筛选器:', filters);
-
-    // 重新加载数据
     await updateStats();
 }
 
@@ -18222,7 +18207,9 @@ function getCurrentFilters() {
     return {
         libraryId: document.getElementById('library-filter')?.value || 'all',
         projectId: document.getElementById('project-filter')?.value || 'all',
-        owner: document.getElementById('owner-filter')?.value || 'all'
+        owner: document.getElementById('owner-filter')?.value || 'all',
+        statusId: document.getElementById('status-filter')?.value || 'all',
+        progressId: document.getElementById('progress-filter')?.value || 'all'
     };
 }
 
