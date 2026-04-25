@@ -202,7 +202,7 @@ const NotificationManager = {
         }
         
         const isReadClass = notif.is_read ? 'read' : 'unread';
-        const date = new Date(notif.created_at).toLocaleString('zh-CN');
+        const date = formatDateTime(notif.created_at);
         const content = notif.content || notif.content_preview || '';
         
         return `

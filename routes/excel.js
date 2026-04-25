@@ -354,7 +354,8 @@ router.get('/export', async (req, res) => {
     ws['!cols'] = [
       { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 30 }, { wch: 10 }, { wch: 15 },
       { wch: 30 }, { wch: 30 }, { wch: 40 }, { wch: 30 }, { wch: 15 }, { wch: 12 },
-      { wch: 20 }, { wch: 30 }, { wch: 20 }
+      { wch: 15 }, { wch: 30 }, { wch: 20 }, { wch: 20 }, { wch: 20 },
+      { wch: 30 }, { wch: 20 }
     ];
     
     XLSX.utils.book_append_sheet(wb, ws, '测试用例');

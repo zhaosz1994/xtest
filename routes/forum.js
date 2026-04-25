@@ -254,7 +254,7 @@ router.post('/attachments', authenticateToken, (req, res, next) => {
 }, attachmentUpload.array('files', 10), async (req, res) => {
     try {
         if (!req.files || req.files.length === 0) {
-            return res.json({ success: false, message: '请选择要上传的文件' });
+            return res.status(400).json({ success: false, message: '请选择要上传的文件' });
         }
         
         const uploaderId = req.user.id;
@@ -328,13 +328,16 @@ router.post('/posts', authenticateToken, checkMuted, async (req, res) => {
     const isAnonymousFlag = isAnonymous ? 1 : 0;
     
     if (!title || !title.trim()) {
-        return res.json({ success: false, message: '帖子标题不能为空' });
+        return res.status(400).json({ success: false, message: '帖子标题不能为空' });
     }
     if (!content || !content.trim()) {
-        return res.json({ success: false, message: '帖子内容不能为空' });
+        return res.status(400).json({ success: false, message: '帖子内容不能为空' });
     }
     if (title.length > 200) {
-        return res.json({ success: false, message: '帖子标题不能超过200个字符' });
+        return res.status(400).json({ success: false, message: '帖子标题不能超过200个字符' });
+    }
+    if (content.length > 50000) {
+        return res.status(400).json({ success: false, message: '帖子内容不能超过50000个字符' });
     }
     
     const connection = await pool.getConnection();
@@ -796,10 +799,10 @@ router.put('/posts/:id', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     
     if (!title || !title.trim()) {
-        return res.json({ success: false, message: '帖子标题不能为空' });
+        return res.status(400).json({ success: false, message: '帖子标题不能为空' });
     }
     if (!content || !content.trim()) {
-        return res.json({ success: false, message: '帖子内容不能为空' });
+        return res.status(400).json({ success: false, message: '帖子内容不能为空' });
     }
     
     const connection = await pool.getConnection();
@@ -814,7 +817,7 @@ router.put('/posts/:id', authenticateToken, async (req, res) => {
         
         if (posts.length === 0) {
             await connection.rollback();
-            return res.json({ success: false, message: '帖子不存在' });
+            return res.status(404).json({ success: false, message: '帖子不存在' });
         }
         
         const actualPostId = posts[0].id;
@@ -823,7 +826,7 @@ router.put('/posts/:id', authenticateToken, async (req, res) => {
         
         if (!isOwner && !isAdmin) {
             await connection.rollback();
-            return res.json({ success: false, message: '无权编辑此帖子' });
+            return res.status(403).json({ success: false, message: '无权编辑此帖子' });
         }
         
         const isAnonymousFlag = isAnonymous ? 1 : 0;
@@ -924,12 +927,12 @@ router.delete('/posts/:id', authenticateToken, async (req, res) => {
         
         if (posts.length === 0) {
             await connection.rollback();
-            return res.json({ success: false, message: '帖子不存在' });
+            return res.status(404).json({ success: false, message: '帖子不存在' });
         }
         
         if (posts[0].author_id !== userId && !ROLES.isAdmin(userRole)) {
             await connection.rollback();
-            return res.json({ success: false, message: '无权删除此帖子' });
+            return res.status(403).json({ success: false, message: '无权删除此帖子' });
         }
         
         const actualPostId = posts[0].id;
@@ -975,13 +978,13 @@ router.post('/comments', authenticateToken, checkMuted, async (req, res) => {
     const isAnonymousFlag = isAnonymous ? 1 : 0;
     
     if (!postId) {
-        return res.json({ success: false, message: '帖子ID不能为空' });
+        return res.status(400).json({ success: false, message: '帖子ID不能为空' });
     }
     if (!content || !content.trim()) {
-        return res.json({ success: false, message: '评论内容不能为空' });
+        return res.status(400).json({ success: false, message: '评论内容不能为空' });
     }
     if (content.length > 2000) {
-        return res.json({ success: false, message: '评论内容不能超过2000个字符' });
+        return res.status(400).json({ success: false, message: '评论内容不能超过2000个字符' });
     }
     
     try {
@@ -991,11 +994,11 @@ router.post('/comments', authenticateToken, checkMuted, async (req, res) => {
         );
         
         if (posts.length === 0) {
-            return res.json({ success: false, message: '帖子不存在' });
+            return res.status(404).json({ success: false, message: '帖子不存在' });
         }
         
         if (posts[0].is_locked === 1) {
-            return res.json({ success: false, message: '帖子已锁定，无法评论' });
+            return res.status(403).json({ success: false, message: '帖子已锁定，无法评论' });
         }
         
         const actualPostId = posts[0].id;
@@ -1065,12 +1068,12 @@ router.delete('/comments/:id', authenticateToken, async (req, res) => {
         
         if (comments.length === 0) {
             await connection.rollback();
-            return res.json({ success: false, message: '评论不存在' });
+            return res.status(404).json({ success: false, message: '评论不存在' });
         }
         
         if (comments[0].author_id !== userId && !ROLES.isAdmin(userRole)) {
             await connection.rollback();
-            return res.json({ success: false, message: '无权删除此评论' });
+            return res.status(403).json({ success: false, message: '无权删除此评论' });
         }
         
         const postId = comments[0].post_id;
@@ -1253,7 +1256,7 @@ router.post('/posts/:id/restore', authenticateToken, async (req, res) => {
         );
         
         if (posts.length === 0) {
-            return res.json({ success: false, message: '帖子不存在或无权恢复' });
+            return res.status(403).json({ success: false, message: '帖子不存在或无权恢复' });
         }
         
         // 恢复帖子
@@ -1297,7 +1300,7 @@ router.post('/comments/:id/restore', authenticateToken, async (req, res) => {
         );
         
         if (comments.length === 0) {
-            return res.json({ success: false, message: '评论不存在或无权恢复' });
+            return res.status(403).json({ success: false, message: '评论不存在或无权恢复' });
         }
         
         // 恢复评论
@@ -1350,11 +1353,11 @@ router.delete('/tags/:id', authenticateToken, async (req, res) => {
     const userRole = req.user.role;
     
     if (!ROLES.isAdmin(userRole)) {
-        return res.json({ success: false, message: '无权执行此操作' });
+        return res.status(403).json({ success: false, message: '无权执行此操作' });
     }
     
     if (tagId == 0 || tagId == '0') {
-        return res.json({ success: false, message: '不能删除"全部"标签' });
+        return res.status(400).json({ success: false, message: '不能删除"全部"标签' });
     }
     
     const connection = await pool.getConnection();
@@ -1369,7 +1372,7 @@ router.delete('/tags/:id', authenticateToken, async (req, res) => {
         
         if (tags.length === 0) {
             await connection.rollback();
-            return res.json({ success: false, message: '标签不存在' });
+            return res.status(404).json({ success: false, message: '标签不存在' });
         }
         
         await connection.execute(
@@ -1409,7 +1412,7 @@ router.put('/posts/:id/pin', authenticateToken, async (req, res) => {
     const { pinned } = req.body;
     
     if (!ROLES.isAdmin(userRole)) {
-        return res.json({ success: false, message: '无权执行此操作' });
+        return res.status(403).json({ success: false, message: '无权执行此操作' });
     }
     
     try {
@@ -1419,7 +1422,7 @@ router.put('/posts/:id/pin', authenticateToken, async (req, res) => {
         );
         
         if (posts.length === 0) {
-            return res.json({ success: false, message: '帖子不存在' });
+            return res.status(404).json({ success: false, message: '帖子不存在' });
         }
         
         await pool.execute(
@@ -1446,7 +1449,7 @@ router.put('/posts/:id/lock', authenticateToken, async (req, res) => {
     const { locked } = req.body;
     
     if (!ROLES.isAdmin(userRole)) {
-        return res.json({ success: false, message: '无权执行此操作' });
+        return res.status(403).json({ success: false, message: '无权执行此操作' });
     }
     
     try {
@@ -1456,7 +1459,7 @@ router.put('/posts/:id/lock', authenticateToken, async (req, res) => {
         );
         
         if (posts.length === 0) {
-            return res.json({ success: false, message: '帖子不存在' });
+            return res.status(404).json({ success: false, message: '帖子不存在' });
         }
         
         await pool.execute(
@@ -1515,7 +1518,7 @@ router.post('/posts/:id/like', authenticateToken, async (req, res) => {
         
         if (posts.length === 0) {
             await connection.rollback();
-            return res.json({ success: false, message: '帖子不存在' });
+            return res.status(404).json({ success: false, message: '帖子不存在' });
         }
         
         const actualPostId = posts[0].id;
@@ -1600,14 +1603,14 @@ router.post('/users/:id/mute', authenticateToken, checkAdmin, async (req, res) =
     const operatorId = req.user.id;
     
     if (!days || days < 1 || days > 365) {
-        return res.json({ 
+        return res.status(400).json({ 
             success: false, 
             message: '禁言天数必须在 1-365 之间' 
         });
     }
     
     if (parseInt(targetUserId) === parseInt(operatorId)) {
-        return res.json({ 
+        return res.status(400).json({ 
             success: false, 
             message: '不能对自己执行禁言操作' 
         });
@@ -1620,7 +1623,7 @@ router.post('/users/:id/mute', authenticateToken, checkAdmin, async (req, res) =
         );
         
         if (users.length === 0) {
-            return res.json({ success: false, message: '用户不存在' });
+            return res.status(404).json({ success: false, message: '用户不存在' });
         }
         
         const targetUser = users[0];
@@ -1665,7 +1668,7 @@ router.delete('/users/:id/mute', authenticateToken, checkAdmin, async (req, res)
         );
         
         if (users.length === 0) {
-            return res.json({ success: false, message: '用户不存在' });
+            return res.status(404).json({ success: false, message: '用户不存在' });
         }
         
         await pool.execute(

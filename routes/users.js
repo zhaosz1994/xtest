@@ -47,7 +47,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     );
 
     // 记录登录日志
-    await logActivity(user.id, user.username, user.role, '用户登录', `用户 ${user.username} 登录系统${rememberMe ? '' : ''}`, 'user', user.id, ipAddress, userAgent);
+    await logActivity(user.id, user.username, user.role, '用户登录', `用户 ${user.username} 登录系统${rememberMe ? '（记住登录）' : ''}`, 'user', user.id, ipAddress, userAgent);
 
     res.json({ 
       success: true,
@@ -150,7 +150,7 @@ router.post('/register', loginLimiter, async (req, res) => {
 });
 
 // 获取用户名列表（公开接口，用于@提及验证）
-router.get('/usernames', async (req, res) => {
+router.get('/usernames', authenticateToken, async (req, res) => {
   try {
     const [users] = await pool.execute(
       'SELECT username FROM users WHERE status = "active"'
@@ -166,7 +166,7 @@ router.get('/usernames', async (req, res) => {
 });
 
 // 获取用户列表（支持分页和搜索）
-router.get('/list', async (req, res) => {
+router.get('/list', authenticateToken, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const pageSize = parseInt(req.query.pageSize) || 50;
@@ -231,7 +231,14 @@ router.post('/add', authenticateToken, requireAdmin, async (req, res) => {
   const userAgent = req.get('User-Agent');
 
   try {
-    // 检查用户名是否已存在
+    if (!username || !password || !email) {
+      return res.status(400).json({ success: false, message: '用户名、密码和邮箱不能为空' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: '密码长度不能少于6位' });
+    }
+
     const [existingUsers] = await pool.execute('SELECT * FROM users WHERE username = ?', [username]);
     if (existingUsers.length > 0) {
       return res.status(400).json({ success: false, message: '用户名已存在' });

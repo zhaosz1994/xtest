@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const logger = require('../services/logger');
+const { generateSummaryForMultipleLevel1 } = require('../services/summaryGenerator');
 
 // 安全解析 JSON 字段（处理 MySQL2 可能已自动解析的情况）
 function safeParseJSON(value) {
@@ -111,15 +112,18 @@ router.get('/level1/:moduleId', authenticateToken, async (req, res) => {
         l1.id, 
         l1.name, 
         l1.test_type, 
+        l1.summary,
         l1.created_at, 
         l1.updated_at,
         l1.order_index,
-        COUNT(tc.id) as test_case_count,
+        COUNT(DISTINCT tc.id) as test_case_count,
+        COUNT(DISTINCT cer.id) as bug_count,
         m.name as module_name,
         m.id as module_id
       FROM level1_points l1
       JOIN modules m ON l1.module_id = m.id
       LEFT JOIN test_cases tc ON l1.id = tc.level1_id
+      LEFT JOIN case_execution_records cer ON tc.id = cer.case_id AND cer.record_type = 'defect'
       WHERE l1.module_id = ?
     `;
     
@@ -131,7 +135,7 @@ router.get('/level1/:moduleId', authenticateToken, async (req, res) => {
       params.push(`%${keyword.trim()}%`);
     }
     
-    query += ` GROUP BY l1.id, l1.name, l1.test_type, l1.created_at, l1.updated_at, l1.order_index, m.name, m.id ORDER BY l1.order_index ASC`;
+    query += ` GROUP BY l1.id, l1.name, l1.test_type, l1.summary, l1.created_at, l1.updated_at, l1.order_index, m.name, m.id ORDER BY l1.order_index ASC`;
     
     const [points] = await pool.execute(query, params);
     res.json({ success: true, level1Points: points });
@@ -151,15 +155,18 @@ router.post('/level1/all', authenticateToken, async (req, res) => {
         l1.id, 
         l1.name, 
         l1.test_type, 
+        l1.summary,
         l1.created_at, 
         l1.updated_at,
         l1.order_index,
-        COUNT(tc.id) as test_case_count,
+        COUNT(DISTINCT tc.id) as test_case_count,
+        COUNT(DISTINCT cer.id) as bug_count,
         m.name as module_name, 
         m.id as module_id
       FROM level1_points l1
       JOIN modules m ON l1.module_id = m.id
       LEFT JOIN test_cases tc ON l1.id = tc.level1_id
+      LEFT JOIN case_execution_records cer ON tc.id = cer.case_id AND cer.record_type = 'defect'
       WHERE m.library_id = ?
     `;
     
@@ -171,7 +178,7 @@ router.post('/level1/all', authenticateToken, async (req, res) => {
       params.push(`%${keyword.trim()}%`);
     }
     
-    query += ` GROUP BY l1.id, l1.name, l1.test_type, l1.created_at, l1.updated_at, l1.order_index, m.name, m.id ORDER BY m.order_index ASC, l1.order_index ASC`;
+    query += ` GROUP BY l1.id, l1.name, l1.test_type, l1.summary, l1.created_at, l1.updated_at, l1.order_index, m.name, m.id ORDER BY m.order_index ASC, l1.order_index ASC`;
     
     const [points] = await pool.execute(query, params);
     res.json({ success: true, level1Points: points });
@@ -335,6 +342,12 @@ router.post('/level1/batch-create', authenticateToken, async (req, res) => {
 
     await connection.commit();
 
+    const level1Ids = createdLevel1Points.map(p => p.id);
+    if (level1Ids.length > 0) {
+      generateSummaryForMultipleLevel1(level1Ids, userId, req.user?.username)
+        .catch(err => logger.error('批量生成概述失败:', { error: err.message }));
+    }
+
     res.json({ 
       success: true,
       message: '批量创建成功',
@@ -356,12 +369,12 @@ router.post('/level1/batch-create', authenticateToken, async (req, res) => {
 // 编辑一级测试点
 router.put('/level1/edit/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
-  const { name, test_type } = req.body;
+  const { name, test_type, summary } = req.body;
 
   try {
     await pool.execute(
-      'UPDATE level1_points SET name = ?, test_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [name, test_type || '功能测试', id]
+      'UPDATE level1_points SET name = ?, test_type = ?, summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [name, test_type || '功能测试', summary || null, id]
     );
 
     res.json({ success: true, message: '一级测试点编辑成功' });
@@ -377,7 +390,7 @@ router.get('/level1/detail/:id', authenticateToken, async (req, res) => {
 
   try {
     const [points] = await pool.execute(
-      'SELECT id, name, test_type, module_id, created_at, updated_at FROM level1_points WHERE id = ?',
+      'SELECT id, name, test_type, summary, module_id, created_at, updated_at FROM level1_points WHERE id = ?',
       [id]
     );
 
@@ -906,6 +919,43 @@ router.put('/execution-records/:recordId', authenticateToken, async (req, res) =
     });
   } catch (error) {
     logger.error('编辑执行记录错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+// 获取一级测试点下的缺陷列表
+router.get('/level1/bugs/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const [bugs] = await pool.execute(`
+      SELECT 
+        cer.id,
+        cer.case_id,
+        cer.record_type,
+        cer.bug_id,
+        cer.bug_type,
+        cer.description,
+        cer.images,
+        cer.creator,
+        cer.created_at,
+        cer.updated_at,
+        tc.case_id as case_code,
+        tc.name as case_name
+      FROM case_execution_records cer
+      JOIN test_cases tc ON cer.case_id = tc.id
+      WHERE tc.level1_id = ? AND cer.record_type = 'defect'
+      ORDER BY cer.created_at DESC
+    `, [id]);
+
+    const parsedBugs = bugs.map(bug => ({
+      ...bug,
+      images: safeParseJSON(bug.images) || []
+    }));
+
+    res.json({ success: true, bugs: parsedBugs });
+  } catch (error) {
+    logger.error('获取一级测试点缺陷列表错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });

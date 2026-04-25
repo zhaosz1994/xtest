@@ -322,6 +322,26 @@ a {
     font-weight: normal;
 }
 
+.post-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.post-tag {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    display: inline-block;
+    line-height: 1.4;
+    transition: opacity 0.2s;
+}
+
+.post-tag:hover {
+    opacity: 0.8;
+}
+
 .post-summary {
     font-size: 14px;
     color: #666;

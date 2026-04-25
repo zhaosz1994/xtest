@@ -118,13 +118,35 @@
 
 .tag-option .tag-remove {
     margin-left: 8px;
-    font-size: 14px;
-    opacity: 0.7;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    opacity: 0.8;
     cursor: pointer;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.2);
+    transition: all 0.25s ease;
+    font-weight: 300;
+    line-height: 1;
 }
 
 .tag-option .tag-remove:hover {
     opacity: 1;
+    background: rgba(255, 255, 255, 0.3);
+    transform: rotate(90deg) scale(1.15);
+}
+
+.tag-option:not(.selected) .tag-remove {
+    background: #f5f5f5;
+    color: #999;
+}
+
+.tag-option:not(.selected) .tag-remove:hover {
+    background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
+    color: #fff;
 }
 
 .custom-tag-input {
@@ -342,80 +364,174 @@
 }
 
 .attachment-section {
-    margin-bottom: 16px;
+    margin-bottom: 20px;
 }
 
 .attachment-section h4 {
-    font-size: 14px;
-    color: #666;
-    margin-bottom: 8px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid #f0f0f0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #374151;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.attachment-section h4::before {
+    content: '';
+    display: inline-block;
+    width: 3px;
+    height: 14px;
+    background: linear-gradient(135deg, #1a73e8, #4285f4);
+    border-radius: 2px;
 }
 
 .edit-attachment-item {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px;
-    background: #f9fafb;
+    gap: 16px;
+    padding: 16px 20px;
+    background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
     border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    margin-bottom: 8px;
+    border-radius: 12px;
+    margin-bottom: 10px;
+    transition: all 0.25s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.edit-attachment-item::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: linear-gradient(180deg, #1a73e8, #4285f4);
+    opacity: 0;
+    transition: opacity 0.25s ease;
+}
+
+.edit-attachment-item:hover {
+    border-color: #1a73e8;
+    box-shadow: 0 4px 12px rgba(26, 115, 232, 0.12);
+    transform: translateY(-1px);
+}
+
+.edit-attachment-item:hover::before {
+    opacity: 1;
 }
 
 .edit-attachment-item.existing {
-    background: #fff;
+    background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
 }
 
 .edit-attachment-item.new {
-    background: #f0f7ff;
-    border-color: #1a73e8;
+    background: linear-gradient(135deg, #f0f7ff 0%, #e8f4fd 100%);
+    border-color: #a8c7fa;
+}
+
+.edit-attachment-item.new::before {
+    background: linear-gradient(180deg, #34a853, #4caf50);
+    opacity: 1;
 }
 
 .edit-attachment-item .attachment-icon {
-    font-size: 24px;
+    font-size: 28px;
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+    border-radius: 10px;
+    flex-shrink: 0;
+}
+
+.edit-attachment-item .attachment-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
 }
 
 .edit-attachment-item .attachment-name {
-    flex: 1;
     font-size: 14px;
-    color: #333;
+    font-weight: 500;
+    color: #1f2937;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .edit-attachment-item .attachment-size {
     font-size: 12px;
-    color: #999;
+    color: #9ca3af;
+}
+
+.edit-attachment-item .attachment-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.edit-attachment-item .action-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    background: #f3f4f6;
+    color: #4b5563;
+    border: 1px solid transparent;
+}
+
+.edit-attachment-item .action-link:hover {
+    background: #e5e7eb;
+    color: #1f2937;
 }
 
 .edit-attachment-item .action-btn {
-    padding: 4px 12px;
-    font-size: 12px;
-    border-radius: 4px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 8px;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .edit-attachment-item .action-btn.download {
-    background: #f0f0f0;
-    color: #666;
-    border: 1px solid #ddd;
+    background: #f3f4f6;
+    color: #4b5563;
+    border: 1px solid transparent;
     text-decoration: none;
 }
 
 .edit-attachment-item .action-btn.download:hover {
-    background: #e0e0e0;
+    background: #e5e7eb;
+    color: #1f2937;
 }
 
 .edit-attachment-item .action-btn.delete {
-    background: #fff;
-    color: #ff4d4f;
-    border: 1px solid #ff4d4f;
+    background: #fef2f2;
+    color: #ef4444;
+    border: 1px solid #fecaca;
 }
 
 .edit-attachment-item .action-btn.delete:hover {
-    background: #ff4d4f;
+    background: #ef4444;
     color: #fff;
+    border-color: #ef4444;
 }
 
 .login-btn {
@@ -514,19 +630,32 @@
 }
 
 .attachment-remove {
-    padding: 4px 8px;
-    background: none;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: #f5f5f5;
     border: none;
     color: #999;
-    font-size: 16px;
+    font-size: 18px;
     cursor: pointer;
-    border-radius: 4px;
-    transition: all 0.2s;
+    border-radius: 50%;
+    transition: all 0.25s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 300;
+    line-height: 1;
 }
 
 .attachment-remove:hover {
-    background: #fee;
-    color: #ff4d4f;
+    background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
+    color: #fff;
+    transform: rotate(90deg) scale(1.1);
+    box-shadow: 0 4px 12px rgba(238, 90, 82, 0.3);
+}
+
+.attachment-remove:active {
+    transform: rotate(90deg) scale(0.95);
 }
 
 /* 搜索框和分页容器样式 */

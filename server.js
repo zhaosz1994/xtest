@@ -214,15 +214,18 @@ app.post('/testpoints/level1/all', authenticateToken, async (req, res) => {
         l1.id, 
         l1.name, 
         l1.test_type, 
+        l1.summary,
         l1.created_at, 
         l1.updated_at,
         l1.order_index,
-        COUNT(tc.id) as test_case_count,
+        COUNT(DISTINCT tc.id) as test_case_count,
+        COUNT(DISTINCT cer.id) as bug_count,
         m.name as module_name, 
         m.id as module_id
       FROM level1_points l1
       JOIN modules m ON l1.module_id = m.id
       LEFT JOIN test_cases tc ON l1.id = tc.level1_id
+      LEFT JOIN case_execution_records cer ON tc.id = cer.case_id AND cer.record_type = 'defect'
       WHERE m.library_id = ?
     `;
     
@@ -233,7 +236,7 @@ app.post('/testpoints/level1/all', authenticateToken, async (req, res) => {
       params.push(`%${keyword.trim()}%`);
     }
     
-    query += ' GROUP BY l1.id, l1.name, l1.test_type, l1.created_at, l1.updated_at, l1.order_index, m.name, m.id ORDER BY m.order_index ASC, l1.order_index ASC';
+    query += ' GROUP BY l1.id, l1.name, l1.test_type, l1.summary, l1.created_at, l1.updated_at, l1.order_index, m.name, m.id ORDER BY m.order_index ASC, l1.order_index ASC';
     
     const [points] = await pool.execute(query, params);
     res.json({ success: true, level1Points: points });
@@ -242,9 +245,6 @@ app.post('/testpoints/level1/all', authenticateToken, async (req, res) => {
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
-
-// 静态文件服务 - 用于访问上传的图片
-app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
 
 // 直接在server.js中实现模块路由
 app.post('/api/modules/list', authenticateToken, async (req, res) => {
@@ -406,31 +406,49 @@ app.post('/api/modules/delete', authenticateToken, async (req, res) => {
       'SELECT module_id, name FROM modules WHERE id = ? AND library_id = ?',
       [id, libraryId]
     );
+
+    if (modules.length === 0) {
+      return res.status(404).json({ success: false, message: '模块不存在' });
+    }
+
+    const [level1Points] = await pool.execute(
+      'SELECT COUNT(*) as count FROM level1_points WHERE module_id = ?',
+      [id]
+    );
+    if (level1Points[0].count > 0) {
+      return res.status(400).json({ success: false, message: `该模块下还有 ${level1Points[0].count} 个一级测试点，请先删除或迁移后再删除模块` });
+    }
+
+    const [testCases] = await pool.execute(
+      'SELECT COUNT(*) as count FROM test_cases WHERE module_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)',
+      [id]
+    );
+    if (testCases[0].count > 0) {
+      return res.status(400).json({ success: false, message: `该模块下还有 ${testCases[0].count} 个测试用例，请先删除或迁移后再删除模块` });
+    }
     
     await pool.execute(
       'DELETE FROM modules WHERE id = ? AND library_id = ?',
       [id, libraryId]
     );
     
-    if (modules.length > 0) {
-        AuditLogService.logModuleAction({
-            userId: req.user.id,
-            username: req.user.username,
-            userRole: req.user.role,
-            action: 'delete',
-            moduleId: modules[0].module_id,
-            moduleName: modules[0].name,
-            ipAddress: req.ip,
-            userAgent: req.get('User-Agent'),
-            beforeData: { id, libraryId, name: modules[0].name }
-        });
-    }
+    AuditLogService.logModuleAction({
+        userId: req.user.id,
+        username: req.user.username,
+        userRole: req.user.role,
+        action: 'delete',
+        moduleId: modules[0].module_id,
+        moduleName: modules[0].name,
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent'),
+        beforeData: { id, libraryId, name: modules[0].name }
+    });
     
     res.json({ success: true, message: '模块删除成功' });
   } catch (error) {
     logger.error('删除模块错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
-    res.json({ success: false, message: '服务器错误', error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -973,6 +991,7 @@ app.get('/api/testpoints/level1/:moduleId', authenticateToken, async (req, res) 
         id: p.id,
         name: p.name,
         test_type: p.test_type,
+        summary: p.summary,
         module_id: p.module_id,
         order_index: p.order_index,
         created_at: p.created_at,
@@ -1986,7 +2005,7 @@ app.get('/api/test/data', async (req, res) => {
 });
 
 // 创建环境
-app.post('/api/environments/create', async (req, res) => {
+app.post('/api/environments/create', authenticateToken, async (req, res) => {
   try {
     console.log('接收到创建环境请求:', req.body);
     const { name, description, creator } = req.body;
@@ -2061,7 +2080,7 @@ app.get('/api/environments/get', async (req, res) => {
 });
 
 // 更新环境
-app.post('/api/environments/update', async (req, res) => {
+app.post('/api/environments/update', authenticateToken, async (req, res) => {
   try {
     console.log('接收到更新环境请求:', req.body);
     const { id, name, description } = req.body;
@@ -2088,7 +2107,7 @@ app.post('/api/environments/update', async (req, res) => {
 });
 
 // 删除环境
-app.delete('/api/environments/delete', async (req, res) => {
+app.delete('/api/environments/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
     console.log('接收到删除环境请求:', { id });
@@ -2115,7 +2134,7 @@ app.delete('/api/environments/delete', async (req, res) => {
 // ==================== 测试点来源管理API ====================
 
 // 创建测试点来源
-app.post('/api/test-sources/create', async (req, res) => {
+app.post('/api/test-sources/create', authenticateToken, async (req, res) => {
   try {
     console.log('接收到创建测试点来源请求:', req.body);
     const { name, description, creator } = req.body;
@@ -2172,7 +2191,7 @@ app.get('/api/test-sources/get', async (req, res) => {
 });
 
 // 更新测试点来源
-app.post('/api/test-sources/update', async (req, res) => {
+app.post('/api/test-sources/update', authenticateToken, async (req, res) => {
   try {
     console.log('接收到更新测试点来源请求:', req.body);
     const { id, name, description } = req.body;
@@ -2194,7 +2213,7 @@ app.post('/api/test-sources/update', async (req, res) => {
 });
 
 // 删除测试点来源
-app.delete('/api/test-sources/delete', async (req, res) => {
+app.delete('/api/test-sources/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
     console.log('接收到删除测试点来源请求:', { id });
@@ -2215,7 +2234,7 @@ app.delete('/api/test-sources/delete', async (req, res) => {
 // 测试类型管理相关路由
 
 // 创建测试类型
-app.post('/api/test-types/create', async (req, res) => {
+app.post('/api/test-types/create', authenticateToken, async (req, res) => {
   try {
     console.log('接收到创建测试类型请求:', req.body);
     const { name, description, creator } = req.body;
@@ -2290,7 +2309,7 @@ app.get('/api/test-types/get', async (req, res) => {
 });
 
 // 更新测试类型
-app.post('/api/test-types/update', async (req, res) => {
+app.post('/api/test-types/update', authenticateToken, async (req, res) => {
   try {
     console.log('接收到更新测试类型请求:', req.body);
     const { id, name, description } = req.body;
@@ -2317,7 +2336,7 @@ app.post('/api/test-types/update', async (req, res) => {
 });
 
 // 删除测试类型
-app.delete('/api/test-types/delete', async (req, res) => {
+app.delete('/api/test-types/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
     console.log('接收到删除测试类型请求:', { id });
@@ -2344,7 +2363,7 @@ app.delete('/api/test-types/delete', async (req, res) => {
 // ==================== 测试软件管理相关路由 ====================
 
 // 创建测试软件
-app.post('/api/test-softwares/create', async (req, res) => {
+app.post('/api/test-softwares/create', authenticateToken, async (req, res) => {
   try {
     console.log('接收到创建测试软件请求:', req.body);
     const { name, description, creator } = req.body;
@@ -2412,7 +2431,7 @@ app.get('/api/test-softwares/get', async (req, res) => {
 });
 
 // 更新测试软件
-app.post('/api/test-softwares/update', async (req, res) => {
+app.post('/api/test-softwares/update', authenticateToken, async (req, res) => {
   try {
     const { id, name, description } = req.body;
     
@@ -2433,7 +2452,7 @@ app.post('/api/test-softwares/update', async (req, res) => {
 });
 
 // 删除测试软件
-app.delete('/api/test-softwares/delete', async (req, res) => {
+app.delete('/api/test-softwares/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
     console.log('接收到删除测试软件请求:', { id });
@@ -2457,7 +2476,7 @@ app.delete('/api/test-softwares/delete', async (req, res) => {
 // 测试阶段管理相关路由
 
 // 创建测试阶段
-app.post('/api/test-phases/create', async (req, res) => {
+app.post('/api/test-phases/create', authenticateToken, async (req, res) => {
   try {
     console.log('接收到创建测试阶段请求:', req.body);
     const { name, description, creator } = req.body;
@@ -2532,7 +2551,7 @@ app.get('/api/test-phases/get', async (req, res) => {
 });
 
 // 更新测试阶段
-app.post('/api/test-phases/update', async (req, res) => {
+app.post('/api/test-phases/update', authenticateToken, async (req, res) => {
   try {
     console.log('接收到更新测试阶段请求:', req.body);
     const { id, name, description } = req.body;
@@ -2559,7 +2578,7 @@ app.post('/api/test-phases/update', async (req, res) => {
 });
 
 // 删除测试阶段
-app.delete('/api/test-phases/delete', async (req, res) => {
+app.delete('/api/test-phases/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
     console.log('接收到删除测试阶段请求:', { id });
@@ -2586,7 +2605,7 @@ app.delete('/api/test-phases/delete', async (req, res) => {
 // 测试进度管理相关路由
 
 // 创建测试进度
-app.post('/api/test-progresses/create', async (req, res) => {
+app.post('/api/test-progresses/create', authenticateToken, async (req, res) => {
   try {
     console.log('接收到创建测试进度请求:', req.body);
     const { name, description, creator } = req.body;
@@ -3484,7 +3503,7 @@ app.get('/api/test-progresses/get', async (req, res) => {
 });
 
 // 更新测试进度
-app.post('/api/test-progresses/update', async (req, res) => {
+app.post('/api/test-progresses/update', authenticateToken, async (req, res) => {
   try {
     console.log('接收到更新测试进度请求:', req.body);
     const { id, name, description } = req.body;
@@ -3511,7 +3530,7 @@ app.post('/api/test-progresses/update', async (req, res) => {
 });
 
 // 删除测试进度
-app.delete('/api/test-progresses/delete', async (req, res) => {
+app.delete('/api/test-progresses/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
     console.log('接收到删除测试进度请求:', { id });
@@ -3538,7 +3557,7 @@ app.delete('/api/test-progresses/delete', async (req, res) => {
 // 测试状态管理相关路由
 
 // 创建测试状态
-app.post('/api/test-statuses/create', async (req, res) => {
+app.post('/api/test-statuses/create', authenticateToken, async (req, res) => {
   try {
     console.log('接收到创建测试状态请求:', req.body);
     const { name, description, creator } = req.body;
@@ -3691,7 +3710,7 @@ app.get('/api/test-statuses/get', async (req, res) => {
 });
 
 // 更新测试状态
-app.post('/api/test-statuses/update', async (req, res) => {
+app.post('/api/test-statuses/update', authenticateToken, async (req, res) => {
   try {
     console.log('接收到更新测试状态请求:', req.body);
     const { id, name, description } = req.body;
@@ -3718,7 +3737,7 @@ app.post('/api/test-statuses/update', async (req, res) => {
 });
 
 // 删除测试状态
-app.delete('/api/test-statuses/delete', async (req, res) => {
+app.delete('/api/test-statuses/delete', authenticateToken, async (req, res) => {
   const { id } = req.query;
   console.log('接收到删除测试状态请求:', { id });
   
@@ -3805,7 +3824,7 @@ app.delete('/api/test-statuses/delete', async (req, res) => {
 // ==================== 优先级管理相关路由 ====================
 
 // 创建优先级
-app.post('/api/priorities/create', async (req, res) => {
+app.post('/api/priorities/create', authenticateToken, async (req, res) => {
   try {
     console.log('接收到创建优先级请求:', req.body);
     const { name, description, creator } = req.body;
@@ -3869,7 +3888,7 @@ app.get('/api/priorities/get', async (req, res) => {
 });
 
 // 更新优先级
-app.post('/api/priorities/update', async (req, res) => {
+app.post('/api/priorities/update', authenticateToken, async (req, res) => {
   try {
     const { id, name, description } = req.body;
     
@@ -3890,7 +3909,7 @@ app.post('/api/priorities/update', async (req, res) => {
 });
 
 // 删除优先级
-app.delete('/api/priorities/delete', async (req, res) => {
+app.delete('/api/priorities/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
     console.log('接收到删除优先级请求:', { id });
@@ -3914,7 +3933,7 @@ app.delete('/api/priorities/delete', async (req, res) => {
 // 测试方式管理相关路由
 
 // 创建测试方式
-app.post('/api/test-methods/create', async (req, res) => {
+app.post('/api/test-methods/create', authenticateToken, async (req, res) => {
   try {
     console.log('接收到创建测试方式请求:', req.body);
     const { name, description, creator } = req.body;
@@ -3989,7 +4008,7 @@ app.get('/api/test-methods/get', async (req, res) => {
 });
 
 // 更新测试方式
-app.post('/api/test-methods/update', async (req, res) => {
+app.post('/api/test-methods/update', authenticateToken, async (req, res) => {
   try {
     console.log('接收到更新测试方式请求:', req.body);
     const { id, name, description } = req.body;
@@ -4016,7 +4035,7 @@ app.post('/api/test-methods/update', async (req, res) => {
 });
 
 // 删除测试方式
-app.delete('/api/test-methods/delete', async (req, res) => {
+app.delete('/api/test-methods/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
     console.log('接收到删除测试方式请求:', { id });
@@ -4083,54 +4102,51 @@ app.get('/api/cases/match/:libraryId/:moduleId/:level1Id', authenticateToken, as
     let testCaseSources = {};
     
     if (testCaseIds.length > 0) {
-      // 查询测试用例环境关联
+      const caseIdPlaceholders = testCaseIds.map(() => '?').join(',');
       const envQuery = `
         SELECT tce.test_case_id, GROUP_CONCAT(e.name) as environments
         FROM test_case_environments tce
         JOIN environments e ON tce.environment_id = e.id
-        WHERE tce.test_case_id IN (${testCaseIds.join(',')})
+        WHERE tce.test_case_id IN (${caseIdPlaceholders})
         GROUP BY tce.test_case_id
       `;
-      const [envResults] = await pool.execute(envQuery);
+      const [envResults] = await pool.execute(envQuery, testCaseIds);
       envResults.forEach(result => {
         testCaseEnvironments[result.test_case_id] = result.environments;
       });
       
-      // 查询测试用例测试方式关联
       const methodQuery = `
         SELECT tcm.test_case_id, GROUP_CONCAT(tm.name) as methods
         FROM test_case_methods tcm
         JOIN test_methods tm ON tcm.method_id = tm.id
-        WHERE tcm.test_case_id IN (${testCaseIds.join(',')})
+        WHERE tcm.test_case_id IN (${caseIdPlaceholders})
         GROUP BY tcm.test_case_id
       `;
-      const [methodResults] = await pool.execute(methodQuery);
+      const [methodResults] = await pool.execute(methodQuery, testCaseIds);
       methodResults.forEach(result => {
         testCaseMethods[result.test_case_id] = result.methods;
       });
       
-      // 查询测试用例测试阶段关联
       const phaseQuery = `
         SELECT tcp.test_case_id, GROUP_CONCAT(tp.name) as phases
         FROM test_case_phases tcp
         JOIN test_phases tp ON tcp.phase_id = tp.id
-        WHERE tcp.test_case_id IN (${testCaseIds.join(',')})
+        WHERE tcp.test_case_id IN (${caseIdPlaceholders})
         GROUP BY tcp.test_case_id
       `;
-      const [phaseResults] = await pool.execute(phaseQuery);
+      const [phaseResults] = await pool.execute(phaseQuery, testCaseIds);
       phaseResults.forEach(result => {
         testCasePhases[result.test_case_id] = result.phases;
       });
       
-      // 查询测试用例测试点来源关联
       const sourceQuery = `
         SELECT tcs.test_case_id, GROUP_CONCAT(ts.name) as sources
         FROM test_case_sources tcs
         JOIN test_sources ts ON tcs.source_id = ts.id
-        WHERE tcs.test_case_id IN (${testCaseIds.join(',')})
+        WHERE tcs.test_case_id IN (${caseIdPlaceholders})
         GROUP BY tcs.test_case_id
       `;
-      const [sourceResults] = await pool.execute(sourceQuery);
+      const [sourceResults] = await pool.execute(sourceQuery, testCaseIds);
       sourceResults.forEach(result => {
         testCaseSources[result.test_case_id] = result.sources;
       });
@@ -4177,21 +4193,20 @@ app.get('/api/cases/match/:libraryId/:moduleId/:level1Id', authenticateToken, as
 });
 
 // 更新测试用例
-app.put('/api/testcases/:id', async (req, res) => {
+app.put('/api/testcases/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, priority, owner, type, precondition, purpose, steps, expected, test_environment } = req.body;
+    const { name, priority, owner, type, precondition, purpose, steps, expected, test_environment, key_config, remark } = req.body;
     
-    console.log('接收到更新测试用例请求:', { id, name, priority, owner, type, precondition, purpose, steps, expected, test_environment });
+    console.log('接收到更新测试用例请求:', { id, name, priority, owner, type, precondition, purpose, steps, expected, test_environment, key_config, remark });
     
-    // 更新test_cases表
     const updateQuery = `
       UPDATE test_cases 
-      SET name = ?, priority = ?, owner = ?, type = ?, precondition = ?, purpose = ?, steps = ?, expected = ?
+      SET name = ?, priority = ?, owner = ?, type = ?, precondition = ?, purpose = ?, steps = ?, expected = ?, key_config = ?, remark = ?
       WHERE id = ?
     `;
     
-    const updateParams = [name, priority, owner, type, precondition, purpose, steps, expected, id];
+    const updateParams = [name, priority, owner, type, precondition, purpose, steps, expected, key_config || '', remark || '', id];
     console.log('执行SQL更新:', updateQuery);
     console.log('更新参数:', updateParams);
     
@@ -4411,46 +4426,40 @@ async function initTestCaseProjectsTable() {
 }
 
 // 更新测试用例关联的项目
-app.put('/api/testcases/:id/projects', async (req, res) => {
+app.put('/api/testcases/:id/projects', authenticateToken, async (req, res) => {
   try {
     let { id } = req.params;
     const { associations, projectIds } = req.body;
     console.log('接收到更新测试用例关联项目请求:', { id, associations, projectIds });
     
-    // 开始事务
-    await pool.query('START TRANSACTION');
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
     
     try {
-      // 检查id是否为字符串（如CASE-20260118-8279），如果是则查找对应的整数id
       let testCaseId = id;
       if (isNaN(Number(id))) {
-        // 是字符串，根据case_id查找对应的整数id
-        const [testCases] = await pool.execute(
+        const [testCases] = await connection.execute(
           'SELECT id FROM test_cases WHERE case_id = ?', [id]
         );
         
         if (testCases.length === 0) {
-          throw new Error(`测试用例不存在: ${id}`);
+          await connection.rollback();
+          connection.release();
+          return res.json({ success: false, message: `测试用例不存在: ${id}` });
         }
         
         testCaseId = testCases[0].id;
         console.log(`根据case_id ${id} 查找到整数id: ${testCaseId}`);
       } else {
-        // 是数字，直接使用
         testCaseId = Number(id);
       }
       
-      // 删除现有关联
-      await pool.execute('DELETE FROM test_case_projects WHERE test_case_id = ?', [testCaseId]);
-      
-      // 处理关联数据
-      let insertValues = [];
+      await connection.execute('DELETE FROM test_case_projects WHERE test_case_id = ?', [testCaseId]);
       
       if (associations && Array.isArray(associations) && associations.length > 0) {
-        // 处理详细关联信息，使用循环插入而不是批量插入，避免语法错误
         for (const assoc of associations) {
             const insertQuery = 'INSERT INTO test_case_projects (test_case_id, project_id, owner, progress_id, status_id, remark) VALUES (?, ?, ?, ?, ?, ?)';
-            await pool.execute(insertQuery, [
+            await connection.execute(insertQuery, [
                 testCaseId, 
                 assoc.project_id, 
                 assoc.owner || '', 
@@ -4461,24 +4470,23 @@ app.put('/api/testcases/:id/projects', async (req, res) => {
         }
         console.log('插入了', associations.length, '条关联项目记录');
         } else if (projectIds && Array.isArray(projectIds) && projectIds.length > 0) {
-        // 兼容旧格式，只处理项目ID，使用循环插入
         for (const projectId of projectIds) {
             const insertQuery = 'INSERT INTO test_case_projects (test_case_id, project_id) VALUES (?, ?)';
-            await pool.execute(insertQuery, [testCaseId, projectId]);
+            await connection.execute(insertQuery, [testCaseId, projectId]);
         }
         console.log('插入了', projectIds.length, '条关联项目记录（旧格式）');
         } else {
         logger.info('没有关联项目数据需要保存');
         }
       
-      // 提交事务
-      await pool.query('COMMIT');
+      await connection.commit();
+      connection.release();
       
       console.log('测试用例关联项目更新成功:', { id, associations, projectIds });
       res.json({ success: true, message: '测试用例关联项目更新成功' });
     } catch (transactionError) {
-      // 回滚事务
-      await pool.query('ROLLBACK');
+      await connection.rollback();
+      connection.release();
       throw transactionError;
     }
   } catch (error) {
@@ -5135,47 +5143,46 @@ app.get('/api/dashboard/trend/progress', async (req, res) => {
 });
 
 // 删除测试用例
-app.delete('/api/testcases/:id', async (req, res) => {
+app.delete('/api/testcases/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     console.log('接收到删除测试用例请求:', { id });
     
-    // 开始事务
-    await pool.query('START TRANSACTION');
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
     
     try {
-      // 删除测试用例环境关联
-      await pool.execute('DELETE FROM test_case_environments WHERE test_case_id = ?', [id]);
+      await connection.execute('DELETE FROM test_case_environments WHERE test_case_id = ?', [id]);
       
-      // 删除测试用例测试方式关联
-      await pool.execute('DELETE FROM test_case_methods WHERE test_case_id = ?', [id]);
+      await connection.execute('DELETE FROM test_case_methods WHERE test_case_id = ?', [id]);
       
-      // 删除测试用例测试类型关联（正确的表名）
-      await pool.execute('DELETE FROM test_case_test_types WHERE test_case_id = ?', [id]);
+      await connection.execute('DELETE FROM test_case_test_types WHERE test_case_id = ?', [id]);
       
-      // 删除测试用例测试状态关联
-      await pool.execute('DELETE FROM test_case_statuses WHERE test_case_id = ?', [id]);
+      await connection.execute('DELETE FROM test_case_statuses WHERE test_case_id = ?', [id]);
       
-      // 删除测试用例项目关联
-      await pool.execute('DELETE FROM test_case_projects WHERE test_case_id = ?', [id]);
+      await connection.execute('DELETE FROM test_case_projects WHERE test_case_id = ?', [id]);
       
-      // 删除测试用例
+      await connection.execute('DELETE FROM test_case_sources WHERE test_case_id = ?', [id]);
+      
+      await connection.execute('DELETE FROM test_plan_cases WHERE case_id = ?', [id]);
+      
       const deleteQuery = 'DELETE FROM test_cases WHERE id = ?';
-      const [deleteResult] = await pool.execute(deleteQuery, [id]);
+      const [deleteResult] = await connection.execute(deleteQuery, [id]);
       
       if (deleteResult.affectedRows === 0) {
-        await pool.query('ROLLBACK');
+        await connection.rollback();
+        connection.release();
         return res.json({ success: false, message: '测试用例不存在' });
       }
       
-      // 提交事务
-      await pool.query('COMMIT');
+      await connection.commit();
+      connection.release();
       
       console.log('测试用例删除成功:', { id });
       res.json({ success: true, message: '测试用例删除成功' });
     } catch (transactionError) {
-      // 回滚事务
-      await pool.query('ROLLBACK');
+      await connection.rollback();
+      connection.release();
       throw transactionError;
     }
   } catch (error) {
@@ -5466,7 +5473,10 @@ async function initDatabase() {
         'ALTER TABLE test_reports ADD COLUMN has_ai_analysis BOOLEAN DEFAULT FALSE',
         'ALTER TABLE test_reports ADD COLUMN status VARCHAR(20) DEFAULT "ready"',
         'ALTER TABLE test_reports ADD COLUMN job_id VARCHAR(100)',
-        'ALTER TABLE test_reports ADD COLUMN creator_id INT'
+        'ALTER TABLE test_reports ADD COLUMN creator_id INT',
+        'ALTER TABLE test_reports ADD COLUMN dimension VARCHAR(20) DEFAULT "testplan"',
+        'ALTER TABLE test_reports ADD COLUMN target_id INT',
+        'ALTER TABLE test_reports ADD COLUMN statistics_json JSON'
       ];
       
       for (const sql of alterStatements) {
@@ -7610,7 +7620,7 @@ app.get('/api/testpoints/detail/:id', authenticateToken, async (req, res) => {
 });
 
 // 创建测试计划（带规则）
-app.post('/api/testplans/create_with_rules', async (req, res) => {
+app.post('/api/testplans/create_with_rules', authenticateToken, async (req, res) => {
   const connection = await pool.getConnection();
   
   try {
@@ -7717,10 +7727,12 @@ app.post('/api/testplans/create_with_rules', async (req, res) => {
       const batchSize = 500;
       for (let i = 0; i < caseIdsToInsert.length; i += batchSize) {
         const batch = caseIdsToInsert.slice(i, i + batchSize);
-        const values = batch.map(caseId => `(${planId}, ${caseId}, 'pending')`).join(',');
+        const placeholders = batch.map(() => '(?, ?, ?)').join(',');
+        const values = batch.flatMap(caseId => [planId, caseId, 'pending']);
         
         await connection.execute(
-          `INSERT IGNORE INTO test_plan_cases (plan_id, case_id, status) VALUES ${values}`
+          `INSERT IGNORE INTO test_plan_cases (plan_id, case_id, status) VALUES ${placeholders}`,
+          values
         );
       }
       
@@ -7750,7 +7762,7 @@ app.post('/api/testplans/create_with_rules', async (req, res) => {
 });
 
 // 自动同步执行结果（Webhook接口）
-app.post('/api/testplans/auto_sync', async (req, res) => {
+app.post('/api/testplans/auto_sync', authenticateToken, async (req, res) => {
   const connection = await pool.getConnection();
   
   try {
@@ -8203,7 +8215,7 @@ app.get('/api/testplans/:id', async (req, res) => {
 });
 
 // 预览计划用例
-app.post('/api/testplans/preview_cases', async (req, res) => {
+app.post('/api/testplans/preview_cases', authenticateToken, async (req, res) => {
   try {
     const { selectedModules, priorities, rules } = req.body;
     
@@ -8262,7 +8274,7 @@ app.post('/api/testplans/preview_cases', async (req, res) => {
 });
 
 // 更新测试计划状态
-app.post('/api/testplans/:id/status', async (req, res) => {
+app.post('/api/testplans/:id/status', authenticateToken, async (req, res) => {
   try {
     const planId = req.params.id;
     const { status } = req.body;
@@ -8298,7 +8310,7 @@ app.post('/api/testplans/:id/status', async (req, res) => {
 });
 
 // 更新测试计划实际完成时间
-app.post('/api/testplans/:id/end-time', async (req, res) => {
+app.post('/api/testplans/:id/end-time', authenticateToken, async (req, res) => {
   try {
     const planId = req.params.id;
     const { actual_end_time } = req.body;
@@ -8317,7 +8329,7 @@ app.post('/api/testplans/:id/end-time', async (req, res) => {
 });
 
 // 更新测试计划
-app.put('/api/testplans/:id', async (req, res) => {
+app.put('/api/testplans/:id', authenticateToken, async (req, res) => {
   try {
     const planId = req.params.id;
     const { name, owner, project, stage_id, software_id, iteration, description, start_date, end_date, actual_end_time, selectedCases } = req.body;
@@ -8345,10 +8357,12 @@ app.put('/api/testplans/:id', async (req, res) => {
         const batchSize = 500;
         for (let i = 0; i < selectedCases.length; i += batchSize) {
           const batch = selectedCases.slice(i, i + batchSize);
-          const values = batch.map(caseId => `(${planId}, ${caseId}, 'pending')`).join(',');
+          const placeholders = batch.map(() => '(?, ?, ?)').join(',');
+          const insertValues = batch.flatMap(caseId => [planId, caseId, 'pending']);
           
           await connection.execute(
-            `INSERT IGNORE INTO test_plan_cases (plan_id, case_id, status) VALUES ${values}`
+            `INSERT IGNORE INTO test_plan_cases (plan_id, case_id, status) VALUES ${placeholders}`,
+            insertValues
           );
         }
         
@@ -8377,7 +8391,7 @@ app.put('/api/testplans/:id', async (req, res) => {
 });
 
 // 删除测试计划
-app.delete('/api/testplans/:id', async (req, res) => {
+app.delete('/api/testplans/:id', authenticateToken, async (req, res) => {
   try {
     const planId = req.params.id;
     

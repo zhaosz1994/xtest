@@ -1016,6 +1016,15 @@
                                     <li class="case-nav-item active">
                                         <span class="case-nav-name">所有用例</span>
                                     </li>
+                                    <li class="case-nav-item" onclick="window.location.href='/level1-points-list.html'" style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 1px solid #3b82f6; cursor: pointer;">
+                                        <span class="case-nav-name" style="color: #3b82f6; font-weight: 600;">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;">
+                                                <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                                            </svg>
+                                            一级测试点列表
+                                        </span>
+                                        <span class="case-nav-count" style="color: #3b82f6; font-size: 11px; background: #dbeafe; padding: 2px 6px; border-radius: 10px;">NEW</span>
+                                    </li>
                                     <li class="case-nav-item">
                                         <span class="case-nav-name">IPC</span>
                                         <span class="case-nav-count">(0)</span>
@@ -1031,8 +1040,7 @@
                         </div>
                         
                         <!-- 中间用例列表 -->
-                        <div class="case-list-wrapper" id="case-list-wrapper">
-                            <div class="case-list-resizer" id="case-list-resizer"></div>
+                        <div class="case-list-wrapper" id="case-list-wrapper" style="flex: 1; max-width: 100%;">
                             <div class="case-list">
                             <style>
                                 .add-case-btn {
@@ -1066,9 +1074,9 @@
                                 }
                                 .level1-list-header {
                                     display: grid;
-                                    grid-template-columns: 60px 1fr 120px 100px 140px;
-                                    gap: 12px;
-                                    padding: 12px 20px;
+                                    grid-template-columns: 50px 338px 2fr 80px 80px 130px 120px;
+                                    gap: 8px;
+                                    padding: 12px 16px;
                                     background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
                                     border-bottom: 2px solid #e2e8f0;
                                     font-size: 12px;
@@ -1079,9 +1087,9 @@
                                 }
                                 .level1-list-item {
                                     display: grid;
-                                    grid-template-columns: 60px 1fr 120px 100px 140px;
-                                    gap: 12px;
-                                    padding: 16px 20px;
+                                    grid-template-columns: 50px 338px 2fr 80px 80px 130px 120px;
+                                    gap: 8px;
+                                    padding: 14px 16px;
                                     border-bottom: 1px solid #f1f5f9;
                                     cursor: pointer;
                                     transition: all 0.2s ease;
@@ -1100,11 +1108,11 @@
                                     display: flex;
                                     align-items: center;
                                     justify-content: center;
-                                    width: 32px;
-                                    height: 32px;
+                                    width: 28px;
+                                    height: 28px;
                                     background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
-                                    border-radius: 8px;
-                                    font-size: 13px;
+                                    border-radius: 6px;
+                                    font-size: 12px;
                                     font-weight: 600;
                                     color: #475569;
                                 }
@@ -1152,16 +1160,961 @@
                                     display: flex;
                                     align-items: center;
                                     justify-content: center;
-                                    gap: 6px;
+                                    gap: 4px;
                                 }
                                 .level1-count-value {
-                                    font-size: 16px;
+                                    font-size: 14px;
                                     font-weight: 700;
                                     color: #6366f1;
                                 }
-                                .level1-count-label {
-                                    font-size: 11px;
+                                .level1-expand-btn {
+                                    width: 24px;
+                                    height: 24px;
+                                    display: flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                    background: transparent;
+                                    border: none;
+                                    cursor: pointer;
                                     color: #94a3b8;
+                                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                                    margin-right: 8px;
+                                }
+                                .level1-expand-btn:hover {
+                                    color: #3b82f6;
+                                }
+                                .level1-expand-btn svg {
+                                    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                                }
+                                .level1-list-item.expanded .level1-expand-btn svg {
+                                    transform: rotate(90deg);
+                                }
+                                .level1-list-item.expanded {
+                                    background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
+                                    border-left: 3px solid #3b82f6;
+                                }
+                                .level1-test-cases-container {
+                                    max-height: 0;
+                                    opacity: 0;
+                                    overflow: hidden;
+                                    transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                                                opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                                    background: #fafbfc;
+                                    border-top: 1px solid #e8ecf1;
+                                }
+                                .level1-test-cases-container.expanded {
+                                    max-height: 2000px;
+                                    opacity: 1;
+                                }
+                                .level1-test-cases-list {
+                                    padding: 12px 0 12px 48px;
+                                }
+                                .level1-test-case-item {
+                                    display: grid;
+                                    grid-template-columns: 30px 302px 1fr 90px 70px 50px 100px 60px;
+                                    gap: 12px;
+                                    align-items: start;
+                                    padding: 12px 16px;
+                                    margin-bottom: 8px;
+                                    background: #ffffff;
+                                    border: 1px solid #e8ecf1;
+                                    border-radius: 8px;
+                                    cursor: pointer;
+                                    transition: all 0.2s ease;
+                                }
+                                .level1-test-case-item:hover {
+                                    background: #f0f4f8;
+                                    border-color: #cbd5e1;
+                                    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
+                                }
+                                .level1-test-case-header {
+                                    display: grid;
+                                    grid-template-columns: 30px 302px 1fr 90px 70px 50px 100px 60px;
+                                    gap: 12px;
+                                    align-items: center;
+                                    padding: 8px 16px;
+                                    margin-bottom: 4px;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    color: #94a3b8;
+                                    text-transform: uppercase;
+                                    letter-spacing: 0.5px;
+                                }
+                                .level1-test-case-status {
+                                    width: 18px;
+                                    height: 18px;
+                                    display: flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                    align-self: center;
+                                }
+                                .level1-test-case-status.executed {
+                                    color: #10b981;
+                                }
+                                .level1-test-case-status.not-executed {
+                                    color: #d1d5db;
+                                }
+                                .level1-test-case-status.has-defect {
+                                    color: #ef4444;
+                                }
+                                .level1-test-case-name {
+                                    font-size: 13px;
+                                    font-weight: 500;
+                                    color: #1e293b;
+                                    line-height: 1.4;
+                                    display: -webkit-box;
+                                    -webkit-line-clamp: 2;
+                                    -webkit-box-orient: vertical;
+                                    overflow: hidden;
+                                    text-overflow: ellipsis;
+                                    word-break: break-all;
+                                }
+                                .level1-test-case-purpose {
+                                    font-size: 12px;
+                                    color: #64748b;
+                                    max-width: 280px;
+                                    line-height: 1.4;
+                                    display: -webkit-box;
+                                    -webkit-line-clamp: 2;
+                                    -webkit-box-orient: vertical;
+                                    overflow: hidden;
+                                    text-overflow: ellipsis;
+                                }
+                                .level1-test-case-type {
+                                    font-size: 11px;
+                                    font-weight: 500;
+                                    padding: 3px 8px;
+                                    border-radius: 10px;
+                                    text-align: center;
+                                    white-space: nowrap;
+                                    align-self: center;
+                                }
+                                .level1-test-case-type.功能测试 {
+                                    background: #dbeafe;
+                                    color: #1e40af;
+                                }
+                                .level1-test-case-type.性能测试 {
+                                    background: #fef3c7;
+                                    color: #92400e;
+                                }
+                                .level1-test-case-type.安全测试 {
+                                    background: #fee2e2;
+                                    color: #991b1b;
+                                }
+                                .level1-test-case-type.兼容性测试 {
+                                    background: #d1fae5;
+                                    color: #065f46;
+                                }
+                                .level1-test-case-type.其他 {
+                                    background: #f1f5f9;
+                                    color: #475569;
+                                }
+                                .level1-test-case-priority {
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    padding: 2px 8px;
+                                    border-radius: 10px;
+                                    text-align: center;
+                                    align-self: center;
+                                }
+                                .level1-test-case-priority.高 {
+                                    background: #fee2e2;
+                                    color: #991b1b;
+                                }
+                                .level1-test-case-priority.中 {
+                                    background: #fef3c7;
+                                    color: #92400e;
+                                }
+                                .level1-test-case-priority.低 {
+                                    background: #d1fae5;
+                                    color: #065f46;
+                                }
+                                .level1-test-case-bug-count {
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    font-family: 'SF Mono', Monaco, Consolas, monospace;
+                                    color: #94a3b8;
+                                    text-align: center;
+                                    align-self: center;
+                                }
+                                .level1-test-case-bug-count.has-bug {
+                                    color: #ef4444;
+                                }
+                                .level1-test-case-owner {
+                                    font-size: 13px;
+                                    color: #64748b;
+                                    align-self: center;
+                                }
+                                .level1-add-test-case-btn {
+                                    width: 100%;
+                                    height: 40px;
+                                    display: flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                    gap: 8px;
+                                    margin-top: 8px;
+                                    background: transparent;
+                                    border: 1px dashed #cbd5e1;
+                                    border-radius: 8px;
+                                    color: #64748b;
+                                    font-size: 13px;
+                                    cursor: pointer;
+                                    transition: all 0.2s ease;
+                                }
+                                .level1-add-test-case-btn:hover {
+                                    border-color: #3b82f6;
+                                    color: #3b82f6;
+                                    background: #eff6ff;
+                                }
+                                .drawer-overlay {
+                                    position: fixed;
+                                    top: 0;
+                                    left: 0;
+                                    right: 0;
+                                    bottom: 0;
+                                    background: rgba(0, 0, 0, 0.3);
+                                    z-index: 999;
+                                    opacity: 0;
+                                    visibility: hidden;
+                                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                                }
+                                .drawer-overlay.active {
+                                    opacity: 1;
+                                    visibility: visible;
+                                }
+                                .drawer {
+                                    position: fixed;
+                                    top: 0;
+                                    right: 0;
+                                    width: 600px;
+                                    height: 100vh;
+                                    background: #ffffff;
+                                    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.1);
+                                    z-index: 1000;
+                                    display: flex;
+                                    flex-direction: column;
+                                    transform: translateX(100%);
+                                    opacity: 0;
+                                    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                                                opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                                }
+                                .drawer.open {
+                                    transform: translateX(0);
+                                    opacity: 1;
+                                }
+                                .drawer-header {
+                                    display: flex;
+                                    align-items: center;
+                                    gap: 16px;
+                                    padding: 20px 24px;
+                                    background: #f8fafc;
+                                    border-bottom: 1px solid #e2e8f0;
+                                }
+                                .drawer-close-btn {
+                                    width: 32px;
+                                    height: 32px;
+                                    display: flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                    background: transparent;
+                                    border: none;
+                                    border-radius: 6px;
+                                    cursor: pointer;
+                                    color: #64748b;
+                                    transition: all 0.2s ease;
+                                }
+                                .drawer-close-btn:hover {
+                                    background: #f1f5f9;
+                                    color: #1e293b;
+                                }
+                                .drawer-title {
+                                    flex: 1;
+                                    margin: 0;
+                                    font-size: 18px;
+                                    font-weight: 600;
+                                    color: #1e293b;
+                                }
+                                .drawer-actions {
+                                    display: flex;
+                                    align-items: center;
+                                    gap: 8px;
+                                }
+                                .drawer-meta {
+                                    display: flex;
+                                    gap: 24px;
+                                    padding: 12px 24px;
+                                    background: #f8fafc;
+                                    border-bottom: 1px solid #e2e8f0;
+                                }
+                                .meta-item {
+                                    display: flex;
+                                    align-items: center;
+                                    gap: 8px;
+                                    font-size: 12px;
+                                }
+                                .meta-label {
+                                    color: #94a3b8;
+                                }
+                                .meta-value {
+                                    color: #64748b;
+                                }
+                                .drawer-content {
+                                    flex: 1;
+                                    overflow-y: auto;
+                                    padding: 24px;
+                                }
+                                .form-section {
+                                    margin-bottom: 32px;
+                                }
+                                .form-section-title {
+                                    margin: 0 0 16px 0;
+                                    padding-bottom: 8px;
+                                    font-size: 15px;
+                                    font-weight: 600;
+                                    color: #1e293b;
+                                    border-bottom: 1px solid #e2e8f0;
+                                }
+                                .form-group {
+                                    margin-bottom: 16px;
+                                }
+                                .form-label {
+                                    display: block;
+                                    margin-bottom: 6px;
+                                    font-size: 13px;
+                                    font-weight: 500;
+                                    color: #374151;
+                                }
+                                .form-label.required::after {
+                                    content: ' *';
+                                    color: #ef4444;
+                                }
+                                .form-row {
+                                    display: grid;
+                                    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                                    gap: 16px;
+                                }
+                                .form-input,
+                                .form-select,
+                                .form-textarea {
+                                    width: 100%;
+                                    padding: 0 12px;
+                                    border: 1px solid #d1d5db;
+                                    border-radius: 8px;
+                                    font-size: 14px;
+                                    color: #1e293b;
+                                    background: #ffffff;
+                                    outline: none;
+                                    transition: all 0.2s ease;
+                                }
+                                .form-input,
+                                .form-select {
+                                    height: 40px;
+                                }
+                                .form-textarea {
+                                    min-height: 100px;
+                                    padding: 10px 12px;
+                                    resize: vertical;
+                                    font-family: inherit;
+                                }
+                                .form-input:focus,
+                                .form-select:focus,
+                                .form-textarea:focus {
+                                    border-color: #3b82f6;
+                                    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+                                }
+                                .drawer-footer {
+                                    display: flex;
+                                    align-items: center;
+                                    justify-content: flex-end;
+                                    gap: 12px;
+                                    padding: 16px 24px;
+                                    background: #f8fafc;
+                                    border-top: 1px solid #e2e8f0;
+                                }
+                                .btn {
+                                    display: inline-flex;
+                                    align-items: center;
+                                    gap: 6px;
+                                    padding: 7px 16px;
+                                    border-radius: 8px;
+                                    font-size: 13.5px;
+                                    font-weight: 500;
+                                    cursor: pointer;
+                                    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+                                    border: 1px solid transparent;
+                                }
+                                .btn-primary {
+                                    background: #3b82f6;
+                                    color: #ffffff;
+                                }
+                                .btn-primary:hover {
+                                    background: #2563eb;
+                                }
+                                .btn-secondary {
+                                    background: #ffffff;
+                                    border-color: #d1d5db;
+                                    color: #64748b;
+                                }
+                                .btn-secondary:hover {
+                                    background: #f8fafc;
+                                    border-color: #3b82f6;
+                                    color: #3b82f6;
+                                }
+                                .btn-danger {
+                                    background: transparent;
+                                    border-color: #fecaca;
+                                    color: #ef4444;
+                                }
+                                .btn-danger:hover {
+                                    background: #fef2f2;
+                                }
+                                .drawer-modern {
+                                    position: fixed;
+                                    top: 0;
+                                    right: 0;
+                                    width: 1080px;
+                                    max-width: 90vw;
+                                    min-width: 480px;
+                                    height: 100vh;
+                                    background: #ffffff;
+                                    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.12);
+                                    z-index: 10000;
+                                    display: flex;
+                                    flex-direction: column;
+                                    transform: translateX(100%);
+                                    opacity: 0;
+                                    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                                                opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                                }
+                                .drawer-modern.open {
+                                    transform: translateX(0);
+                                    opacity: 1;
+                                }
+                                .drawer-resize-handle {
+                                    position: absolute;
+                                    left: 0;
+                                    top: 0;
+                                    width: 6px;
+                                    height: 100%;
+                                    cursor: col-resize;
+                                    z-index: 10;
+                                    background: transparent;
+                                    transition: background 0.2s ease;
+                                }
+                                .drawer-resize-handle:hover,
+                                .drawer-resize-handle.active {
+                                    background: #3b82f6;
+                                }
+                                .drawer-header-modern {
+                                    display: flex;
+                                    align-items: flex-start;
+                                    justify-content: space-between;
+                                    padding: 24px;
+                                    background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
+                                    border-bottom: 1px solid #e2e8f0;
+                                }
+                                .drawer-header-left {
+                                    display: flex;
+                                    align-items: flex-start;
+                                    gap: 16px;
+                                    flex: 1;
+                                }
+                                .drawer-close-btn-modern {
+                                    width: 36px;
+                                    height: 36px;
+                                    display: flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                    background: transparent;
+                                    border: none;
+                                    border-radius: 8px;
+                                    cursor: pointer;
+                                    color: #64748b;
+                                    transition: all 0.2s ease;
+                                    flex-shrink: 0;
+                                }
+                                .drawer-close-btn-modern:hover {
+                                    background: #f1f5f9;
+                                    color: #1e293b;
+                                }
+                                .drawer-header-info {
+                                    flex: 1;
+                                    min-width: 0;
+                                }
+                                .drawer-header-badges {
+                                    display: flex;
+                                    gap: 8px;
+                                    margin-bottom: 8px;
+                                }
+                                .drawer-priority-badge {
+                                    display: inline-flex;
+                                    align-items: center;
+                                    padding: 4px 12px;
+                                    border-radius: 12px;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                }
+                                .drawer-priority-badge.priority-high {
+                                    background: #fee2e2;
+                                    color: #991b1b;
+                                }
+                                .drawer-priority-badge.priority-medium {
+                                    background: #fef3c7;
+                                    color: #92400e;
+                                }
+                                .drawer-priority-badge.priority-low {
+                                    background: #d1fae5;
+                                    color: #065f46;
+                                }
+                                .drawer-type-badge {
+                                    display: inline-flex;
+                                    align-items: center;
+                                    padding: 4px 12px;
+                                    background: #eff6ff;
+                                    color: #1e40af;
+                                    border-radius: 12px;
+                                    font-size: 12px;
+                                    font-weight: 500;
+                                }
+                                .drawer-title-modern {
+                                    margin: 0 0 8px 0;
+                                    font-size: 20px;
+                                    font-weight: 600;
+                                    color: #1e293b;
+                                    line-height: 1.4;
+                                    word-break: break-word;
+                                }
+                                .drawer-meta-modern {
+                                    display: flex;
+                                    gap: 16px;
+                                    font-size: 13px;
+                                    color: #64748b;
+                                }
+                                .drawer-meta-item {
+                                    display: flex;
+                                    align-items: center;
+                                    gap: 6px;
+                                }
+                                .drawer-header-actions {
+                                    display: flex;
+                                    gap: 8px;
+                                    flex-shrink: 0;
+                                }
+                                .drawer-action-btn {
+                                    display: inline-flex;
+                                    align-items: center;
+                                    gap: 6px;
+                                    padding: 8px 16px;
+                                    border-radius: 8px;
+                                    font-size: 14px;
+                                    font-weight: 500;
+                                    cursor: pointer;
+                                    transition: all 0.2s ease;
+                                    border: 1px solid transparent;
+                                }
+                                .drawer-action-btn-primary {
+                                    background: #3b82f6;
+                                    color: #ffffff;
+                                }
+                                .drawer-action-btn-primary:hover {
+                                    background: #2563eb;
+                                }
+                                .drawer-action-btn-danger {
+                                    background: transparent;
+                                    border-color: #fecaca;
+                                    color: #ef4444;
+                                }
+                                .drawer-action-btn-danger:hover {
+                                    background: #fef2f2;
+                                }
+                                .drawer-tabs {
+                                    display: flex;
+                                    gap: 0;
+                                    padding: 0 24px;
+                                    background: #ffffff;
+                                    border-bottom: 1px solid #e2e8f0;
+                                }
+                                .drawer-tab {
+                                    display: flex;
+                                    align-items: center;
+                                    gap: 8px;
+                                    padding: 14px 20px;
+                                    background: transparent;
+                                    border: none;
+                                    border-bottom: 2px solid transparent;
+                                    cursor: pointer;
+                                    font-size: 14px;
+                                    font-weight: 500;
+                                    color: #64748b;
+                                    transition: all 0.2s ease;
+                                }
+                                .drawer-tab:hover {
+                                    color: #3b82f6;
+                                }
+                                .drawer-tab.active {
+                                    color: #3b82f6;
+                                    border-bottom-color: #3b82f6;
+                                }
+                                .drawer-content-modern {
+                                    flex: 1;
+                                    overflow-y: auto;
+                                    padding: 24px;
+                                    background: #f8fafc;
+                                }
+                                .drawer-tab-content {
+                                    display: none;
+                                }
+                                .drawer-tab-content.active {
+                                    display: block;
+                                }
+                                .drawer-card {
+                                    background: #ffffff;
+                                    border-radius: 12px;
+                                    border: 1px solid #e2e8f0;
+                                    margin-bottom: 16px;
+                                    overflow: hidden;
+                                }
+                                .drawer-card-header {
+                                    display: flex;
+                                    align-items: center;
+                                    gap: 10px;
+                                    padding: 16px 20px;
+                                    background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
+                                    border-bottom: 1px solid #e2e8f0;
+                                    font-size: 14px;
+                                    font-weight: 600;
+                                    color: #1e293b;
+                                }
+                                .drawer-card-icon {
+                                    font-size: 18px;
+                                }
+                                .drawer-card-body {
+                                    padding: 20px;
+                                }
+                                .drawer-form-group {
+                                    margin-bottom: 16px;
+                                }
+                                .drawer-form-group:last-child {
+                                    margin-bottom: 0;
+                                }
+                                .drawer-form-label {
+                                    display: block;
+                                    margin-bottom: 8px;
+                                    font-size: 13px;
+                                    font-weight: 500;
+                                    color: #374151;
+                                }
+                                .drawer-form-label.required::after {
+                                    content: ' *';
+                                    color: #ef4444;
+                                }
+                                .drawer-form-row {
+                                    display: grid;
+                                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                                    gap: 16px;
+                                }
+                                .drawer-form-input,
+                                .drawer-form-select,
+                                .drawer-form-textarea {
+                                    width: 100%;
+                                    padding: 10px 14px;
+                                    border: 1px solid #d1d5db;
+                                    border-radius: 8px;
+                                    font-size: 14px;
+                                    color: #1e293b;
+                                    background: #ffffff;
+                                    outline: none;
+                                    transition: all 0.2s ease;
+                                    font-family: inherit;
+                                }
+                                .drawer-form-input,
+                                .drawer-form-select {
+                                    height: 42px;
+                                }
+                                .drawer-form-textarea {
+                                    min-height: 100px;
+                                    resize: vertical;
+                                    line-height: 1.5;
+                                }
+                                .drawer-form-input:focus,
+                                .drawer-form-select:focus,
+                                .drawer-form-textarea:focus {
+                                    border-color: #3b82f6;
+                                    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+                                }
+                                .drawer-form-input-readonly {
+                                    background: #f8fafc;
+                                    color: #64748b;
+                                    cursor: not-allowed;
+                                }
+                                .drawer-form-hint {
+                                    margin: 8px 0 0 0;
+                                    font-size: 12px;
+                                    color: #94a3b8;
+                                }
+                                .drawer-empty-state {
+                                    text-align: center;
+                                    padding: 40px 20px;
+                                    color: #94a3b8;
+                                }
+                                .drawer-empty-state svg {
+                                    margin-bottom: 12px;
+                                    color: #cbd5e1;
+                                }
+                                .drawer-empty-state p {
+                                    margin: 0 0 4px 0;
+                                    font-size: 14px;
+                                }
+                                .drawer-empty-hint {
+                                    font-size: 12px !important;
+                                    color: #cbd5e1 !important;
+                                }
+                                .drawer-review-status {
+                                    padding: 16px;
+                                    background: #f8fafc;
+                                    border-radius: 8px;
+                                }
+                                .drawer-status-row {
+                                    display: flex;
+                                    align-items: center;
+                                    gap: 12px;
+                                    padding: 8px 0;
+                                    border-bottom: 1px solid #e2e8f0;
+                                }
+                                .drawer-status-row:last-child {
+                                    border-bottom: none;
+                                }
+                                .drawer-status-label {
+                                    font-size: 13px;
+                                    font-weight: 500;
+                                    color: #64748b;
+                                    min-width: 80px;
+                                }
+                                .drawer-status-value {
+                                    font-size: 13px;
+                                    color: #1e293b;
+                                }
+                                .drawer-status-badge {
+                                    display: inline-flex;
+                                    align-items: center;
+                                    padding: 4px 12px;
+                                    border-radius: 12px;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    background: #f1f5f9;
+                                    color: #64748b;
+                                }
+                                .drawer-status-draft {
+                                    background: #f1f5f9;
+                                    color: #64748b;
+                                }
+                                .drawer-status-pending {
+                                    background: #fef3c7;
+                                    color: #d97706;
+                                }
+                                .drawer-status-approved {
+                                    background: #d1fae5;
+                                    color: #059669;
+                                }
+                                .drawer-status-rejected {
+                                    background: #fee2e2;
+                                    color: #dc2626;
+                                }
+                                .drawer-item-card {
+                                    background: #ffffff;
+                                    border: 1px solid #e2e8f0;
+                                    border-radius: 8px;
+                                    margin-bottom: 12px;
+                                    overflow: hidden;
+                                    transition: all 0.2s ease;
+                                }
+                                .drawer-item-card:hover {
+                                    border-color: #cbd5e1;
+                                    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
+                                }
+                                .drawer-item-header {
+                                    display: flex;
+                                    align-items: center;
+                                    gap: 8px;
+                                    padding: 12px 16px;
+                                    background: #f8fafc;
+                                    border-bottom: 1px solid #e2e8f0;
+                                }
+                                .drawer-item-icon {
+                                    font-size: 16px;
+                                }
+                                .drawer-item-title {
+                                    flex: 1;
+                                    font-size: 14px;
+                                    font-weight: 500;
+                                    color: #1e293b;
+                                }
+                                .drawer-item-time {
+                                    font-size: 12px;
+                                    color: #94a3b8;
+                                }
+                                .drawer-item-body {
+                                    padding: 12px 16px;
+                                }
+                                .drawer-item-row {
+                                    display: flex;
+                                    align-items: flex-start;
+                                    gap: 8px;
+                                    padding: 6px 0;
+                                }
+                                .drawer-item-label {
+                                    font-size: 13px;
+                                    font-weight: 500;
+                                    color: #64748b;
+                                    min-width: 70px;
+                                    flex-shrink: 0;
+                                }
+                                .drawer-item-value {
+                                    font-size: 13px;
+                                    color: #1e293b;
+                                    word-break: break-word;
+                                }
+                                .drawer-images-grid {
+                                    display: flex;
+                                    flex-wrap: wrap;
+                                    gap: 8px;
+                                    flex: 1;
+                                }
+                                .drawer-thumbnail {
+                                    width: 80px;
+                                    height: 80px;
+                                    object-fit: cover;
+                                    border-radius: 6px;
+                                    border: 1px solid #e2e8f0;
+                                    cursor: pointer;
+                                    transition: all 0.2s ease;
+                                }
+                                .drawer-thumbnail:hover {
+                                    border-color: #3b82f6;
+                                    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2);
+                                    transform: scale(1.05);
+                                }
+                                .image-preview-modal {
+                                    position: fixed;
+                                    top: 0;
+                                    left: 0;
+                                    right: 0;
+                                    bottom: 0;
+                                    z-index: 99999;
+                                    display: flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                }
+                                .image-preview-overlay {
+                                    position: absolute;
+                                    top: 0;
+                                    left: 0;
+                                    right: 0;
+                                    bottom: 0;
+                                    background: rgba(0, 0, 0, 0.8);
+                                }
+                                .image-preview-content {
+                                    position: relative;
+                                    z-index: 1;
+                                    max-width: 90vw;
+                                    max-height: 90vh;
+                                }
+                                .image-preview-content img {
+                                    max-width: 100%;
+                                    max-height: 90vh;
+                                    border-radius: 8px;
+                                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+                                }
+                                .image-preview-close {
+                                    position: absolute;
+                                    top: -40px;
+                                    right: 0;
+                                    width: 32px;
+                                    height: 32px;
+                                    background: rgba(255, 255, 255, 0.9);
+                                    border: none;
+                                    border-radius: 50%;
+                                    font-size: 24px;
+                                    cursor: pointer;
+                                    color: #1e293b;
+                                    display: flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                    transition: all 0.2s ease;
+                                }
+                                .image-preview-close:hover {
+                                    background: #ffffff;
+                                    transform: scale(1.1);
+                                }
+                                .level1-count-label {
+                                    font-size: 10px;
+                                    color: #94a3b8;
+                                }
+                                .level1-bug-count {
+                                    display: flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                    gap: 4px;
+                                    cursor: pointer;
+                                    transition: all 0.2s ease;
+                                }
+                                .level1-bug-count:hover .level1-bug-value {
+                                    text-decoration: underline;
+                                }
+                                .level1-bug-value {
+                                    font-size: 14px;
+                                    font-weight: 700;
+                                    color: #ef4444;
+                                }
+                                .level1-bug-label {
+                                    font-size: 10px;
+                                    color: #94a3b8;
+                                }
+                                .level1-summary {
+                                    font-size: 12px;
+                                    color: #64748b;
+                                    overflow: hidden;
+                                    text-overflow: ellipsis;
+                                    white-space: nowrap;
+                                    line-height: 1.4;
+                                }
+                                .level1-actions {
+                                    display: flex;
+                                    align-items: center;
+                                    gap: 4px;
+                                }
+                                .level1-action-btn {
+                                    display: inline-flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                    width: 28px;
+                                    height: 28px;
+                                    border: none;
+                                    border-radius: 6px;
+                                    cursor: pointer;
+                                    transition: all 0.2s ease;
+                                    background: transparent;
+                                }
+                                .level1-action-btn:hover {
+                                    transform: scale(1.1);
+                                }
+                                .level1-action-btn.view-btn {
+                                    color: #6366f1;
+                                }
+                                .level1-action-btn.view-btn:hover {
+                                    background: #eef2ff;
+                                }
+                                .level1-action-btn.edit-btn {
+                                    color: #10b981;
+                                }
+                                .level1-action-btn.edit-btn:hover {
+                                    background: #ecfdf5;
+                                }
+                                .level1-action-btn.delete-btn {
+                                    color: #ef4444;
+                                }
+                                .level1-action-btn.delete-btn:hover {
+                                    background: #fef2f2;
                                 }
                                 .level1-time {
                                     font-size: 12px;
@@ -1373,6 +2326,59 @@
                                 .action-btn.pause-btn:hover {
                                     box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
                                 }
+                                
+                                .status-select-inline {
+                                    padding: 4px 8px;
+                                    border-radius: 12px;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    border: none;
+                                    cursor: pointer;
+                                    transition: all 0.2s ease;
+                                    min-width: 80px;
+                                    text-align: center;
+                                }
+                                
+                                .status-select-inline:focus {
+                                    outline: 2px solid #6366f1;
+                                    outline-offset: 1px;
+                                }
+                                
+                                .status-select-inline:disabled {
+                                    opacity: 0.6;
+                                    cursor: not-allowed;
+                                }
+                                
+                                .status-select-inline.pass {
+                                    background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+                                    color: #059669;
+                                }
+                                
+                                .status-select-inline.fail {
+                                    background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+                                    color: #dc2626;
+                                }
+                                
+                                .status-select-inline.blocked {
+                                    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+                                    color: #d97706;
+                                }
+                                
+                                .status-select-inline.pending {
+                                    background: #f3f4f6;
+                                    color: #6b7280;
+                                }
+                                
+                                .status-select-inline.paused {
+                                    background: linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%);
+                                    color: #4f46e5;
+                                }
+                                
+                                .status-select-inline option {
+                                    background: white;
+                                    color: #374151;
+                                    padding: 8px;
+                                }
                             </style>
                             <div class="case-list-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0; padding: 16px 20px; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border: 1px solid #e2e8f0; border-radius: 12px 12px 0 0;">
                                 <div style="display: flex; align-items: center; gap: 12px;">
@@ -1394,6 +2400,11 @@
                                         </svg>
                                         <input type="text" id="level1-search-input" placeholder="模糊搜索名称..." class="search-input" style="width: 400px; height: 32px; padding: 0 12px 0 32px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; background: white; color: #1e293b; outline: none; transition: all 0.2s ease;">
                                     </div>
+                                    <button class="add-case-btn" id="expand-all-level1-btn" onclick="toggleExpandAllLevel1()" title="全展开/收起" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                                        </svg>
+                                    </button>
                                     <button class="add-case-btn edit-btn" onclick="openEditLevel1PointsModal()" title="调整一级测试点顺序">
                                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path>
@@ -1412,9 +2423,11 @@
                                     <div class="level1-list-header">
                                         <div>编号</div>
                                         <div>名称</div>
-                                        <div>测试类型</div>
+                                        <div>概述</div>
                                         <div>用例数量</div>
+                                        <div>缺陷统计</div>
                                         <div>更新时间</div>
+                                        <div>操作</div>
                                     </div>
                                     <div class="level1-empty-state">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -4159,6 +5172,18 @@ return rows[0];'></textarea>
                             <p style="margin: 8px 0 0 0; font-size: 12px; color: #94a3b8;">选择测试点所属的测试类型分类</p>
                         </div>
                     </div>
+                    <div class="form-row">
+                        <div class="form-group full-width">
+                            <label style="display: block; margin-bottom: 8px; font-size: 14px; font-weight: 500; color: #374151;">
+                                概述
+                            </label>
+                            <textarea id="edit-level1-point-summary" class="form-input" maxlength="300" placeholder="请输入一级测试点概述（可由AI自动生成）" rows="3" style="width: 100%; padding: 10px 14px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; transition: all 0.2s ease; resize: vertical; min-height: 60px;"></textarea>
+                            <div style="display: flex; justify-content: space-between; margin-top: 6px;">
+                                <span style="font-size: 12px; color: #94a3b8;">概述由AI总结子测试点内容生成，也可手动编辑</span>
+                                <span id="edit-level1-point-summary-counter" style="font-size: 12px; color: #94a3b8;">0/300</span>
+                            </div>
+                        </div>
+                    </div>
                 </form>
             </div>
             <div class="modal-footer" style="padding: 16px 24px; background: #f8fafc; border-top: 1px solid #e2e8f0; display: flex; justify-content: flex-end; gap: 12px;">
@@ -4813,6 +5838,8 @@ return rows[0];'></textarea>
     <!-- 测试用例详情编辑模态框 -->
     <div id="test-case-detail-modal" class="modal case-detail-modal" style="display: none;">
         <div class="modal-content case-detail-content">
+            <div class="modal-resizer" id="case-detail-resizer"></div>
+            <div class="modal-resizer-corner" id="case-detail-resizer-corner"></div>
             <div class="modal-header case-detail-header">
                 <div class="case-header-info">
                     <div class="case-header-top">
@@ -6849,6 +7876,492 @@ return rows[0];'></textarea>
             <div class="modal-footer">
                 <button class="secondary-btn" onclick="closeCaseReadonlyModal()">关闭</button>
             </div>
+        </div>
+    </div>
+
+    <!-- 测试用例编辑滑屉 -->
+    <div class="drawer-overlay" id="testcase-drawer-overlay" onclick="closeTestCaseDrawer()"></div>
+    <div class="drawer drawer-modern" id="testcase-edit-drawer">
+        <div class="drawer-resize-handle" id="drawer-resize-handle"></div>
+        <div class="drawer-header-modern">
+            <div class="drawer-header-left">
+                <button class="drawer-close-btn-modern" onclick="closeTestCaseDrawer()">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"></path>
+                    </svg>
+                </button>
+                <div class="drawer-header-info">
+                    <div class="drawer-header-badges">
+                        <span class="drawer-priority-badge priority-high" id="drawer-priority-badge">高</span>
+                        <span class="drawer-type-badge" id="drawer-type-badge">功能测试</span>
+                    </div>
+                    <h2 class="drawer-title-modern" id="drawer-testcase-name-display">测试用例名称</h2>
+                    <div class="drawer-meta-modern">
+                        <span class="drawer-meta-item">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="12" cy="7" r="4"></circle>
+                            </svg>
+                            <span id="drawer-owner-display">-</span>
+                        </span>
+                        <span class="drawer-meta-item">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                                <line x1="16" y1="2" x2="16" y2="6"></line>
+                                <line x1="8" y1="2" x2="8" y2="6"></line>
+                                <line x1="3" y1="10" x2="21" y2="10"></line>
+                            </svg>
+                            <span id="drawer-created-time">-</span>
+                        </span>
+                    </div>
+                </div>
+            </div>
+            <div class="drawer-header-actions">
+                <button class="drawer-action-btn drawer-action-btn-danger" onclick="deleteTestCaseFromDrawer()" title="删除">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                </button>
+                <button class="drawer-action-btn drawer-action-btn-primary" onclick="saveTestCaseFromDrawer()" title="保存">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                        <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                        <polyline points="7 3 7 8 15 8"></polyline>
+                    </svg>
+                    <span class="drawer-btn-text">保存</span>
+                    <span class="drawer-btn-loading" style="display: none;">
+                        <span class="loading-spinner loading-spinner-sm"></span>
+                    </span>
+                </button>
+            </div>
+        </div>
+
+        <div class="drawer-tabs">
+            <button class="drawer-tab active" data-tab="basic">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                </svg>
+                基本信息
+            </button>
+            <button class="drawer-tab" data-tab="content">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+                测试内容
+            </button>
+            <button class="drawer-tab" data-tab="scripts">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="16 18 22 12 16 6"></polyline>
+                    <polyline points="8 6 2 12 8 18"></polyline>
+                </svg>
+                关联脚本
+            </button>
+            <button class="drawer-tab" data-tab="projects">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                </svg>
+                关联项目
+            </button>
+            <button class="drawer-tab" data-tab="history">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+                执行记录
+            </button>
+            <button class="drawer-tab" data-tab="review">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 11l3 3L22 4"></path>
+                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                </svg>
+                评审信息
+            </button>
+        </div>
+
+        <div class="drawer-content-modern">
+            <form id="testcase-drawer-form">
+                <input type="hidden" id="drawer-testcase-id">
+                
+                <!-- 基本信息标签页 -->
+                <div class="drawer-tab-content active" id="drawer-tab-basic">
+                    <div class="drawer-card">
+                        <div class="drawer-card-header">
+                            <span class="drawer-card-icon">📝</span>
+                            <span>测试项信息</span>
+                        </div>
+                        <div class="drawer-card-body">
+                            <div class="drawer-form-group">
+                                <label class="drawer-form-label required">测试项名称</label>
+                                <input type="text" class="drawer-form-input" id="drawer-testcase-name" required maxlength="200" placeholder="请输入测试项名称">
+                            </div>
+                            <div class="drawer-form-row">
+                                <div class="drawer-form-group">
+                                    <label class="drawer-form-label">用例ID</label>
+                                    <input type="text" class="drawer-form-input drawer-form-input-readonly" id="drawer-testcase-caseid" readonly>
+                                </div>
+                                <div class="drawer-form-group">
+                                    <label class="drawer-form-label">优先级</label>
+                                    <select class="drawer-form-select" id="drawer-testcase-priority">
+                                        <option value="高">高</option>
+                                        <option value="中" selected>中</option>
+                                        <option value="低">低</option>
+                                    </select>
+                                </div>
+                                <div class="drawer-form-group">
+                                    <label class="drawer-form-label">测试类型</label>
+                                    <select class="drawer-form-select" id="drawer-testcase-type">
+                                        <option value="功能测试" selected>功能测试</option>
+                                        <option value="性能测试">性能测试</option>
+                                        <option value="安全测试">安全测试</option>
+                                        <option value="兼容性测试">兼容性测试</option>
+                                        <option value="其他">其他</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="drawer-form-row">
+                                <div class="drawer-form-group">
+                                    <label class="drawer-form-label">负责人</label>
+                                    <input type="text" class="drawer-form-input" id="drawer-testcase-owner" maxlength="50" placeholder="请输入负责人">
+                                </div>
+                                <div class="drawer-form-group">
+                                    <label class="drawer-form-label">创建人</label>
+                                    <input type="text" class="drawer-form-input drawer-form-input-readonly" id="drawer-testcase-creator" readonly>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="drawer-card">
+                        <div class="drawer-card-header">
+                            <span class="drawer-card-icon">📊</span>
+                            <span>时间信息</span>
+                        </div>
+                        <div class="drawer-card-body">
+                            <div class="drawer-form-row">
+                                <div class="drawer-form-group">
+                                    <label class="drawer-form-label">创建时间</label>
+                                    <input type="text" class="drawer-form-input drawer-form-input-readonly" id="drawer-testcase-created-at" readonly>
+                                </div>
+                                <div class="drawer-form-group">
+                                    <label class="drawer-form-label">更新时间</label>
+                                    <input type="text" class="drawer-form-input drawer-form-input-readonly" id="drawer-testcase-updated-at" readonly>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="drawer-card">
+                        <div class="drawer-card-header">
+                            <span class="drawer-card-icon">🏷️</span>
+                            <span>分类标签</span>
+                        </div>
+                        <div class="drawer-card-body">
+                            <div class="drawer-form-row">
+                                <div class="drawer-form-group">
+                                    <label class="drawer-form-label">测试阶段</label>
+                                    <select class="drawer-form-select" id="drawer-testcase-phase">
+                                        <option value="">请选择</option>
+                                        <option value="单元测试">单元测试</option>
+                                        <option value="集成测试">集成测试</option>
+                                        <option value="系统测试">系统测试</option>
+                                        <option value="验收测试">验收测试</option>
+                                    </select>
+                                </div>
+                                <div class="drawer-form-group">
+                                    <label class="drawer-form-label">测试环境</label>
+                                    <select class="drawer-form-select" id="drawer-testcase-env">
+                                        <option value="">请选择</option>
+                                        <option value="开发环境">开发环境</option>
+                                        <option value="测试环境">测试环境</option>
+                                        <option value="预发布环境">预发布环境</option>
+                                        <option value="生产环境">生产环境</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="drawer-form-row">
+                                <div class="drawer-form-group">
+                                    <label class="drawer-form-label">测试方式</label>
+                                    <select class="drawer-form-select" id="drawer-testcase-method">
+                                        <option value="">请选择</option>
+                                        <option value="手工测试">手工测试</option>
+                                        <option value="自动化测试">自动化测试</option>
+                                        <option value="半自动化">半自动化</option>
+                                    </select>
+                                </div>
+                                <div class="drawer-form-group">
+                                    <label class="drawer-form-label">测试状态</label>
+                                    <select class="drawer-form-select" id="drawer-testcase-status">
+                                        <option value="">请选择</option>
+                                        <option value="设计中">设计中</option>
+                                        <option value="评审中">评审中</option>
+                                        <option value="维护中">维护中</option>
+                                        <option value="已废弃">已废弃</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 测试内容标签页 -->
+                <div class="drawer-tab-content" id="drawer-tab-content">
+                    <div class="drawer-card">
+                        <div class="drawer-card-header">
+                            <span class="drawer-card-icon">📌</span>
+                            <span>前置条件</span>
+                        </div>
+                        <div class="drawer-card-body">
+                            <div class="drawer-form-group">
+                                <textarea class="drawer-form-textarea" id="drawer-testcase-precondition" rows="3" maxlength="1000" placeholder="请输入前置条件，如：&#10;1. 系统已启动&#10;2. 用户已登录"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="drawer-card">
+                        <div class="drawer-card-header">
+                            <span class="drawer-card-icon">🎯</span>
+                            <span>测试目的</span>
+                        </div>
+                        <div class="drawer-card-body">
+                            <div class="drawer-form-group">
+                                <textarea class="drawer-form-textarea" id="drawer-testcase-purpose" rows="3" maxlength="1000" placeholder="请输入测试目的，描述本次测试要验证的内容"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="drawer-card">
+                        <div class="drawer-card-header">
+                            <span class="drawer-card-icon">📝</span>
+                            <span>测试步骤</span>
+                        </div>
+                        <div class="drawer-card-body">
+                            <div class="drawer-form-group">
+                                <textarea class="drawer-form-textarea" id="drawer-testcase-steps" rows="5" maxlength="2000" placeholder="请输入测试步骤，如：&#10;步骤1: 打开登录页面&#10;步骤2: 输入用户名和密码&#10;步骤3: 点击登录按钮"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="drawer-card">
+                        <div class="drawer-card-header">
+                            <span class="drawer-card-icon">✅</span>
+                            <span>预期结果</span>
+                        </div>
+                        <div class="drawer-card-body">
+                            <div class="drawer-form-group">
+                                <textarea class="drawer-form-textarea" id="drawer-testcase-expected" rows="3" maxlength="1000" placeholder="请输入预期结果，描述测试通过的标准"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="drawer-card">
+                        <div class="drawer-card-header">
+                            <span class="drawer-card-icon">⚙️</span>
+                            <span>关键配置</span>
+                        </div>
+                        <div class="drawer-card-body">
+                            <div class="drawer-form-group">
+                                <textarea class="drawer-form-textarea" id="drawer-testcase-key-config" rows="3" maxlength="500" placeholder="请输入关键配置命令或参数"></textarea>
+                                <p class="drawer-form-hint">记录测试用例的关键配置命令或参数</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="drawer-card">
+                        <div class="drawer-card-header">
+                            <span class="drawer-card-icon">💬</span>
+                            <span>测试备注</span>
+                        </div>
+                        <div class="drawer-card-body">
+                            <div class="drawer-form-group">
+                                <textarea class="drawer-form-textarea" id="drawer-testcase-remark" rows="3" maxlength="500" placeholder="请输入测试备注，如：注意事项、依赖说明等"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 关联脚本标签页 -->
+                <div class="drawer-tab-content" id="drawer-tab-scripts">
+                    <div class="drawer-card">
+                        <div class="drawer-card-header">
+                            <span class="drawer-card-icon">📜</span>
+                            <span>关联脚本</span>
+                            <button type="button" class="drawer-action-btn drawer-action-btn-primary" style="margin-left: auto; padding: 6px 12px; font-size: 13px;" id="drawer-add-script-btn">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                </svg>
+                                添加脚本
+                            </button>
+                        </div>
+                        <div class="drawer-card-body">
+                            <div class="drawer-empty-state" id="drawer-scripts-empty">
+                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <polyline points="16 18 22 12 16 6"></polyline>
+                                    <polyline points="8 6 2 12 8 18"></polyline>
+                                </svg>
+                                <p>暂无关联脚本</p>
+                                <button type="button" class="drawer-action-btn drawer-action-btn-primary" style="padding: 6px 12px; font-size: 13px;" id="drawer-add-script-btn-empty">
+                                    添加脚本
+                                </button>
+                            </div>
+                            <div id="drawer-scripts-list" style="display: none;"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 关联项目标签页 -->
+                <div class="drawer-tab-content" id="drawer-tab-projects">
+                    <div class="drawer-card">
+                        <div class="drawer-card-header">
+                            <span class="drawer-card-icon">📁</span>
+                            <span>关联项目</span>
+                            <button type="button" class="drawer-action-btn drawer-action-btn-primary" style="margin-left: auto; padding: 6px 12px; font-size: 13px;" id="drawer-edit-projects-btn">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                </svg>
+                                编辑关联
+                            </button>
+                        </div>
+                        <div class="drawer-card-body">
+                            <div class="drawer-empty-state" id="drawer-projects-empty">
+                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                                </svg>
+                                <p>暂未关联项目</p>
+                                <button type="button" class="drawer-action-btn drawer-action-btn-primary" style="padding: 6px 12px; font-size: 13px;" id="drawer-edit-projects-btn-empty">
+                                    添加关联
+                                </button>
+                            </div>
+                            <div id="drawer-projects-list" style="display: none;"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 执行记录标签页 -->
+                <div class="drawer-tab-content" id="drawer-tab-history">
+                    <div class="drawer-card">
+                        <div class="drawer-card-header">
+                            <span class="drawer-card-icon">📜</span>
+                            <span>执行历史</span>
+                            <button type="button" class="drawer-action-btn drawer-action-btn-primary" style="margin-left: auto; padding: 6px 12px; font-size: 13px;" id="drawer-add-record-btn">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                </svg>
+                                添加记录
+                            </button>
+                        </div>
+                        <div class="drawer-card-body">
+                            <div id="drawer-execution-record-form" class="drawer-execution-record-form" style="display: none;">
+                                <div class="drawer-form-row">
+                                    <div class="drawer-form-group">
+                                        <label class="drawer-form-label required">记录类型</label>
+                                        <div style="display: flex; gap: 16px; padding: 8px 0;">
+                                            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 14px;">
+                                                <input type="radio" name="drawer-record-type" value="defect">
+                                                <span>缺陷</span>
+                                            </label>
+                                            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 14px;">
+                                                <input type="radio" name="drawer-record-type" value="other">
+                                                <span>其他</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="drawer-form-row" id="drawer-bug-id-row" style="display: none;">
+                                    <div class="drawer-form-group">
+                                        <label class="drawer-form-label required">Bug ID</label>
+                                        <input type="text" class="drawer-form-input" id="drawer-record-bug-id" placeholder="请输入Bug ID">
+                                    </div>
+                                </div>
+                                <div class="drawer-form-group">
+                                    <label class="drawer-form-label">详细描述</label>
+                                    <textarea class="drawer-form-textarea" id="drawer-record-description" rows="3" placeholder="请输入详细描述..."></textarea>
+                                </div>
+                                <div class="drawer-form-group">
+                                    <label class="drawer-form-label">图片附件</label>
+                                    <div class="drawer-upload-area" id="drawer-record-upload-area">
+                                        <input type="file" id="drawer-record-image-input" accept="image/*" multiple style="display: none;">
+                                        <div id="drawer-record-images-preview" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+                                        <div style="display: flex; align-items: center; gap: 8px; color: #94a3b8; font-size: 13px; cursor: pointer;" id="drawer-record-upload-hint">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                                <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                                <polyline points="21 15 16 10 5 21"></polyline>
+                                            </svg>
+                                            选择图片
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style="display: flex; gap: 8px; justify-content: flex-end; padding-top: 8px;">
+                                    <button type="button" class="drawer-action-btn" style="padding: 6px 14px; font-size: 13px; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; color: #374151;" id="drawer-cancel-record-btn">取消</button>
+                                    <button type="button" class="drawer-action-btn drawer-action-btn-primary" style="padding: 6px 14px; font-size: 13px;" id="drawer-submit-record-btn">确定</button>
+                                </div>
+                            </div>
+                            <div class="drawer-empty-state" id="drawer-history-empty">
+                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <polyline points="12 6 12 12 16 14"></polyline>
+                                </svg>
+                                <p>暂无执行记录</p>
+                                <button type="button" class="drawer-action-btn drawer-action-btn-primary" style="padding: 6px 12px; font-size: 13px;" id="drawer-add-record-btn-empty">
+                                    添加记录
+                                </button>
+                            </div>
+                            <div id="drawer-history-list" style="display: none;"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 评审信息标签页 -->
+                <div class="drawer-tab-content" id="drawer-tab-review">
+                    <div class="drawer-card">
+                        <div class="drawer-card-header">
+                            <span class="drawer-card-icon">📋</span>
+                            <span>评审状态</span>
+                        </div>
+                        <div class="drawer-card-body">
+                            <div class="drawer-review-status">
+                                <div class="drawer-status-row">
+                                    <span class="drawer-status-label">当前状态:</span>
+                                    <span class="drawer-status-badge" id="drawer-review-status-badge">草稿</span>
+                                </div>
+                                <div class="drawer-status-row">
+                                    <span class="drawer-status-label">评审人:</span>
+                                    <span class="drawer-status-value" id="drawer-reviewer-name">-</span>
+                                </div>
+                                <div class="drawer-status-row">
+                                    <span class="drawer-status-label">提交时间:</span>
+                                    <span class="drawer-status-value" id="drawer-review-submitted-time">-</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="drawer-card">
+                        <div class="drawer-card-header">
+                            <span class="drawer-card-icon">📜</span>
+                            <span>评审历史</span>
+                        </div>
+                        <div class="drawer-card-body">
+                            <div class="drawer-empty-state" id="drawer-review-history-empty">
+                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path d="M9 11l3 3L22 4"></path>
+                                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                                </svg>
+                                <p>暂无评审记录</p>
+                            </div>
+                            <div id="drawer-review-history-list" style="display: none;"></div>
+                        </div>
+                    </div>
+                </div>
+            </form>
         </div>
     </div>
 </body>

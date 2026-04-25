@@ -202,7 +202,7 @@
         if (!text) return '';
         const div = document.createElement('div');
         div.textContent = text;
-        return div.innerHTML;
+        return div.innerHTML.replace(/'/g, '&#039;');
     }
 
     function hasDetailData(row) {

@@ -127,13 +127,32 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
     const ipAddress = req.ip || req.connection.remoteAddress;
     const userAgent = req.get('User-Agent');
     
+    if (!name || !name.trim()) {
+      return res.json({
+        success: false,
+        message: '用例库名称不能为空'
+      });
+    }
+    
+    const trimmedName = name.trim();
+    
+    const [existing] = await pool.execute(
+      'SELECT id FROM case_libraries WHERE name = ? AND id != ?',
+      [trimmedName, id]
+    );
+    if (existing.length > 0) {
+      return res.json({
+        success: false,
+        message: '用例库名称已存在，请使用其他名称'
+      });
+    }
+    
     await pool.execute(
       'UPDATE case_libraries SET name = ?, module_count = ?, config = ? WHERE id = ?',
-      [name, moduleCount || 0, config || '', id]
+      [trimmedName, moduleCount || 0, config || '', id]
     );
     
-    // 记录操作日志
-    await logActivity(currentUser.id, currentUser.username, currentUser.role, '更新用例库', `更新了用例库 ${name}`, 'case_library', parseInt(id), ipAddress, userAgent);
+    await logActivity(currentUser.id, currentUser.username, currentUser.role, '更新用例库', `更新了用例库 ${trimmedName}`, 'case_library', parseInt(id), ipAddress, userAgent);
     
     res.json({
       success: true,

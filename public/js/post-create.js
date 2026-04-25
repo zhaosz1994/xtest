@@ -87,7 +87,7 @@ function renderTags(tags) {
     
     html += `
         <div class="custom-tag-input">
-            <input type="text" id="custom-tag-input" placeholder="自定义标签..." maxlength="10">
+            <input type="text" id="custom-tag-input" placeholder="自定义标签..." maxlength="20">
             <button type="button" class="custom-tag-add-btn" onclick="addCustomTag()">+</button>
         </div>
     `;
@@ -111,8 +111,8 @@ function addCustomTag() {
         return;
     }
     
-    if (tagName.length > 10) {
-        showToast('标签名称不能超过10个字符', 'error');
+    if (tagName.length > 20) {
+        showToast('标签名称不能超过20个字符', 'error');
         return;
     }
     
@@ -452,7 +452,7 @@ function loadDraft() {
     
     try {
         const draft = JSON.parse(draftStr);
-        const savedTime = new Date(draft.savedAt).toLocaleString('zh-CN');
+        const savedTime = formatDateTime(draft.savedAt);
         
         showConfirm(`发现保存的草稿（保存于 ${savedTime}），是否加载？`, (confirmed) => {
             if (confirmed) {
@@ -490,5 +490,5 @@ function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML.replace(/'/g, '&#039;');
 }

@@ -75,7 +75,7 @@ const TestPlanService = {
     async delete(planId) {
         try {
             showLoading('删除测试计划中...');
-            const response = await apiRequest(`/testplans/delete?id=${planId}`, {
+            const response = await apiRequest(`/testplans/delete/${planId}`, {
                 method: 'DELETE'
             });
 

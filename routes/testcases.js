@@ -5,6 +5,7 @@ const { authenticateToken } = require('../middleware');
 const { logActivity } = require('./history');
 const logger = require('../services/logger');
 const emailNotificationService = require('../services/emailNotificationService');
+const { generateSummaryForLevel1 } = require('../services/summaryGenerator');
 
 const errorResp = (res, status, message) => res.status(status).json({ success: false, message });
 
@@ -337,6 +338,11 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
         await connection.commit();
         console.log(`[批量创建] 成功创建 ${createdCases.length} 个测试用例`);
 
+        if (level1Id) {
+            generateSummaryForLevel1(level1Id, currentUser.id, currentUser.username)
+                .catch(err => logger.error('自动生成概述失败:', { error: err.message, level1Id }));
+        }
+
         res.json({
             success: true,
             message: `成功创建 ${createdCases.length} 个测试用例`,
@@ -472,7 +478,7 @@ router.post('/:id/submit-review', authenticateToken, async (req, res) => {
         const io = req.app.get('io');
         if (io) {
             for (const reviewerId of reviewerIdList) {
-                io.emit('review:submitted', {
+                io.to(`user_${reviewerId}`).emit('review:submitted', {
                     caseId: id,
                     caseName: caseData.name,
                     submitterName: currentUser.username,
@@ -679,14 +685,20 @@ router.post('/:id/review', authenticateToken, async (req, res) => {
 
         const io = req.app.get('io');
         if (io && caseData.creator) {
-            io.emit('review:completed', {
-                caseId: id,
-                caseName: caseData.name,
-                reviewerName: currentUser.username,
-                action: action,
-                reviewedAt: new Date().toISOString(),
-                finalStatus: newCaseStatus
-            });
+            const [creatorResult2] = await pool.execute(
+                'SELECT id FROM users WHERE username = ?',
+                [caseData.creator]
+            );
+            if (creatorResult2.length > 0) {
+                io.to(`user_${creatorResult2[0].id}`).emit('review:completed', {
+                    caseId: id,
+                    caseName: caseData.name,
+                    reviewerName: currentUser.username,
+                    action: action,
+                    reviewedAt: new Date().toISOString(),
+                    finalStatus: newCaseStatus
+                });
+            }
         }
 
         const reviewedCount = allReviewers.filter(r => r.status !== 'pending').length;
@@ -1007,7 +1019,8 @@ router.post('/batch-submit-review', authenticateToken, async (req, res) => {
             successCases.push({
                 id: caseItem.id,
                 case_id: caseItem.case_id,
-                name: caseItem.name
+                name: caseItem.name,
+                creator_id: caseItem.creator_id
             });
         }
         
@@ -1029,6 +1042,16 @@ router.post('/batch-submit-review', authenticateToken, async (req, res) => {
         await connection.commit();
         
         if (successCases.length > 0) {
+            const creatorNotifications = {};
+            successCases.forEach(c => {
+                if (c.creator_id && !creatorNotifications[c.creator_id]) {
+                    creatorNotifications[c.creator_id] = [];
+                }
+                if (c.creator_id) {
+                    creatorNotifications[c.creator_id].push(c);
+                }
+            });
+            
             emailNotificationService.send({
                 emailType: 'case_review_submit',
                 to: reviewer_ids,
@@ -1045,13 +1068,14 @@ router.post('/batch-submit-review', authenticateToken, async (req, res) => {
 
             const io = req.app.get('io');
             if (io) {
-                const reviewerNames = reviewers.map(r => r.username);
-                io.emit('review:batch_submitted', {
-                    count: successCases.length,
-                    submitterName: currentUser.username,
-                    reviewerIds: reviewer_ids,
-                    reviewerNames: reviewerNames,
-                    submittedAt: new Date().toISOString()
+                Object.entries(creatorNotifications).forEach(([creatorId, cases]) => {
+                    io.to(`user_${creatorId}`).emit('review:batch_submitted', {
+                        count: successCases.length,
+                        submitterName: currentUser.username,
+                        reviewerIds: reviewer_ids,
+                        reviewerNames: reviewerNames,
+                        submittedAt: new Date().toISOString()
+                    });
                 });
             }
         }
@@ -1241,7 +1265,7 @@ router.post('/batch-review', authenticateToken, async (req, res) => {
             const io = req.app.get('io');
             if (io) {
                 Object.entries(creatorNotifications).forEach(([creatorId, cases]) => {
-                    io.emit('review:batch_completed', {
+                    io.to(`user_${creatorId}`).emit('review:batch_completed', {
                         count: cases.length,
                         action: action,
                         reviewerName: currentUser.username,
@@ -1653,6 +1677,11 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
 
         await connection.commit();
 
+        if (level1Id) {
+            generateSummaryForLevel1(level1Id, currentUser.id, currentUser.username)
+                .catch(err => logger.error('自动生成概述失败:', { error: err.message, level1Id }));
+        }
+
         res.json({
             success: true,
             message: '批量更新成功',
@@ -1667,6 +1696,305 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
         await connection.rollback();
         logger.error('批量更新错误:', { error: error.message });
         errorResp(res, 500, '批量更新失败: ' + error.message);
+    } finally {
+        connection.release();
+    }
+});
+
+router.get('/level1/:level1Id', authenticateToken, async (req, res) => {
+    try {
+        const { level1Id } = req.params;
+        
+        const [testCases] = await pool.execute(`
+            SELECT 
+                tc.id,
+                tc.case_id,
+                tc.name,
+                tc.priority,
+                tc.type,
+                tc.owner,
+                tc.precondition,
+                tc.purpose,
+                tc.steps,
+                tc.expected,
+                tc.key_config,
+                tc.remark,
+                tc.created_at,
+                tc.updated_at,
+                tc.level1_id,
+                CAST((SELECT COUNT(*) FROM case_execution_records cer WHERE cer.case_id = tc.id AND cer.record_type = 'defect') 
+                + (SELECT COUNT(DISTINCT tpc.plan_id) FROM test_plan_cases tpc WHERE tpc.case_id = tc.id AND tpc.bug_id IS NOT NULL AND tpc.bug_id != '') AS SIGNED) as bug_count,
+                CASE 
+                    WHEN EXISTS (
+                        SELECT 1 FROM case_execution_records cer 
+                        WHERE cer.case_id = tc.id AND cer.record_type = 'defect'
+                    ) OR EXISTS (
+                        SELECT 1 FROM test_plan_cases tpc 
+                        WHERE tpc.case_id = tc.id AND tpc.bug_id IS NOT NULL AND tpc.bug_id != ''
+                    ) THEN 1 
+                    ELSE 0 
+                END as has_defect,
+                CASE 
+                    WHEN EXISTS (
+                        SELECT 1 FROM case_execution_records cer 
+                        WHERE cer.case_id = tc.id
+                    ) OR EXISTS (
+                        SELECT 1 FROM test_plan_cases tpc 
+                        WHERE tpc.case_id = tc.id AND tpc.status != 'pending'
+                    ) THEN 1 
+                    ELSE 0 
+                END as executed
+            FROM test_cases tc
+            WHERE tc.level1_id = ?
+            ORDER BY tc.created_at DESC
+        `, [level1Id]);
+        
+        res.json({
+            success: true,
+            testCases: testCases
+        });
+    } catch (error) {
+        logger.error('获取一级测试点下的测试用例失败:', { error: error.message });
+        res.status(500).json({ success: false, message: '服务器错误' });
+    }
+});
+
+router.get('/:id', authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        const [testCases] = await pool.execute(`
+            SELECT 
+                tc.*,
+                m.name as module_name,
+                m.id as module_id,
+                l.name as library_name,
+                l.id as library_id
+            FROM test_cases tc
+            LEFT JOIN modules m ON tc.module_id = m.id
+            LEFT JOIN case_libraries l ON tc.library_id = l.id
+            WHERE tc.id = ?
+        `, [id]);
+        
+        if (testCases.length === 0) {
+            return res.status(404).json({ success: false, message: '测试用例不存在' });
+        }
+        
+        const testCase = testCases[0];
+        
+        const [environments] = await pool.execute(`
+            SELECT e.id, e.name
+            FROM test_case_environments tce
+            JOIN environments e ON tce.environment_id = e.id
+            WHERE tce.test_case_id = ?
+        `, [id]);
+        
+        const [phases] = await pool.execute(`
+            SELECT tp.id, tp.name
+            FROM test_case_phases tcp
+            JOIN test_phases tp ON tcp.phase_id = tp.id
+            WHERE tcp.test_case_id = ?
+        `, [id]);
+        
+        const [methods] = await pool.execute(`
+            SELECT tm.id, tm.name
+            FROM test_case_methods tcm
+            JOIN test_methods tm ON tcm.method_id = tm.id
+            WHERE tcm.test_case_id = ?
+        `, [id]);
+        
+        const [projects] = await pool.execute(`
+            SELECT 
+                tcp.id,
+                tcp.project_id,
+                tcp.owner,
+                tcp.remark,
+                tcp.created_at,
+                p.name as project_name,
+                tp.name as progress_name,
+                ts.name as status_name
+            FROM test_case_projects tcp
+            LEFT JOIN projects p ON tcp.project_id = p.id
+            LEFT JOIN test_progresses tp ON tcp.progress_id = tp.id
+            LEFT JOIN test_statuses ts ON tcp.status_id = ts.id
+            WHERE tcp.test_case_id = ?
+            ORDER BY tcp.created_at DESC
+        `, [id]);
+        
+        const [executionRecords] = await pool.execute(`
+            SELECT 
+                id,
+                record_type,
+                bug_id,
+                bug_type,
+                description,
+                images,
+                creator,
+                created_at,
+                updated_at
+            FROM case_execution_records
+            WHERE case_id = ?
+            ORDER BY created_at DESC
+            LIMIT 20
+        `, [id]);
+        
+        testCase.environments = environments || [];
+        testCase.phases = phases || [];
+        testCase.methods = methods || [];
+        
+        res.json({
+            success: true,
+            testCase: testCase,
+            projects: projects || [],
+            executionRecords: executionRecords || [],
+            scripts: []
+        });
+    } catch (error) {
+        logger.error('获取测试用例详情失败:', { error: error.message });
+        res.status(500).json({ success: false, message: '服务器错误' });
+    }
+});
+
+router.put('/:id', authenticateToken, async (req, res) => {
+    const connection = await pool.getConnection();
+    
+    try {
+        const { id } = req.params;
+        const {
+            name,
+            priority,
+            type,
+            owner,
+            precondition,
+            purpose,
+            steps,
+            expected,
+            key_config,
+            remark,
+            method,
+            status
+        } = req.body;
+        
+        const currentUser = req.user;
+        
+        if (!name || !name.trim()) {
+            return res.status(400).json({ success: false, message: '用例名称不能为空' });
+        }
+        
+        await connection.beginTransaction();
+        
+        const [existing] = await connection.execute(
+            'SELECT id, level1_id FROM test_cases WHERE id = ?',
+            [id]
+        );
+        
+        if (existing.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({ success: false, message: '测试用例不存在' });
+        }
+        
+        await connection.execute(`
+            UPDATE test_cases 
+            SET 
+                name = ?,
+                priority = ?,
+                type = ?,
+                owner = ?,
+                precondition = ?,
+                purpose = ?,
+                steps = ?,
+                expected = ?,
+                key_config = ?,
+                remark = ?,
+                method = ?,
+                status = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `, [
+            name.trim(),
+            priority || '中',
+            type || '功能测试',
+            owner || '',
+            precondition || '',
+            purpose || '',
+            steps || '',
+            expected || '',
+            key_config || '',
+            remark || '',
+            method || '自动化',
+            status || '维护中',
+            id
+        ]);
+        
+        await connection.commit();
+        
+        const level1Id = existing[0].level1_id;
+        if (level1Id) {
+            generateSummaryForLevel1(level1Id, currentUser.id, currentUser.username)
+                .catch(err => logger.error('自动生成概述失败:', { error: err.message, level1Id }));
+        }
+        
+        res.json({
+            success: true,
+            message: '测试用例更新成功'
+        });
+        
+    } catch (error) {
+        await connection.rollback();
+        logger.error('更新测试用例失败:', { error: error.message });
+        res.status(500).json({ success: false, message: '服务器错误' });
+    } finally {
+        connection.release();
+    }
+});
+
+router.delete('/:id', authenticateToken, async (req, res) => {
+    const connection = await pool.getConnection();
+    
+    try {
+        const { id } = req.params;
+        const currentUser = req.user;
+        
+        await connection.beginTransaction();
+        
+        const [existing] = await connection.execute(
+            'SELECT id, name, level1_id FROM test_cases WHERE id = ?',
+            [id]
+        );
+        
+        if (existing.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({ success: false, message: '测试用例不存在' });
+        }
+        
+        await connection.execute('DELETE FROM case_execution_records WHERE case_id = ?', [id]);
+        
+        await connection.execute('DELETE FROM test_case_environments WHERE test_case_id = ?', [id]);
+        await connection.execute('DELETE FROM test_case_phases WHERE test_case_id = ?', [id]);
+        await connection.execute('DELETE FROM test_case_test_types WHERE test_case_id = ?', [id]);
+        await connection.execute('DELETE FROM test_case_sources WHERE test_case_id = ?', [id]);
+        await connection.execute('DELETE FROM test_case_methods WHERE test_case_id = ?', [id]);
+        await connection.execute('DELETE FROM test_case_projects WHERE test_case_id = ?', [id]);
+        
+        await connection.execute('DELETE FROM test_cases WHERE id = ?', [id]);
+        
+        await connection.commit();
+        
+        const level1Id = existing[0].level1_id;
+        if (level1Id) {
+            generateSummaryForLevel1(level1Id, currentUser.id, currentUser.username)
+                .catch(err => logger.error('自动生成概述失败:', { error: err.message, level1Id }));
+        }
+        
+        res.json({
+            success: true,
+            message: '测试用例删除成功'
+        });
+        
+    } catch (error) {
+        await connection.rollback();
+        logger.error('删除测试用例失败:', { error: error.message });
+        res.status(500).json({ success: false, message: '服务器错误' });
     } finally {
         connection.release();
     }

@@ -464,7 +464,7 @@ function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML.replace(/'/g, '&#039;');
 }
 
 function escapeForJs(text) {
@@ -488,14 +488,13 @@ function formatTime(dateStr) {
     if (hours < 24) return `${hours}小时前`;
     if (days < 7) return `${days}天前`;
     
-    return date.toLocaleDateString('zh-CN', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-    });
+    return formatDate(date);
 }
 
-// ==================== 用户管理功能 ====================
+function formatMutedTime(dateStr) {
+    if (!dateStr) return '';
+    return formatDateTime(dateStr);
+}
 
 async function loadUsers() {
     const userListEl = document.getElementById('user-list');
@@ -597,18 +596,6 @@ function renderUsers(users) {
             </div>
         `;
     }).join('');
-}
-
-function formatMutedTime(dateStr) {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    return date.toLocaleString('zh-CN', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
 }
 
 function searchUsers() {

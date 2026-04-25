@@ -4,25 +4,24 @@ const crypto = require('crypto');
 
 // 加密密钥（生产环境应从环境变量获取）
 const ENCRYPTION_KEY = process.env.EMAIL_ENCRYPTION_KEY || 'xtest-email-encryption-key-32b';
+const ENCRYPTION_SALT = process.env.EMAIL_ENCRYPTION_SALT || 'xtest-email-salt-unique';
 const IV_LENGTH = 16;
 
-// 加密函数
 function encrypt(text) {
   const iv = crypto.randomBytes(IV_LENGTH);
-  const key = crypto.scryptSync(ENCRYPTION_KEY, 'salt', 32);
+  const key = crypto.scryptSync(ENCRYPTION_KEY, ENCRYPTION_SALT, 32);
   const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
   let encrypted = cipher.update(text, 'utf8', 'hex');
   encrypted += cipher.final('hex');
   return iv.toString('hex') + ':' + encrypted;
 }
 
-// 解密函数
 function decrypt(text) {
   try {
     const textParts = text.split(':');
     const iv = Buffer.from(textParts.shift(), 'hex');
     const encryptedText = textParts.join(':');
-    const key = crypto.scryptSync(ENCRYPTION_KEY, 'salt', 32);
+    const key = crypto.scryptSync(ENCRYPTION_KEY, ENCRYPTION_SALT, 32);
     const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
     let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
     decrypted += decipher.final('utf8');
@@ -44,7 +43,7 @@ function createSMTPTransporter(config) {
       pass: decrypt(config.smtp_password)
     },
     tls: {
-      rejectUnauthorized: false
+      rejectUnauthorized: process.env.NODE_ENV === 'production'
     }
   });
 }

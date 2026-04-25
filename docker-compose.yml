@@ -3,6 +3,7 @@ version: '3.8'
 services:
   mysql:
     image: mysql:8.0
+    platform: linux/amd64
     container_name: xtest-mysql
     restart: unless-stopped
     environment:
@@ -28,6 +29,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    platform: linux/amd64
     container_name: xtest-app
     restart: unless-stopped
     ports:

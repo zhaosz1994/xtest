@@ -1,20 +1,32 @@
 const crypto = require('crypto');
 require('dotenv').config();
 
-const ENCRYPTION_KEY = process.env.API_KEY_ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
 const ALGORITHM = 'aes-256-cbc';
 
 if (!process.env.API_KEY_ENCRYPTION_KEY) {
-  console.warn('警告: 未设置API_KEY_ENCRYPTION_KEY环境变量，使用随机密钥。重启后加密的数据将无法解密！');
+  console.error('严重错误: 未设置 API_KEY_ENCRYPTION_KEY 环境变量！API密钥加密功能无法安全运行，重启后加密的数据将无法解密。请在 .env 文件中设置 API_KEY_ENCRYPTION_KEY 后重新启动。');
 }
+
+const ENCRYPTION_KEY = process.env.API_KEY_ENCRYPTION_KEY;
 
 class APIKeyEncryption {
   constructor() {
+    if (!ENCRYPTION_KEY) {
+      this.key = null;
+      return;
+    }
     this.key = Buffer.from(ENCRYPTION_KEY.substring(0, 64), 'hex');
+  }
+
+  _ensureKey() {
+    if (!this.key) {
+      throw new Error('API_KEY_ENCRYPTION_KEY 未配置，无法执行加密/解密操作。请在 .env 中设置该环境变量。');
+    }
   }
 
   encrypt(text) {
     if (!text) return null;
+    this._ensureKey();
     
     try {
       const iv = crypto.randomBytes(16);
@@ -32,6 +44,7 @@ class APIKeyEncryption {
 
   decrypt(encryptedData) {
     if (!encryptedData) return null;
+    this._ensureKey();
     
     try {
       const parts = encryptedData.split(':');

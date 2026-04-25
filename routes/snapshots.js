@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
+const { authenticateToken } = require('../middleware');
 const logger = require('../services/logger');
 
-// 创建历史快照
-router.post('/create', async (req, res) => {
+router.post('/create', authenticateToken, async (req, res) => {
   const { entity_type, entity_id, snapshot_data, version, user, action } = req.body;
   
   try {
@@ -20,8 +20,7 @@ router.post('/create', async (req, res) => {
   }
 });
 
-// 获取指定实体的历史快照
-router.get('/:entity_type/:entity_id', async (req, res) => {
+router.get('/:entity_type/:entity_id', authenticateToken, async (req, res) => {
   const { entity_type, entity_id } = req.params;
   
   try {
@@ -37,12 +36,10 @@ router.get('/:entity_type/:entity_id', async (req, res) => {
   }
 });
 
-// 恢复到指定版本
-router.post('/restore/:snapshot_id', async (req, res) => {
+router.post('/restore/:snapshot_id', authenticateToken, async (req, res) => {
   const { snapshot_id } = req.params;
   
   try {
-    // 获取快照数据
     const [snapshots] = await pool.execute(
       'SELECT * FROM history_snapshots WHERE id = ?',
       [snapshot_id]
@@ -56,10 +53,8 @@ router.post('/restore/:snapshot_id', async (req, res) => {
     const { entity_type, entity_id, snapshot_data } = snapshot;
     const snapshotObj = JSON.parse(snapshot_data);
     
-    // 根据实体类型执行恢复操作
     switch (entity_type) {
       case 'module':
-        // 恢复模块
         await pool.execute(
           'UPDATE modules SET name = ? WHERE id = ?',
           [snapshotObj.name, entity_id]
@@ -67,7 +62,6 @@ router.post('/restore/:snapshot_id', async (req, res) => {
         break;
         
       case 'level1_point':
-        // 恢复一级测试点
         await pool.execute(
           'UPDATE level1_points SET name = ? WHERE id = ?',
           [snapshotObj.name, entity_id]
@@ -75,7 +69,6 @@ router.post('/restore/:snapshot_id', async (req, res) => {
         break;
         
       case 'level2_point':
-        // 恢复二级测试点
         await pool.execute(
           'UPDATE level2_points SET name = ?, test_steps = ?, expected_behavior = ?, chip_sequence = ?, test_result = ?, test_environment = ?, case_name = ?, remarks = ? WHERE id = ?',
           [

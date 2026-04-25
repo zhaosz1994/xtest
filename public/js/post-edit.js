@@ -357,7 +357,7 @@ function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML.replace(/'/g, '&#039;');
 }
 
 function initAttachmentEvents() {
@@ -414,12 +414,20 @@ function renderExistingAttachments() {
         PostEdit.existingAttachments.forEach(att => {
             html += `
                 <div class="edit-attachment-item">
-                    <span class="attachment-icon">${getFileIcon(att.file_type)}</span>
-                    <span class="attachment-name">${escapeHtml(att.file_name)}</span>
-                    <span class="attachment-size">${formatFileSize(att.file_size)}</span>
+                    <div class="attachment-icon">${getFileIcon(att.file_type)}</div>
+                    <div class="attachment-info">
+                        <span class="attachment-name">${escapeHtml(att.file_name)}</span>
+                        <span class="attachment-size">${formatFileSize(att.file_size)}</span>
+                    </div>
                     <div class="attachment-actions">
-                        <a href="/api/forum/attachments/download/${att.id}" class="action-link">下载</a>
-                        <button type="button" class="action-btn delete" onclick="deleteExistingAttachment(${att.id})">删除</button>
+                        <a href="/api/forum/attachments/download/${att.id}" class="action-link" title="下载">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                            下载
+                        </a>
+                        <button type="button" class="action-btn delete" onclick="deleteExistingAttachment(${att.id})" title="删除">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                            删除
+                        </button>
                     </div>
                 </div>
             `;
@@ -432,10 +440,17 @@ function renderExistingAttachments() {
         PostEdit.newAttachments.forEach((att, index) => {
             html += `
                 <div class="edit-attachment-item new">
-                    <span class="attachment-icon">${getFileIcon(att.type)}</span>
-                    <span class="attachment-name">${escapeHtml(att.name)}</span>
-                    <span class="attachment-size">${formatFileSize(att.size)}</span>
-                    <button type="button" class="action-btn delete" onclick="removeNewAttachment(${index})">移除</button>
+                    <div class="attachment-icon">${getFileIcon(att.type)}</div>
+                    <div class="attachment-info">
+                        <span class="attachment-name">${escapeHtml(att.name)}</span>
+                        <span class="attachment-size">${formatFileSize(att.size)}</span>
+                    </div>
+                    <div class="attachment-actions">
+                        <button type="button" class="action-btn delete" onclick="removeNewAttachment(${index})" title="移除">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                            移除
+                        </button>
+                    </div>
                 </div>
             `;
         });

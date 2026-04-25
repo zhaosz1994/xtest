@@ -214,7 +214,7 @@
         if (!text) return '';
         const div = document.createElement('div');
         div.textContent = text;
-        return div.innerHTML;
+        return div.innerHTML.replace(/'/g, '&#039;');
     }
 
     function hasDetailData(row) {
@@ -2478,6 +2478,9 @@
     };
 
     function checkParams() {
+        if (level1Id && libraryId) {
+            return true;
+        }
         if (!moduleId || moduleName === '未知模块') {
             needSelectLocation = true;
             return true;

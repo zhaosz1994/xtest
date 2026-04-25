@@ -436,12 +436,18 @@ router.put('/:id', authenticateToken, async (req, res) => {
       const addedCaseIds = newCaseIds.filter(caseId => !oldCaseIds.includes(caseId));
       const removedCaseIds = oldCaseIds.filter(caseId => !newCaseIds.includes(caseId));
       
-      await connection.execute('DELETE FROM test_plan_cases WHERE plan_id = ?', [id]);
+      if (removedCaseIds.length > 0) {
+        const removePlaceholders = removedCaseIds.map(() => '?').join(',');
+        await connection.execute(
+          `DELETE FROM test_plan_cases WHERE plan_id = ? AND case_id IN (${removePlaceholders})`,
+          [id, ...removedCaseIds]
+        );
+      }
       
-      if (selectedCases.length > 0) {
+      if (addedCaseIds.length > 0) {
         const batchSize = 500;
-        for (let i = 0; i < selectedCases.length; i += batchSize) {
-          const batch = selectedCases.slice(i, i + batchSize);
+        for (let i = 0; i < addedCaseIds.length; i += batchSize) {
+          const batch = addedCaseIds.slice(i, i + batchSize);
           const placeholders = batch.map(() => '(?, ?, ?)').join(',');
           const values = batch.flatMap(caseId => [id, caseId, 'pending']);
           await connection.execute(`
@@ -1021,7 +1027,6 @@ router.put('/:planId/cases/:caseId', authenticateToken, async (req, res) => {
     const normalizedStatus = normalizeStatus(status);
     const validStatuses = ['pass', 'fail', 'blocked', 'paused', 'pending', 'asic_hang', 'core_dump', 'traffic_drop'];
     if (!normalizedStatus || !validStatuses.includes(normalizedStatus)) {
-      connection.release();
       logger.warn('无效的状态值', { status, planId, caseId });
       return res.status(400).json({ success: false, message: `无效的状态值: ${status}` });
     }
@@ -1062,7 +1067,6 @@ router.put('/:planId/cases/:caseId', authenticateToken, async (req, res) => {
     `, [planId]);
     
     await connection.commit();
-    connection.release();
     
     const responseData = {
       success: true,
@@ -1076,9 +1080,10 @@ router.put('/:planId/cases/:caseId', authenticateToken, async (req, res) => {
     res.json(responseData);
   } catch (error) {
     await connection.rollback();
-    connection.release();
     logger.error('更新用例状态失败', { error: error.message, planId, caseId });
     res.status(500).json({ success: false, message: '服务器错误' });
+  } finally {
+    connection.release();
   }
 });
 
@@ -1122,13 +1127,11 @@ router.put('/:planId/cases/batch', authenticateToken, async (req, res) => {
     const normalizedStatus = normalizeStatus(status);
     const validStatuses = ['pass', 'fail', 'blocked', 'paused', 'pending', 'asic_hang', 'core_dump', 'traffic_drop'];
     if (!normalizedStatus || !validStatuses.includes(normalizedStatus)) {
-      connection.release();
       logger.warn('批量更新无效的状态值', { status, planId });
       return res.status(400).json({ success: false, message: `无效的状态值: ${status}` });
     }
     
     if (!caseIds || !Array.isArray(caseIds) || caseIds.length === 0) {
-      connection.release();
       return res.status(400).json({ success: false, message: '请选择要更新的用例' });
     }
     
@@ -1168,7 +1171,6 @@ router.put('/:planId/cases/batch', authenticateToken, async (req, res) => {
     `, [planId]);
     
     await connection.commit();
-    connection.release();
     
     const responseData = {
       success: true,
@@ -1182,9 +1184,10 @@ router.put('/:planId/cases/batch', authenticateToken, async (req, res) => {
     res.json(responseData);
   } catch (error) {
     await connection.rollback();
-    connection.release();
     logger.error('批量更新用例状态失败', { error: error.message, planId });
     res.status(500).json({ success: false, message: '服务器错误' });
+  } finally {
+    connection.release();
   }
 });
 
@@ -1243,7 +1246,6 @@ router.post('/:id/reset', authenticateToken, async (req, res) => {
     
     if (planRows.length === 0) {
       await connection.rollback();
-      connection.release();
       return res.status(404).json({ success: false, message: '测试计划不存在' });
     }
     
@@ -1270,14 +1272,14 @@ router.post('/:id/reset', authenticateToken, async (req, res) => {
     );
     
     await connection.commit();
-    connection.release();
     
     res.json({ success: true, message: '测试计划已重置' });
   } catch (error) {
     await connection.rollback();
-    connection.release();
-    logger.error('重置测试计划失败', { error: error.message, planId });
+    logger.error('重置测试计划失败', { error: error.message, planId: id });
     res.status(500).json({ success: false, message: '服务器错误' });
+  } finally {
+    connection.release();
   }
 });
 

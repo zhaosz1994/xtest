@@ -31,14 +31,7 @@ async function loadPostDetail() {
     const postContentEl = document.getElementById('post-content');
     
     try {
-        const token = localStorage.getItem('authToken');
-        const headers = {};
-        if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
-        }
-        
-        const response = await fetch(`/api/forum/posts/${currentPostId}`, { headers });
-        const result = await response.json();
+        const result = await apiRequest(`/forum/posts/${currentPostId}`);
         
         if (!result.success) {
             postContentEl.innerHTML = `
@@ -96,6 +89,7 @@ async function loadPostDetail() {
                 <div class="post-detail-body">
                     ${renderedContent}
                 </div>
+                ${renderAttachments(post.attachments)}
                 <div class="post-detail-actions">
                     <button class="action-btn like-btn ${post.liked ? 'liked' : ''}" onclick="toggleLike()">
                         <span class="action-icon">${post.liked ? '❤️' : '🤍'}</span>
@@ -224,14 +218,9 @@ async function toggleLike() {
     }
     
     try {
-        const response = await fetch(`/api/forum/posts/${currentPostId}/like`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${token}`
-            }
+        const result = await apiRequest(`/forum/posts/${currentPostId}/like`, {
+            method: 'POST'
         });
-        
-        const result = await response.json();
         
         if (result.success) {
             // 更新本地缓存状态
@@ -288,19 +277,13 @@ async function submitComment() {
     }
     
     try {
-        const response = await fetch('/api/forum/comments', {
+        const result = await apiRequest('/forum/comments', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-            },
             body: JSON.stringify({ 
                 postId: currentPostId,
                 content 
             })
         });
-        
-        const result = await response.json();
         
         if (result.success) {
             commentInput.value = '';
@@ -327,14 +310,9 @@ async function deleteComment(commentId) {
         if (!confirmed) return;
         
         try {
-            const response = await fetch(`/api/forum/comments/${commentId}`, {
-                method: 'DELETE',
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
+            const result = await apiRequest(`/forum/comments/${commentId}`, {
+                method: 'DELETE'
             });
-            
-            const result = await response.json();
             
             if (result.success) {
                 showToast('评论已删除', 'success');
@@ -370,7 +348,7 @@ function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML.replace(/'/g, '&#039;');
 }
 
 function formatTime(dateStr) {
@@ -388,11 +366,7 @@ function formatTime(dateStr) {
     if (hours < 24) return `${hours}小时前`;
     if (days < 7) return `${days}天前`;
     
-    return date.toLocaleDateString('zh-CN', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-    });
+    return formatDate(date);
 }
 
 function markdownToHtml(text) {
@@ -415,11 +389,13 @@ function markdownToHtml(text) {
                     mangle: false
                 });
                 
+                const sanitized = sanitizeHtml(html);
+                
                 if (window.NotificationManager) {
-                    return window.NotificationManager.parseMentions(html);
+                    return window.NotificationManager.parseMentions(sanitized);
                 }
                 
-                return html;
+                return sanitized;
             }
         } catch (e) {
             console.error('Markdown解析失败:', e);
@@ -445,4 +421,60 @@ function markdownToHtml(text) {
     }
     
     return html;
+}
+
+function sanitizeHtml(html) {
+    return html
+        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+        .replace(/\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+        .replace(/<iframe\b[^>]*>/gi, '')
+        .replace(/<object\b[^>]*>/gi, '')
+        .replace(/<embed\b[^>]*>/gi, '')
+        .replace(/javascript\s*:/gi, '');
+}
+
+function renderAttachments(attachments) {
+    if (!attachments || attachments.length === 0) {
+        return '';
+    }
+    
+    let html = '<div class="post-detail-attachments">';
+    html += '<div class="attachment-section"><h4>附件</h4>';
+    
+    attachments.forEach(att => {
+        html += `
+            <div class="edit-attachment-item">
+                <div class="attachment-icon">${getFileIcon(att.file_type)}</div>
+                <div class="attachment-info">
+                    <span class="attachment-name">${escapeHtml(att.file_name)}</span>
+                    <span class="attachment-size">${formatFileSize(att.file_size)}</span>
+                </div>
+                <div class="attachment-actions">
+                    <a href="/api/forum/attachments/download/${att.id}" class="action-link" title="下载">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                        下载
+                    </a>
+                </div>
+            </div>
+        `;
+    });
+    
+    html += '</div></div>';
+    return html;
+}
+
+function getFileIcon(type) {
+    const icons = {
+        'image': '🖼️',
+        'document': '📄',
+        'code': '💻',
+        'other': '📎'
+    };
+    return icons[type] || '📎';
+}
+
+function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }

@@ -191,9 +191,18 @@ router.get('/detail/:id', authenticateToken, async (req, res) => {
   
   try {
     const [testReports] = await pool.execute(`
-      SELECT r.*, t.name as test_plan_name, r.test_plan_id, r.report_type, r.summary
+      SELECT r.*, 
+             t.name as test_plan_name, 
+             t.test_phase,
+             t.stage_id,
+             t.software_id,
+             t.owner as plan_owner,
+             tph.name as phase_name,
+             ts.name as software_name
       FROM test_reports r
       LEFT JOIN test_plans t ON r.test_plan_id = t.id
+      LEFT JOIN test_phases tph ON t.stage_id = tph.id
+      LEFT JOIN test_softwares ts ON t.software_id = ts.id
       WHERE r.id = ?
     `, [id]);
     
@@ -202,6 +211,18 @@ router.get('/detail/:id', authenticateToken, async (req, res) => {
     }
     
     const report = testReports[0];
+    
+    let statistics = null;
+    if (report.statistics_json) {
+      try {
+        statistics = typeof report.statistics_json === 'string' 
+          ? JSON.parse(report.statistics_json) 
+          : report.statistics_json;
+      } catch (e) {
+        logger.warn('解析统计数据失败', { error: e.message });
+      }
+    }
+    
     res.json({ 
       success: true, 
       report: {
@@ -216,6 +237,12 @@ router.get('/detail/:id', authenticateToken, async (req, res) => {
         summary: report.summary,
         startDate: report.start_date,
         endDate: report.end_date,
+        testPhase: report.phase_name || report.test_phase || '-',
+        software: report.software_name || '-',
+        planOwner: report.plan_owner || '-',
+        dimension: report.dimension || 'testplan',
+        targetId: report.target_id,
+        statistics: statistics,
         createdAt: report.created_at,
         updatedAt: report.updated_at
       }
@@ -223,6 +250,70 @@ router.get('/detail/:id', authenticateToken, async (req, res) => {
   } catch (error) {
     logger.error('获取测试报告详情错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+// 获取报告统计数据（根据维度动态获取）
+router.get('/statistics/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const [testReports] = await pool.execute(
+      'SELECT dimension, target_id, test_plan_id FROM test_reports WHERE id = ?',
+      [id]
+    );
+    
+    if (testReports.length === 0) {
+      return res.status(404).json({ success: false, message: '报告不存在' });
+    }
+    
+    const report = testReports[0];
+    const dimension = report.dimension || 'testplan';
+    const targetId = report.target_id || report.test_plan_id;
+    
+    if (!targetId) {
+      return res.json({ 
+        success: true, 
+        statistics: { total: 0, passed: 0, failed: 0, blocked: 0, notRun: 0, passRate: 0 },
+        moduleDistribution: {},
+        priorityDistribution: {},
+        ownerDistribution: [],
+        failedCases: [],
+        testCases: []
+      });
+    }
+    
+    let reportData;
+    switch (dimension) {
+      case 'testplan':
+        reportData = await reportService.assembleReportData(targetId);
+        break;
+      case 'project':
+        reportData = await assembleReportByProject(targetId);
+        break;
+      case 'module':
+        reportData = await assembleReportByModule(targetId);
+        break;
+      case 'library':
+        reportData = await assembleReportByLibrary(targetId);
+        break;
+      default:
+        reportData = await reportService.assembleReportData(targetId);
+    }
+    
+    res.json({
+      success: true,
+      statistics: reportData.statistics,
+      moduleDistribution: reportData.moduleDistribution,
+      priorityDistribution: reportData.priorityDistribution,
+      ownerDistribution: reportData.ownerDistribution,
+      failedCases: reportData.failedCases,
+      testCases: reportData.testCases,
+      testPlan: reportData.testPlan
+    });
+  } catch (error) {
+    logger.error('获取报告统计数据错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '获取统计数据失败' });
   }
 });
 
@@ -494,7 +585,7 @@ ${blockedCases.slice(0, 10).map(tc =>
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    const timeoutId = setTimeout(() => controller.abort(), 600000);
     
     const response = await fetch(aiModel.endpoint, {
       method: 'POST',
@@ -682,7 +773,7 @@ ${blockedCases.slice(0, 10).map(tc =>
     }
     
     if (error.name === 'AbortError') {
-      logger.error('AI分析超时（60秒）');
+      logger.error('AI分析超时（600秒）');
     } else {
       logger.error('AI分析生成异常:', { error: error.message });
     }
@@ -999,7 +1090,7 @@ async function processAsyncJob(jobId, config, userId, username) {
     // 更新已创建的报告记录
     await pool.execute(`
       UPDATE test_reports 
-      SET project = ?, iteration = ?, test_plan_id = ?, summary = ?, has_ai_analysis = ?, status = ?, start_date = ?, end_date = ?, ai_analysis_failed = ?
+      SET project = ?, iteration = ?, test_plan_id = ?, summary = ?, has_ai_analysis = ?, status = ?, start_date = ?, end_date = ?, ai_analysis_failed = ?, dimension = ?, target_id = ?, statistics_json = ?
       WHERE id = ?
     `, [
       reportData.testPlan?.project || '',
@@ -1011,6 +1102,9 @@ async function processAsyncJob(jobId, config, userId, username) {
       reportData.testPlan?.startDate || null,
       reportData.testPlan?.endDate || null,
       aiAnalysisFailed ? 1 : 0,
+      config.dimension || 'testplan',
+      config.targetId,
+      JSON.stringify(reportData.statistics || {}),
       reportId
     ]);
     
