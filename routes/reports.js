@@ -3,7 +3,7 @@ const router = express.Router();
 const pool = require('../db');
 const { authenticateToken } = require('../middleware');
 const reportService = require('../services/reportService');
-const { getUserAIConfig } = require('../services/aiService');
+const { getUserAIConfig, getUserAITimeoutConfig } = require('../services/aiService');
 const { logActivity } = require('./history');
 const logger = require('../services/logger');
 const aiAuditLogger = require('../services/aiAuditLogger');
@@ -585,7 +585,8 @@ ${blockedCases.slice(0, 10).map(tc =>
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 600000);
+    const timeoutConfig = await getUserAITimeoutConfig(userId);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutConfig.reportGeneration);
     
     const response = await fetch(aiModel.endpoint, {
       method: 'POST',

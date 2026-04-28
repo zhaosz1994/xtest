@@ -26,6 +26,7 @@ class DatabaseMigrator {
 
   async init() {
     this.registerAIOperationLogsMigration();
+    this.registerUserAITimeoutConfigMigration();
     
     logger.info('[数据库迁移] 开始检查...');
     console.log('\n🔄 数据库自动迁移检查...\n');
@@ -150,7 +151,6 @@ class DatabaseMigrator {
         }
       }
       
-      // 创建索引
       const indexCreated = await this.createIndexSafe(
         'ai_operation_logs', 
         'idx_ai_logs_total_tokens', 
@@ -164,6 +164,31 @@ class DatabaseMigrator {
       } else {
         return { status: 'ok', message: '无需修复' };
       }
+    });
+  }
+
+  registerUserAITimeoutConfigMigration() {
+    this.registerMigration('users_ai_timeout_config_field', async () => {
+      console.log('  检查 users 表 ai_timeout_config 字段...');
+
+      const exists = await this.columnExists('users', 'ai_timeout_config');
+
+      if (exists) {
+        console.log('    ✅ 字段存在: ai_timeout_config');
+        return { status: 'ok', message: 'ai_timeout_config 字段已存在' };
+      }
+
+      console.log('    ⚠️ 缺失字段: ai_timeout_config, 正在添加...');
+      const added = await this.addColumnSafe('users', 'ai_timeout_config', "JSON DEFAULT NULL COMMENT '用户AI任务超时配置'");
+
+      if (added === true) {
+        console.log('    ✅ 已添加: ai_timeout_config');
+        return { status: 'fixed', message: '已添加 ai_timeout_config 字段' };
+      } else if (added === false) {
+        return { status: 'error', message: '无法添加字段: ai_timeout_config' };
+      }
+
+      return { status: 'ok', message: '无需修复' };
     });
   }
 }

@@ -1,3 +1,10 @@
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 const ModuleService = {
     modules: [],
     currentPage: 1,
@@ -181,13 +188,24 @@ function updateModuleDisplay() {
 
     container.innerHTML = moduleList.map(module => `
         <div class="module-item" data-module-id="${module.id}">
-            <div class="module-name">${module.name}</div>
+            <div class="module-name">${escapeHtml(module.name)}</div>
             <div class="module-actions">
-                <button onclick="editModule(${module.id})">编辑</button>
-                <button onclick="deleteModule(${module.id})">删除</button>
+                <button class="edit-module-btn" data-module-id="${module.id}">编辑</button>
+                <button class="delete-module-btn" data-module-id="${module.id}">删除</button>
             </div>
         </div>
     `).join('');
+
+    container.querySelectorAll('.edit-module-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            editModule(parseInt(this.dataset.moduleId));
+        });
+    });
+    container.querySelectorAll('.delete-module-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            deleteModule(parseInt(this.dataset.moduleId));
+        });
+    });
 }
 
 async function openAddModuleModal() {
@@ -217,10 +235,16 @@ async function submitAddModuleForm() {
         parentId: null
     };
 
-    const result = await ModuleService.create(moduleData);
-    if (result.success) {
-        closeAddModuleModal();
-        await initModuleData();
+    try {
+        const result = await ModuleService.create(moduleData);
+        if (result.success) {
+            closeAddModuleModal();
+            await initModuleData();
+        } else {
+            showErrorMessage(result.message || '创建模块失败');
+        }
+    } catch (error) {
+        showErrorMessage('创建模块失败');
     }
 }
 

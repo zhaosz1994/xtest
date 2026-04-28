@@ -6,6 +6,8 @@ const Router = {
         'testplans': { section: 'testplans', title: '测试计划', requiresAuth: true },
         'reports': { section: 'reports', title: '测试报告', requiresAuth: true },
         'settings': { section: 'settings', title: '配置中心', requiresAuth: true },
+        'knowledge': { section: 'knowledge', title: '知识库', requiresAuth: true },
+        'ai-generation': { section: 'ai-generation', title: 'AI生成', requiresAuth: true },
         'login': { section: 'login', title: '登录', requiresAuth: false },
         'register': { section: 'register', title: '注册', requiresAuth: false }
     },
@@ -124,7 +126,8 @@ const Router = {
 
         const targetSection = document.getElementById(`${sectionId}-section`);
         if (targetSection) {
-            targetSection.style.display = 'block';
+            const flexSections = ['knowledge-section', 'ai-generation-section'];
+            targetSection.style.display = flexSections.includes(targetSection.id) ? 'flex' : 'block';
         }
 
         const loginSection = document.getElementById('login-section');
@@ -134,7 +137,7 @@ const Router = {
 
         const testlinkContainer = document.querySelector('.testlink-container');
         if (testlinkContainer) {
-            testlinkContainer.style.display = 'block';
+            testlinkContainer.style.display = 'flex';
         }
 
         switch (sectionId) {
@@ -167,6 +170,12 @@ const Router = {
                 break;
             case 'workspace':
                 initWorkspace();
+                break;
+            case 'knowledge':
+                if (typeof initKnowledgeLibrary === 'function') initKnowledgeLibrary();
+                break;
+            case 'ai-generation':
+                if (typeof initAIGeneration === 'function') initAIGeneration();
                 break;
             case 'dashboard':
                 loadRecentLogins();

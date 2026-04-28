@@ -8,9 +8,8 @@ const logger = require('../services/logger');
 logger.debug('模块路由已加载');
 
 // 获取模块列表（支持分页和按用例库过滤）
-router.post('/list', async (req, res) => {
+router.post('/list', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到模块列表请求:', req.body);
     const { libraryId, page = 1, pageSize = 32 } = req.body;
     const offset = (page - 1) * pageSize;
     
@@ -35,8 +34,6 @@ router.post('/list', async (req, res) => {
     query += ` GROUP BY m.id ORDER BY m.order_index ASC, m.created_at DESC LIMIT ${limitValue} OFFSET ${offsetValue}`;
     
     const [modules] = await pool.query(query, params);
-    
-    console.log('查询结果:', modules);
     
     res.json({ 
       success: true,
@@ -105,12 +102,16 @@ router.post('/create', authenticateToken, async (req, res) => {
 });
 
 // 搜索模块
-router.post('/search', async (req, res) => {
+router.post('/search', authenticateToken, async (req, res) => {
   try {
     const { libraryId, searchTerm, page = 1, pageSize = 32 } = req.body;
     const offset = (page - 1) * pageSize;
     
-    let query = 'SELECT id, module_id, name, library_id, order_index FROM modules WHERE 1=1';
+    let query = `SELECT m.id, m.module_id, m.name, m.library_id, m.order_index,
+                 COUNT(tc.id) as case_count
+                 FROM modules m
+                 LEFT JOIN test_cases tc ON m.id = tc.module_id AND tc.is_deleted = 0
+                 WHERE 1=1`;
     let params = [];
     
     if (libraryId) {
@@ -127,7 +128,7 @@ router.post('/search', async (req, res) => {
     const limitValue = parseInt(pageSize);
     const offsetValue = parseInt(offset);
     
-    query += ` ORDER BY order_index ASC, created_at DESC LIMIT ${limitValue} OFFSET ${offsetValue}`;
+    query += ` GROUP BY m.id ORDER BY m.order_index ASC, m.created_at DESC LIMIT ${limitValue} OFFSET ${offsetValue}`;
     
     const [modules] = await pool.execute(query, params);
     
@@ -136,7 +137,8 @@ router.post('/search', async (req, res) => {
       modules: modules.map(module => ({
         id: module.id,
         name: module.name,
-        orderIndex: module.order_index
+        orderIndex: module.order_index,
+        caseCount: module.case_count || 0
       }))
     });
   } catch (error) {
@@ -146,7 +148,7 @@ router.post('/search', async (req, res) => {
 });
 
 // 调整模块顺序
-router.post('/reorder', async (req, res) => {
+router.post('/reorder', authenticateToken, async (req, res) => {
   try {
     const { modules, libraryId } = req.body;
     
@@ -162,7 +164,7 @@ router.post('/reorder', async (req, res) => {
       // 更新每个模块的order_index
       for (let i = 0; i < modules.length; i++) {
         await connection.execute(
-          'UPDATE modules SET order_index = ? WHERE name = ? AND library_id = ?',
+          'UPDATE modules SET order_index = ? WHERE id = ? AND library_id = ?',
           [i, modules[i], libraryId]
         );
       }
@@ -182,7 +184,7 @@ router.post('/reorder', async (req, res) => {
 });
 
 // 批量创建模块（用于测试）
-router.post('/batchCreate', async (req, res) => {
+router.post('/batchCreate', authenticateToken, async (req, res) => {
   try {
     const { modules } = req.body;
     
@@ -284,7 +286,7 @@ router.post('/clone', authenticateToken, async (req, res) => {
     // 4. 克隆测试用例
     if (includeTestCases) {
       const [testCases] = await connection.execute(
-        'SELECT * FROM test_cases WHERE module_id = ?',
+        'SELECT * FROM test_cases WHERE module_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)',
         [sourceModuleId]
       );
       
@@ -520,7 +522,7 @@ router.post('/clone', authenticateToken, async (req, res) => {
 });
 
 // 获取指定用例库下的模块列表（用于克隆选择）
-router.get('/by-library/:libraryId', async (req, res) => {
+router.get('/by-library/:libraryId', authenticateToken, async (req, res) => {
   try {
     const { libraryId } = req.params;
     
@@ -544,7 +546,7 @@ router.get('/by-library/:libraryId', async (req, res) => {
 });
 
 // 获取指定项目关联的模块列表（通过测试用例关联）
-router.get('/by-project/:projectId', async (req, res) => {
+router.get('/by-project/:projectId', authenticateToken, async (req, res) => {
   try {
     const { projectId } = req.params;
     

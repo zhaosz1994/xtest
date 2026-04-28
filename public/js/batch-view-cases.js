@@ -266,12 +266,23 @@
             ...options.headers
         };
 
-        if (authToken) {
-            headers['Authorization'] = `Bearer ${authToken}`;
+        const currentToken = localStorage.getItem('authToken') || authToken;
+        if (currentToken) {
+            headers['Authorization'] = `Bearer ${currentToken}`;
         }
 
         try {
             const response = await fetch(url, { ...options, headers });
+            if (!response.ok) {
+                let errorMessage = '请求失败';
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.message || errorMessage;
+                } catch (e) {
+                    errorMessage = `请求失败 (${response.status})`;
+                }
+                return { success: false, message: errorMessage };
+            }
             const data = await response.json();
             return data;
         } catch (error) {
@@ -1442,7 +1453,7 @@
                     <td class="pa-col-checkbox">
                         <input type="checkbox" class="drawer-project-item-cb" value="${project.id}" ${isSelected ? 'checked' : ''} onchange="toggleDrawerProjectCheckbox(this)">
                     </td>
-                    <td class="pa-col-name" onclick="toggleDrawerProjectCheckboxFromRow('${project.id}')" style="cursor: pointer;">
+                    <td class="pa-col-name project-name-cell" data-project-id="${project.id}" style="cursor: pointer;">
                         ${escapeHtml(project.name || '未命名项目')}
                     </td>
                     <td class="pa-col-owner">
@@ -1468,6 +1479,17 @@
         }).join('');
         
         if (selectAllCheckbox) selectAllCheckbox.checked = filteredProjects.length > 0 && allSelected;
+
+        listEl.querySelectorAll('.project-name-cell').forEach(cell => {
+            cell.addEventListener('click', function() {
+                const projectId = this.dataset.projectId;
+                const checkbox = this.closest('tr').querySelector('.drawer-project-item-cb');
+                if (checkbox) {
+                    checkbox.checked = !checkbox.checked;
+                    toggleDrawerProjectSelection(projectId, checkbox.checked);
+                }
+            });
+        });
     }
 
     window.filterDrawerProjects = function() {
@@ -2952,7 +2974,7 @@
                     <span class="script-type-badge ${script.script_type}">${script.script_type.toUpperCase()}</span>
                     <span class="script-name">${escapeHtml(script.script_name)}</span>
                     ${script.file_path ? `<span class="script-file-indicator" title="已上传文件">📎</span>` : ''}
-                    ${script.link_url ? `<a href="${escapeHtml(script.link_url)}" class="script-link">查看</a>` : ''}
+                    ${script.link_url ? `<a href="${escapeHtml(script.link_url)}" class="script-link" target="_blank" rel="noopener noreferrer" onclick="if(!this.href.startsWith('http')){event.preventDefault();return false;}">查看</a>` : ''}
                     <button type="button" class="btn-icon" onclick="editDrawerScript(${index})" title="编辑">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>

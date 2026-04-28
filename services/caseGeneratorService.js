@@ -1,0 +1,467 @@
+const pool = require('../db');
+const { v4: uuidv4 } = require('uuid');
+const { default: PQueue } = require('p-queue');
+
+class CaseGeneratorService {
+  constructor() {
+    this.apiQueue = new PQueue({ concurrency: parseInt(process.env.CHUNK_API_CONCURRENCY) || 4 });
+    this.runningTasks = new Set();
+  }
+
+  async executeMapPhase(taskId) {
+    if (this.runningTasks.has(taskId)) {
+      console.log(`[executeMapPhase] 任务 ${taskId} 已在运行中，跳过`);
+      return;
+    }
+    this.runningTasks.add(taskId);
+    console.log(`[executeMapPhase] 开始处理任务 ${taskId}`);
+
+    try {
+    const [tasks] = await pool.execute(`
+      SELECT t.*, m.name as module_name,
+        l.name as library_name
+      FROM ai_case_generation_tasks t
+      JOIN modules m ON t.module_id = m.id
+      LEFT JOIN case_libraries l ON t.library_id = l.id
+      WHERE t.task_id = ?
+    `, [taskId]);
+
+    if (tasks.length === 0) {
+      console.log(`[executeMapPhase] 任务 ${taskId} 不存在`);
+      return;
+    }
+
+    const task = tasks[0];
+    const selectedFiles = typeof task.selected_files === 'string' 
+      ? JSON.parse(task.selected_files || '[]') 
+      : (task.selected_files || []);
+    
+    console.log(`[executeMapPhase] 任务 ${taskId} module_id=${task.module_id}, selectedFiles=${JSON.stringify(selectedFiles)}`);
+
+    let sql = `
+      SELECT c.*, f.name as file_name
+      FROM ai_material_chunks c
+      JOIN module_knowledge_files f ON c.file_id = f.id
+      WHERE c.module_id = ? AND c.status = 'pending' AND f.deleted_at IS NULL
+    `;
+    const params = [task.module_id];
+
+    if (selectedFiles.length > 0) {
+      const placeholders = selectedFiles.map(() => '?').join(',');
+      sql += ` AND f.id IN (${placeholders})`;
+      params.push(...selectedFiles);
+    }
+
+    sql += ` ORDER BY c.chunk_index ASC`;
+    
+    console.log(`[executeMapPhase] SQL: ${sql}`);
+    console.log(`[executeMapPhase] Params: ${JSON.stringify(params)}`);
+
+    const [chunks] = await pool.execute(sql, params);
+    
+    console.log(`[executeMapPhase] 找到 ${chunks.length} 个 chunks`);
+
+    await pool.execute(`
+      UPDATE ai_case_generation_tasks 
+      SET total_chunks = ?, stage = 'mapping', progress_message = '正在生成用例...'
+      WHERE task_id = ?
+    `, [chunks.length, taskId]);
+
+    if (chunks.length === 0) {
+      console.log(`[executeMapPhase] 无可用文本块`);
+      await pool.execute(`
+        UPDATE ai_case_generation_tasks 
+        SET total_cases = 0, progress = 100, progress_message = '无可用文本块'
+        WHERE task_id = ?
+      `, [taskId]);
+      return;
+    }
+
+    let processedCount = 0;
+
+    const config = task.config ? (typeof task.config === 'string' ? JSON.parse(task.config) : task.config) : {};
+
+    const skillPrompt = await this.loadSkillPrompt(task.skill_id);
+
+    for (const chunk of chunks) {
+      await this.apiQueue.add(async () => {
+        try {
+          await pool.execute(`
+            UPDATE ai_material_chunks 
+            SET status = 'processing'
+            WHERE id = ?
+          `, [chunk.id]);
+
+          const cases = await this.generateCasesFromChunk(chunk, task, config, skillPrompt);
+
+          if (cases.length > 0) {
+            await this.saveTempCases(taskId, task.module_id, chunk.id, cases, task.library_id);
+          }
+
+          await pool.execute(`
+            UPDATE ai_material_chunks 
+            SET status = 'completed', generated_cases = ?, processed_at = NOW()
+            WHERE id = ?
+          `, [cases.length, chunk.id]);
+
+          processedCount++;
+          await this.updateProgressFromDB(taskId, processedCount, chunks.length);
+
+        } catch (error) {
+          await pool.execute(`
+            UPDATE ai_material_chunks 
+            SET status = 'failed', error_message = ?, retry_count = retry_count + 1
+            WHERE id = ?
+          `, [error.message, chunk.id]);
+          processedCount++;
+          await this.updateProgressFromDB(taskId, processedCount, chunks.length);
+        }
+      });
+    }
+
+    await this.apiQueue.onIdle();
+
+    const [countResult] = await pool.execute(`
+      SELECT COUNT(*) as total FROM temp_test_cases WHERE task_id = ?
+    `, [taskId]);
+    const totalCases = countResult[0].total;
+
+    await pool.execute(`
+      UPDATE ai_case_generation_tasks 
+      SET total_cases = ?
+      WHERE task_id = ?
+    `, [totalCases, taskId]);
+    } finally {
+      this.runningTasks.delete(taskId);
+    }
+  }
+
+  async loadSkillPrompt(skillId) {
+    if (!skillId) return null;
+
+    const [skills] = await pool.execute(`
+      SELECT definition FROM ai_skills WHERE id = ? AND is_enabled = 1
+    `, [skillId]);
+
+    if (skills.length === 0) return null;
+
+    try {
+      const definition = typeof skills[0].definition === 'string' 
+        ? JSON.parse(skills[0].definition) 
+        : skills[0].definition;
+      return definition.prompts || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async generateCasesFromChunk(chunk, task, config, skillPrompt) {
+    const systemPrompt = skillPrompt?.system || this.getDefaultSystemPrompt();
+    const userPrompt = skillPrompt?.userTemplate 
+      ? this.applyTemplate(skillPrompt.userTemplate, chunk, task, config)
+      : this.buildPrompt(chunk, task, config);
+
+    const aiConfig = await this.getAIConfig(task.user_id);
+
+    const response = await this.callAI(aiConfig, systemPrompt, userPrompt, config, task.user_id);
+
+    const content = response.choices?.[0]?.message?.content || '';
+    return this.parseAIResponse(content);
+  }
+
+  getDefaultSystemPrompt() {
+    return `你是一个专业的测试用例设计专家，拥有丰富的软件测试经验。
+你的任务是根据用户提供的需求材料，生成高质量、可执行的测试用例。
+
+## 专业能力
+1. 深入理解软件测试原理和方法
+2. 熟悉各种测试类型：功能测试、性能测试、安全测试、兼容性测试等
+3. 能够识别边界条件和异常场景
+4. 善于设计可验证的测试步骤和预期结果
+
+## 输出原则
+1. 用例名称要简洁明确，能体现测试点
+2. 测试步骤要具体可执行，编号清晰
+3. 预期结果要明确可验证
+4. 考虑正常场景和异常场景
+5. 仅根据提供的材料内容生成，不要臆测`;
+  }
+
+  buildPrompt(chunk, task, config) {
+    const caseLimit = config.caseCountLimit || 20;
+    return `## 模块背景
+模块名称: ${task.module_name}
+模块描述: ${task.module_desc || task.module_name || '无'}
+
+## 当前材料片段
+文件: ${chunk.file_name}
+片段序号: ${chunk.chunk_index + 1}
+内容:
+${chunk.chunk_content}
+
+## 生成要求
+1. 仅根据当前片段内容生成测试用例
+2. 如果片段内容不足以生成完整用例，可以跳过
+3. 用例名称要能体现测试点
+4. 测试步骤要具体可执行
+5. 预期结果要明确可验证
+6. 最多生成 ${caseLimit} 个用例
+
+## 输出格式
+请严格按照以下JSON格式输出:
+\`\`\`json
+{
+  "cases": [
+    {
+      "name": "用例名称",
+      "priority": "高/中/低",
+      "type": "功能测试/性能测试/压力测试/规格测试/异常测试",
+      "precondition": "前置条件",
+      "purpose": "测试目的",
+      "steps": "1. 步骤1\\n2. 步骤2\\n3. 步骤3",
+      "expected": "预期结果",
+      "key_config": "关键配置(可选)",
+      "remark": "备注(可选)"
+    }
+  ]
+}
+\`\`\``;
+  }
+
+  applyTemplate(template, chunk, task, config) {
+    return template
+      .replace(/\{\{module_name\}\}/g, task.module_name)
+      .replace(/\{\{module_description\}\}/g, task.module_desc || task.module_name || '无')
+      .replace(/\{\{material_content\}\}/g, chunk.chunk_content)
+      .replace(/\{\{case_count_limit\}\}/g, config.caseCountLimit || 20)
+      .replace(/\{\{focus_areas\}\}/g, (config.focusAreas || []).join(', '))
+      .replace(/\{\{existing_case_style\}\}/g, config.existingCaseStyle || '无');
+  }
+
+  async getAIConfig(userId) {
+    const aiService = require('./aiService');
+    return aiService.getUserAIConfig(userId);
+  }
+
+  async callAI(aiConfig, systemPrompt, userPrompt, config, userId) {
+    const axios = require('axios');
+    const { getUserAITimeoutConfig } = require('./aiService');
+    const timeoutConfig = await getUserAITimeoutConfig(userId);
+    const apiKey = aiConfig.api_key;
+    const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
+    const model = aiConfig.model_name || config?.model || 'deepseek-chat';
+
+    const response = await axios.post(apiUrl, {
+      model: model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: config?.temperature || 0.7,
+      max_tokens: config?.max_tokens || 4000
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      timeout: timeoutConfig.generalAITask
+    });
+
+    return response.data;
+  }
+
+  parseAIResponse(content) {
+    const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[1]);
+        return parsed.cases || [];
+      } catch {
+        return [];
+      }
+    }
+
+    try {
+      const parsed = JSON.parse(content);
+      return parsed.cases || [];
+    } catch {
+      return [];
+    }
+  }
+
+  async saveTempCases(taskId, moduleId, chunkId, cases, libraryId) {
+    if (cases.length === 0) return;
+
+    const connection = await pool.getConnection();
+
+    try {
+      await connection.beginTransaction();
+
+      for (const c of cases) {
+        const tempCaseId = `TEMP-${uuidv4().slice(0, 16).toUpperCase()}`;
+        await connection.execute(`
+          INSERT INTO temp_test_cases 
+            (temp_case_id, task_id, module_id, chunk_id, name, priority, type,
+             precondition, purpose, steps, expected, key_config, remark)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [tempCaseId, taskId, moduleId, chunkId,
+            c.name || '未命名用例',
+            c.priority || '中',
+            c.type || '功能测试',
+            c.precondition || '',
+            c.purpose || '',
+            c.steps || '',
+            c.expected || '',
+            c.key_config || null,
+            c.remark || null]);
+      }
+
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async updateProgress(taskId, processed, total, totalCases) {
+    const progress = Math.round((processed / total) * 80);
+    await pool.execute(`
+      UPDATE ai_case_generation_tasks 
+      SET progress = ?, processed_chunks = ?, total_cases = ?,
+          progress_message = CONCAT('正在生成用例... ', ?, '/', ?)
+      WHERE task_id = ?
+    `, [progress, processed, totalCases, processed, total, taskId]);
+  }
+
+  async updateProgressFromDB(taskId, processed, total) {
+    const [countResult] = await pool.execute(`
+      SELECT COUNT(*) as total FROM temp_test_cases WHERE task_id = ?
+    `, [taskId]);
+    const totalCases = countResult[0].total;
+    await this.updateProgress(taskId, processed, total, totalCases);
+  }
+
+  async createTask(moduleId, userId, options = {}) {
+    const taskId = `TASK-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${uuidv4().slice(0, 8).toUpperCase()}`;
+
+    const config = {
+      caseCountLimit: options.caseCountLimit || 20,
+      enableDedup: options.enableDedup !== false,
+      similarityThreshold: options.similarityThreshold || 0.85,
+      model: options.model,
+      temperature: options.temperature,
+      max_tokens: options.max_tokens,
+      focusAreas: options.focusAreas || [],
+      level1Mode: options.level1Mode || 'auto',
+      selectedLevel1Ids: options.selectedLevel1Ids || []
+    };
+
+    const [result] = await pool.execute(`
+      INSERT INTO ai_case_generation_tasks 
+        (task_id, module_id, library_id, user_id, config, selected_files, skill_id,
+         expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY))
+    `, [taskId, moduleId, options.libraryId || null, userId,
+        JSON.stringify(config),
+        JSON.stringify(options.selectedFiles || []),
+        options.skillId || null]);
+
+    return { taskId, id: result.insertId };
+  }
+
+  async getTaskStatus(taskId) {
+    const [tasks] = await pool.execute(`
+      SELECT t.*, m.name as module_name
+      FROM ai_case_generation_tasks t
+      JOIN modules m ON t.module_id = m.id
+      WHERE t.task_id = ?
+    `, [taskId]);
+
+    return tasks[0] || null;
+  }
+
+  async getUserTasks(userId, options = {}) {
+    const limit = Math.max(1, Math.min(100, parseInt(options.limit) || 20));
+    const offset = Math.max(0, parseInt(options.offset) || 0);
+
+    const [tasks] = await pool.execute(`
+      SELECT t.*, m.name as module_name
+      FROM ai_case_generation_tasks t
+      JOIN modules m ON t.module_id = m.id
+      WHERE t.user_id = ?
+      ORDER BY t.created_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `, [userId]);
+
+    const [countResult] = await pool.execute(`
+      SELECT COUNT(*) as total FROM ai_case_generation_tasks WHERE user_id = ?
+    `, [userId]);
+
+    return {
+      tasks,
+      total: countResult[0].total
+    };
+  }
+
+  async cancelTask(taskId, userId) {
+    const [result] = await pool.execute(`
+      UPDATE ai_case_generation_tasks 
+      SET status = 'cancelled',
+          progress_message = '用户取消'
+      WHERE task_id = ? AND user_id = ? AND status IN ('pending', 'processing')
+    `, [taskId, userId]);
+
+    return result.affectedRows > 0;
+  }
+
+  async retryTask(taskId, userId) {
+    const [tasks] = await pool.execute(`
+      SELECT * FROM ai_case_generation_tasks WHERE task_id = ? AND user_id = ?
+    `, [taskId, userId]);
+
+    if (tasks.length === 0) return false;
+
+    const task = tasks[0];
+    if (task.status !== 'failed') return false;
+
+    await pool.execute(`
+      UPDATE ai_case_generation_tasks 
+      SET status = 'pending', 
+          stage = 'init',
+          progress = 0,
+          processed_chunks = 0,
+          total_cases = 0,
+          total_chunks = 0,
+          progress_message = '等待重试...',
+          error_message = NULL,
+          error_stack = NULL,
+          started_at = NULL,
+          completed_at = NULL
+      WHERE task_id = ?
+    `, [taskId]);
+
+    const selectedFiles = typeof task.selected_files === 'string' 
+      ? JSON.parse(task.selected_files || '[]') 
+      : (task.selected_files || []);
+    if (selectedFiles.length > 0) {
+      const placeholders = selectedFiles.map(() => '?').join(',');
+      await pool.execute(`
+        UPDATE ai_material_chunks 
+        SET status = 'pending', error_message = NULL
+        WHERE file_id IN (${placeholders}) AND status = 'failed'
+      `, selectedFiles);
+    } else {
+      await pool.execute(`
+        UPDATE ai_material_chunks 
+        SET status = 'pending', error_message = NULL
+        WHERE module_id = ? AND status = 'failed'
+      `, [task.module_id]);
+    }
+
+    return true;
+  }
+}
+
+module.exports = new CaseGeneratorService();

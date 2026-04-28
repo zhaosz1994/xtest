@@ -492,6 +492,39 @@ async function resetPrefs(userId) {
     );
 }
 
+async function sendAIGenerationCompletionNotification(taskId) {
+    try {
+        const [tasks] = await pool.execute(`
+            SELECT t.*, u.username, u.email, m.name as module_name
+            FROM ai_case_generation_tasks t
+            JOIN users u ON t.user_id = u.id
+            JOIN modules m ON t.module_id = m.id
+            WHERE t.task_id = ?
+        `, [taskId]);
+
+        if (tasks.length === 0) return { success: false };
+
+        const task = tasks[0];
+
+        return await send({
+            emailType: 'ai_generation_complete',
+            to: task.user_id,
+            data: {
+                taskId: task.task_id,
+                moduleName: task.module_name,
+                totalCases: task.total_cases,
+                duplicateCount: task.duplicate_count,
+                status: task.status,
+                username: task.username
+            },
+            options: { skipInApp: false }
+        });
+    } catch (error) {
+        logger.error('发送AI生成完成通知失败:', { error: error.message });
+        return { success: false, error: error.message };
+    }
+}
+
 module.exports = {
     send,
     shouldSendEmail,
@@ -503,5 +536,6 @@ module.exports = {
     getUserNotificationPrefs,
     getUserGlobalPrefs,
     getEmailTypeConfig,
-    renderTemplate
+    renderTemplate,
+    sendAIGenerationCompletionNotification
 };

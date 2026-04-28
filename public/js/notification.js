@@ -260,7 +260,11 @@ const NotificationManager = {
     
     async loadValidUsernames() {
         try {
-            const res = await fetch('/api/users/usernames');
+            const res = await fetch('/api/users/usernames', {
+                headers: {
+                    'Authorization': `Bearer ${this.token}`
+                }
+            });
             if (!res) return;
             const data = await res.json();
             if (data.success && data.usernames) {

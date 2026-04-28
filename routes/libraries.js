@@ -156,7 +156,11 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
     
     res.json({
       success: true,
-      message: '用例库更新成功'
+      message: '用例库更新成功',
+      data: {
+        id: parseInt(id),
+        name: trimmedName
+      }
     });
   } catch (error) {
     logger.error('更新用例库失败', { error: error.message, id, name });
@@ -339,7 +343,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 });
 
 // 兼容旧的删除路由
-router.delete('/delete/:id', async (req, res) => {
+router.delete('/delete/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   // 转发到新的删除路由
   req.url = `/${id}`;

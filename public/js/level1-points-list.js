@@ -21,6 +21,7 @@ class Level1PointsList {
                     endpoint.startsWith('/api') ? endpoint : 
                     endpoint.startsWith('/') ? `/api${endpoint}` : `/api/${endpoint}`;
         
+        this.authToken = localStorage.getItem('authToken');
         const headers = {
             'Content-Type': 'application/json',
             ...options.headers
@@ -36,12 +37,18 @@ class Level1PointsList {
                 headers
             });
             
-            const data = await response.json();
-            
             if (!response.ok) {
-                throw new Error(data.message || '请求失败');
+                let errorMessage = '请求失败';
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.message || errorMessage;
+                } catch (e) {
+                    errorMessage = `请求失败 (${response.status})`;
+                }
+                throw new Error(errorMessage);
             }
             
+            const data = await response.json();
             return data;
         } catch (error) {
             console.error('API请求失败:', error);
@@ -101,22 +108,20 @@ class Level1PointsList {
         try {
             this.showLoading();
             
-            let url = '/testpoints/level1/all';
-            const params = new URLSearchParams();
+            const body = {};
             
             if (this.currentLibraryId) {
-                params.append('libraryId', this.currentLibraryId);
+                body.libraryId = this.currentLibraryId;
             }
             
             if (this.searchKeyword) {
-                params.append('keyword', this.searchKeyword);
+                body.keyword = this.searchKeyword;
             }
             
-            if (params.toString()) {
-                url += '?' + params.toString();
-            }
-            
-            const response = await this.apiRequest(url);
+            const response = await this.apiRequest('/testpoints/level1/all', {
+                method: 'POST',
+                body: JSON.stringify(body)
+            });
             
             if (response.success && response.level1Points) {
                 this.level1Points = response.level1Points;
@@ -280,7 +285,14 @@ class Level1PointsList {
                 </div>
             `;
             
-            const response = await this.apiRequest(`/testcases/level1/${level1Id}`);
+            const response = await this.apiRequest('/api/cases/list', {
+                method: 'POST',
+                body: JSON.stringify({
+                    level1Id: level1Id,
+                    page: 1,
+                    pageSize: 1000
+                })
+            });
             
             if (response.success && response.testCases) {
                 this.testCases[level1Id] = response.testCases;
@@ -293,7 +305,7 @@ class Level1PointsList {
             const listContainer = document.querySelector(`.test-cases-list[data-id="${level1Id}"]`);
             listContainer.innerHTML = `
                 <div class="error-state" style="padding: 20px; text-align: center;">
-                    <p style="margin: 0; font-size: 13px; color: #ef4444;">加载失败：${error.message}</p>
+                    <p style="margin: 0; font-size: 13px; color: #ef4444;">加载失败：${this.escapeHtml(error.message)}</p>
                 </div>
             `;
         }
@@ -748,7 +760,7 @@ class Level1PointsList {
                 ${type === 'error' ? '<circle cx="12" cy="12" r="10"></circle><path d="M12 8v4M12 16h.01"></path>' : ''}
                 ${type === 'warning' ? '<path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>' : ''}
             </svg>
-            <span>${message}</span>
+            <span>${this.escapeHtml(message)}</span>
         `;
         
         container.appendChild(toast);
@@ -771,18 +783,23 @@ class Level1PointsList {
         if (!text) return '';
         const div = document.createElement('div');
         div.textContent = text;
-        return div.innerHTML;
+        return div.innerHTML.replace(/'/g, '&#039;');
     }
 
     formatDateTime(dateString) {
         if (!dateString) return '-';
-        const date = new Date(dateString);
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const hours = String(date.getHours()).padStart(2, '0');
-        const minutes = String(date.getMinutes()).padStart(2, '0');
-        return `${year}-${month}-${day} ${hours}:${minutes}`;
+        try {
+            const date = new Date(dateString);
+            if (isNaN(date.getTime())) return dateString;
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            return `${year}/${month}/${day} ${hours}:${minutes}`;
+        } catch (e) {
+            return dateString;
+        }
     }
 }
 

@@ -31,7 +31,7 @@ async function loadPostDetail() {
     const postContentEl = document.getElementById('post-content');
     
     try {
-        const result = await apiRequest(`/forum/posts/${currentPostId}`);
+        const result = await apiRequest(`/posts/${currentPostId}`);
         
         if (!result.success) {
             postContentEl.innerHTML = `
@@ -101,7 +101,7 @@ async function loadPostDetail() {
         `;
         
         // 显示评论表单（如果已登录）
-        if (token) {
+        if (Forum.authToken) {
             document.getElementById('comment-form').style.display = 'block';
         }
         
@@ -277,7 +277,7 @@ async function submitComment() {
     }
     
     try {
-        const result = await apiRequest('/forum/comments', {
+        const result = await apiRequest('/comments', {
             method: 'POST',
             body: JSON.stringify({ 
                 postId: currentPostId,
@@ -310,7 +310,7 @@ async function deleteComment(commentId) {
         if (!confirmed) return;
         
         try {
-            const result = await apiRequest(`/forum/comments/${commentId}`, {
+            const result = await apiRequest(`/comments/${commentId}`, {
                 method: 'DELETE'
             });
             
@@ -367,6 +367,20 @@ function formatTime(dateStr) {
     if (days < 7) return `${days}天前`;
     
     return formatDate(date);
+}
+
+function formatDate(date) {
+    if (!date) return '-';
+    if (!(date instanceof Date)) {
+        date = new Date(date);
+    }
+    if (isNaN(date.getTime())) return '-';
+    
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    
+    return `${year}-${month}-${day}`;
 }
 
 function markdownToHtml(text) {

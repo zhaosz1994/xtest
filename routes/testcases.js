@@ -6,6 +6,7 @@ const { logActivity } = require('./history');
 const logger = require('../services/logger');
 const emailNotificationService = require('../services/emailNotificationService');
 const { generateSummaryForLevel1 } = require('../services/summaryGenerator');
+const reviewService = require('../services/reviewService');
 
 const errorResp = (res, status, message) => res.status(status).json({ success: false, message });
 
@@ -127,16 +128,13 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
         }
 
         // ── 批量 INSERT 主表 ──────────────────────────────────────
-        const crypto = require('crypto');
-        const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const caseIds = await reviewService.generateCaseIds(cases.length, libraryIdValue, moduleId, false, connection);
         const caseValues   = [];
         const caseParams   = [];
-        const generatedIds = [];
 
         for (let i = 0; i < cases.length; i++) {
             const caseData = cases[i];
-            const caseId = `CASE-${today}-${crypto.randomUUID().split('-')[0]}-${i}`;
-            generatedIds.push(caseId);
+            const caseId = caseIds[i];
             caseValues.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
             caseParams.push(
                 caseId,
@@ -144,7 +142,7 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
                 caseData.priority || '中',
                 caseData.type || '功能测试',
                 caseData.precondition || '',
-                caseData.purpose || '',               // ✅ 修复：写入用户填写的测试目的
+                caseData.purpose || '',
                 caseData.steps || '',
                 caseData.expected || '',
                 currentUser.username,
@@ -155,7 +153,7 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
                 '维护中',
                 'manual',
                 caseData.remark || '',
-                caseData.key_config || ''             // ✅ 修复：写入用户填写的关键配置
+                caseData.key_config || ''
             );
         }
 
@@ -169,10 +167,10 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
         );
 
         // ── 查询刚插入的记录 ID（按 case_id 精确匹配）────────────
-        const idPlaceholders = generatedIds.map(() => '?').join(',');
+        const idPlaceholders = caseIds.map(() => '?').join(',');
         const [insertedRows] = await connection.query(
             `SELECT id, case_id, name FROM test_cases WHERE case_id IN (${idPlaceholders})`,
-            generatedIds
+            caseIds
         );
 
         // 构建 case_id → db id 映射
@@ -189,7 +187,7 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
 
         for (let i = 0; i < cases.length; i++) {
             const caseData  = cases[i];
-            const myCaseId  = generatedIds[i];
+            const myCaseId  = caseIds[i];
             const dbId      = dbIdMap.get(myCaseId);
             if (!dbId) continue;
 
@@ -1578,19 +1576,26 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
                     rows.forEach(r => methodMap.set(r.name, r.id));
                 }
 
-                for (const caseData of validNewCases) {
+                const caseIds = await reviewService.generateCaseIds(
+                    validNewCases.length, 
+                    libraryId, 
+                    moduleId, 
+                    false, 
+                    connection
+                );
+
+                for (let i = 0; i < validNewCases.length; i++) {
+                    const caseData = validNewCases[i];
+                    const caseId = caseIds[i];
+                    
                     console.log('创建新用例:', {
                         name: caseData.name,
                         level1_id: caseData.level1_id,
                         level1Id: caseData.level1Id,
                         moduleId: moduleId,
-                        requestLevel1Id: level1Id
+                        requestLevel1Id: level1Id,
+                        caseId: caseId
                     });
-                    
-                    // 生成用例编号
-                    const [countResult] = await connection.execute('SELECT COUNT(*) as cnt FROM test_cases');
-                    const caseNum = (countResult[0].cnt || 0) + 1;
-                    const caseId = `CASE-${String(caseNum).padStart(4, '0')}`;
 
                     const [result] = await connection.execute(
                         `INSERT INTO test_cases (
@@ -1884,7 +1889,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
         await connection.beginTransaction();
         
         const [existing] = await connection.execute(
-            'SELECT id, level1_id FROM test_cases WHERE id = ?',
+            'SELECT id, level1_id FROM test_cases WHERE id = ? AND (is_deleted = 0 OR is_deleted IS NULL)',
             [id]
         );
         
@@ -1958,7 +1963,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
         await connection.beginTransaction();
         
         const [existing] = await connection.execute(
-            'SELECT id, name, level1_id FROM test_cases WHERE id = ?',
+            'SELECT id, name, level1_id FROM test_cases WHERE id = ? AND (is_deleted = 0 OR is_deleted IS NULL)',
             [id]
         );
         

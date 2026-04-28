@@ -1,0 +1,217 @@
+-- AI测试用例生成系统 - 数据库迁移脚本
+-- 版本: v1.0
+-- 日期: 2026-04-25
+
+-- 1. 虚拟文件系统表
+CREATE TABLE IF NOT EXISTS `module_knowledge_files` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `module_id` int NOT NULL COMMENT '所属模块ID',
+  `parent_id` int DEFAULT NULL COMMENT '父目录ID，NULL表示根目录',
+  `name` varchar(255) NOT NULL COMMENT '文件/文件夹名称',
+  `type` enum('folder','file') NOT NULL DEFAULT 'folder' COMMENT '类型: folder-文件夹, file-文件',
+  `file_path` varchar(500) DEFAULT NULL COMMENT '物理存储路径(相对路径)',
+  `file_size` bigint DEFAULT NULL COMMENT '文件大小(字节)',
+  `file_ext` varchar(20) DEFAULT NULL COMMENT '文件扩展名',
+  `mime_type` varchar(100) DEFAULT NULL COMMENT 'MIME类型',
+  `parse_status` enum('pending','parsing','parsed','failed') DEFAULT 'pending' COMMENT '解析状态',
+  `parse_error` text COMMENT '解析错误信息',
+  `parsed_at` timestamp NULL DEFAULT NULL COMMENT '解析完成时间',
+  `chunk_count` int DEFAULT 0 COMMENT '切分后的文本块数量',
+  `total_tokens` int DEFAULT 0 COMMENT '预估总Token数',
+  `description` varchar(500) DEFAULT NULL COMMENT '文件描述',
+  `tags` json DEFAULT NULL COMMENT '标签(JSON数组)',
+  `is_enabled` tinyint(1) DEFAULT 1 COMMENT '是否启用',
+  `sort_order` int DEFAULT 0 COMMENT '排序序号',
+  `created_by` varchar(50) DEFAULT NULL COMMENT '创建人',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `deleted_at` timestamp NULL DEFAULT NULL COMMENT '软删除时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_module_id` (`module_id`),
+  KEY `idx_parent_id` (`parent_id`),
+  KEY `idx_type` (`type`),
+  KEY `idx_parse_status` (`parse_status`),
+  KEY `idx_deleted_at` (`deleted_at`),
+  CONSTRAINT `fk_knowledge_module` FOREIGN KEY (`module_id`) REFERENCES `modules` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='模块知识库文件表(VFS)';
+
+-- 2. 文本分块存储表
+CREATE TABLE IF NOT EXISTS `ai_material_chunks` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `file_id` int NOT NULL COMMENT '关联的文件ID',
+  `module_id` int NOT NULL COMMENT '所属模块ID(冗余，便于查询)',
+  `chunk_index` int NOT NULL COMMENT '块的顺序索引(从0开始)',
+  `chunk_content` text NOT NULL COMMENT '文本片段内容',
+  `token_count` int DEFAULT 0 COMMENT '预估Token数',
+  `char_count` int DEFAULT 0 COMMENT '字符数',
+  `status` enum('pending','processing','completed','failed') DEFAULT 'pending' COMMENT '处理状态',
+  `retry_count` int DEFAULT 0 COMMENT '重试次数',
+  `error_message` text COMMENT '错误信息',
+  `generated_cases` int DEFAULT 0 COMMENT '该块生成的用例数',
+  `processed_at` timestamp NULL DEFAULT NULL COMMENT '处理完成时间',
+  `metadata` json DEFAULT NULL COMMENT '扩展元数据(如章节标题、页码等)',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_file_chunk` (`file_id`, `chunk_index`),
+  KEY `idx_module_id` (`module_id`),
+  KEY `idx_status` (`status`),
+  CONSTRAINT `fk_chunk_file` FOREIGN KEY (`file_id`) REFERENCES `module_knowledge_files` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_chunk_module` FOREIGN KEY (`module_id`) REFERENCES `modules` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI材料分块处理表';
+
+-- 3. 任务管理表
+CREATE TABLE IF NOT EXISTS `ai_case_generation_tasks` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `task_id` varchar(50) NOT NULL COMMENT '任务唯一标识(业务ID)',
+  `module_id` int NOT NULL COMMENT '目标模块ID',
+  `library_id` int DEFAULT NULL COMMENT '用例库ID',
+  `user_id` int NOT NULL COMMENT '发起任务的用户ID',
+  `status` enum('pending','processing','completed','failed','cancelled') DEFAULT 'pending' COMMENT '任务状态',
+  `stage` enum('init','chunking','mapping','reducing','finished') DEFAULT 'init' COMMENT '当前处理阶段',
+  `progress` int DEFAULT 0 COMMENT '进度百分比(0-100)',
+  `progress_message` varchar(500) DEFAULT NULL COMMENT '进度描述信息',
+  `total_chunks` int DEFAULT 0 COMMENT '待处理的文本块总数',
+  `processed_chunks` int DEFAULT 0 COMMENT '已处理的文本块数',
+  `total_cases` int DEFAULT 0 COMMENT '生成的用例总数',
+  `duplicate_count` int DEFAULT 0 COMMENT '查重过滤的数量',
+  `approved_count` int DEFAULT 0 COMMENT '用户批准的数量',
+  `config` json DEFAULT NULL COMMENT '生成配置(JSON格式)',
+  `selected_files` json DEFAULT NULL COMMENT '选中的文件ID列表',
+  `skill_id` int DEFAULT NULL COMMENT '使用的Skill ID',
+  `error_message` text COMMENT '错误信息',
+  `error_stack` text COMMENT '错误堆栈',
+  `started_at` timestamp NULL DEFAULT NULL COMMENT '开始处理时间',
+  `completed_at` timestamp NULL DEFAULT NULL COMMENT '完成时间',
+  `expires_at` timestamp NULL DEFAULT NULL COMMENT '临时用例过期时间',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_task_id` (`task_id`),
+  KEY `idx_module_id` (`module_id`),
+  KEY `idx_user_id` (`user_id`),
+  KEY `idx_status` (`status`),
+  KEY `idx_created_at` (`created_at`),
+  KEY `idx_expires_at` (`expires_at`),
+  KEY `idx_skill_id` (`skill_id`),
+  CONSTRAINT `fk_task_module` FOREIGN KEY (`module_id`) REFERENCES `modules` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_task_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI测试用例生成任务表';
+
+-- 4. 临时一级测试点表
+CREATE TABLE IF NOT EXISTS `temp_level1_points` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `temp_level1_id` varchar(50) NOT NULL COMMENT '临时一级测试点唯一标识',
+  `task_id` varchar(50) NOT NULL COMMENT '关联的任务ID',
+  `module_id` int NOT NULL COMMENT '模块ID',
+  `name` varchar(100) NOT NULL COMMENT '一级测试点名称',
+  `test_type` varchar(50) DEFAULT '功能测试' COMMENT '测试类型',
+  `description` text COMMENT '测试点描述',
+  `order_index` int DEFAULT 0 COMMENT '排序序号',
+  `case_count` int DEFAULT 0 COMMENT '关联的用例数量',
+  `status` enum('pending','approved','rejected','merged') DEFAULT 'pending' COMMENT '确认状态',
+  `merged_level1_id` int DEFAULT NULL COMMENT '合并后的一级测试点ID',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_temp_level1_id` (`temp_level1_id`),
+  KEY `idx_task_id` (`task_id`),
+  KEY `idx_module_id` (`module_id`),
+  KEY `idx_status` (`status`),
+  CONSTRAINT `fk_temp_level1_task` FOREIGN KEY (`task_id`) REFERENCES `ai_case_generation_tasks` (`task_id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_temp_level1_module` FOREIGN KEY (`module_id`) REFERENCES `modules` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='临时一级测试点表';
+
+-- 5. 临时用例表
+CREATE TABLE IF NOT EXISTS `temp_test_cases` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `temp_case_id` varchar(50) NOT NULL COMMENT '临时用例唯一标识',
+  `task_id` varchar(50) NOT NULL COMMENT '关联的任务ID',
+  `module_id` int NOT NULL COMMENT '模块ID',
+  `chunk_id` int DEFAULT NULL COMMENT '来源文本块ID',
+  `level1_id` int DEFAULT NULL COMMENT '关联的一级测试点ID',
+  `level1_name` varchar(100) DEFAULT NULL COMMENT '一级测试点名称(冗余)',
+  `is_new_level1` tinyint(1) DEFAULT 0 COMMENT '是否为新生成的一级测试点',
+  `name` varchar(500) NOT NULL COMMENT '用例名称',
+  `priority` varchar(20) DEFAULT '中' COMMENT '优先级',
+  `type` varchar(50) DEFAULT '功能测试' COMMENT '用例类型',
+  `precondition` text COMMENT '前置条件',
+  `purpose` text COMMENT '测试目的',
+  `steps` text NOT NULL COMMENT '测试步骤',
+  `expected` text NOT NULL COMMENT '预期结果',
+  `key_config` text COMMENT '关键配置',
+  `remark` text COMMENT '备注',
+  `method` varchar(50) DEFAULT '手动' COMMENT '测试方法',
+  `owner` varchar(50) DEFAULT NULL COMMENT '负责人',
+  `environments` json DEFAULT NULL COMMENT '测试环境(JSON数组)',
+  `test_types` json DEFAULT NULL COMMENT '测试类型(JSON数组)',
+  `sources` json DEFAULT NULL COMMENT '用例来源(JSON数组)',
+  `phases` json DEFAULT NULL COMMENT '测试阶段(JSON数组)',
+  `methods` json DEFAULT NULL COMMENT '测试方法(JSON数组)',
+  `duplicate_score` decimal(5,2) DEFAULT NULL COMMENT '查重相似度分数(0-100)',
+  `duplicate_with_case_id` int DEFAULT NULL COMMENT '重复的正式用例ID',
+  `duplicate_with_temp_id` int DEFAULT NULL COMMENT '重复的临时用例ID',
+  `is_duplicate` tinyint(1) DEFAULT 0 COMMENT '是否被标记为重复',
+  `user_modified` tinyint(1) DEFAULT 0 COMMENT '用户是否已修改',
+  `status` enum('pending','approved','rejected','merged') DEFAULT 'pending' COMMENT '确认状态',
+  `review_status` enum('none','pending','approved','rejected') DEFAULT 'none' COMMENT '评审状态',
+  `reviewer_id` int DEFAULT NULL COMMENT '评审人ID',
+  `review_comment` text COMMENT '评审意见',
+  `reviewed_at` timestamp NULL DEFAULT NULL COMMENT '评审时间',
+  `review_deadline` timestamp NULL DEFAULT NULL COMMENT '评审截止时间',
+  `merged_case_id` int DEFAULT NULL COMMENT '合并后的正式用例ID',
+  `merged_at` timestamp NULL DEFAULT NULL COMMENT '合并时间',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_temp_case_id` (`temp_case_id`),
+  KEY `idx_task_id` (`task_id`),
+  KEY `idx_module_id` (`module_id`),
+  KEY `idx_level1_id` (`level1_id`),
+  KEY `idx_status` (`status`),
+  KEY `idx_is_duplicate` (`is_duplicate`),
+  KEY `idx_duplicate_score` (`duplicate_score`),
+  CONSTRAINT `fk_temp_task` FOREIGN KEY (`task_id`) REFERENCES `ai_case_generation_tasks` (`task_id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_temp_module` FOREIGN KEY (`module_id`) REFERENCES `modules` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='临时测试用例表';
+
+-- 6. 向量索引表
+CREATE TABLE IF NOT EXISTS `case_embedding_index` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `case_id` int NOT NULL COMMENT '测试用例ID',
+  `case_type` enum('formal','temp') DEFAULT 'formal' COMMENT '用例类型',
+  `name_embedding` json DEFAULT NULL COMMENT '用例名称的embedding向量',
+  `content_embedding` json DEFAULT NULL COMMENT '用例内容的embedding向量',
+  `embedding_model` varchar(50) DEFAULT NULL COMMENT '生成embedding的模型',
+  `embedding_dimension` int DEFAULT 1536 COMMENT '向量维度',
+  `content_hash` varchar(64) DEFAULT NULL COMMENT '内容哈希',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_case_type` (`case_id`, `case_type`),
+  KEY `idx_case_type` (`case_type`),
+  KEY `idx_content_hash` (`content_hash`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用例向量索引表';
+
+-- 7. 评审记录表
+CREATE TABLE IF NOT EXISTS `case_review_records` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `task_id` varchar(50) NOT NULL COMMENT '任务ID',
+  `temp_case_id` varchar(50) NOT NULL COMMENT '临时用例ID',
+  `reviewer_id` int NOT NULL COMMENT '评审人ID',
+  `result` enum('approved','rejected') NOT NULL COMMENT '评审结果',
+  `comment` text COMMENT '评审意见',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_task_id` (`task_id`),
+  KEY `idx_temp_case_id` (`temp_case_id`),
+  KEY `idx_reviewer_id` (`reviewer_id`),
+  CONSTRAINT `fk_review_task` FOREIGN KEY (`task_id`) REFERENCES `ai_case_generation_tasks` (`task_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用例评审记录表';
+
+-- 8. 插入内置Skills
+INSERT IGNORE INTO `ai_skills` (`name`, `display_name`, `description`, `definition`, `execute_code`, `category`, `is_enabled`, `is_system`, `is_public`, `created_by`) VALUES
+('generate_test_cases', '测试用例生成', '根据需求文档材料自动生成标准化的测试用例，支持功能测试、性能测试、异常测试等多种类型', '{"type":"function","function":{"name":"generate_test_cases","description":"根据输入的需求材料生成测试用例","parameters":{"type":"object","required":["module_context","material_content"],"properties":{"module_context":{"type":"object","description":"模块上下文信息","properties":{"module_name":{"type":"string","description":"模块名称"},"module_description":{"type":"string","description":"模块描述"},"existing_case_style":{"type":"string","description":"现有用例风格参考"}}},"material_content":{"type":"string","description":"需求材料内容"},"case_count_limit":{"type":"integer","description":"生成用例数量上限","default":20},"focus_areas":{"type":"array","items":{"type":"string"},"description":"重点关注领域"}}}},"prompts":{"system":"你是一个专业的测试用例设计专家，拥有丰富的软件测试经验。\\n你的任务是根据用户提供的需求材料，生成高质量、可执行的测试用例。\\n\\n## 专业能力\\n1. 深入理解软件测试原理和方法\\n2. 熟悉各种测试类型：功能测试、性能测试、安全测试、兼容性测试等\\n3. 能够识别边界条件和异常场景\\n4. 善于设计可验证的测试步骤和预期结果\\n\\n## 输出原则\\n1. 用例名称要简洁明确，能体现测试点\\n2. 测试步骤要具体可执行，编号清晰\\n3. 预期结果要明确可验证\\n4. 考虑正常场景和异常场景\\n5. 参考现有用例的命名和描述风格","userTemplate":"## 模块信息\\n模块名称: {{module_name}}\\n模块描述: {{module_description}}\\n\\n## 现有用例风格参考\\n{{existing_case_style}}\\n\\n## 需求材料内容\\n{{material_content}}\\n\\n## 生成要求\\n1. 生成数量: 最多 {{case_count_limit}} 个用例\\n2. 重点关注: {{focus_areas}}\\n3. 仅根据材料内容生成，不要臆测\\n\\n## 输出格式\\n严格按照以下JSON格式输出:\\n```json\\n{\\n  \\"cases\\": [\\n    {\\n      \\"name\\": \\"用例名称\\",\\n      \\"priority\\": \\"高/中/低\\",\\n      \\"type\\": \\"功能测试/性能测试/压力测试/规格测试/异常测试\\",\\n      \\"precondition\\": \\"前置条件\\",\\n      \\"purpose\\": \\"测试目的\\",\\n      \\"steps\\": \\"1. 步骤1\\\\n2. 步骤2\\\\n3. 步骤3\\",\\n      \\"expected\\": \\"预期结果\\",\\n      \\"key_config\\": \\"关键配置(可选)\\",\\n      \\"remark\\": \\"备注(可选)\\"\\n    }\\n  ]\\n}\\n```"}}', 'return { skill: "generate_test_cases", status: "ready" };', 'test_generation', 1, 1, 1, 'system'),
+('generate_functional_cases', '功能测试用例生成', '专注于功能验证，生成功能测试用例', '{"type":"function","function":{"name":"generate_functional_cases","description":"根据需求材料生成功能测试用例","parameters":{"type":"object","required":["module_context","material_content"],"properties":{"module_context":{"type":"object"},"material_content":{"type":"string"},"case_count_limit":{"type":"integer","default":20}}}},"prompts":{"system":"你是一个专注于功能测试的用例设计专家。你的任务是根据需求材料，生成全面的功能测试用例。\\n\\n## 重点关注\\n1. 功能完整性验证\\n2. 输入参数边界测试\\n3. 业务流程正确性\\n4. 数据一致性\\n5. 接口功能验证","userTemplate":"## 模块信息\\n模块名称: {{module_name}}\\n模块描述: {{module_description}}\\n\\n## 需求材料内容\\n{{material_content}}\\n\\n## 生成要求\\n请专注于功能测试用例的生成，确保覆盖所有功能点。\\n\\n## 输出格式\\n严格按照以下JSON格式输出:\\n```json\\n{\\n  \\"cases\\": [\\n    {\\n      \\"name\\": \\"用例名称\\",\\n      \\"priority\\": \\"高/中/低\\",\\n      \\"type\\": \\"功能测试\\",\\n      \\"precondition\\": \\"前置条件\\",\\n      \\"purpose\\": \\"测试目的\\",\\n      \\"steps\\": \\"1. 步骤1\\\\n2. 步骤2\\",\\n      \\"expected\\": \\"预期结果\\"\\n    }\\n  ]\\n}\\n```"}}', 'return { skill: "generate_functional_cases", status: "ready" };', 'test_generation', 1, 1, 1, 'system'),
+('generate_performance_cases', '性能测试用例生成', '专注于性能指标，生成性能测试用例', '{"type":"function","function":{"name":"generate_performance_cases","description":"根据需求材料生成性能测试用例","parameters":{"type":"object","required":["module_context","material_content"],"properties":{"module_context":{"type":"object"},"material_content":{"type":"string"},"case_count_limit":{"type":"integer","default":15}}}},"prompts":{"system":"你是一个专注于性能测试的用例设计专家。你的任务是根据需求材料，生成全面的性能测试用例。\\n\\n## 重点关注\\n1. 响应时间测试\\n2. 吞吐量测试\\n3. 并发性能测试\\n4. 资源利用率测试\\n5. 稳定性/疲劳性测试","userTemplate":"## 模块信息\\n模块名称: {{module_name}}\\n模块描述: {{module_description}}\\n\\n## 需求材料内容\\n{{material_content}}\\n\\n## 生成要求\\n请专注于性能测试用例的生成，包含具体的性能指标和测试方法。\\n\\n## 输出格式\\n严格按照以下JSON格式输出:\\n```json\\n{\\n  \\"cases\\": [\\n    {\\n      \\"name\\": \\"用例名称\\",\\n      \\"priority\\": \\"高/中/低\\",\\n      \\"type\\": \\"性能测试\\",\\n      \\"precondition\\": \\"前置条件\\",\\n      \\"purpose\\": \\"测试目的\\",\\n      \\"steps\\": \\"1. 步骤1\\\\n2. 步骤2\\",\\n      \\"expected\\": \\"预期结果\\",\\n      \\"key_config\\": \\"关键配置(性能参数)\\"\\n    }\\n  ]\\n}\\n```"}}', 'return { skill: "generate_performance_cases", status: "ready" };', 'test_generation', 1, 1, 1, 'system'),
+('generate_exception_cases', '异常测试用例生成', '专注于异常场景，生成异常测试用例', '{"type":"function","function":{"name":"generate_exception_cases","description":"根据需求材料生成异常测试用例","parameters":{"type":"object","required":["module_context","material_content"],"properties":{"module_context":{"type":"object"},"material_content":{"type":"string"},"case_count_limit":{"type":"integer","default":15}}}},"prompts":{"system":"你是一个专注于异常测试的用例设计专家。你的任务是根据需求材料，生成全面的异常测试用例。\\n\\n## 重点关注\\n1. 输入异常测试(非法值、边界值、空值)\\n2. 环境异常测试(网络中断、资源不足)\\n3. 并发冲突测试\\n4. 数据损坏测试\\n5. 容错恢复测试","userTemplate":"## 模块信息\\n模块名称: {{module_name}}\\n模块描述: {{module_description}}\\n\\n## 需求材料内容\\n{{material_content}}\\n\\n## 生成要求\\n请专注于异常测试用例的生成，确保覆盖各种异常场景。\\n\\n## 输出格式\\n严格按照以下JSON格式输出:\\n```json\\n{\\n  \\"cases\\": [\\n    {\\n      \\"name\\": \\"用例名称\\",\\n      \\"priority\\": \\"高/中/低\\",\\n      \\"type\\": \\"异常测试\\",\\n      \\"precondition\\": \\"前置条件\\",\\n      \\"purpose\\": \\"测试目的\\",\\n      \\"steps\\": \\"1. 步骤1\\\\n2. 步骤2\\",\\n      \\"expected\\": \\"预期结果(异常处理行为)\\"\\n    }\\n  ]\\n}\\n```"}}', 'return { skill: "generate_exception_cases", status: "ready" };', 'test_generation', 1, 1, 1, 'system');

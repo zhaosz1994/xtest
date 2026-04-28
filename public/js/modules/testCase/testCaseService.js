@@ -1,3 +1,10 @@
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 const TestCaseService = {
     testCases: [],
     currentPage: 1,
@@ -269,8 +276,8 @@ function renderCasesTable(filteredCases = null) {
 
     tableBody.innerHTML = casesToRender.map(testCase => `
         <tr>
-            <td>${testCase.name}</td>
-            <td>${testCase.creator}</td>
+            <td>${escapeHtml(testCase.name)}</td>
+            <td>${escapeHtml(testCase.creator)}</td>
             <td>${testCase.createdAt}</td>
             <td>${testCase.updatedAt}</td>
             <td>

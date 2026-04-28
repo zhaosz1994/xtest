@@ -8,6 +8,8 @@
     <link rel="stylesheet" href="styles-dashboard.css">
     <link rel="stylesheet" href="styles-theme.css">
     <link rel="stylesheet" href="styles-design-system.css">
+    <link rel="stylesheet" href="css/knowledge-library.css">
+    <link rel="stylesheet" href="css/ai-generation.css">
     <script src="/js/marked.min.js"></script>
     <script>
         (function() {
@@ -25,6 +27,81 @@
         html.authenticated .testlink-container { display: flex !important; }
         html:not(.authenticated) #login-section { display: flex !important; }
         html:not(.authenticated) .testlink-container { display: none !important; }
+        
+        /* AI生成按钮样式 */
+        #ai-generate-summary-btn,
+        #ai-generate-key-config-btn {
+            transition: all 0.2s ease;
+        }
+        
+        #ai-generate-summary-btn:hover:not(:disabled),
+        #ai-generate-key-config-btn:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+        }
+        
+        #ai-generate-summary-btn:active:not(:disabled),
+        #ai-generate-key-config-btn:active:not(:disabled) {
+            transform: translateY(0);
+        }
+        
+        #ai-generate-summary-btn:disabled,
+        #ai-generate-key-config-btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+        }
+        
+        /* 旋转动画 */
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        /* 模态框调整大小手柄 */
+        .modal-resizer {
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 8px;
+            cursor: ew-resize;
+            background: transparent;
+            z-index: 9999;
+            pointer-events: auto;
+        }
+        
+        .modal-resizer:hover,
+        .modal-resizer.dragging {
+            background: linear-gradient(to bottom, #10b981, #059669);
+        }
+        
+        .modal-resizer::after {
+            content: '';
+            position: absolute;
+            right: 3px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 2px;
+            height: 40px;
+            background: #cbd5e1;
+            border-radius: 2px;
+        }
+        
+        .modal-resizer:hover::after,
+        .modal-resizer.dragging::after {
+            background: white;
+        }
+        
+        /* 拖拽和调整大小时的样式 */
+        body.modal-resizing {
+            cursor: ew-resize !important;
+            user-select: none;
+        }
+        
+        body.modal-dragging {
+            cursor: move !important;
+            user-select: none;
+        }
     </style>
 </head>
 <body>
@@ -237,6 +314,7 @@
                     <a href="#/cases" class="nav-item">用例库</a>
                     <a href="#/testplans" class="nav-item">测试计划</a>
                     <a href="#/reports" class="nav-item">测试报告</a>
+                    <a href="#/knowledge" class="nav-item">知识库</a>
                     <a href="#/settings" class="nav-item" style="display: none;">配置中心</a>
                 </div>
                 <div class="nav-right">
@@ -248,6 +326,13 @@
                             </svg>
                             <span class="nav-btn-text">AI问答</span>
                         </button>
+                        <!-- AI用例生成入口 -->
+                        <a href="#/ai-generation" onclick="event.preventDefault(); Router.navigateTo('ai-generation');" class="nav-action-btn" style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; text-decoration: none;" title="AI用例生成">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                            </svg>
+                            <span class="nav-btn-text">AI生成</span>
+                        </a>
                         <!-- 社区入口 -->
                         <a href="/forum.html" class="nav-action-btn nav-community-btn" title="社区">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -326,6 +411,12 @@
                             </svg>
                             AI问答
                         </button>
+                        <a href="#/ai-generation" onclick="event.preventDefault(); Router.navigateTo('ai-generation');" class="search-analysis-button sidebar-search-button" style="display: flex; align-items: center; justify-content: center; text-decoration: none; margin-top: 8px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px; margin-right: 6px;">
+                                <path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                            </svg>
+                            AI用例生成
+                        </a>
                     </div>
                 </div>
                 <div class="sidebar-bottom-section">
@@ -998,45 +1089,49 @@
                         </div>
                     </div>
                     
-                    <div class="case-management-content">
-                        <!-- 左侧导航 -->
-                        <div class="case-nav">
-                            <div class="case-nav-section">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                                    <h3>功能模块</h3>
-                                    <div style="display: flex; gap: 8px;">
-                                        <button class="add-module-btn" onclick="openAddModuleModal()" title="添加模块">+</button>
-                                        <button class="reorder-modules-btn" onclick="openReorderModulesModal()" title="调整模块顺序">☰</button>
+                    <div class="case-management-content" id="case-management-content">
+                        <div class="case-nav-wrapper" id="case-nav-wrapper">
+                            <div class="case-nav" id="case-nav">
+                                <div class="nav-resizer" id="nav-resizer"></div>
+                                <div class="case-nav-section">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                        <h3>功能模块</h3>
+                                        <div style="display: flex; gap: 8px;">
+                                            <button class="add-module-btn" onclick="openAddModuleModal()" title="添加模块">+</button>
+                                            <button class="reorder-modules-btn" onclick="openReorderModulesModal()" title="调整模块顺序">☰</button>
+                                            <button class="collapse-nav-btn" id="collapse-nav-btn" onclick="toggleModuleNavCollapse()" title="收起模块列表">◀</button>
+                                        </div>
                                     </div>
+                                    <div class="search-box">
+                                        <input type="text" placeholder="搜索模块" class="search-input">
+                                    </div>
+                                    <ul class="case-nav-list">
+                                        <li class="case-nav-item active">
+                                            <span class="case-nav-name">所有用例</span>
+                                        </li>
+                                        <li class="case-nav-item" onclick="window.location.href='/level1-points-list.html'" style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 1px solid #3b82f6; cursor: pointer;">
+                                            <span class="case-nav-name" style="color: #3b82f6; font-weight: 600;">
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;">
+                                                    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                                                </svg>
+                                                一级测试点列表
+                                            </span>
+                                            <span class="case-nav-count" style="color: #3b82f6; font-size: 11px; background: #dbeafe; padding: 2px 6px; border-radius: 10px;">NEW</span>
+                                        </li>
+                                        <li class="case-nav-item">
+                                            <span class="case-nav-name">IPC</span>
+                                            <span class="case-nav-count">(0)</span>
+                                        </li>
+                                        <li class="case-nav-item">
+                                            <span class="case-nav-name">无线编解码</span>
+                                        </li>
+                                        <li class="case-nav-item">
+                                            <span class="case-nav-name">云平台管理</span>
+                                        </li>
+                                    </ul>
                                 </div>
-                                <div class="search-box">
-                                    <input type="text" placeholder="搜索模块" class="search-input">
-                                </div>
-                                <ul class="case-nav-list">
-                                    <li class="case-nav-item active">
-                                        <span class="case-nav-name">所有用例</span>
-                                    </li>
-                                    <li class="case-nav-item" onclick="window.location.href='/level1-points-list.html'" style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 1px solid #3b82f6; cursor: pointer;">
-                                        <span class="case-nav-name" style="color: #3b82f6; font-weight: 600;">
-                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;">
-                                                <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
-                                            </svg>
-                                            一级测试点列表
-                                        </span>
-                                        <span class="case-nav-count" style="color: #3b82f6; font-size: 11px; background: #dbeafe; padding: 2px 6px; border-radius: 10px;">NEW</span>
-                                    </li>
-                                    <li class="case-nav-item">
-                                        <span class="case-nav-name">IPC</span>
-                                        <span class="case-nav-count">(0)</span>
-                                    </li>
-                                    <li class="case-nav-item">
-                                        <span class="case-nav-name">无线编解码</span>
-                                    </li>
-                                    <li class="case-nav-item">
-                                        <span class="case-nav-name">云平台管理</span>
-                                    </li>
-                                </ul>
                             </div>
+                            <button class="nav-collapsed-toggle" id="nav-collapsed-toggle" onclick="toggleModuleNavCollapse()" title="展开模块列表">▶</button>
                         </div>
                         
                         <!-- 中间用例列表 -->
@@ -1264,6 +1359,7 @@
                                     line-height: 1.4;
                                     display: -webkit-box;
                                     -webkit-line-clamp: 2;
+                                    line-clamp: 2;
                                     -webkit-box-orient: vertical;
                                     overflow: hidden;
                                     text-overflow: ellipsis;
@@ -1276,6 +1372,7 @@
                                     line-height: 1.4;
                                     display: -webkit-box;
                                     -webkit-line-clamp: 2;
+                                    line-clamp: 2;
                                     -webkit-box-orient: vertical;
                                     overflow: hidden;
                                     text-overflow: ellipsis;
@@ -2980,6 +3077,10 @@
                                             <span class="menu-item-icon">⚡</span>
                                             <span class="menu-item-text">AI 技能管理</span>
                                         </a>
+                                        <a href="#/settings?config=ai-timeout" class="menu-item" data-panel="ai-timeout-config">
+                                            <span class="menu-item-icon">⏱️</span>
+                                            <span class="menu-item-text">AI 超时配置</span>
+                                        </a>
                                     </div>
                                 </div>
                                 
@@ -3126,6 +3227,38 @@
                                                 </tr>
                                             </tbody>
                                         </table>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="config-panel" id="ai-timeout-config">
+                                <div class="panel-header">
+                                    <div class="panel-header-content">
+                                        <div class="panel-title-group">
+                                            <span class="panel-icon">⏱️</span>
+                                            <div>
+                                                <h3>AI 超时配置</h3>
+                                                <p class="panel-description">自定义AI任务的请求超时时间，不同大模型和服务器速度可配不同超时</p>
+                                            </div>
+                                        </div>
+                                        <div class="panel-header-actions">
+                                            <button class="btn btn-secondary" id="reset-ai-timeout-btn" style="margin-right:8px;">
+                                                <span class="btn-icon">🔄</span>
+                                                恢复默认
+                                            </button>
+                                            <button class="btn btn-primary" id="save-ai-timeout-btn">
+                                                <span class="btn-icon">💾</span>
+                                                保存设置
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="panel-content">
+                                    <div id="ai-timeout-settings-container">
+                                        <div style="text-align:center;padding:40px;color:#999;">
+                                            <span style="font-size:24px;">⏳</span>
+                                            <p>加载AI超时配置中...</p>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -3766,63 +3899,79 @@
                         
                         <!-- AI技能编辑模态框 -->
                         <div id="ai-skill-modal" class="modal" style="display: none;">
-                            <div class="modal-content" style="width: 900px; max-width: 95%; max-height: 90vh; overflow-y: auto;">
-                                <div class="modal-header">
+                            <div class="ai-skill-modal-content">
+                                <div class="ai-skill-modal-header">
                                     <h3 id="ai-skill-modal-title">新建AI技能</h3>
-                                    <button class="close-btn" onclick="closeAISkillModal()">&times;</button>
+                                    <button class="ai-skill-modal-close" onclick="closeAISkillModal()">✕</button>
                                 </div>
-                                <div class="modal-body">
-                                    <div class="form-row">
-                                        <div class="form-group">
-                                            <label>技能标识名 <span class="required">*</span></label>
-                                            <input type="text" id="ai-skill-name-input" placeholder="例如: query_test_statistics">
-                                            <small style="color: #6b7280;">唯一标识，用于AI调用</small>
-                                        </div>
-                                        <div class="form-group">
-                                            <label>显示名称 <span class="required">*</span></label>
-                                            <input type="text" id="ai-skill-display-name-input" placeholder="例如: 查询测试统计">
+                                <div class="ai-skill-modal-body">
+                                    <div class="ai-skill-section">
+                                        <div class="ai-skill-section-title">基本信息</div>
+                                        <div class="ai-skill-section-body">
+                                            <div class="ai-skill-form-row">
+                                                <div class="form-group">
+                                                    <label>技能标识名 <span class="required">*</span></label>
+                                                    <input type="text" id="ai-skill-name-input" placeholder="例如: query_test_statistics">
+                                                    <small class="ai-skill-field-hint">唯一标识，用于AI调用</small>
+                                                </div>
+                                                <div class="form-group">
+                                                    <label>显示名称 <span class="required">*</span></label>
+                                                    <input type="text" id="ai-skill-display-name-input" placeholder="例如: 查询测试统计">
+                                                </div>
+                                            </div>
+                                            <div class="ai-skill-form-row">
+                                                <div class="form-group">
+                                                    <label>技能分类</label>
+                                                    <select id="ai-skill-category-select">
+                                                        <option value="general">通用</option>
+                                                        <option value="statistics">统计分析</option>
+                                                        <option value="task">任务管理</option>
+                                                        <option value="analysis">数据分析</option>
+                                                        <option value="report">报告生成</option>
+                                                    </select>
+                                                </div>
+                                                <div class="form-group">
+                                                    <label>启用状态</label>
+                                                    <select id="ai-skill-enabled-select">
+                                                        <option value="true">启用</option>
+                                                        <option value="false">禁用</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div class="ai-skill-form-row">
+                                                <div class="form-group" style="flex: 2;">
+                                                    <label>技能描述</label>
+                                                    <textarea id="ai-skill-description-input" rows="2" placeholder="描述该技能的功能和用途"></textarea>
+                                                </div>
+                                            </div>
+                                            <div class="ai-skill-form-row">
+                                                <div class="form-group" style="flex: 2;">
+                                                    <label>公开此技能并默认向全员启用</label>
+                                                    <div class="ai-skill-toggle-row">
+                                                        <label class="ai-skill-switch">
+                                                            <input type="checkbox" id="ai-skill-public-checkbox">
+                                                            <span class="ai-skill-switch-slider"></span>
+                                                        </label>
+                                                        <span class="ai-skill-toggle-desc">勾选后，该技能将对所有用户可见，且默认为全员启用状态</span>
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
-                                    <div class="form-row">
-                                        <div class="form-group">
-                                            <label>技能分类</label>
-                                            <select id="ai-skill-category-select">
-                                                <option value="general">通用</option>
-                                                <option value="statistics">统计分析</option>
-                                                <option value="task">任务管理</option>
-                                                <option value="analysis">数据分析</option>
-                                                <option value="report">报告生成</option>
-                                            </select>
+
+                                    <div class="ai-skill-section">
+                                        <div class="ai-skill-section-title">
+                                            技能定义
+                                            <span class="ai-skill-section-badge">JSON</span>
+                                            <div class="ai-skill-section-actions">
+                                                <button type="button" class="ai-skill-toolbar-btn" onclick="aiSkillFormatJson()" title="格式化JSON">✎ 格式化</button>
+                                                <button type="button" class="ai-skill-toolbar-btn" onclick="aiSkillCompressJson()" title="压缩JSON">━ 压缩</button>
+                                                <button type="button" class="ai-skill-toolbar-btn" onclick="aiSkillValidateJson()" title="验证JSON">✓ 验证</button>
+                                            </div>
                                         </div>
-                                        <div class="form-group">
-                                            <label>启用状态</label>
-                                            <select id="ai-skill-enabled-select">
-                                                <option value="true">启用</option>
-                                                <option value="false">禁用</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    <div class="form-row">
-                                        <div class="form-group" style="flex: 2;">
-                                            <label class="checkbox-label">
-                                                <input type="checkbox" id="ai-skill-public-checkbox" class="custom-checkbox">
-                                                <span class="checkbox-text">
-                                                    <span class="checkbox-title">公开此技能并默认向全员启用</span>
-                                                    <span class="checkbox-desc">勾选后，该技能将对所有用户可见，且默认为全员启用状态</span>
-                                                </span>
-                                            </label>
-                                        </div>
-                                    </div>
-                                    <div class="form-row">
-                                        <div class="form-group" style="flex: 2;">
-                                            <label>技能描述</label>
-                                            <textarea id="ai-skill-description-input" rows="2" placeholder="描述该技能的功能和用途"></textarea>
-                                        </div>
-                                    </div>
-                                    <div class="form-row" style="flex-direction: column;">
-                                        <div class="form-group" style="width: 100%;">
-                                            <label>技能定义 (JSON格式) <span class="required">*</span></label>
-                                            <textarea id="ai-skill-definition-input" rows="8" style="font-family: 'Monaco', 'Menlo', monospace; font-size: 12px;" placeholder='{
+                                        <div class="ai-skill-section-body">
+                                            <div class="form-group" style="width: 100%;">
+                                                <textarea id="ai-skill-definition-input" rows="8" class="ai-skill-code-textarea" placeholder='{
   "type": "function",
   "function": {
     "name": "query_test_statistics",
@@ -3836,42 +3985,41 @@
     }
   }
 }'></textarea>
-                                            <small style="color: #6b7280;">LLM Tool Schema 格式，定义技能的参数结构</small>
+                                                <div id="ai-skill-json-status" class="ai-skill-json-status" style="display:none;"></div>
+                                                <small class="ai-skill-field-hint">LLM Tool Schema 格式，定义技能的参数结构</small>
+                                            </div>
                                         </div>
                                     </div>
-                                    <div class="form-row">
-                                        <div class="form-group" style="flex: 2;">
-                                            <label class="checkbox-label">
-                                                <input type="checkbox" id="ai-skill-public-checkbox" class="custom-checkbox">
-                                                <span class="checkbox-text">
-                                                    <span class="checkbox-title">公开此技能并默认向全员启用</span>
-                                                    <span class="checkbox-desc">勾选后，该技能将对所有用户可见，且默认为全员启用状态</span>
-                                                </span>
-                                            </label>
+
+                                    <div class="ai-skill-section">
+                                        <div class="ai-skill-section-title">
+                                            执行代码
+                                            <span class="ai-skill-section-badge ai-skill-section-badge-js">JS</span>
                                         </div>
-                                    </div>
-                                    <div class="form-row" style="flex-direction: column;">
-                                        <div class="form-group" style="width: 100%;">
-                                            <label>执行代码 (JavaScript) <span class="required">*</span></label>
-                                            <textarea id="ai-skill-code-input" rows="12" style="font-family: 'Monaco', 'Menlo', monospace; font-size: 12px;" placeholder='// 可用变量: dbPool (数据库连接池), args (参数对象)
+                                        <div class="ai-skill-section-body">
+                                            <div class="form-group" style="width: 100%;">
+                                                <textarea id="ai-skill-code-input" rows="12" class="ai-skill-code-textarea" placeholder='// 可用变量: dbPool (数据库连接池), args (参数对象)
 // 示例: 查询测试用例统计
 const [rows] = await dbPool.execute(
   "SELECT COUNT(*) as total FROM test_cases"
 );
 return rows[0];'></textarea>
-                                            <small style="color: #dc2626;">⚠️ 注意：代码将在服务端执行，请确保安全性。可用变量: dbPool, args, console</small>
+                                                <div class="ai-skill-field-warning">
+                                                    ⚠️ 注意：代码将在服务端执行，请确保安全性。可用变量: dbPool, args, console
+                                                </div>
+                                                <span id="ai-skill-edit-warning" class="ai-skill-field-warning ai-skill-field-warning-system" style="display: none;">⚠️ 系统内置技能不允许修改执行代码</span>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
-                                <div class="modal-footer" style="justify-content: space-between;">
-                                    <div style="color: #6b7280; font-size: 12px;">
-                                        <span id="ai-skill-edit-warning" style="display: none; color: #f59e0b;">⚠️ 系统内置技能不允许修改执行代码</span>
-                                    </div>
-                                    <div style="display: flex; gap: 12px;">
+                                <div class="ai-skill-modal-footer">
+                                    <div></div>
+                                    <div class="ai-skill-footer-actions">
                                         <button class="secondary-btn" onclick="closeAISkillModal()">取消</button>
                                         <button class="primary-btn" onclick="saveAISkill()">保存</button>
                                     </div>
                                 </div>
+                                <div class="ai-skill-modal-resizer"></div>
                             </div>
                         </div>
                         
@@ -3966,6 +4114,863 @@ return rows[0];'></textarea>
                         </div>
                     </div>
                 </section>
+
+        <!-- 知识库管理 Section -->
+        <section id="knowledge-section" style="display: none;">
+    <div class="kl-page">
+        <div class="kl-page-header">
+            <h1><span class="icon">📚</span> 知识库管理</h1>
+            <div class="kl-header-actions">
+                <button class="kl-btn kl-btn-outline" id="btnUpload">📄 上传文件</button>
+                <button class="kl-btn kl-btn-outline" id="btnNewFolder">📁 新建文件夹</button>
+                <button class="kl-btn kl-btn-ghost" id="btnCrawl">🌐 爬取网页</button>
+            </div>
+        </div>
+
+        <div class="kl-body">
+            <div class="kl-sidebar" id="sidebar">
+                <div class="kl-sidebar-resize-handle" id="sidebarResizeHandle"></div>
+                <div class="kl-sidebar-header">
+                    <h3>📂 目录结构</h3>
+                    <button class="kl-sidebar-toggle" id="btnCollapseSidebar" title="收起侧栏">◀</button>
+                </div>
+                <div class="kl-tree" id="treeContainer">
+                    <div class="kl-loading"><div class="kl-spinner"></div></div>
+                </div>
+            </div>
+
+            <button class="kl-sidebar-expand-btn" id="btnExpandSidebar" title="展开侧栏">▶</button>
+
+            <div class="kl-content">
+                <div class="kl-topbar">
+                    <div class="kl-breadcrumb" id="breadcrumb">
+                        <div class="kl-breadcrumb-item current" data-id="">
+                            <span>📚</span> 全部知识库
+                        </div>
+                    </div>
+                    <button class="kl-btn kl-btn-primary kl-btn-ai-generate" id="btnAIGenerate" title="AI生成测试用例">🤖 AI生成</button>
+                    <div class="kl-stats-bar" id="statsBar">
+                        <div class="stat-item"><span class="stat-label">文件</span> <span class="stat-value" id="statTotal">0</span></div>
+                        <div class="stat-divider"></div>
+                        <div class="stat-item"><span class="stat-label">总大小</span> <span class="stat-value" id="statSize">0B</span></div>
+                        <div class="stat-divider"></div>
+                        <div class="stat-item"><span class="stat-label">已解析</span> <span class="stat-value stat-parsed" id="statParsed">0</span></div>
+                        <div class="stat-divider"></div>
+                        <div class="stat-item"><span class="stat-label">待解析</span> <span class="stat-value stat-pending" id="statPending">0</span></div>
+                    </div>
+                </div>
+
+                <div class="kl-toolbar">
+                    <div class="kl-search-box">
+                        <span class="search-icon">🔍</span>
+                        <input type="text" id="searchInput" placeholder="搜索文件名...">
+                    </div>
+                    <select class="kl-filter-select" id="filterType">
+                        <option value="">全部类型</option>
+                        <option value="docx">Word文档</option>
+                        <option value="xlsx">Excel表格</option>
+                        <option value="pdf">PDF文档</option>
+                        <option value="txt">文本文件</option>
+                        <option value="md">Markdown</option>
+                        <option value="png">图片</option>
+                    </select>
+                    <select class="kl-filter-select" id="filterStatus">
+                        <option value="">全部状态</option>
+                        <option value="pending">待解析</option>
+                        <option value="parsing">解析中</option>
+                        <option value="parsed">已解析</option>
+                        <option value="failed">解析失败</option>
+                    </select>
+                    <div class="kl-view-toggle">
+                        <button class="active" id="btnListView" title="列表视图">☰</button>
+                        <button id="btnGridView" title="网格视图">⊞</button>
+                    </div>
+                    <div style="flex:1;"></div>
+                    <button class="kl-btn kl-btn-sm kl-btn-ghost" id="btnSelectAll">全选</button>
+                    <button class="kl-btn kl-btn-sm kl-btn-ghost" id="btnBatchDownload" style="display:none;">⬇ 批量下载</button>
+                    <button class="kl-btn kl-btn-sm kl-btn-ghost" id="btnBatchDelete" style="display:none;">🗑 批量删除</button>
+                </div>
+
+                <div class="kl-batch-bar" id="batchBar">
+                    <span>已选择 <span class="batch-count" id="batchCount">0</span> 个文件</span>
+                    <div class="batch-actions">
+                        <button class="kl-btn kl-btn-sm kl-btn-outline" id="btnBatchDownloadBar">⬇ 下载</button>
+                        <button class="kl-btn kl-btn-sm kl-btn-danger" id="btnBatchDeleteBar">🗑 删除</button>
+                        <button class="kl-btn kl-btn-sm kl-btn-ghost" id="btnBatchCancel">取消选择</button>
+                    </div>
+                </div>
+
+                <div class="kl-file-area" id="fileArea">
+                    <div class="kl-empty" id="emptyState">
+                        <div class="icon">📚</div>
+                        <div class="title">选择左侧目录浏览文件</div>
+                        <p>从左侧树形目录选择一个用例库或模块开始浏览</p>
+                    </div>
+
+                    <div class="kl-file-list" id="fileListView" style="display:none;">
+                        <div class="kl-file-list-header">
+                            <div class="col col-checkbox"><input type="checkbox" id="checkAll"></div>
+                            <div class="col sortable" data-sort="name">文件名</div>
+                            <div class="col sortable" data-sort="type">类型</div>
+                            <div class="col sortable" data-sort="size">大小</div>
+                            <div class="col sortable" data-sort="status">状态</div>
+                            <div class="col">操作</div>
+                        </div>
+                        <div id="fileListBody"></div>
+                    </div>
+
+                    <div class="kl-grid-view" id="fileGridView" style="display:none;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="kl-overlay" id="overlay"></div>
+
+    <div class="kl-detail-panel" id="detailPanel">
+        <div class="kl-detail-resize-handle" id="detailResizeHandle"></div>
+        <div class="kl-detail-header">
+            <h3>📄 文件详情</h3>
+            <button class="kl-close-btn" id="btnCloseDetail">✕</button>
+        </div>
+        <div class="kl-detail-body" id="detailBody"></div>
+        <div class="kl-detail-actions" id="detailActions"></div>
+    </div>
+
+    <div class="kl-modal" id="previewModal" style="min-width:min(800px,90vw);width:min(900px,90vw);height:min(90vh,910px);">
+        <div class="kl-modal-header">
+            <h3 id="previewTitle">📄 文件预览</h3>
+            <button class="kl-close-btn" id="btnClosePreview">✕</button>
+        </div>
+        <div class="kl-preview-container">
+            <div class="kl-preview-toolbar">
+                <div class="preview-info" id="previewInfo"></div>
+                <div class="preview-actions">
+                    <button class="kl-btn kl-btn-sm kl-btn-ghost" id="btnPreviewDownload">⬇ 下载</button>
+                    <button class="kl-btn kl-btn-sm kl-btn-ghost" id="btnPreviewFullscreen">⛶ 全屏</button>
+                </div>
+            </div>
+            <div class="kl-preview-content" id="previewContent">
+                <div class="kl-loading"><div class="kl-spinner"></div></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="kl-modal" id="uploadModal" style="min-width:500px;">
+        <div class="kl-modal-header">
+            <h3>📄 上传文件</h3>
+            <button class="kl-close-btn" id="btnCloseUpload">✕</button>
+        </div>
+        <div class="kl-modal-body">
+            <div class="kl-form-group" id="uploadModuleGroup">
+                <label><span class="required">*</span> 目标模块</label>
+                <select class="kl-select" id="uploadModuleSelect">
+                    <option value="">请选择模块</option>
+                </select>
+            </div>
+            <div class="kl-upload-zone" id="uploadZone">
+                <div class="icon">📤</div>
+                <div class="title">拖拽文件到此处或点击上传</div>
+                <div class="desc">支持 docx, xlsx, pdf, txt, md, png, jpg 等格式，单文件最大20MB</div>
+            </div>
+            <input type="file" id="fileInput" multiple style="display:none;" accept=".docx,.doc,.xlsx,.xls,.pdf,.txt,.md,.png,.jpg,.jpeg,.drawio,.vsdx">
+            <div class="kl-upload-progress" id="uploadProgress"></div>
+        </div>
+        <div class="kl-modal-footer">
+            <button class="kl-btn kl-btn-ghost" id="btnCancelUpload">关闭</button>
+        </div>
+    </div>
+
+    <div class="kl-modal" id="newFolderModal" style="min-width:400px;">
+        <div class="kl-modal-header">
+            <h3>📁 新建文件夹</h3>
+            <button class="kl-close-btn" id="btnCloseNewFolder">✕</button>
+        </div>
+        <div class="kl-modal-body">
+            <div class="kl-form-group" id="folderHintGroup" style="display:none;">
+                <div class="kl-hint-box">
+                    <span class="kl-hint-icon">📍</span>
+                    <span class="kl-hint-text" id="folderHintText"></span>
+                </div>
+            </div>
+            <div class="kl-form-group" id="folderModuleGroup">
+                <label><span class="required">*</span> 目标模块</label>
+                <select class="kl-select" id="folderModuleSelect">
+                    <option value="">请选择模块</option>
+                </select>
+            </div>
+            <div class="kl-form-group">
+                <label><span class="required">*</span> 文件夹名称</label>
+                <input type="text" class="kl-input" id="newFolderName" placeholder="请输入文件夹名称">
+            </div>
+        </div>
+        <div class="kl-modal-footer">
+            <button class="kl-btn kl-btn-ghost" id="btnCancelNewFolder">取消</button>
+            <button class="kl-btn kl-btn-primary" id="btnConfirmNewFolder">创建</button>
+        </div>
+    </div>
+
+    <div class="kl-modal" id="renameModal" style="min-width:400px;">
+        <div class="kl-modal-header">
+            <h3>✏️ 重命名</h3>
+            <button class="kl-close-btn" id="btnCloseRename">✕</button>
+        </div>
+        <div class="kl-modal-body">
+            <div class="kl-form-group">
+                <label>新名称</label>
+                <input type="text" class="kl-input" id="renameInput" placeholder="请输入新名称">
+            </div>
+        </div>
+        <div class="kl-modal-footer">
+            <button class="kl-btn kl-btn-ghost" id="btnCancelRename">取消</button>
+            <button class="kl-btn kl-btn-primary" id="btnConfirmRename">确认</button>
+        </div>
+    </div>
+
+    <div class="kl-modal" id="crawlModal" style="min-width:550px;">
+        <div class="kl-modal-header">
+            <h3>🌐 爬取网页</h3>
+            <button class="kl-close-btn" id="btnCloseCrawl">✕</button>
+        </div>
+        <div class="kl-modal-body">
+            <div class="kl-form-group" id="crawlModuleGroup">
+                <label><span class="required">*</span> 目标模块</label>
+                <select class="kl-select" id="crawlModuleSelect">
+                    <option value="">请选择模块</option>
+                </select>
+            </div>
+            <div class="kl-form-group">
+                <label><span class="required">*</span> 网页URL</label>
+                <input type="url" class="kl-input" id="crawlUrl" placeholder="https://example.com/docs">
+            </div>
+            <div class="kl-form-group">
+                <label>登录用户名 (可选)</label>
+                <input type="text" class="kl-input" id="crawlUsername" placeholder="需要登录的页面填写">
+            </div>
+            <div class="kl-form-group">
+                <label>登录密码 (可选)</label>
+                <input type="password" class="kl-input" id="crawlPassword" placeholder="需要登录的页面填写">
+            </div>
+        </div>
+        <div class="kl-modal-footer">
+            <button class="kl-btn kl-btn-ghost" id="btnCancelCrawl">取消</button>
+            <button class="kl-btn kl-btn-primary" id="btnConfirmCrawl">爬取并保存</button>
+        </div>
+    </div>
+
+    <div class="kl-modal kl-confirm-modal" id="confirmModal" style="min-width:400px;">
+        <div class="kl-modal-header">
+            <h3 id="confirmTitle">确认操作</h3>
+            <button class="kl-close-btn" id="btnCloseConfirm">✕</button>
+        </div>
+        <div class="kl-modal-body">
+            <div class="confirm-icon" id="confirmIcon">⚠️</div>
+            <div class="confirm-message" id="confirmMessage"></div>
+        </div>
+        <div class="kl-modal-footer">
+            <button class="kl-btn kl-btn-ghost" id="btnConfirmCancel">取消</button>
+            <button class="kl-btn kl-btn-primary" id="btnConfirmOk">确认</button>
+        </div>
+    </div>
+
+    <div class="kl-modal" id="aiGenerateTargetModal" style="min-width:480px;">
+        <div class="kl-modal-header">
+            <h3>🤖 AI生成测试用例 - 选择目标</h3>
+            <button class="kl-close-btn" id="btnCloseAiTarget">✕</button>
+        </div>
+        <div class="kl-modal-body">
+            <div class="kl-form-group">
+                <div class="kl-hint-box" style="margin-bottom:12px;">
+                    <span class="kl-hint-icon">📋</span>
+                    <span class="kl-hint-text" id="aiTargetFileInfo">选中的文件来自多个用例库或模块，请选择AI生成测试用例的目标位置</span>
+                </div>
+            </div>
+            <div class="kl-form-group">
+                <label><span class="required">*</span> 目标用例库</label>
+                <select class="kl-select" id="aiTargetLibrarySelect">
+                    <option value="">请选择用例库</option>
+                </select>
+            </div>
+            <div class="kl-form-group">
+                <label><span class="required">*</span> 目标模块</label>
+                <select class="kl-select" id="aiTargetModuleSelect">
+                    <option value="">请先选择用例库</option>
+                </select>
+            </div>
+        </div>
+        <div class="kl-modal-footer">
+            <button class="kl-btn kl-btn-ghost" id="btnCancelAiTarget">取消</button>
+            <button class="kl-btn kl-btn-primary" id="btnConfirmAiTarget">开始生成</button>
+        </div>
+    </div>
+
+    <div class="kl-context-menu" id="contextMenu">
+        <div class="kl-context-menu-item" data-action="preview">👁️ 预览</div>
+        <div class="kl-context-menu-item" data-action="download">⬇️ 下载</div>
+        <div class="kl-context-menu-sep"></div>
+        <div class="kl-context-menu-item" data-action="rename">✏️ 重命名</div>
+        <div class="kl-context-menu-item" data-action="detail">📋 详情</div>
+        <div class="kl-context-menu-sep"></div>
+        <div class="kl-context-menu-item danger" data-action="delete">🗑️ 删除</div>
+    </div>
+        </section>
+
+        <!-- AI生成 Section -->
+        <section id="ai-generation-section" style="display: none;">
+    <div class="ai-page">
+        <div class="ai-page-header">
+            <h1><span class="icon">🤖</span> AI测试用例生成</h1>
+            <div style="display:flex;gap:8px;">
+                <button class="ai-btn ai-btn-outline" onclick="showTaskHistory()">📋 任务历史</button>
+                <button class="ai-btn ai-btn-outline" onclick="showSkillsManager()">⚙️ Skills管理</button>
+            </div>
+        </div>
+
+        <div class="ai-tabs" id="mainTabs">
+            <div class="ai-tab active" data-tab="generate" onclick="switchTab('generate')">🚀 创建生成任务</div>
+            <div class="ai-tab" data-tab="preview" onclick="switchTab('preview')">📋 临时用例预览</div>
+            <div class="ai-tab" data-tab="review" onclick="switchTab('review')">🔍 评审管理</div>
+        </div>
+
+        <div id="tab-generate" class="tab-content">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+                <div class="ai-card">
+                    <div class="ai-card-header">
+                        <h3>📚 知识库文件</h3>
+                        <div style="display:flex;gap:8px;">
+                            <button class="ai-btn ai-btn-sm ai-btn-outline" onclick="openKnowledgeDrawer()">📂 管理知识库</button>
+                            <button class="ai-btn ai-btn-sm ai-btn-outline" onclick="showCrawlModal()">🌐 爬取网页</button>
+                        </div>
+                    </div>
+                    <div class="ai-card-body">
+                        <div id="fileList" class="ai-file-list">
+                            <div class="ai-empty">
+                                <div class="icon">📁</div>
+                                <p>请先选择模块，然后从知识库选择文件</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="ai-card">
+                    <div class="ai-card-header">
+                        <h3>⚙️ 生成配置</h3>
+                    </div>
+                    <div class="ai-card-body">
+                        <div class="ai-form-group">
+                            <label><span class="required">*</span> 用例库</label>
+                            <select id="librarySelect" class="ai-select" onchange="onLibraryChange()">
+                                <option value="">请选择用例库</option>
+                            </select>
+                        </div>
+
+                        <div class="ai-form-group">
+                            <label><span class="required">*</span> 目标模块</label>
+                            <select id="moduleSelect" class="ai-select" onchange="onModuleChange()">
+                                <option value="">请选择模块</option>
+                            </select>
+                        </div>
+
+                        <div class="ai-form-group">
+                            <label>生成Skill</label>
+                            <select id="skillSelect" class="ai-select">
+                                <option value="">默认测试用例生成</option>
+                            </select>
+                        </div>
+
+                        <div class="ai-form-group">
+                            <label>📁 一级测试点关联模式</label>
+                            <div class="ai-radio-group" id="level1ModeGroup">
+                                <div class="ai-radio-item active" data-value="auto" onclick="selectLevel1Mode('auto')">
+                                    <input type="radio" name="level1Mode" value="auto" checked>
+                                    自动创建新测试点
+                                </div>
+                                <div class="ai-radio-item" data-value="existing" onclick="selectLevel1Mode('existing')">
+                                    <input type="radio" name="level1Mode" value="existing">
+                                    关联已有测试点
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="existingLevel1Container" style="display:none;" class="ai-form-group">
+                            <label>选择一级测试点</label>
+                            <div class="ai-level1-toolbar">
+                                <input type="text" id="level1SearchInput" class="ai-search-input" 
+                                       placeholder="搜索一级测试点..." oninput="filterLevel1Points()" style="width:200px;">
+                                <div class="ai-level1-actions">
+                                    <button class="ai-btn ai-btn-sm ai-btn-outline" onclick="selectAllLevel1()">全选</button>
+                                    <button class="ai-btn ai-btn-sm ai-btn-outline" onclick="deselectAllLevel1()">反选</button>
+                                    <span id="level1SelectedCount" class="ai-level1-count">已选: 0</span>
+                                    <span id="level1TotalCount" class="ai-level1-count">共: 0</span>
+                                </div>
+                            </div>
+                            <div id="existingLevel1List" class="ai-checkbox-group ai-level1-scroll-container"></div>
+                        </div>
+
+                        <div class="ai-form-group">
+                            <label>用例数量上限</label>
+                            <input type="number" id="caseCountLimit" class="ai-input" value="20" min="1" max="100">
+                        </div>
+
+                        <div class="ai-form-group">
+                            <label style="display:flex;align-items:center;gap:8px;">
+                                <input type="checkbox" id="enableDedup" checked>
+                                启用查重过滤
+                            </label>
+                        </div>
+
+                        <div class="ai-form-group" id="thresholdContainer">
+                            <label>查重阈值 (%)</label>
+                            <input type="number" id="similarityThreshold" class="ai-input" value="85" min="50" max="100">
+                        </div>
+
+                        <button class="ai-btn ai-btn-primary" style="width:100%;justify-content:center;padding:12px;" onclick="createTask()">
+                            🤖 开始生成测试用例
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-preview" class="tab-content" style="display:none;">
+            <div class="ai-toolbar">
+                <select id="taskFilter" class="ai-filter-select" onchange="loadTempCases()">
+                    <option value="all">全部未合并用例</option>
+                </select>
+                <input type="text" id="caseSearch" class="ai-search-input" placeholder="搜索用例..." oninput="filterCases()">
+                <select id="statusFilter" class="ai-filter-select" onchange="filterCases()">
+                    <option value="">全部状态</option>
+                    <option value="pending">待确认</option>
+                    <option value="approved">已批准</option>
+                    <option value="rejected">已拒绝</option>
+                </select>
+                <select id="duplicateFilter" class="ai-filter-select" onchange="filterCases()">
+                    <option value="">全部</option>
+                    <option value="1">重复用例</option>
+                    <option value="0">非重复</option>
+                </select>
+                <div style="flex:1;"></div>
+                <span id="selectedCountBadge" style="display:none;background:var(--ai-primary);color:#fff;padding:4px 10px;border-radius:12px;font-size:12px;font-weight:500;margin-right:4px;">0</span>
+                <button class="ai-btn ai-btn-sm ai-btn-ghost" id="clearSelectionBtn" style="display:none;" onclick="clearAllSelections()">✖️ 清空选择</button>
+                <button class="ai-btn ai-btn-sm ai-btn-warning" onclick="showMergeModal()">📦 合并进库</button>
+                <button class="ai-btn ai-btn-sm ai-btn-outline" onclick="batchEdit()">✏️ 批量编辑</button>
+                <button class="ai-btn ai-btn-sm ai-btn-success" onclick="batchApprove()">✅ 批量批准</button>
+                <button class="ai-btn ai-btn-sm ai-btn-danger" onclick="batchReject()">❌ 批量拒绝</button>
+                <button class="ai-btn ai-btn-sm ai-btn-ghost" onclick="batchDelete()">🗑️ 批量删除</button>
+            </div>
+
+            <div id="caseStats" class="ai-stats-grid"></div>
+
+            <div id="level1Groups"></div>
+
+            <div id="caseTreeTableContainer">
+                <table class="ai-tree-table" id="caseTreeTable">
+                    <thead>
+                        <tr>
+                            <th class="col-checkbox"><input type="checkbox" id="selectAll" class="ai-tree-checkbox" onchange="toggleSelectAll()"></th>
+                            <th class="col-name">用例名称</th>
+                            <th class="col-priority">优先级</th>
+                            <th class="col-type">类型</th>
+                            <th class="col-similarity">相似度</th>
+                            <th class="col-status">状态</th>
+                            <th class="col-actions">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="caseTreeTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="tab-review" class="tab-content" style="display:none;">
+            <div id="reviewList"></div>
+            <div id="reviewPagination" class="pagination-container"></div>
+        </div>
+    </div>
+
+    <div class="ai-overlay" id="aiGenOverlay" onclick="aiCloseAllModals()"></div>
+
+    <div class="ai-drawer" id="knowledgeDrawer">
+        <div class="ai-drawer-resize-handle" id="ai-drawer-resize-handle"></div>
+        <div class="ai-drawer-header">
+            <h3>📚 知识库</h3>
+            <button class="ai-close-btn" onclick="closeKnowledgeDrawer()">✕</button>
+        </div>
+        <div class="ai-drawer-body" style="padding: 0;">
+            <div class="ai-knowledge-toolbar">
+                <button class="ai-btn ai-btn-sm ai-btn-primary" id="createFolderBtn" onclick="createFolder()">📁 新建文件夹</button>
+                <button class="ai-btn ai-btn-sm ai-btn-primary" id="uploadFileBtn" onclick="triggerUpload()">📄 上传文件</button>
+                <div class="search-box">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" id="knowledgeSearchInput" placeholder="搜索文件..." oninput="filterKnowledgeList()">
+                </div>
+                <input type="file" id="aiFileInput" multiple style="display:none;" onchange="handleFileUpload()" accept=".docx,.doc,.xlsx,.xls,.pdf,.txt,.md,.png,.jpg,.jpeg">
+            </div>
+            <div id="knowledgeTree"></div>
+        </div>
+        <div class="ai-drawer-footer">
+            <span id="knowledgeSelectionCount" style="flex:1;font-size:13px;color:var(--ai-text-secondary);">已选择 0 个文件</span>
+            <button class="ai-btn ai-btn-ghost" onclick="closeKnowledgeDrawer()">取消</button>
+            <button class="ai-btn ai-btn-primary" onclick="confirmFileSelection()">确认选择</button>
+        </div>
+    </div>
+
+    <div class="ai-modal" id="progressModal" style="min-width:500px;">
+        <div class="ai-modal-header">
+            <h3>⏳ AI生成进度</h3>
+            <button class="ai-close-btn" onclick="closeProgressModal()">✕</button>
+        </div>
+        <div class="ai-modal-body">
+            <div style="margin-bottom:16px;">
+                <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+                    <span id="progressTaskId">任务ID: -</span>
+                    <span id="progressPercent">0%</span>
+                </div>
+                <div class="ai-progress-bar">
+                    <div class="ai-progress-fill" id="progressFill" style="width:0%"></div>
+                </div>
+            </div>
+
+            <ul class="ai-stage-list" id="stageList">
+                <li class="ai-stage-item">
+                    <span class="ai-stage-icon ai-stage-waiting" id="stage1">1</span>
+                    <span>准备材料</span>
+                </li>
+                <li class="ai-stage-item">
+                    <span class="ai-stage-icon ai-stage-waiting" id="stage2">2</span>
+                    <span>文本分块</span>
+                </li>
+                <li class="ai-stage-item">
+                    <span class="ai-stage-icon ai-stage-waiting" id="stage3">3</span>
+                    <span id="stage3Text">AI生成用例</span>
+                </li>
+                <li class="ai-stage-item">
+                    <span class="ai-stage-icon ai-stage-waiting" id="stage4">4</span>
+                    <span>查重过滤</span>
+                </li>
+                <li class="ai-stage-item">
+                    <span class="ai-stage-icon ai-stage-waiting" id="stage5">5</span>
+                    <span>完成</span>
+                </li>
+            </ul>
+
+            <div id="progressStats" style="margin-top:16px;padding:12px;background:#f8fafc;border-radius:8px;">
+                <p style="font-size:14px;color:var(--ai-text-secondary);">已生成: <strong id="statGenerated">0</strong> 个用例 &nbsp; 重复: <strong id="statDuplicate">0</strong> 个 &nbsp; 有效: <strong id="statEffective">0</strong> 个</p>
+            </div>
+
+            <p style="margin-top:12px;font-size:13px;color:var(--ai-text-secondary);">💡 任务完成后将发送邮件通知，您可以关闭此窗口</p>
+        </div>
+        <div class="ai-modal-footer" style="justify-content:space-between;">
+            <button class="ai-btn ai-btn-danger" id="cancelTaskBtn" onclick="cancelTask()">取消任务</button>
+            <button class="ai-btn ai-btn-outline" onclick="closeProgressModal()">最小化</button>
+        </div>
+    </div>
+
+    <div class="ai-modal" id="mergeModal" style="min-width:550px;">
+        <div class="ai-modal-header">
+            <h3>📦 合并进库</h3>
+            <button class="ai-close-btn" onclick="closeMergeModal()">✕</button>
+        </div>
+        <div class="ai-modal-body">
+            <p style="margin-bottom:16px;color:var(--ai-text-secondary);">已选择 <strong id="mergeCaseCount">0</strong> 个用例</p>
+            <div class="ai-form-group">
+                <label>目标用例库</label>
+                <select id="mergeLibrarySelect" class="ai-select"></select>
+            </div>
+            <div class="ai-form-group">
+                <label>合并方式</label>
+                <div class="ai-radio-group" id="mergeModeGroup">
+                    <div class="ai-radio-item active" data-value="direct" onclick="selectMergeMode('direct')">
+                        <input type="radio" name="mergeMode" value="direct" checked>
+                        直接合并到正式库 (跳过评审)
+                    </div>
+                    <div class="ai-radio-item" data-value="review" onclick="selectMergeMode('review')">
+                        <input type="radio" name="mergeMode" value="review">
+                        提交评审流程 (推荐)
+                    </div>
+                </div>
+            </div>
+            <div id="reviewConfig" style="display:none;">
+                <div class="ai-form-group">
+                    <label>评审人 <span style="font-size:12px;color:var(--ai-text-secondary);font-weight:normal;">（可多选）</span></label>
+                    <div id="reviewerCheckboxList" class="ai-checkbox-group" style="border:1px solid var(--ai-border);border-radius:8px;padding:8px;background:#fafbfc;max-height:180px;overflow-y:auto;"></div>
+                </div>
+                <div class="ai-form-group">
+                    <label>评审截止时间</label>
+                    <input type="date" id="reviewDeadline" class="ai-input">
+                </div>
+            </div>
+        </div>
+        <div class="ai-modal-footer">
+            <button class="ai-btn ai-btn-ghost" onclick="closeMergeModal()">取消</button>
+            <button class="ai-btn ai-btn-primary" onclick="executeMerge()">确认合并</button>
+        </div>
+        <div class="ai-modal-resizer"></div>
+    </div>
+
+    <div class="ai-modal" id="batchEditModal" style="min-width:600px;">
+        <div class="ai-modal-header">
+            <h3>✏️ 批量编辑</h3>
+            <button class="ai-close-btn" onclick="closeBatchEditModal()">✕</button>
+        </div>
+        <div class="ai-modal-body">
+            <p style="margin-bottom:16px;color:var(--ai-text-secondary);">已选择 <strong id="batchEditCount">0</strong> 个用例</p>
+            <div class="ai-form-group">
+                <label>负责人</label>
+                <select id="batchOwner" class="ai-select">
+                    <option value="">留空则不修改</option>
+                </select>
+            </div>
+            <div class="ai-form-group">
+                <label>关联项目 <span style="font-size:12px;color:var(--ai-text-secondary);font-weight:normal;">（可多选，不勾选则不修改）</span></label>
+                <div id="batchProjectList" class="ai-checkbox-group" style="max-height:120px;overflow-y:auto;border:1px solid var(--ai-border);border-radius:8px;padding:8px;background:#fafbfc;">
+                </div>
+            </div>
+            <div class="ai-form-group">
+                <label>优先级</label>
+                <select id="batchPriority" class="ai-select">
+                    <option value="">不修改</option>
+                    <option value="高">高</option>
+                    <option value="中">中</option>
+                    <option value="低">低</option>
+                </select>
+            </div>
+            <div class="ai-form-group">
+                <label>用例类型 <span style="font-size:12px;color:var(--ai-text-secondary);font-weight:normal;">（可多选，不勾选则不修改）</span></label>
+                <div id="batchTypeList" class="ai-checkbox-group" style="border:1px solid var(--ai-border);border-radius:8px;padding:8px;background:#fafbfc;">
+                    <label class="ai-checkbox-item"><input type="checkbox" value="功能测试"> 功能测试</label>
+                    <label class="ai-checkbox-item"><input type="checkbox" value="性能测试"> 性能测试</label>
+                    <label class="ai-checkbox-item"><input type="checkbox" value="异常测试"> 异常测试</label>
+                    <label class="ai-checkbox-item"><input type="checkbox" value="压力测试"> 压力测试</label>
+                    <label class="ai-checkbox-item"><input type="checkbox" value="规格测试"> 规格测试</label>
+                </div>
+            </div>
+            <div class="ai-form-group">
+                <label>测试方法 <span style="font-size:12px;color:var(--ai-text-secondary);font-weight:normal;">（可多选，不勾选则不修改）</span></label>
+                <div id="batchMethodList" class="ai-checkbox-group" style="border:1px solid var(--ai-border);border-radius:8px;padding:8px;background:#fafbfc;">
+                    <label class="ai-checkbox-item"><input type="checkbox" value="手动"> 手动</label>
+                    <label class="ai-checkbox-item"><input type="checkbox" value="自动化"> 自动化</label>
+                </div>
+            </div>
+        </div>
+        <div class="ai-modal-footer">
+            <button class="ai-btn ai-btn-ghost" onclick="closeBatchEditModal()">取消</button>
+            <button class="ai-btn ai-btn-primary" onclick="saveBatchEdit()">保存修改</button>
+        </div>
+    </div>
+
+    <div class="ai-modal" id="caseDetailModal">
+        <div class="ai-modal-header">
+            <h3>📋 用例详情</h3>
+            <button class="ai-close-btn" onclick="closeCaseDetailModal()">✕</button>
+        </div>
+        <div class="ai-modal-body" id="caseDetailBody"></div>
+        <div class="ai-modal-footer">
+            <button class="ai-btn ai-btn-ghost" onclick="closeCaseDetailModal()">关闭</button>
+            <button class="ai-btn ai-btn-primary" id="caseDetailSaveBtn" onclick="saveCaseDetail()">保存</button>
+        </div>
+        <div class="ai-modal-resizer"></div>
+    </div>
+
+    <div class="ai-modal" id="aiCrawlModal" style="min-width:550px;">
+        <div class="ai-modal-header">
+            <h3>🌐 爬取网页</h3>
+            <button class="ai-close-btn" onclick="closeCrawlModal()">✕</button>
+        </div>
+        <div class="ai-modal-body">
+            <div class="ai-form-group">
+                <label><span class="required">*</span> 网页URL</label>
+                <input type="url" id="aiCrawlUrl" class="ai-input" placeholder="https://example.com/docs">
+            </div>
+            <div class="ai-form-group">
+                <label>登录用户名 (可选)</label>
+                <input type="text" id="aiCrawlUsername" class="ai-input" placeholder="需要登录的页面填写">
+            </div>
+            <div class="ai-form-group">
+                <label>登录密码 (可选)</label>
+                <input type="password" id="aiCrawlPassword" class="ai-input" placeholder="需要登录的页面填写">
+            </div>
+        </div>
+        <div class="ai-modal-footer">
+            <button class="ai-btn ai-btn-ghost" onclick="closeCrawlModal()">取消</button>
+            <button class="ai-btn ai-btn-primary" onclick="executeCrawl()">爬取并保存</button>
+        </div>
+    </div>
+
+    <div class="ai-modal ai-modal-lg" id="taskHistoryModal">
+        <button class="ai-modal-close-corner" onclick="closeTaskHistoryModal()" title="关闭">✕</button>
+        <div class="ai-modal-body">
+            <table class="ai-table">
+                <thead>
+                    <tr>
+                        <th>任务ID</th>
+                        <th>模块</th>
+                        <th>状态</th>
+                        <th>用例数</th>
+                        <th>创建时间</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="taskHistoryBody"></tbody>
+            </table>
+            <div id="taskHistoryPagination" class="pagination-container"></div>
+        </div>
+        <div class="ai-modal-resizer"></div>
+    </div>
+
+    <div class="ai-modal ai-modal-lg" id="skillsModal">
+        <div class="ai-modal-header" data-drag-handle>
+            <h3>Skills 列表</h3>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <button class="ai-btn ai-btn-primary" id="btnCreateSkill" style="padding:4px 12px;font-size:13px;">+ 新建</button>
+                <button class="ai-close-btn" onclick="closeSkillsModal()">✕</button>
+            </div>
+        </div>
+        <div class="ai-modal-body ai-skills-modal-body">
+            <div class="ai-skills-split-container">
+                <div class="ai-skills-sidebar">
+                    <div class="ai-skills-list-header">
+                        <span>技能列表</span>
+                    </div>
+                    <div id="skillsList" class="ai-skills-list"></div>
+                </div>
+                <div class="ai-skills-detail-view" id="ai-skills-detail-container">
+                    <div id="skillsEmptyHint" class="ai-detail-empty">
+                        <div class="ai-detail-empty-icon">📋</div>
+                        <p>请从左侧选择一个技能查看详情<br>或点击上方按钮新增</p>
+                    </div>
+                    <div id="skillEditForm" class="ai-skills-form-panel" style="display:none;">
+                        <div class="ai-skills-panel-header">
+                            <h4 id="skillFormTitle">新建Skill</h4>
+                            <div class="ai-skills-panel-actions">
+                                <button class="ai-btn ai-btn-sm ai-btn-ghost" id="btnCancelSkill">取消</button>
+                            </div>
+                        </div>
+                        <div class="ai-skills-panel-body">
+                            <div class="ai-form-group">
+                                <label>Skill名称</label>
+                                <input type="text" id="skillName" class="ai-input" placeholder="英文标识，如 my_test_skill">
+                            </div>
+                            <div class="ai-form-group">
+                                <label>显示名称</label>
+                                <input type="text" id="skillDisplayName" class="ai-input" placeholder="我的测试Skill">
+                            </div>
+                            <div class="ai-form-group">
+                                <label>描述</label>
+                                <textarea id="skillDescription" class="ai-textarea" placeholder="描述此Skill的用途"></textarea>
+                            </div>
+                            <div class="ai-form-group">
+                                <label>系统提示词 (定义AI的角色和能力)</label>
+                                <textarea id="skillSystemPrompt" class="ai-textarea" style="min-height:120px;" placeholder="你是一个专业的测试用例设计专家..."></textarea>
+                            </div>
+                            <div class="ai-form-group">
+                                <label>用户提示词模板 (支持变量: {{module_name}}, {{module_description}}, {{material_content}}, {{case_count_limit}})</label>
+                                <textarea id="skillUserTemplate" class="ai-textarea" style="min-height:120px;" placeholder="## 模块信息&#10;模块名称: {{module_name}}&#10;..."></textarea>
+                            </div>
+                            <div class="ai-form-group">
+                                <label style="display:flex;align-items:center;gap:8px;">
+                                    <input type="checkbox" id="skillIsPublic" checked>
+                                    公开 (其他用户可以使用此Skill)
+                                </label>
+                            </div>
+                            <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:8px;">
+                                <button class="ai-btn ai-btn-primary" id="btnSaveSkill">保存</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="skillViewPanel" class="ai-skills-form-panel" style="display:none;">
+                        <div class="ai-skills-panel-header">
+                            <h4 id="skillViewTitle"></h4>
+                            <div class="ai-skills-panel-actions">
+                                <button class="ai-btn ai-btn-sm ai-btn-outline" id="btnEditSkill">编辑</button>
+                                <button class="ai-btn ai-btn-sm ai-btn-ghost" id="btnCloseSkillView">✕ 关闭</button>
+                            </div>
+                        </div>
+                        <div class="ai-skills-panel-body">
+                            <div class="ai-skill-detail">
+                                <div class="ai-skill-detail-row">
+                                    <span class="ai-skill-detail-label">Skill名称</span>
+                                    <span id="skillViewName" class="ai-skill-detail-value"></span>
+                                </div>
+                                <div class="ai-skill-detail-row">
+                                    <span class="ai-skill-detail-label">类型</span>
+                                    <span id="skillViewType" class="ai-skill-detail-value"></span>
+                                </div>
+                                <div class="ai-skill-detail-row">
+                                    <span class="ai-skill-detail-label">描述</span>
+                                    <span id="skillViewDesc" class="ai-skill-detail-value"></span>
+                                </div>
+                                <div class="ai-skill-detail-row" style="flex-direction:column;gap:8px;">
+                                    <span class="ai-skill-detail-label">系统提示词</span>
+                                    <pre id="skillViewSystemPrompt" class="ai-skill-detail-pre"></pre>
+                                </div>
+                                <div class="ai-skill-detail-row" style="flex-direction:column;gap:8px;">
+                                    <span class="ai-skill-detail-label">用户提示词模板</span>
+                                    <pre id="skillViewUserTemplate" class="ai-skill-detail-pre"></pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="ai-modal-resizer"></div>
+    </div>
+
+    <div class="ai-modal" id="createFolderModal" style="min-width:400px;">
+        <div class="ai-modal-header">
+            <h3>📁 新建文件夹</h3>
+            <button class="ai-close-btn" onclick="closeCreateFolderModal()">✕</button>
+        </div>
+        <div class="ai-modal-body">
+            <div class="ai-form-group">
+                <label>文件夹名称</label>
+                <input type="text" id="aiNewFolderName" class="ai-input" placeholder="请输入文件夹名称" autofocus>
+            </div>
+        </div>
+        <div class="ai-modal-footer">
+            <button class="ai-btn ai-btn-ghost" onclick="closeCreateFolderModal()">取消</button>
+            <button class="ai-btn ai-btn-primary" onclick="confirmCreateFolder()">创建</button>
+        </div>
+    </div>
+
+    <div class="ai-modal ai-modal-lg" id="fileContentModal">
+        <div class="ai-modal-header">
+            <h3 id="fileContentTitle">📄 文件内容</h3>
+            <button class="ai-close-btn" onclick="closeFileContentModal()">✕</button>
+        </div>
+        <div class="ai-modal-body" style="padding:0;">
+            <pre id="fileContentBody" style="margin:0;padding:16px;max-height:70vh;overflow:auto;background:#f8fafc;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word;"></pre>
+        </div>
+        <div class="ai-modal-footer">
+            <button class="ai-btn ai-btn-ghost" onclick="closeFileContentModal()">关闭</button>
+        </div>
+    </div>
+
+    <div class="ai-modal" id="conflictModal" style="min-width:450px;">
+        <div class="ai-modal-header">
+            <h3>⚠️ 检测到同名文件</h3>
+            <button class="ai-close-btn" onclick="closeConflictModal()">✕</button>
+        </div>
+        <div class="ai-modal-body">
+            <p id="conflictMessage" style="margin-bottom:16px;"></p>
+            <div class="ai-radio-group" id="conflictOptions">
+                <div class="ai-radio-item active" data-value="overwrite" onclick="selectConflictAction('overwrite')">
+                    <input type="radio" name="conflictAction" value="overwrite" checked>
+                    覆盖更新 - 删除旧文件，用新文件替换
+                </div>
+                <div class="ai-radio-item" data-value="coexist" onclick="selectConflictAction('coexist')">
+                    <input type="radio" name="conflictAction" value="coexist">
+                    共存保留 - 保留旧文件，新文件独立存储
+                </div>
+            </div>
+        </div>
+        <div class="ai-modal-footer">
+            <button class="ai-btn ai-btn-ghost" onclick="closeConflictModal()">取消上传</button>
+            <button class="ai-btn ai-btn-primary" onclick="resolveConflict()">确认</button>
+        </div>
+    </div>
+        </section>
+
             </main>
         </div>
     </div>
@@ -5122,7 +6127,7 @@ return rows[0];'></textarea>
     
     <!-- 编辑一级测试点模态框 -->
     <div id="edit-level1-point-modal" class="modal" style="display: none;">
-        <div class="modal-content" id="edit-level1-point-content" style="max-width: 520px; min-width: 400px;">
+        <div class="modal-content" id="edit-level1-point-content" style="max-width: 680px; min-width: 500px; width: 680px;">
             <div class="modal-resizer" id="edit-level1-point-resizer"></div>
             <div class="modal-header" style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-bottom: 1px solid #e2e8f0; padding: 20px 24px; cursor: move;">
                 <div style="display: flex; align-items: center; gap: 12px;">
@@ -5150,7 +6155,7 @@ return rows[0];'></textarea>
                                 测试点名称
                                 <span style="color: #ef4444;">*</span>
                             </label>
-                            <input type="text" id="edit-level1-point-name" class="form-input" required maxlength="64" placeholder="请输入一级测试点名称" style="width: 100%; padding: 10px 14px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; transition: all 0.2s ease;">
+                            <input type="text" id="edit-level1-point-name" class="form-input" required maxlength="64" placeholder="请输入一级测试点名称" style="width: 100%; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; transition: all 0.2s ease;">
                             <div style="display: flex; justify-content: space-between; margin-top: 6px;">
                                 <span style="font-size: 12px; color: #94a3b8;">建议使用简洁明了的名称</span>
                                 <span id="edit-level1-point-name-counter" style="font-size: 12px; color: #94a3b8;">0/64</span>
@@ -5163,7 +6168,7 @@ return rows[0];'></textarea>
                                 测试类型
                                 <span style="color: #ef4444;">*</span>
                             </label>
-                            <select id="edit-level1-point-type" class="form-select" style="width: 100%; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; background: #fff; cursor: pointer;">
+                            <select id="edit-level1-point-type" class="form-select" style="width: 100%; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; background: #fff; cursor: pointer; height: 42px; line-height: 1.5;">
                                 <option value="功能测试">🧪 功能测试</option>
                                 <option value="性能测试">⚡ 性能测试</option>
                                 <option value="兼容性测试">🔄 兼容性测试</option>
@@ -5174,10 +6179,20 @@ return rows[0];'></textarea>
                     </div>
                     <div class="form-row">
                         <div class="form-group full-width">
-                            <label style="display: block; margin-bottom: 8px; font-size: 14px; font-weight: 500; color: #374151;">
-                                概述
-                            </label>
-                            <textarea id="edit-level1-point-summary" class="form-input" maxlength="300" placeholder="请输入一级测试点概述（可由AI自动生成）" rows="3" style="width: 100%; padding: 10px 14px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; transition: all 0.2s ease; resize: vertical; min-height: 60px;"></textarea>
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <label style="font-size: 14px; font-weight: 500; color: #374151; margin: 0;">
+                                    概述
+                                </label>
+                                <button type="button" id="ai-generate-summary-btn" onclick="generateLevel1PointSummary()" style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all 0.2s ease;">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"></path>
+                                        <path d="M12 16v-4"></path>
+                                        <path d="M12 8h.01"></path>
+                                    </svg>
+                                    AI生成概述
+                                </button>
+                            </div>
+                            <textarea id="edit-level1-point-summary" class="form-input" maxlength="300" placeholder="请输入一级测试点概述（可由AI自动生成）" rows="5" style="width: 100%; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; transition: all 0.2s ease; resize: vertical; min-height: 100px;"></textarea>
                             <div style="display: flex; justify-content: space-between; margin-top: 6px;">
                                 <span style="font-size: 12px; color: #94a3b8;">概述由AI总结子测试点内容生成，也可手动编辑</span>
                                 <span id="edit-level1-point-summary-counter" style="font-size: 12px; color: #94a3b8;">0/300</span>
@@ -6086,6 +7101,12 @@ return rows[0];'></textarea>
                             <div class="form-card-header">
                                 <span class="form-card-icon">⚙️</span>
                                 <span>关键配置</span>
+                                <button type="button" id="ai-generate-key-config-btn" onclick="generateKeyConfig()" class="btn btn-sm btn-primary" style="margin-left: auto; display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all 0.2s ease;">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                                    </svg>
+                                    AI生成
+                                </button>
                             </div>
                             <div class="form-card-body">
                                 <div class="form-group">
@@ -7562,8 +8583,12 @@ return rows[0];'></textarea>
     <script src="/js/modules/moduleLoader.js"></script>
     
     <!-- 原有的 script.js -->
-    <script src="script.js"></script>
+    <script src="script.js?v=20260428b"></script>
     <script src="js/notification.js"></script>
+    
+    <!-- 知识库和AI生成模块 -->
+    <script src="js/modules/knowledge-library.js?v=20260428d"></script>
+    <script src="js/modules/ai-generation.js?v=20260428"></script>
     
     <!-- AI问答模态框 -->
     <div id="ai-assistant-modal" class="ai-modal">
@@ -8162,6 +9187,12 @@ return rows[0];'></textarea>
                         <div class="drawer-card-header">
                             <span class="drawer-card-icon">⚙️</span>
                             <span>关键配置</span>
+                            <button type="button" id="ai-generate-key-config-btn" onclick="generateKeyConfig()" class="btn btn-sm btn-primary" style="margin-left: auto; display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all 0.2s ease;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                                </svg>
+                                AI生成
+                            </button>
                         </div>
                         <div class="drawer-card-body">
                             <div class="drawer-form-group">

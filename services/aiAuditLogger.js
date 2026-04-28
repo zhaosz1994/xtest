@@ -123,11 +123,12 @@ class AIAuditLogger {
 
   async getRecentLogs(limit = 100) {
     try {
+      const safeLimit = Math.max(1, Math.min(1000, parseInt(limit) || 100));
       const [logs] = await pool.execute(`
         SELECT * FROM ai_operation_logs 
         ORDER BY created_at DESC 
-        LIMIT ?
-      `, [limit]);
+        LIMIT ${safeLimit}
+      `);
       
       return logs;
     } catch (error) {
@@ -138,12 +139,13 @@ class AIAuditLogger {
 
   async getUserLogs(userId, limit = 100) {
     try {
+      const safeLimit = Math.max(1, Math.min(1000, parseInt(limit) || 100));
       const [logs] = await pool.execute(`
         SELECT * FROM ai_operation_logs 
         WHERE user_id = ?
         ORDER BY created_at DESC 
-        LIMIT ?
-      `, [userId, limit]);
+        LIMIT ${safeLimit}
+      `, [userId]);
       
       return logs;
     } catch (error) {
@@ -201,12 +203,13 @@ class AIAuditLogger {
 
   async getFailedOperations(limit = 100) {
     try {
+      const safeLimit = Math.max(1, Math.min(1000, parseInt(limit) || 100));
       const [logs] = await pool.execute(`
         SELECT * FROM ai_operation_logs 
         WHERE status = 'failed'
         ORDER BY created_at DESC 
-        LIMIT ?
-      `, [limit]);
+        LIMIT ${safeLimit}
+      `);
       
       return logs;
     } catch (error) {

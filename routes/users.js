@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../db');
 const { loginLimiter, writeLimiter } = require('../services/rateLimiter');
+const { getUserAIConfig, getUserAITimeoutConfig, getAITimeoutDefaults } = require('../services/aiService');
 const { authenticateToken, requireAdmin } = require('../middleware');
 const { logActivity } = require('./history');
 const logger = require('../services/logger');
@@ -626,6 +627,67 @@ router.put('/password', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '密码修改成功' });
   } catch (error) {
     logger.error('修改密码错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+router.get('/ai-timeout-config', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+
+  try {
+    const config = await getUserAITimeoutConfig(userId);
+    const defaults = getAITimeoutDefaults();
+    res.json({ success: true, data: { config, defaults } });
+  } catch (error) {
+    logger.error('获取用户AI超时配置错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+router.put('/ai-timeout-config', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const { generalAITask, reportGeneration } = req.body;
+
+  try {
+    const config = {};
+    const fields = { generalAITask, reportGeneration };
+    const defaults = getAITimeoutDefaults();
+    const validators = {
+      generalAITask: { min: 10000, max: 3600000 },
+      reportGeneration: { min: 60000, max: 7200000 }
+    };
+
+    for (const [key, value] of Object.entries(fields)) {
+      if (value !== undefined && value !== null) {
+        const numVal = parseInt(value, 10);
+        const { min, max } = validators[key] || { min: 5000, max: 3600000 };
+        if (isNaN(numVal) || numVal < min || numVal > max) {
+          return res.status(400).json({
+            success: false,
+            message: `${key} 的值必须在 ${min}-${max} 毫秒之间`
+          });
+        }
+        config[key] = numVal;
+      }
+    }
+
+    if (Object.keys(config).length === 0) {
+      await pool.execute(
+        'UPDATE users SET ai_timeout_config = NULL, updated_at = NOW() WHERE id = ?',
+        [userId]
+      );
+    } else {
+      const fullConfig = { ...defaults, ...config };
+      await pool.execute(
+        'UPDATE users SET ai_timeout_config = ?, updated_at = NOW() WHERE id = ?',
+        [JSON.stringify(fullConfig), userId]
+      );
+    }
+
+    const updatedConfig = await getUserAITimeoutConfig(userId);
+    res.json({ success: true, message: 'AI超时配置已更新', data: updatedConfig });
+  } catch (error) {
+    logger.error('更新用户AI超时配置错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });

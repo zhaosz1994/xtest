@@ -240,7 +240,7 @@
     cursor: pointer;
 }
 
-.expand-btn {
+.level1-item-header .expand-btn {
     width: 24px;
     height: 24px;
     display: flex;
@@ -250,14 +250,22 @@
     border: none;
     cursor: pointer;
     color: #94a3b8;
+    padding: 0;
+    font-size: inherit;
+    border-radius: 0;
+    font-weight: inherit;
+    box-shadow: none;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.expand-btn:hover {
+.level1-item-header .expand-btn:hover {
     color: #3b82f6;
+    background: transparent;
+    transform: none;
+    box-shadow: none;
 }
 
-.expand-btn svg {
+.level1-item-header .expand-btn svg {
     transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 

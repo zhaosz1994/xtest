@@ -1,5 +1,49 @@
 const pool = require('../db');
 
+const AI_TIMEOUT_DEFAULTS = {
+  generalAITask: 120000,
+  reportGeneration: 600000
+};
+
+function getAITimeoutDefaults() {
+  return { ...AI_TIMEOUT_DEFAULTS };
+}
+
+async function getUserAITimeoutConfig(userId) {
+  if (!userId) {
+    return getAITimeoutDefaults();
+  }
+
+  try {
+    const [users] = await pool.execute(
+      'SELECT ai_timeout_config FROM users WHERE id = ?',
+      [userId]
+    );
+
+    if (users.length === 0 || !users[0].ai_timeout_config) {
+      return getAITimeoutDefaults();
+    }
+
+    const userConfig = typeof users[0].ai_timeout_config === 'string'
+      ? JSON.parse(users[0].ai_timeout_config)
+      : users[0].ai_timeout_config;
+
+    const result = {
+      ...getAITimeoutDefaults(),
+      ...userConfig
+    };
+
+    if (userConfig.caseGeneration || userConfig.level1PointGeneration || userConfig.dedupEmbedding || userConfig.summaryGeneration) {
+      result.generalAITask = userConfig.generalAITask || userConfig.caseGeneration || userConfig.level1PointGeneration || userConfig.summaryGeneration || userConfig.dedupEmbedding || AI_TIMEOUT_DEFAULTS.generalAITask;
+    }
+
+    return result;
+  } catch (error) {
+    console.error('获取用户AI超时配置错误:', error);
+    return getAITimeoutDefaults();
+  }
+}
+
 async function getSystemDefaultAIConfig() {
   try {
     const [models] = await pool.execute(
@@ -48,5 +92,7 @@ async function getUserAIConfig(userId, modelId = null) {
 
 module.exports = {
   getSystemDefaultAIConfig,
-  getUserAIConfig
+  getUserAIConfig,
+  getUserAITimeoutConfig,
+  getAITimeoutDefaults
 };

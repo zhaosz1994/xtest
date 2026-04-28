@@ -1,5 +1,5 @@
 const pool = require('../db');
-const { getUserAIConfig } = require('./aiService');
+const { getUserAIConfig, getUserAITimeoutConfig } = require('./aiService');
 const aiAuditLogger = require('./aiAuditLogger');
 const logger = require('./logger');
 
@@ -100,7 +100,8 @@ ${caseSummary}
 请根据以上测试用例的内容，生成一段简洁的概述，总结该测试点的测试内容和目的。`;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    const timeoutConfig = await getUserAITimeoutConfig(userId);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutConfig.generalAITask);
     
     const response = await fetch(aiModel.endpoint, {
       method: 'POST',

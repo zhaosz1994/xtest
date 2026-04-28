@@ -1,3 +1,11 @@
+// ==================== 工具函数 ====================
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // ==================== 日志级别控制系统 ====================
 const LOG_LEVELS = {
     ERROR: 0,
@@ -272,6 +280,8 @@ const Router = {
         'cases': { section: 'cases', title: '用例库', requiresAuth: true },
         'testplans': { section: 'testplans', title: '测试计划', requiresAuth: true },
         'reports': { section: 'reports', title: '测试报告', requiresAuth: true },
+        'knowledge': { section: 'knowledge', title: '知识库', requiresAuth: true },
+        'ai-generation': { section: 'ai-generation', title: 'AI生成', requiresAuth: true },
         'settings': { section: 'settings', title: '配置中心', requiresAuth: true },
         'login': { section: 'login', title: '登录', requiresAuth: false },
         'register': { section: 'register', title: '注册', requiresAuth: false }
@@ -344,6 +354,12 @@ const Router = {
             }
         }
 
+        if (route.external && route.url) {
+            console.log('[Router] 外部链接，跳转到:', route.url);
+            window.location.href = route.url;
+            return;
+        }
+
         console.log('[Router] 显示页面:', route.section);
         this.showSection(route.section, route.title);
 
@@ -397,7 +413,8 @@ const Router = {
 
         const targetSection = document.getElementById(`${sectionId}-section`);
         if (targetSection) {
-            targetSection.style.display = 'block';
+            const flexSections = ['knowledge-section', 'ai-generation-section'];
+            targetSection.style.display = flexSections.includes(targetSection.id) ? 'flex' : 'block';
         }
 
         const loginSection = document.getElementById('login-section');
@@ -407,7 +424,7 @@ const Router = {
 
         const testlinkContainer = document.querySelector('.testlink-container');
         if (testlinkContainer) {
-            testlinkContainer.style.display = 'block';
+            testlinkContainer.style.display = 'flex';
         }
 
         // 根据不同页面加载对应数据
@@ -442,6 +459,12 @@ const Router = {
             case 'workspace':
                 initWorkspace();
                 break;
+            case 'knowledge':
+                if (typeof initKnowledgeLibrary === 'function') initKnowledgeLibrary();
+                break;
+            case 'ai-generation':
+                if (typeof initAIGeneration === 'function') initAIGeneration();
+                break;
             case 'dashboard':
                 loadRecentLogins();
                 updateStats();
@@ -459,7 +482,6 @@ const Router = {
         const testlinkContainer = document.querySelector('.testlink-container');
         if (testlinkContainer) {
             testlinkContainer.style.display = 'none';
-            console.log('[Router] 隐藏testlink-container');
         }
 
         const loginSection = document.getElementById('login-section');
@@ -472,7 +494,7 @@ const Router = {
     },
 
     updateNavigation(routeName) {
-        document.querySelectorAll('.nav-item, .sidebar-link').forEach(link => {
+        document.querySelectorAll('.nav-item, .sidebar-link, .nav-action-btn').forEach(link => {
             link.classList.remove('active');
             const href = link.getAttribute('href');
             if (href === `#${routeName}` || href === `#/${routeName}`) {
@@ -561,6 +583,10 @@ let selectedModules = [];
 let moduleList = [];
 let currentModulePage = 1;
 const modulesPerPage = 32;
+
+// 模块导航收起/展开状态
+let isModuleNavCollapsed = false;
+let savedNavWidth = 220;
 
 // 一级测试点相关变量
 let level1Points = [];
@@ -664,7 +690,7 @@ const dashboardDataCache = {
 
     clear() {
         Object.keys(this).forEach(k => {
-            if (k !== 'isExpired' && k !== 'set' && k !== 'get' && k !== 'timestamp' && k !== 'TTL' && k !== 'invalidateKey') {
+            if (k !== 'isExpired' && k !== 'set' && k !== 'get' && k !== 'timestamp' && k !== 'TTL' && k !== 'invalidateKey' && k !== 'clear' && k !== 'invalidateOnDataChange') {
                 this[k] = null;
             }
         });
@@ -2595,7 +2621,14 @@ function initWebSocket() {
     try {
         // 创建WebSocket连接 - 动态获取当前主机地址，支持跨平台部署
         const wsOrigin = window.location.origin;
-        socket = io(wsOrigin);
+        socket = io(wsOrigin, {
+            reconnection: true,
+            reconnectionAttempts: 10,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            timeout: 20000,
+            transports: ['websocket', 'polling']
+        });
 
         // 连接成功
         socket.on('connect', () => {
@@ -2609,6 +2642,25 @@ function initWebSocket() {
         // 连接失败
         socket.on('disconnect', () => {
             console.log('WebSocket连接断开');
+        });
+
+        // 连接错误
+        socket.on('connect_error', (error) => {
+            console.warn('WebSocket连接错误:', error.message);
+        });
+
+        // 重连成功
+        socket.on('reconnect', (attemptNumber) => {
+            console.log('WebSocket重连成功，尝试次数:', attemptNumber);
+            // 如果用户已登录，重新发送登录事件
+            if (currentUser && currentUser.username) {
+                socket.emit('login', currentUser);
+            }
+        });
+
+        // 重连失败
+        socket.on('reconnect_failed', () => {
+            console.warn('WebSocket重连失败，已达到最大重试次数');
         });
 
         // 监听用户登录
@@ -3786,11 +3838,11 @@ function renderTestCasesTable() {
     tableBody.innerHTML = testCasesData.map(testCase => `
         <tr>
             <td>${testCase.id}</td>
-            <td>${testCase.name}</td>
-            <td>${testCase.maintainer}</td>
+            <td>${escapeHtml(testCase.name)}</td>
+            <td>${escapeHtml(testCase.maintainer)}</td>
             <td><span class="priority-badge ${testCase.priority}">${getPriorityText(testCase.priority)}</span></td>
-            <td>${testCase.type}</td>
-            <td>${testCase.executor}</td>
+            <td>${escapeHtml(testCase.type)}</td>
+            <td>${escapeHtml(testCase.executor)}</td>
             <td><span class="status-badge ${testCase.result}">${getStatusText(testCase.result)}</span></td>
             <td>${testCase.lastExecuted || '未执行'}</td>
         </tr>
@@ -3953,8 +4005,8 @@ function renderCasesTable(filteredCases = null) {
 
     tableBody.innerHTML = casesToRender.map(testCase => `
         <tr>
-            <td>${testCase.name}</td>
-            <td>${testCase.creator}</td>
+            <td>${escapeHtml(testCase.name)}</td>
+            <td>${escapeHtml(testCase.creator)}</td>
             <td>${testCase.createdAt}</td>
             <td>${testCase.updatedAt}</td>
             <td>
@@ -4009,12 +4061,17 @@ function renderProjectsList() {
 
     if (projects && projects.length > 0) {
         tableBody.innerHTML = projects.map(project => `
-            <tr onclick="selectProject('${project.name}')">
-                <td>${project.name}</td>
-                <td>${currentUser ? currentUser.username : 'admin'}</td>
+            <tr class="project-row" data-project-name="${escapeHtml(project.name)}">
+                <td>${escapeHtml(project.name)}</td>
+                <td>${currentUser ? escapeHtml(currentUser.username) : 'admin'}</td>
                 <td>${formatDateTime(project.createdAt || project.created_at || '')}</td>
             </tr>
         `).join('');
+        tableBody.querySelectorAll('.project-row').forEach(row => {
+            row.addEventListener('click', function() {
+                selectProject(this.dataset.projectName);
+            });
+        });
     } else {
         tableBody.innerHTML = `
             <tr>
@@ -4322,14 +4379,20 @@ function getPriorityText(priority) {
 }
 
 // 格式化日期时间
-function formatDateTime(dateString) {
-    if (!dateString) return '';
-    // 处理 ISO 格式日期
-    if (dateString.includes('T') && dateString.includes('Z')) {
-        return dateString.replace('T', ' ').replace(/\.\d+Z$/, '');
+function formatDateTime(dateStr) {
+    if (!dateStr) return '-';
+    try {
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return dateStr;
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        return `${year}/${month}/${day} ${hours}:${minutes}`;
+    } catch (e) {
+        return dateStr;
     }
-    // 处理普通日期格式
-    return dateString;
 }
 
 // 获取当前日期时间（格式：YYYY-MM-DD HH:MM:SS，北京时间）
@@ -4880,7 +4943,7 @@ async function loadModulesForReordering() {
             li.className = 'reorder-item';
             li.dataset.moduleId = module.id;
             li.innerHTML = `
-                <span class="reorder-item-name">${module.name}</span>
+                <span class="reorder-item-name">${escapeHtml(module.name)}</span>
             `;
             li.draggable = true;
 
@@ -4951,7 +5014,7 @@ async function submitReorderModulesForm() {
         const items = reorderList.querySelectorAll('.reorder-item');
 
         const reorderedModules = Array.from(items).map(item => {
-            return item.querySelector('.reorder-item-name').textContent;
+            return item.dataset.moduleId;
         });
 
         console.log('调整后的模块顺序:', reorderedModules);
@@ -5027,6 +5090,12 @@ async function initModuleData() {
         // 初始化搜索功能
         initModuleSearch();
 
+        // 初始化拖拽调整宽度功能
+        initNavResizer();
+
+        // 加载用户偏好设置
+        loadNavPreferences();
+
         // 初始化事件监听器（只初始化一次）
         if (!window.dataEventListenersInitialized) {
             initDataEventListeners();
@@ -5045,6 +5114,12 @@ async function initModuleData() {
 
         // 初始化搜索功能
         initModuleSearch();
+
+        // 初始化拖拽调整宽度功能
+        initNavResizer();
+
+        // 加载用户偏好设置
+        loadNavPreferences();
 
         // 即使出错也尝试加载所有一级测试点
         await loadAllLevel1Points();
@@ -5176,7 +5251,7 @@ async function filterModules(searchTerm) {
             const li = document.createElement('li');
             li.className = 'case-nav-item';
             li.innerHTML = `
-                <span class="case-nav-name">${module.name}</span><span class="case-nav-count">(${module.level1Count || 0})</span>
+                <span class="case-nav-name">${escapeHtml(module.name)}</span><span class="case-nav-count">(${module.level1Count || 0})</span>
             `;
 
             // 添加点击事件
@@ -5294,7 +5369,7 @@ function updateModuleDisplay() {
         const li = document.createElement('li');
         li.className = 'case-nav-item';
         li.innerHTML = `
-                <span class="case-nav-name">${module.name}</span><span class="case-nav-count">(${module.level1Count || 0})</span>
+                <span class="case-nav-name">${escapeHtml(module.name)}</span><span class="case-nav-count">(${module.level1Count || 0})</span>
                 <span class="module-actions">
                     <button class="module-action-btn" data-module-id="${module.id}" title="操作">...</button>
                 </span>
@@ -5453,15 +5528,24 @@ function initModuleActionButtons() {
             background-color: #f5f7fa;
         }
         
+        .case-nav-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .case-nav-count {
+            margin-right: 40px;
+            color: #909399;
+            font-size: 13px;
+        }
+        
         .module-actions {
             position: absolute;
             right: 16px;
-            opacity: 0;
-            transition: opacity 0.2s ease;
-        }
-        
-        .case-nav-item:hover .module-actions {
             opacity: 1;
+            transition: opacity 0.2s ease;
         }
         
         .module-action-btn {
@@ -5525,27 +5609,39 @@ function initModuleActionButtons() {
 
 // 显示模块菜单
 function showModuleMenu(x, y, moduleId, moduleName) {
-    // 移除已存在的菜单
     const existingMenu = document.querySelector('.module-menu');
     if (existingMenu) {
         existingMenu.remove();
     }
 
-    // 创建菜单
+    const module = moduleList.find(m => m.id == moduleId);
+    const hasAssociatedData = module && (module.level1Count > 0 || module.caseCount > 0);
+    const isAdminUser = Router.isAdmin();
+    const isCreator = module && currentUser && module.createdBy === currentUser.username;
+    const canOperate = isAdminUser || (!hasAssociatedData && isCreator);
+
     const menu = document.createElement('div');
     menu.className = 'module-menu';
     menu.style.left = x + 'px';
     menu.style.top = y + 'px';
-    menu.innerHTML = `
-        <div class="module-menu-item" data-action="rename" data-module-id="${moduleId}">重命名</div>
-        <div class="module-menu-item" data-action="add-submodule" data-module-id="${moduleId}">新建子模块</div>
-        <div class="module-menu-item" data-action="delete" data-module-id="${moduleId}">删除</div>
-    `;
 
+    let menuHtml = '';
+    
+    if (canOperate) {
+        menuHtml += `<div class="module-menu-item" data-action="rename" data-module-id="${moduleId}">重命名</div>`;
+        menuHtml += `<div class="module-menu-item" data-action="delete" data-module-id="${moduleId}">删除</div>`;
+    } else if (isAdminUser && hasAssociatedData) {
+        menuHtml += `<div class="module-menu-item" data-action="rename" data-module-id="${moduleId}">重命名</div>`;
+        menuHtml += `<div class="module-menu-item" data-action="delete" data-module-id="${moduleId}">删除</div>`;
+    } else {
+        menuHtml += `<div class="module-menu-item disabled" style="color: #c0c4cc; cursor: not-allowed;">重命名 (无权限)</div>`;
+        menuHtml += `<div class="module-menu-item disabled" style="color: #c0c4cc; cursor: not-allowed;">删除 (无权限)</div>`;
+    }
+    
+    menu.innerHTML = menuHtml;
     document.body.appendChild(menu);
 
-    // 点击菜单项
-    menu.querySelectorAll('.module-menu-item').forEach(item => {
+    menu.querySelectorAll('.module-menu-item:not(.disabled)').forEach(item => {
         item.addEventListener('click', function () {
             const action = this.getAttribute('data-action');
             handleModuleAction(action, moduleId, moduleName);
@@ -5553,7 +5649,6 @@ function showModuleMenu(x, y, moduleId, moduleName) {
         });
     });
 
-    // 点击外部关闭菜单
     document.addEventListener('click', function closeMenu(e) {
         if (!menu.contains(e.target)) {
             menu.remove();
@@ -5591,10 +5686,9 @@ function openEditModuleModal(moduleId, currentName) {
     nameInput.value = currentName;
     counter.textContent = `${currentName.length}/32`;
 
-    // 添加输入事件监听器
-    nameInput.addEventListener('input', function () {
+    nameInput.oninput = function () {
         counter.textContent = `${this.value.length}/32`;
-    });
+    };
 
     modal.style.display = 'block';
 }
@@ -5793,6 +5887,149 @@ async function deleteModule(moduleId, moduleName) {
         showErrorMessage('模块删除失败: ' + error.message);
     } finally {
         hideLoading();
+    }
+}
+
+// ========================================
+// 模块导航收起/展开和拖拽调整功能
+// ========================================
+
+// 切换模块导航收起/展开状态
+function toggleModuleNavCollapse() {
+    const caseNavWrapper = document.getElementById('case-nav-wrapper');
+    const caseManagementContent = document.getElementById('case-management-content');
+    const collapseBtn = document.getElementById('collapse-nav-btn');
+    const collapsedToggle = document.getElementById('nav-collapsed-toggle');
+    
+    if (!caseNavWrapper || !caseManagementContent) return;
+    
+    if (isModuleNavCollapsed) {
+        // 展开
+        caseNavWrapper.classList.remove('collapsed');
+        caseManagementContent.style.gridTemplateColumns = `${savedNavWidth}px 1fr`;
+        caseManagementContent.style.gap = '24px';
+        if (collapseBtn) {
+            collapseBtn.title = '收起模块列表';
+        }
+    } else {
+        // 收起
+        const caseNav = document.getElementById('case-nav');
+        if (caseNav) savedNavWidth = caseNav.offsetWidth;
+        caseNavWrapper.classList.add('collapsed');
+        caseManagementContent.style.gridTemplateColumns = '20px 1fr';
+        caseManagementContent.style.gap = '4px';
+        if (collapseBtn) {
+            collapseBtn.title = '展开模块列表';
+        }
+    }
+    
+    isModuleNavCollapsed = !isModuleNavCollapsed;
+    
+    // 保存用户偏好
+    saveNavPreferences();
+    
+    // 触发右侧内容区域重新布局
+    setTimeout(() => {
+        triggerContentResize();
+    }, 350);
+}
+
+// 初始化导航拖拽调整宽度功能
+function initNavResizer() {
+    const caseNav = document.getElementById('case-nav');
+    const resizer = document.getElementById('nav-resizer');
+    const caseManagementContent = document.getElementById('case-management-content');
+    
+    if (!caseNav || !resizer || !caseManagementContent) return;
+    
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 0;
+    const minWidth = 180;
+    const maxWidth = 400;
+    
+    resizer.addEventListener('mousedown', (e) => {
+        // 如果已收起，不允许拖拽
+        if (isModuleNavCollapsed) return;
+        
+        isResizing = true;
+        startX = e.clientX;
+        startWidth = caseNav.offsetWidth;
+        
+        resizer.classList.add('dragging');
+        document.body.classList.add('nav-resizing');
+        
+        e.preventDefault();
+    });
+    
+    document.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+        
+        const deltaX = e.clientX - startX;
+        let newWidth = startWidth + deltaX;
+        
+        // 限制宽度范围
+        newWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
+        
+        // 更新Grid布局
+        caseManagementContent.style.gridTemplateColumns = `${newWidth}px 1fr`;
+        
+        // 保存宽度
+        savedNavWidth = newWidth;
+    });
+    
+    document.addEventListener('mouseup', () => {
+        if (isResizing) {
+            isResizing = false;
+            resizer.classList.remove('dragging');
+            document.body.classList.remove('nav-resizing');
+            
+            // 保存用户偏好
+            saveNavPreferences();
+            
+            // 触发右侧内容区域重新布局
+            triggerContentResize();
+        }
+    });
+    
+    // 双击恢复默认宽度
+    resizer.addEventListener('dblclick', () => {
+        if (isModuleNavCollapsed) return;
+        
+        caseManagementContent.style.gridTemplateColumns = '220px 1fr';
+        savedNavWidth = 220;
+        saveNavPreferences();
+        triggerContentResize();
+    });
+}
+
+// 触发右侧内容区域重新布局
+function triggerContentResize() {
+    // 触发 window resize 事件，让右侧内容区域重新计算布局
+    window.dispatchEvent(new Event('resize'));
+}
+
+// 保存用户偏好设置
+function saveNavPreferences() {
+    try {
+        const preferences = {
+            collapsed: isModuleNavCollapsed,
+            width: savedNavWidth
+        };
+        localStorage.setItem('moduleNavPreferences', JSON.stringify(preferences));
+    } catch (e) {
+        // 忽略存储错误
+    }
+}
+
+// 加载用户偏好设置
+function loadNavPreferences() {
+    try {
+        localStorage.removeItem('moduleNavPreferences');
+        
+        const caseManagementContent = document.getElementById('case-management-content');
+        if (caseManagementContent) caseManagementContent.style.gridTemplateColumns = `${savedNavWidth}px 1fr`;
+    } catch (e) {
     }
 }
 
@@ -6124,7 +6361,14 @@ async function toggleLevel1Expand(pointId) {
 
 async function loadLevel1TestCases(level1Id) {
     try {
-        const response = await apiRequest(`/testcases/level1/${level1Id}`);
+        const response = await apiRequest('/cases/list', {
+            method: 'POST',
+            body: JSON.stringify({
+                level1Id: level1Id,
+                page: 1,
+                pageSize: 1000
+            })
+        });
         
         if (response.success && response.testCases) {
             level1TestCasesCache[level1Id] = response.testCases;
@@ -6220,7 +6464,7 @@ function renderLevel1TestCases(level1Id, testCases) {
 
 function toggleExpandAllLevel1() {
     const btn = document.getElementById('expand-all-level1-btn');
-    const allExpanded = level1ExpandedItems.size === level1Points.length;
+    const allExpanded = level1ExpandedItems.size === level1Points.length && level1Points.length > 0;
     
     if (allExpanded) {
         level1ExpandedItems.clear();
@@ -6233,11 +6477,9 @@ function toggleExpandAllLevel1() {
         btn.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
     } else {
         level1Points.forEach((point, index) => {
-            setTimeout(() => {
-                if (!level1ExpandedItems.has(point.id)) {
-                    toggleLevel1Expand(point.id);
-                }
-            }, index * 50);
+            if (!level1ExpandedItems.has(point.id)) {
+                toggleLevel1Expand(point.id);
+            }
         });
         btn.style.background = 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)';
     }
@@ -7656,15 +7898,20 @@ async function deleteTestCaseFromDrawer() {
     }
 }
 
-function formatDateTime(dateString) {
-    if (!dateString) return '-';
-    const date = new Date(dateString);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    return `${year}/${month}/${day} ${hours}:${minutes}`;
+function formatDateTime(dateStr) {
+    if (!dateStr) return '-';
+    try {
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return dateStr;
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        return `${year}/${month}/${day} ${hours}:${minutes}`;
+    } catch (e) {
+        return dateStr;
+    }
 }
 
 // 更新一级测试点分页控件
@@ -9648,13 +9895,6 @@ function toggleTimelineImages(btn) {
 }
 
 // HTML转义函数
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML.replace(/'/g, '&#039;');
-}
-
 function showBugDetail(bugId) {
     showSuccessMessage(`查看Bug详情: ${bugId}`);
 }
@@ -10689,9 +10929,17 @@ function initLevel1PointModalResizer(type) {
     const resizer = document.getElementById(resizerId);
     const modalHeader = modalContent?.querySelector('.modal-header');
     
-    if (!modalContent || !resizer) return;
+    console.log('初始化调整大小功能:', { type, contentId, resizerId, modalContent: !!modalContent, resizer: !!resizer });
     
-    if (modalContent.dataset.resizerInitialized === 'true') return;
+    if (!modalContent || !resizer) {
+        console.warn('找不到模态框或调整手柄元素');
+        return;
+    }
+    
+    if (modalContent.dataset.resizerInitialized === 'true') {
+        console.log('调整大小功能已初始化，跳过');
+        return;
+    }
     modalContent.dataset.resizerInitialized = 'true';
 
     let isResizing = false;
@@ -10706,9 +10954,19 @@ function initLevel1PointModalResizer(type) {
 
     // 调整宽度功能
     resizer.addEventListener('mousedown', (e) => {
+        console.log('调整手柄被点击');
         isResizing = true;
         startX = e.clientX;
         startWidth = modalContent.offsetWidth;
+        
+        // 确保模态框在调整大小时有正确的定位
+        if (modalContent.style.position !== 'fixed') {
+            const rect = modalContent.getBoundingClientRect();
+            modalContent.style.position = 'fixed';
+            modalContent.style.left = rect.left + 'px';
+            modalContent.style.top = rect.top + 'px';
+            modalContent.style.margin = '0';
+        }
         
         resizer.classList.add('dragging');
         document.body.classList.add('modal-resizing');
@@ -10747,6 +11005,8 @@ function initLevel1PointModalResizer(type) {
             const deltaX = e.clientX - startX;
             const newWidth = startWidth + deltaX;
             const maxWidth = window.innerWidth * maxWidthRatio;
+            
+            console.log('调整宽度:', { deltaX, newWidth, minWidth, maxWidth });
             
             if (newWidth >= minWidth && newWidth <= maxWidth) {
                 modalContent.style.width = newWidth + 'px';
@@ -10794,8 +11054,9 @@ function initLevel1PointModalResizer(type) {
 
     // 双击重置宽度
     resizer.addEventListener('dblclick', () => {
-        modalContent.style.width = '';
-        modalContent.style.maxWidth = '520px';
+        const defaultWidth = type === 'add' ? '520px' : '680px';
+        modalContent.style.width = defaultWidth;
+        modalContent.style.maxWidth = defaultWidth;
     });
 }
 
@@ -10809,7 +11070,7 @@ function resetLevel1PointModalPosition(type) {
         modalContent.style.top = '';
         modalContent.style.margin = '';
         modalContent.style.width = '';
-        modalContent.style.maxWidth = '520px';
+        modalContent.style.maxWidth = type === 'add' ? '520px' : '680px';
     }
 }
 
@@ -14751,13 +15012,6 @@ function renderMarkdownContent() {
     }
 }
 
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML.replace(/'/g, '&#039;');
-}
-
 async function generateReportFromTestPlan(testPlanId) {
     console.log(`[生成报告] 开始生成测试报告，testPlanId: ${testPlanId}`);
     
@@ -15317,10 +15571,10 @@ function renderCaseLibrariesTable() {
                                 <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
                             </svg>
                         </div>
-                        <span class="case-library-name">${library.name || '未命名'}</span>
+                        <span class="case-library-name">${escapeHtml(library.name || '未命名')}</span>
                     </div>
                 </td>
-                <td style="color: #64748b;">${library.creator || library.owner || 'admin'}</td>
+                <td style="color: #64748b;">${escapeHtml(library.creator || library.owner || 'admin')}</td>
                 <td style="color: #64748b;">${formatDateTime(library.createdAt || library.created_at || '')}</td>
                 <td style="text-align: right;">
                     <span style="display: inline-flex; align-items: center; gap: 4px; background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%); padding: 4px 12px; border-radius: 12px; font-size: 13px; font-weight: 600; color: #6366f1;">
@@ -15760,8 +16014,7 @@ async function verifyCaseLibraryPersistence() {
 
 // 导入用例
 function importTestCases() {
-    console.log('导入用例');
-    // 这里将实现导入用例功能
+    openImportExcelModal();
 }
 
 // 配置中心功能
@@ -15958,7 +16211,8 @@ function loadConfigPanelData(panelId) {
         'test-software-config': loadTestSoftwares,
         'report-templates-config': loadReportTemplates,
         'ai-config-config': initAIConfigPage,
-        'ai-skills-config': loadAISkills
+        'ai-skills-config': loadAISkills,
+        'ai-timeout-config': loadAITimeoutConfig
     };
 
     const loader = dataLoaders[panelId];
@@ -16301,6 +16555,190 @@ async function resetNotificationPrefs() {
     }
 }
 
+// ========================================
+// AI 超时配置功能
+// ========================================
+
+const AI_TIMEOUT_ITEMS = [
+    { key: 'generalAITask', label: 'AI 任务超时', desc: '用例生成、一级测试点生成、去重 Embedding、概述生成等所有常规AI任务的统一超时时间', defaultMs: 120000, min: 10000, max: 3600000 },
+    { key: 'reportGeneration', label: '报告分析超时', desc: 'AI生成报告分析时的请求超时时间，因数据量较大通常需要更长超时', defaultMs: 600000, min: 60000, max: 7200000 }
+];
+
+let _aiTimeoutConfig = null;
+let _aiTimeoutDefaults = null;
+
+async function loadAITimeoutConfig() {
+    const container = document.getElementById('ai-timeout-settings-container');
+    if (!container) return;
+
+    container.innerHTML = '<div style="text-align:center;padding:40px;color:#999;"><span style="font-size:24px;">⏳</span><p>加载AI超时配置中...</p></div>';
+
+    try {
+        const result = await apiRequest('/users/ai-timeout-config', { useCache: false });
+        if (result.success && result.data) {
+            _aiTimeoutConfig = result.data.config;
+            _aiTimeoutDefaults = result.data.defaults;
+            renderAITimeoutConfig(result.data.config, result.data.defaults);
+        } else {
+            container.innerHTML = '<div style="text-align:center;padding:40px;color:#dc3545;"><span style="font-size:24px;">❌</span><p>加载AI超时配置失败</p></div>';
+        }
+    } catch (error) {
+        console.error('加载AI超时配置失败:', error);
+        container.innerHTML = '<div style="text-align:center;padding:40px;color:#dc3545;"><span style="font-size:24px;">❌</span><p>加载AI超时配置失败</p></div>';
+    }
+}
+
+function renderAITimeoutConfig(config, defaults) {
+    const container = document.getElementById('ai-timeout-settings-container');
+    if (!container) return;
+
+    let html = '';
+
+    html += `<div class="settings-section" style="margin-bottom:20px;">
+        <div class="settings-section-header">
+            <span class="section-icon">💡</span>
+            <div class="section-title-group">
+                <h4 class="settings-section-title">超时配置说明</h4>
+                <p class="settings-section-desc">不同大模型和服务器响应速度不同，您可以根据实际使用情况调整AI任务的请求超时时间。未配置的项将使用系统默认值。</p>
+            </div>
+        </div>
+    </div>`;
+
+    html += `<div class="settings-section" style="margin-bottom:20px;">
+        <div class="settings-section-header">
+            <span class="section-icon">⏱️</span>
+            <div class="section-title-group">
+                <h4 class="settings-section-title">超时设置</h4>
+                <p class="settings-section-desc">单位：秒，数值表示等待AI响应的最大时间</p>
+            </div>
+        </div>
+        <div class="settings-items">`;
+
+    AI_TIMEOUT_ITEMS.forEach(item => {
+        const currentValue = config[item.key] || defaults[item.key] || item.defaultMs;
+        const currentSeconds = Math.round(currentValue / 1000);
+        const defaultSeconds = Math.round((defaults[item.key] || item.defaultMs) / 1000);
+        const minSeconds = Math.round(item.min / 1000);
+        const maxSeconds = Math.round(item.max / 1000);
+        const isCustom = config[item.key] !== undefined && config[item.key] !== null && config[item.key] !== defaults[item.key];
+
+        html += `<div class="setting-item-card" style="flex-direction:column;align-items:flex-start;gap:8px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
+                <div class="setting-item-info">
+                    <h5>${item.label} ${isCustom ? '<span style="color:#f59e0b;font-size:11px;font-weight:normal;">(已自定义)</span>' : ''}</h5>
+                    <p>${item.desc}</p>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <input type="number" id="ai-timeout-${item.key}" value="${currentSeconds}" min="${minSeconds}" max="${maxSeconds}" step="5"
+                        style="width:80px;padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px;text-align:right;"
+                        data-key="${item.key}" data-default-ms="${item.defaultMs}">
+                    <span style="color:#666;font-size:14px;white-space:nowrap;">秒</span>
+                </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding-left:12px;width:100%;">
+                <span style="color:#9ca3af;font-size:12px;">默认 ${defaultSeconds} 秒</span>
+                <span style="color:#d1d5db;">|</span>
+                <span style="color:#9ca3af;font-size:12px;">范围 ${minSeconds}-${maxSeconds} 秒</span>
+            </div>
+        </div>`;
+    });
+
+    html += `</div></div>`;
+
+    container.innerHTML = html;
+}
+
+async function saveAITimeoutConfig() {
+    if (!_aiTimeoutDefaults) {
+        showErrorMessage('请先加载配置');
+        return;
+    }
+
+    const config = {};
+
+    for (const item of AI_TIMEOUT_ITEMS) {
+        const input = document.getElementById(`ai-timeout-${item.key}`);
+        if (!input) continue;
+
+        const valueSeconds = parseInt(input.value, 10);
+        const minSeconds = Math.round(item.min / 1000);
+        const maxSeconds = Math.round(item.max / 1000);
+
+        if (isNaN(valueSeconds) || valueSeconds < minSeconds || valueSeconds > maxSeconds) {
+            showErrorMessage(`${item.label} 的值必须在 ${minSeconds}-${maxSeconds} 秒之间`);
+            return;
+        }
+
+        config[item.key] = valueSeconds * 1000;
+    }
+
+    try {
+        const saveBtn = document.getElementById('save-ai-timeout-btn');
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<span class="btn-icon">⏳</span> 保存中...';
+        }
+
+        const result = await apiRequest('/users/ai-timeout-config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        });
+
+        if (result.success) {
+            showSuccessMessage('AI超时配置已保存');
+            _aiTimeoutConfig = result.data;
+            renderAITimeoutConfig(result.data, _aiTimeoutDefaults);
+        } else {
+            showErrorMessage(result.message || '保存失败');
+        }
+    } catch (error) {
+        console.error('保存AI超时配置失败:', error);
+        showErrorMessage('保存AI超时配置失败');
+    } finally {
+        const saveBtn = document.getElementById('save-ai-timeout-btn');
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<span class="btn-icon">💾</span> 保存设置';
+        }
+    }
+}
+
+async function resetAITimeoutConfig() {
+    if (!(await showConfirmMessage('确定要恢复所有AI超时配置为系统默认值吗？'))) return;
+
+    try {
+        const resetBtn = document.getElementById('reset-ai-timeout-btn');
+        if (resetBtn) {
+            resetBtn.disabled = true;
+            resetBtn.innerHTML = '<span class="btn-icon">⏳</span> 重置中...';
+        }
+
+        const result = await apiRequest('/users/ai-timeout-config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+
+        if (result.success) {
+            showSuccessMessage('已恢复为默认配置');
+            _aiTimeoutConfig = result.data;
+            renderAITimeoutConfig(result.data, _aiTimeoutDefaults);
+        } else {
+            showErrorMessage(result.message || '重置失败');
+        }
+    } catch (error) {
+        console.error('重置AI超时配置失败:', error);
+        showErrorMessage('重置AI超时配置失败');
+    } finally {
+        const resetBtn = document.getElementById('reset-ai-timeout-btn');
+        if (resetBtn) {
+            resetBtn.disabled = false;
+            resetBtn.innerHTML = '<span class="btn-icon">🔄</span> 恢复默认';
+        }
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     const saveBtn = document.getElementById('save-notification-prefs-btn');
     if (saveBtn) {
@@ -16309,6 +16747,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const resetBtn = document.getElementById('reset-notification-prefs-btn');
     if (resetBtn) {
         resetBtn.addEventListener('click', resetNotificationPrefs);
+    }
+    const aiTimeoutSaveBtn = document.getElementById('save-ai-timeout-btn');
+    if (aiTimeoutSaveBtn) {
+        aiTimeoutSaveBtn.addEventListener('click', saveAITimeoutConfig);
+    }
+    const aiTimeoutResetBtn = document.getElementById('reset-ai-timeout-btn');
+    if (aiTimeoutResetBtn) {
+        aiTimeoutResetBtn.addEventListener('click', resetAITimeoutConfig);
     }
 });
 
@@ -22704,6 +23150,115 @@ function closeEditLevel1PointModal() {
     resetLevel1PointModalPosition('edit');
 }
 
+// AI生成一级测试点概述
+async function generateLevel1PointSummary() {
+    const pointId = document.getElementById('edit-level1-point-id').value;
+    const summaryTextarea = document.getElementById('edit-level1-point-summary');
+    const generateBtn = document.getElementById('ai-generate-summary-btn');
+    
+    if (!pointId) {
+        showErrorMessage('无法获取测试点ID');
+        return;
+    }
+    
+    try {
+        generateBtn.disabled = true;
+        generateBtn.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite;">
+                <circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="32"></circle>
+            </svg>
+            生成中...
+        `;
+        
+        showLoading('AI正在生成概述...');
+        
+        // TODO: 这里后续实现AI生成概述的逻辑
+        // 目前先显示提示信息
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        showInfoMessage('AI生成概述功能即将上线，敬请期待！');
+        
+    } catch (error) {
+        console.error('生成概述失败:', error);
+        showErrorMessage('生成概述失败: ' + error.message);
+    } finally {
+        hideLoading();
+        generateBtn.disabled = false;
+        generateBtn.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"></path>
+                <path d="M12 16v-4"></path>
+                <path d="M12 8h.01"></path>
+            </svg>
+            AI生成概述
+        `;
+    }
+}
+
+// AI生成关键配置
+async function generateKeyConfig() {
+    // 检测当前是在哪个表单中（右侧滑屉或详情模态框）
+    const isDrawer = document.getElementById('drawer-testcase-key-config') !== null;
+    const isModal = document.getElementById('detail-case-key-config') !== null;
+    
+    let keyConfigTextarea, generateBtn;
+    let precondition, purpose, steps, expected, caseName;
+    
+    if (isDrawer) {
+        // 右侧滑屉表单
+        keyConfigTextarea = document.getElementById('drawer-testcase-key-config');
+        generateBtn = document.getElementById('ai-generate-key-config-btn');
+        precondition = document.getElementById('drawer-testcase-precondition')?.value || '';
+        purpose = document.getElementById('drawer-testcase-purpose')?.value || '';
+        steps = document.getElementById('drawer-testcase-steps')?.value || '';
+        expected = document.getElementById('drawer-testcase-expected')?.value || '';
+        caseName = document.getElementById('drawer-testcase-name')?.value || '';
+    } else if (isModal) {
+        // 详情模态框表单
+        keyConfigTextarea = document.getElementById('detail-case-key-config');
+        generateBtn = document.getElementById('ai-generate-key-config-btn');
+        precondition = document.getElementById('detail-case-precondition')?.value || '';
+        purpose = document.getElementById('detail-case-purpose')?.value || '';
+        steps = document.getElementById('detail-case-steps')?.value || '';
+        expected = document.getElementById('detail-case-expected')?.value || '';
+        caseName = document.getElementById('detail-case-name')?.value || '';
+    } else {
+        showErrorMessage('未找到关键配置表单');
+        return;
+    }
+    
+    try {
+        generateBtn.disabled = true;
+        generateBtn.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite;">
+                <circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="32"></circle>
+            </svg>
+            生成中...
+        `;
+        
+        showLoading('AI正在生成关键配置...');
+        
+        // TODO: 这里后续实现AI生成关键配置的逻辑
+        // 目前先显示提示信息
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        showInfoMessage('AI生成关键配置功能即将上线，敬请期待！');
+        
+    } catch (error) {
+        console.error('生成关键配置失败:', error);
+        showErrorMessage('生成关键配置失败: ' + error.message);
+    } finally {
+        hideLoading();
+        generateBtn.disabled = false;
+        generateBtn.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+            </svg>
+            AI生成
+        `;
+    }
+}
+
 // 提交编辑一级测试点表单
 async function submitEditLevel1PointForm() {
     try {
@@ -23191,6 +23746,134 @@ async function toggleSkillStatus(skillId) {
     }
 }
 
+function aiSkillFormatJson() {
+    const input = document.getElementById('ai-skill-definition-input');
+    const status = document.getElementById('ai-skill-json-status');
+    if (!input.value.trim()) return;
+    try {
+        const obj = JSON.parse(input.value);
+        input.value = JSON.stringify(obj, null, 2);
+        status.className = 'ai-skill-json-status json-valid';
+        status.textContent = '✓ JSON格式化成功';
+        status.style.display = 'flex';
+        setTimeout(() => { status.style.display = 'none'; }, 2000);
+    } catch (e) {
+        status.className = 'ai-skill-json-status json-invalid';
+        status.textContent = '✕ JSON格式错误: ' + e.message;
+        status.style.display = 'flex';
+    }
+}
+
+function aiSkillCompressJson() {
+    const input = document.getElementById('ai-skill-definition-input');
+    const status = document.getElementById('ai-skill-json-status');
+    if (!input.value.trim()) return;
+    try {
+        const obj = JSON.parse(input.value);
+        input.value = JSON.stringify(obj);
+        status.className = 'ai-skill-json-status json-valid';
+        status.textContent = '✓ JSON已压缩';
+        status.style.display = 'flex';
+        setTimeout(() => { status.style.display = 'none'; }, 2000);
+    } catch (e) {
+        status.className = 'ai-skill-json-status json-invalid';
+        status.textContent = '✕ JSON格式错误: ' + e.message;
+        status.style.display = 'flex';
+    }
+}
+
+function aiSkillValidateJson() {
+    const input = document.getElementById('ai-skill-definition-input');
+    const status = document.getElementById('ai-skill-json-status');
+    if (!input.value.trim()) {
+        status.className = 'ai-skill-json-status json-invalid';
+        status.textContent = '✕ 内容为空';
+        status.style.display = 'flex';
+        return;
+    }
+    try {
+        JSON.parse(input.value);
+        status.className = 'ai-skill-json-status json-valid';
+        status.textContent = '✓ JSON格式正确';
+        status.style.display = 'flex';
+        setTimeout(() => { status.style.display = 'none'; }, 3000);
+    } catch (e) {
+        status.className = 'ai-skill-json-status json-invalid';
+        status.textContent = '✕ JSON格式错误: ' + e.message;
+        status.style.display = 'flex';
+    }
+}
+
+let _aiSkillModalDragInited = false;
+function _initAiSkillModalDragResize() {
+    if (_aiSkillModalDragInited) return;
+    _aiSkillModalDragInited = true;
+    const modal = document.getElementById('ai-skill-modal');
+    const content = modal.querySelector('.ai-skill-modal-content');
+    const header = modal.querySelector('.ai-skill-modal-header');
+    const resizer = modal.querySelector('.ai-skill-modal-resizer');
+    if (!content) return;
+
+    let isDragging = false, isResizing = false;
+    let dragStartX = 0, dragStartY = 0, dragStartLeft = 0, dragStartTop = 0;
+    let resizeStartX = 0, resizeStartY = 0, resizeStartW = 0, resizeStartH = 0;
+
+    if (header) {
+        header.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.ai-skill-modal-close')) return;
+            isDragging = true;
+            const rect = content.getBoundingClientRect();
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            dragStartLeft = rect.left;
+            dragStartTop = rect.top;
+            document.body.classList.add('ai-skill-modal-dragging');
+            e.preventDefault();
+        });
+    }
+
+    if (resizer) {
+        resizer.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            resizeStartX = e.clientX;
+            resizeStartY = e.clientY;
+            resizeStartW = content.offsetWidth;
+            resizeStartH = content.offsetHeight;
+            document.body.classList.add('ai-skill-modal-resizing');
+            e.preventDefault();
+            e.stopPropagation();
+        });
+    }
+
+    document.addEventListener('mousemove', (e) => {
+        if (isDragging) {
+            const dx = e.clientX - dragStartX;
+            const dy = e.clientY - dragStartY;
+            content.style.position = 'fixed';
+            content.style.left = (dragStartLeft + dx) + 'px';
+            content.style.top = (dragStartTop + dy) + 'px';
+            content.style.margin = '0';
+        }
+        if (isResizing) {
+            const newW = Math.max(520, resizeStartW + (e.clientX - resizeStartX));
+            const newH = Math.max(400, resizeStartH + (e.clientY - resizeStartY));
+            content.style.width = Math.min(newW, window.innerWidth - 40) + 'px';
+            content.style.height = Math.min(newH, window.innerHeight - 40) + 'px';
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            document.body.classList.remove('ai-skill-modal-dragging');
+        }
+        if (isResizing) {
+            isResizing = false;
+            document.body.classList.remove('ai-skill-modal-resizing');
+        }
+    });
+}
+
 // 打开AI技能模态框
 function openAISkillModal(skill = null) {
     const modal = document.getElementById('ai-skill-modal');
@@ -23217,7 +23900,7 @@ function openAISkillModal(skill = null) {
 
         if (skill.isSystem) {
             document.getElementById('ai-skill-code-input').disabled = true;
-            warning.style.display = 'inline';
+            warning.style.display = 'flex';
         } else {
             document.getElementById('ai-skill-code-input').disabled = false;
             warning.style.display = 'none';
@@ -23249,12 +23932,23 @@ function openAISkillModal(skill = null) {
     }
 
     modal.style.display = 'flex';
+    _initAiSkillModalDragResize();
 }
 
 // 关闭AI技能模态框
 function closeAISkillModal() {
-    document.getElementById('ai-skill-modal').style.display = 'none';
+    const modal = document.getElementById('ai-skill-modal');
+    const content = modal.querySelector('.ai-skill-modal-content');
+    modal.style.display = 'none';
     currentEditingSkillId = null;
+    if (content) {
+        content.style.position = '';
+        content.style.left = '';
+        content.style.top = '';
+        content.style.margin = '';
+        content.style.width = '';
+        content.style.height = '';
+    }
 }
 
 // 编辑AI技能
@@ -23737,14 +24431,6 @@ async function deleteReportTemplate(templateId) {
         logger.error('删除报告模板错误:', error);
         showErrorMessage('删除失败: ' + error.message);
     }
-}
-
-// HTML 转义函数
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML.replace(/'/g, '&#039;');
 }
 
 document.addEventListener('DOMContentLoaded', function () {
@@ -24899,16 +25585,6 @@ document.addEventListener('DOMContentLoaded', function () {
         aiInput.addEventListener('input', function () {
             this.style.height = 'auto';
             this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-        });
-    }
-
-    // 点击模态框外部关闭
-    const aiModal = document.getElementById('ai-assistant-modal');
-    if (aiModal) {
-        aiModal.addEventListener('click', function (e) {
-            if (e.target === this) {
-                closeAIAssistant();
-            }
         });
     }
 });
@@ -28638,16 +29314,9 @@ function getStatusText(status) {
     }
 }
 
-// 格式化日期时间
-function formatDateTime(dateStr) {
-    if (!dateStr) return '-';
-    const date = new Date(dateStr);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    return `${year}/${month}/${day} ${hours}:${minutes}`;
+// 格式化日期时间（已由全局 formatDateTime 统一处理）
+function formatDateTimeAlias(dateStr) {
+    return formatDateTime(dateStr);
 }
 
 // 更新报告统计
@@ -29663,13 +30332,6 @@ async function saveCaseStatus(caseId, planId) {
     } finally {
         hideLoading();
     }
-}
-
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML.replace(/'/g, '&#039;');
 }
 
 // 获取状态样式类
@@ -30744,7 +31406,7 @@ async function loadExportModulesList() {
                 item.innerHTML = `
                     <input type="checkbox" id="export-module-${module.id}" style="display: none;">
                     <span class="checkbox-custom"></span>
-                    <span class="module-name">${module.name}</span>
+                    <span class="module-name">${escapeHtml(module.name)}</span>
                     <span class="module-count">${module.caseCount || 0} 条用例</span>
                 `;
                 
@@ -31577,10 +32239,9 @@ function toggleReviewHistory(btn) {
 }
 
 function initReviewSocketListeners() {
-    const socket = io();
-
+    // 复用全局socket变量，避免创建重复连接
     if (!socket) {
-        logger.error('WebSocket not connected');
+        logger.warn('WebSocket未初始化，等待连接...');
         return;
     }
 
@@ -33530,13 +34191,6 @@ function getScriptTypeLabel(type) {
         'other': '其他'
     };
     return labels[type] || '其他';
-}
-
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML.replace(/'/g, '&#039;');
 }
 
 function openAddScriptModal() {

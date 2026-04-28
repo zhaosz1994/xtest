@@ -492,8 +492,8 @@
         
         <!-- 时间范围选择器 -->
         <div class="time-range-selector">
-            <button class="time-range-btn active" data-days="7">最近7天</button>
-            <button class="time-range-btn" data-days="30">最近30天</button>
+            <button class="time-range-btn" data-days="7">最近7天</button>
+            <button class="time-range-btn active" data-days="30">最近30天</button>
             <button class="time-range-btn" data-days="90">最近90天</button>
             <button class="time-range-btn" data-days="365">最近1年</button>
         </div>
@@ -596,7 +596,7 @@
     
     <script src="js/socket.io.min.js"></script>
     <script>
-        let currentDays = 7;
+        let currentDays = 30;
         let dailyChart, topSkillsChart, topUsersChart;
         
         function showErrorMessage(message) {
@@ -749,6 +749,21 @@
                 return `${year}/${month}/${day}`;
             } catch (e) {
                 return dateStr;
+            }
+        }
+        
+        function formatDateTime(dateStr) {
+            if (!dateStr) return '-';
+            try {
+                const date = new Date(dateStr);
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+                return `${year}/${month}/${day} ${hours}:${minutes}`;
+            } catch (e) {
+                return '-';
             }
         }
         

@@ -9,6 +9,7 @@ const logger = require('./services/logger');
 const { loginLimiter, apiLimiter, dashboardLimiter, writeLimiter, aiLimiter } = require('./services/rateLimiter');
 const AuditLogService = require('./services/auditLogService');
 const { getUserAIConfig } = require('./services/aiService');
+const autoMigration = require('./services/autoMigration');
 // 暂时注释掉模块路由，直接在server.js中实现
 // const modulesRouter = require('./routes/modules');
 const testpointsRouter = require('./routes/testpoints');
@@ -91,6 +92,11 @@ app.use('/api/dashboard', dashboardLimiter);
 
 // 静态文件服务 - 暴露 public 目录
 app.use(express.static(path.join(__dirname, 'public')));
+// favicon 处理
+app.get('/favicon.ico', (req, res) => {
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.sendFile(path.join(__dirname, 'public/favicon.svg'));
+});
 // 额外暴露根目录的 CSS 和 JS 文件
 app.use('/styles.css', express.static(path.join(__dirname, 'styles.css')));
 app.use('/styles-dashboard.css', express.static(path.join(__dirname, 'styles-dashboard.css')));
@@ -132,6 +138,9 @@ app.use('/api/testcases', require('./routes/testcases'));
 app.use('/api', require('./routes/scripts'));
 app.use('/api/workspace', require('./routes/workspace'));
 app.use('/api', require('./routes/search'));
+app.use('/api/knowledge', require('./routes/knowledge'));
+app.use('/api/ai-generation', require('./routes/aiGeneration'));
+app.use('/api/temp-cases', require('./routes/tempCases'));
 
 app.get('/api/audit-logs', authenticateToken, requireAdmin, async (req, res) => {
     try {
@@ -260,6 +269,7 @@ app.post('/api/modules/list', authenticateToken, async (req, res) => {
         m.name, 
         m.library_id, 
         m.order_index,
+        m.created_by,
         (SELECT COUNT(*) FROM level1_points l1 WHERE l1.module_id = m.id) as level1_count,
         (SELECT COUNT(*) FROM test_cases tc WHERE tc.module_id = m.id AND tc.is_deleted = 0) as case_count
       FROM modules m
@@ -290,6 +300,7 @@ app.post('/api/modules/list', authenticateToken, async (req, res) => {
         id: module.id,
         name: module.name,
         orderIndex: module.order_index,
+        createdBy: module.created_by || null,
         level1Count: module.level1_count || 0,
         caseCount: module.case_count || 0
       }))
@@ -336,11 +347,11 @@ app.post('/api/modules/create', authenticateToken, async (req, res) => {
       }
     }
     
-    console.log('插入新模块:', { name, libraryId, moduleId, orderIndex, parentId });
+    console.log('插入新模块:', { name, libraryId, moduleId, orderIndex, parentId, createdBy: req.user.username });
     
     await pool.execute(
-      'INSERT INTO modules (module_id, name, library_id, order_index, parent_id) VALUES (?, ?, ?, ?, ?)',
-      [moduleId, name, libraryId, orderIndex, parentId || null]
+      'INSERT INTO modules (module_id, name, library_id, order_index, parent_id, created_by) VALUES (?, ?, ?, ?, ?, ?)',
+      [moduleId, name, libraryId, orderIndex, parentId || null, req.user.username]
     );
     
     AuditLogService.logModuleAction({
@@ -390,11 +401,11 @@ app.post('/api/modules/update', authenticateToken, async (req, res) => {
       [name, id]
     );
     
-    res.json({ success: true, message: '模块更新成功' });
+    res.json({ success: true, message: '模块更新成功', data: { id, name } });
   } catch (error) {
     logger.error('更新模块错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
-    res.json({ success: false, message: '服务器错误', error: error.message });
+    res.json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -464,7 +475,8 @@ app.post('/api/modules/search', authenticateToken, async (req, res) => {
         m.module_id, 
         m.name, 
         m.library_id, 
-        m.order_index, 
+        m.order_index,
+        m.created_by,
         COUNT(l1.id) as level1_count
       FROM modules m
       LEFT JOIN level1_points l1 ON m.id = l1.module_id
@@ -483,7 +495,7 @@ app.post('/api/modules/search', authenticateToken, async (req, res) => {
     }
     
     query += ` 
-      GROUP BY m.id, m.module_id, m.name, m.library_id, m.order_index 
+      GROUP BY m.id, m.module_id, m.name, m.library_id, m.order_index, m.created_by 
       ORDER BY m.order_index ASC, m.created_at DESC 
       LIMIT ${parseInt(pageSize)} OFFSET ${parseInt(offset)}
     `;
@@ -501,6 +513,7 @@ app.post('/api/modules/search', authenticateToken, async (req, res) => {
         id: module.id,
         name: module.name,
         orderIndex: module.order_index,
+        createdBy: module.created_by || null,
         level1Count: module.level1_count
       }))
     });
@@ -560,8 +573,8 @@ app.post('/api/modules/batchCreate', authenticateToken, async (req, res) => {
     for (const module of modules) {
       const moduleId = 'MODULE_' + crypto.randomUUID();
       await pool.execute(
-        'INSERT INTO modules (module_id, name, library_id) VALUES (?, ?, ?)',
-        [moduleId, module.name, module.libraryId]
+        'INSERT INTO modules (module_id, name, library_id, created_by) VALUES (?, ?, ?, ?)',
+        [moduleId, module.name, module.libraryId, req.user.username]
       );
     }
     
@@ -645,8 +658,8 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
     // 2. 创建新模块
     const newModuleId = 'MODULE_' + crypto.randomUUID();
     const [moduleResult] = await connection.execute(
-      'INSERT INTO modules (module_id, name, library_id, order_index) VALUES (?, ?, ?, ?)',
-      [newModuleId, newModuleName, targetLibraryId, 0]
+      'INSERT INTO modules (module_id, name, library_id, order_index, created_by) VALUES (?, ?, ?, ?, ?)',
+      [newModuleId, newModuleName, targetLibraryId, 0, req.user.username]
     );
     const newModuleDbId = moduleResult.insertId;
     
@@ -4291,7 +4304,7 @@ app.get('/api/testtypes/list', async (req, res) => {
 });
 
 // 获取测试用例详情
-app.get('/api/testcases/:id', async (req, res) => {
+app.get('/api/testcases/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     console.log('接收到获取测试用例详情请求:', { id });
@@ -4330,7 +4343,7 @@ app.get('/api/testcases/:id', async (req, res) => {
 });
 
 // 获取测试用例关联的项目
-app.get('/api/testcases/:id/projects', async (req, res) => {
+app.get('/api/testcases/:id/projects', authenticateToken, async (req, res) => {
   try {
     let { id } = req.params;
     console.log('接收到获取测试用例关联项目请求:', { id });
@@ -5302,6 +5315,14 @@ async function initDatabase() {
       } catch (error) {
         logger.info('order_index字段已存在');
       }
+      
+      // 确保created_by字段存在
+      try {
+        await connection.execute(`ALTER TABLE modules ADD COLUMN created_by VARCHAR(100) NULL COMMENT '创建者用户名'`);
+        logger.info('modules表created_by字段添加成功');
+      } catch (error) {
+        logger.info('created_by字段已存在');
+      }
       logger.info('模块表创建成功');
       
       // 创建一级测试点表
@@ -5695,6 +5716,33 @@ async function initDatabase() {
         logger.error('检查或添加测试用例表软删除字段错误:', { error: error.message });
       }
       
+      // 确保测试用例表有评审相关字段
+      try {
+        const [columns] = await connection.execute(
+          "SHOW COLUMNS FROM test_cases LIKE 'review_status'"
+        );
+        
+        if (columns.length === 0) {
+          await connection.execute(`ALTER TABLE test_cases 
+            ADD COLUMN review_status ENUM('draft', 'pending', 'approved', 'rejected') DEFAULT 'draft' COMMENT '评审状态' AFTER is_deleted`);
+          await connection.execute(`ALTER TABLE test_cases 
+            ADD COLUMN reviewer_id INT NULL COMMENT '评审人ID' AFTER review_status`);
+          await connection.execute(`ALTER TABLE test_cases 
+            ADD COLUMN review_submitted_at TIMESTAMP NULL COMMENT '提交评审时间' AFTER reviewer_id`);
+          await connection.execute(`ALTER TABLE test_cases 
+            ADD COLUMN review_completed_at TIMESTAMP NULL COMMENT '评审完成时间' AFTER review_submitted_at`);
+          await connection.execute(`ALTER TABLE test_cases 
+            ADD INDEX idx_review_status (review_status)`);
+          await connection.execute(`ALTER TABLE test_cases 
+            ADD INDEX idx_reviewer_id (reviewer_id)`);
+          logger.info('测试用例表评审字段添加成功');
+        } else {
+          logger.info('测试用例表评审字段已存在');
+        }
+      } catch (error) {
+        logger.error('检查或添加测试用例表评审字段错误:', { error: error.message });
+      }
+      
       // 创建测试用例关联脚本表
       await connection.execute(`
         CREATE TABLE IF NOT EXISTS test_case_scripts (
@@ -5720,6 +5768,48 @@ async function initDatabase() {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例关联脚本表'
       `);
       logger.info('测试用例关联脚本表创建成功');
+      
+      // 创建评审记录表
+      await connection.execute(`
+        CREATE TABLE IF NOT EXISTS review_records (
+          id INT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+          case_id INT NOT NULL COMMENT '测试用例ID',
+          reviewer_id INT NOT NULL COMMENT '评审人ID',
+          submitter_id INT NOT NULL COMMENT '提交人ID',
+          action ENUM('submit', 'approve', 'reject', 'resubmit') NOT NULL COMMENT '操作类型',
+          comment TEXT COMMENT '评审意见',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+          INDEX idx_case_id (case_id),
+          INDEX idx_reviewer_id (reviewer_id),
+          INDEX idx_submitter_id (submitter_id),
+          INDEX idx_action (action),
+          INDEX idx_created_at (created_at),
+          FOREIGN KEY (case_id) REFERENCES test_cases(id) ON DELETE CASCADE,
+          FOREIGN KEY (reviewer_id) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY (submitter_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例评审记录表'
+      `);
+      logger.info('评审记录表创建成功');
+      
+      // 创建用例评审人表（支持多人评审）
+      await connection.execute(`
+        CREATE TABLE IF NOT EXISTS case_reviewers (
+          id INT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+          case_id INT NOT NULL COMMENT '测试用例ID',
+          reviewer_id INT NOT NULL COMMENT '评审人ID',
+          status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending' COMMENT '评审状态',
+          comment TEXT COMMENT '评审意见',
+          reviewed_at TIMESTAMP NULL COMMENT '评审时间',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+          UNIQUE KEY uk_case_reviewer (case_id, reviewer_id),
+          INDEX idx_case_id (case_id),
+          INDEX idx_reviewer_id (reviewer_id),
+          INDEX idx_status (status),
+          FOREIGN KEY (case_id) REFERENCES test_cases(id) ON DELETE CASCADE,
+          FOREIGN KEY (reviewer_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用例评审人表'
+      `);
+      logger.info('用例评审人表创建成功');
       
       // ==================== 先创建配置表（被其他表外键引用） ====================
       
@@ -8512,6 +8602,22 @@ async function startServer() {
     }
     
     logger.info('安全配置校验通过');
+    
+    logger.info('开始执行数据库自动迁移...');
+    const migrationResult = await autoMigration.runMigrations();
+    
+    if (!migrationResult.success) {
+      logger.error('数据库迁移失败，服务器启动终止', { 
+        error: migrationResult.error,
+        failedMigrations: migrationResult.failedMigrations 
+      });
+      process.exit(1);
+    }
+    
+    logger.info('数据库迁移完成，继续启动服务...');
+    
+    const taskScheduler = require('./services/taskScheduler');
+    taskScheduler.start();
     
     // 启动服务器
     server.listen(PORT, () => {
