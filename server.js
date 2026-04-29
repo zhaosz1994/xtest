@@ -141,6 +141,12 @@ app.use('/api', require('./routes/search'));
 app.use('/api/knowledge', require('./routes/knowledge'));
 app.use('/api/ai-generation', require('./routes/aiGeneration'));
 app.use('/api/temp-cases', require('./routes/tempCases'));
+app.use('/api/ai-sub-agents', require('./routes/aiSubAgents'));
+app.use('/api/ai-tools', require('./routes/aiTools'));
+app.use('/api/ai-sub-agents/config-files', require('./routes/aiSubAgentConfigFiles'));
+app.use('/api/ai-memories', require('./routes/aiMemories'));
+app.use('/api/ai-review', require('./routes/aiReview'));
+app.use('/api/ai-qa', require('./routes/aiQA'));
 
 app.get('/api/audit-logs', authenticateToken, requireAdmin, async (req, res) => {
     try {
@@ -8512,7 +8518,7 @@ async function startServer() {
     
     // 创建HTTP服务器
     const server = http.createServer(app);
-    
+
     // 配置Socket.io - 添加心跳检测
     const io = socketIO(server, {
       cors: {
@@ -8522,6 +8528,9 @@ async function startServer() {
       pingInterval: 25000,  // 每25秒发送一次ping
       pingTimeout: 60000    // 60秒未响应则断开连接
     });
+
+    // 设置global.io供service层发送WebSocket通知
+    global.io = io;
     
     // 存储在线用户
     const onlineUsersManager = require('./onlineUsersManager');
@@ -8618,6 +8627,25 @@ async function startServer() {
     
     const taskScheduler = require('./services/taskScheduler');
     taskScheduler.start();
+
+    try {
+      const aiReviewService = require('./services/aiReviewService');
+      await aiReviewService.cleanupOrphanTasks();
+      logger.info('AI评审孤儿任务自检完成');
+    } catch (orphanError) {
+      logger.warn('AI评审孤儿任务自检失败（不影响启动）:', orphanError.message);
+    }
+
+    try {
+      const memoryEngine = require('./services/memoryEngine');
+      const [agents] = await pool.query('SELECT id, memory_distill_threshold FROM ai_sub_agents WHERE memory_enabled = 1');
+      for (const agent of agents) {
+        await memoryEngine.checkAndAutoDistill(agent.id);
+      }
+      logger.info('AI记忆阈值自检完成');
+    } catch (memoryCheckError) {
+      logger.warn('AI记忆阈值自检失败（不影响启动）:', memoryCheckError.message);
+    }
     
     // 启动服务器
     server.listen(PORT, () => {

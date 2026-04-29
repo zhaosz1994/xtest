@@ -464,6 +464,8 @@ const Router = {
                 break;
             case 'ai-generation':
                 if (typeof initAIGeneration === 'function') initAIGeneration();
+                // 从知识库跳转时自动填充上下文
+                if (typeof applyAIGenerationContext === 'function') applyAIGenerationContext();
                 break;
             case 'dashboard':
                 loadRecentLogins();
@@ -16190,6 +16192,39 @@ function restoreConfigPanelFromHash() {
     }
 }
 
+async function loadSubAgentsConfigPanel() {
+    if (typeof initSubAgentsConfig === 'function') initSubAgentsConfig();
+    else console.warn('[loadSubAgentsConfigPanel] initSubAgentsConfig 未定义，模块可能未加载');
+    if (typeof loadSubAgentsList === 'function') {
+        await loadSubAgentsList();
+    } else if (typeof loadSubAgentsData === 'function') {
+        await loadSubAgentsData();
+    } else {
+        console.warn('[loadSubAgentsConfigPanel] loadSubAgentsList/loadSubAgentsData 未定义，模块可能未加载');
+    }
+}
+
+async function loadAIToolsConfigPanel() {
+    if (typeof ensureAIToolsModal === 'function') ensureAIToolsModal();
+    if (typeof initAIToolsConfig === 'function') initAIToolsConfig();
+    else console.warn('[loadAIToolsConfigPanel] initAIToolsConfig 未定义，模块可能未加载');
+    if (typeof loadAIToolsList === 'function') {
+        await loadAIToolsList();
+    } else {
+        console.warn('[loadAIToolsConfigPanel] loadAIToolsList 未定义，模块可能未加载');
+    }
+}
+
+async function loadAIMemoriesConfigPanel() {
+    if (typeof initAIMemoriesConfig === 'function') initAIMemoriesConfig();
+    else console.warn('[loadAIMemoriesConfigPanel] initAIMemoriesConfig 未定义，模块可能未加载');
+    if (typeof loadAgentDropdown === 'function') {
+        await loadAgentDropdown();
+    } else {
+        console.warn('[loadAIMemoriesConfigPanel] loadAgentDropdown 未定义，模块可能未加载');
+    }
+}
+
 // 加载配置面板数据
 function loadConfigPanelData(panelId) {
     // 根据面板 ID 加载对应数据
@@ -16212,7 +16247,10 @@ function loadConfigPanelData(panelId) {
         'report-templates-config': loadReportTemplates,
         'ai-config-config': initAIConfigPage,
         'ai-skills-config': loadAISkills,
-        'ai-timeout-config': loadAITimeoutConfig
+        'ai-timeout-config': loadAITimeoutConfig,
+        'ai-sub-agents-config': loadSubAgentsConfigPanel,
+        'ai-tools-config': loadAIToolsConfigPanel,
+        'ai-memories-config': loadAIMemoriesConfigPanel
     };
 
     const loader = dataLoaders[panelId];

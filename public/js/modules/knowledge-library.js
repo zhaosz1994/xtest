@@ -816,19 +816,23 @@ function renderPreviewContent(data) {
     const container = document.getElementById('previewContent');
 
     if (data.type === 'image') {
-        container.innerHTML = `<img src="${data.content}" alt="preview" style="max-width:100%;max-height:70vh;">`;
+        const safeSrc = klEscapeHtml(data.content || '').replace(/^javascript:/i, '');
+        container.innerHTML = `<img src="${safeSrc}" alt="preview" style="max-width:100%;max-height:70vh;">`;
     } else if (data.type === 'pdf') {
-        container.innerHTML = `<iframe src="${data.url}" style="width:100%;height:70vh;border:none;"></iframe>`;
+        const safeUrl = klEscapeHtml(data.url || '').replace(/^javascript:/i, '');
+        container.innerHTML = `<iframe src="${safeUrl}" style="width:100%;height:70vh;border:none;"></iframe>`;
     } else if (data.type === 'markdown') {
         if (typeof marked !== 'undefined' && marked.parse) {
-            container.innerHTML = `<div class="markdown-body">${marked.parse(data.content || '')}</div>`;
+            const rawHtml = marked.parse(data.content || '');
+            container.innerHTML = `<div class="markdown-body">${typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(rawHtml) : klEscapeHtml(data.content || '')}</div>`;
         } else {
             container.innerHTML = `<pre>${klEscapeHtml(data.content || '')}</pre>`;
         }
     } else if (data.type === 'text') {
         container.innerHTML = `<pre>${klEscapeHtml(data.content || '')}</pre>`;
     } else if (data.type === 'html') {
-        container.innerHTML = `<div class="markdown-body">${data.content || ''}</div>`;
+        const sanitized = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(data.content || '') : klEscapeHtml(data.content || '');
+        container.innerHTML = `<div class="markdown-body">${sanitized}</div>`;
     } else {
         container.innerHTML = `<div class="kl-preview-unsupported"><div class="icon">📄</div><p>该文件类型暂不支持在线预览</p><p style="font-size:13px;margin-top:8px;">请下载后查看</p></div>`;
     }
@@ -1560,40 +1564,20 @@ function showAITargetModal(fileCount, libraryCount, moduleCount) {
 }
 
 async function startAIGeneration(moduleId, libraryId) {
-    const fileIds = Array.from(klSelectedFiles);
+    // 不再直接创建任务，而是携带上下文参数跳转到 AI 生成页面
+    // 让用户在 AI 生成页面中确认参数后一键生成
+    const params = new URLSearchParams({
+        libraryId: libraryId || '',
+        moduleId: moduleId || ''
+    });
+    klSelectedFiles.clear();
+    klSelectedFileModuleMap = {};
+    updateBatchBar();
+    renderFileArea();
 
-    const lib = klLibraries.find(l => l.id === libraryId);
-    const modules = klModulesMap[libraryId] || [];
-    const mod = modules.find(m => m.id === moduleId);
-    const targetName = mod ? `${lib ? lib.name + ' / ' : ''}${mod.name}` : `模块 ${moduleId}`;
-
-    klShowConfirm(`确定要对选中的 ${fileIds.length} 个文件在「${targetName}」下AI生成测试用例吗？`, async () => {
-        try {
-            const res = await klApiPost('/api/ai-generation/create', {
-                moduleId: moduleId,
-                libraryId: libraryId,
-                selectedFiles: fileIds,
-                caseCountLimit: 20,
-                enableDedup: true,
-                similarityThreshold: 0.85,
-                level1Mode: 'auto'
-            });
-            if (res && res.success) {
-                klNotify(`AI生成任务已创建：${res.data.taskId || ''}`, 'success');
-                klSelectedFiles.clear();
-                klSelectedFileModuleMap = {};
-                updateBatchBar();
-                renderFileArea();
-                if (typeof Router !== 'undefined' && Router.navigateTo) {
-                    Router.navigateTo('ai-generation');
-                }
-            } else {
-                klNotify(res?.message || '创建AI生成任务失败', 'error');
-            }
-        } catch (e) {
-            klNotify('创建AI生成任务失败: ' + e.message, 'error');
-        }
-    }, '🤖');
+    if (typeof Router !== 'undefined' && Router.navigateTo) {
+        window.location.hash = `#/ai-generation?${params.toString()}`;
+    }
 }
 
 function initKLEventListeners() {

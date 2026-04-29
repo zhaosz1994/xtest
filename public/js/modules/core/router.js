@@ -176,6 +176,7 @@ const Router = {
                 break;
             case 'ai-generation':
                 if (typeof initAIGeneration === 'function') initAIGeneration();
+                if (typeof applyAIGenerationContext === 'function') applyAIGenerationContext();
                 break;
             case 'dashboard':
                 loadRecentLogins();

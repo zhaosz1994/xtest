@@ -3062,20 +3062,28 @@
                                     </div>
                                 </div>
                                 
-                                <!-- AI 引擎设置 -->
+                                <!-- 🤖 AI 智能体 -->
                                 <div class="menu-group">
                                     <div class="menu-group-title">
-                                        <span class="menu-group-icon">🧠</span>
-                                        <span>AI 引擎设置</span>
+                                        <span class="menu-group-icon">🤖</span>
+                                        <span>AI 智能体</span>
                                     </div>
                                     <div class="menu-items">
                                         <a href="#/settings?config=ai-config" class="menu-item" data-panel="ai-config-config">
-                                            <span class="menu-item-icon">🤖</span>
+                                            <span class="menu-item-icon">⚙️</span>
                                             <span class="menu-item-text">AI 配置</span>
                                         </a>
-                                        <a href="#/settings?config=ai-skills" class="menu-item" data-panel="ai-skills-config">
-                                            <span class="menu-item-icon">⚡</span>
-                                            <span class="menu-item-text">AI 技能管理</span>
+                                        <a href="#/settings?config=ai-sub-agents" class="menu-item" data-panel="ai-sub-agents-config">
+                                            <span class="menu-item-icon">🧩</span>
+                                            <span class="menu-item-text">智能体编排台</span>
+                                        </a>
+                                        <a href="#/settings?config=ai-tools" class="menu-item" data-panel="ai-tools-config">
+                                            <span class="menu-item-icon">🔧</span>
+                                            <span class="menu-item-text">自定义工具工坊</span>
+                                        </a>
+                                        <a href="#/settings?config=ai-memories" class="menu-item" data-panel="ai-memories-config">
+                                            <span class="menu-item-icon">🧠</span>
+                                            <span class="menu-item-text">记忆管理台</span>
                                         </a>
                                         <a href="#/settings?config=ai-timeout" class="menu-item" data-panel="ai-timeout-config">
                                             <span class="menu-item-icon">⏱️</span>
@@ -4024,6 +4032,129 @@ return rows[0];'></textarea>
                         </div>
                         
                         <!-- 报告模板上传模态框 -->
+
+                        <!-- 智能体编排台面板 -->
+                        <div class="config-panel" id="ai-sub-agents-config">
+                            <div class="config-section">
+                                <div class="panel-header-content">
+                                    <div class="panel-title-group">
+                                        <span class="panel-icon">🧩</span>
+                                        <div>
+                                            <h3>智能体编排台</h3>
+                                            <p class="config-description">管理AI子智能体，配置人设、上下文、工具和记忆。</p>
+                                        </div>
+                                    </div>
+                                    <div class="panel-header-actions">
+                                        <button class="btn btn-primary" id="saBtnCreateAgent">+ 新建智能体</button>
+                                    </div>
+                                </div>
+                                <div id="sub-agents-section" style="margin-top:16px;">
+                                    <div class="sa-table-wrapper">
+                                        <table class="config-table">
+                                            <thead>
+                                                <tr>
+                                                    <th style="width:20%;">编码</th>
+                                                    <th style="width:18%;">名称</th>
+                                                    <th style="width:12%;">分类</th>
+                                                    <th style="width:8%;">记忆</th>
+                                                    <th style="width:8%;">状态</th>
+                                                    <th style="width:14%;">操作</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="saAgentListBody">
+                                                <tr><td colspan="6" class="no-data">加载中...</td></tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                <div style="margin-top:12px;color:#909399;font-size:12px;">💡 系统内置智能体不可删除，非管理员修改后自动保存为私有版本</div>
+                            </div>
+                        </div>
+
+                        <!-- 自定义工具工坊面板 -->
+                        <div class="config-panel" id="ai-tools-config">
+                            <div class="config-section">
+                                <div class="panel-header-content">
+                                    <div class="panel-title-group">
+                                        <span class="panel-icon">🔧</span>
+                                        <div>
+                                            <h3>自定义工具工坊</h3>
+                                            <p class="config-description">管理AI可调用的原子工具，支持JavaScript和Python脚本。</p>
+                                        </div>
+                                    </div>
+                                    <div class="panel-header-actions">
+                                        <button class="btn btn-primary" id="aitools-btn-create">+ 新建工具</button>
+                                    </div>
+                                </div>
+                                <div id="ai-tools-list-container" style="margin-top:16px;">
+                                    <table class="config-table">
+                                        <thead>
+                                            <tr>
+                                                <th style="width:18%;">工具标识</th>
+                                                <th style="width:16%;">展示名</th>
+                                                <th style="width:10%;">语言</th>
+                                                <th style="width:8%;">公开</th>
+                                                <th style="width:8%;">状态</th>
+                                                <th style="width:16%;">操作</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="aitools-table-body">
+                                            <tr><td colspan="6" class="no-data">加载中...</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 记忆管理台面板 -->
+                        <div class="config-panel" id="ai-memories-config">
+                            <div class="config-section">
+                                <div class="panel-header-content">
+                                    <div class="panel-title-group">
+                                        <span class="panel-icon">🧠</span>
+                                        <div>
+                                            <h3>记忆管理台</h3>
+                                            <p class="config-description">管理AI子智能体的业务经验记忆，支持查看、编辑和提炼。</p>
+                                        </div>
+                                    </div>
+                                    <div class="panel-header-actions">
+                                        <button class="btn btn-secondary" id="aimem-btn-reset-all" style="display:none;">🗑️ 重置全部记忆</button>
+                                    </div>
+                                </div>
+                                <div style="margin-top:16px;margin-bottom:16px;">
+                                    <label class="form-label">选择智能体:</label>
+                                    <select id="aimem-agent-select" class="form-input" style="width:300px;">
+                                        <option value="">-- 请选择 --</option>
+                                    </select>
+                                </div>
+                                <div id="aimem-main-container" style="display:none;">
+                                    <div style="display:flex;gap:16px;height:500px;">
+                                        <div id="aimem-tree-container" style="width:280px;flex-shrink:0;border:1px solid #e4e7ed;border-radius:8px;padding:12px;overflow-y:auto;background:#fafafa;">
+                                            <div style="color:#909399;font-size:13px;">请选择智能体查看记忆树</div>
+                                        </div>
+                                        <div style="flex:1;border:1px solid #e4e7ed;border-radius:8px;padding:16px;overflow-y:auto;display:flex;flex-direction:column;">
+                                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                                                <span id="aimem-content-level" style="font-weight:600;font-size:13px;color:#606266;"></span>
+                                                <div id="aimem-content-actions" style="display:none;gap:8px;">
+                                                    <button class="btn btn-sm btn-secondary" id="aimem-btn-refresh" title="刷新">🔄</button>
+                                                    <button class="btn btn-sm btn-primary" id="aimem-btn-edit">编辑</button>
+                                                    <button class="btn btn-sm btn-primary" id="aimem-btn-save" style="display:none;">保存</button>
+                                                    <button class="btn btn-sm btn-secondary" id="aimem-btn-cancel" style="display:none;">取消</button>
+                                                    <button class="btn btn-sm btn-warning" id="aimem-btn-distill" style="display:none;" title="蒸馏提炼">🔄 提炼</button>
+                                                    <button class="btn btn-sm btn-danger" id="aimem-btn-clear" style="display:none;" title="清空记忆">🗑️ 清空</button>
+                                                </div>
+                                            </div>
+                                            <div id="aimem-content-area" style="flex:1;overflow-y:auto;">
+                                                <div style="color:#909399;font-size:13px;">点击左侧节点查看记忆内容</div>
+                                            </div>
+                                            <div id="aimem-content-stats" style="margin-top:8px;padding:6px 10px;background:#f0f2f5;border-radius:4px;font-size:12px;color:#606266;"></div>
+                                        </div>
+                                    </div>
+                                    <div id="aimem-stats-container" style="margin-top:12px;padding:8px 12px;background:#f0f2f5;border-radius:6px;font-size:12px;color:#606266;"></div>
+                                </div>
+                                <div style="margin-top:12px;color:#909399;font-size:12px;">💡 记忆由AI自动沉淀，您也可以手动编辑。当记忆超过阈值时会自动提炼。</div>
+                            </div>
+                        </div>
                         <div id="template-upload-modal" class="modal" style="display: none;">
                             <div class="modal-content" style="width: 500px; max-width: 95%;">
                                 <div class="modal-header">
@@ -4569,10 +4700,12 @@ return rows[0];'></textarea>
                         <tr>
                             <th class="col-checkbox"><input type="checkbox" id="selectAll" class="ai-tree-checkbox" onchange="toggleSelectAll()"></th>
                             <th class="col-name">用例名称</th>
+                            <th class="col-purpose">测试目的</th>
                             <th class="col-priority">优先级</th>
                             <th class="col-type">类型</th>
                             <th class="col-similarity">相似度</th>
                             <th class="col-status">状态</th>
+                            <th class="col-time">生成时间</th>
                             <th class="col-actions">操作</th>
                         </tr>
                     </thead>
@@ -4582,8 +4715,60 @@ return rows[0];'></textarea>
         </div>
 
         <div id="tab-review" class="tab-content" style="display:none;">
-            <div id="reviewList"></div>
-            <div id="reviewPagination" class="pagination-container"></div>
+            <div class="ai-review-sub-tabs" style="display:flex;gap:8px;margin-bottom:16px;border-bottom:2px solid #e4e7ed;padding-bottom:8px;">
+                <div id="humanReviewSubTab" class="ai-review-sub-tab active" data-sub-tab="manual" style="padding:8px 16px;cursor:pointer;border-bottom:2px solid #6366f1;color:#6366f1;font-weight:500;">👥 人工评审</div>
+                <div id="aiReviewSubTab" class="ai-review-sub-tab" data-sub-tab="ai" style="padding:8px 16px;cursor:pointer;color:#606266;">🤖 AI辅助评审</div>
+            </div>
+            <div id="manual-review-container">
+                <div id="reviewList"></div>
+                <div id="reviewPagination" class="pagination-container"></div>
+            </div>
+            <div id="ai-review-container" style="display:none;">
+                <div id="ai-review-tasks-list"></div>
+                <div id="ai-review-results-area" style="display:none;">
+                    <div style="margin-bottom:12px;">
+                        <button id="ai-review-back-btn" class="btn btn-secondary" style="display:inline-flex;align-items:center;gap:4px;">← 返回任务列表</button>
+                    </div>
+                    <div id="ai-review-stats-cards" style="display:flex;gap:12px;margin-bottom:16px;"></div>
+                    <div id="ai-review-memory-note" style="margin-bottom:12px;"></div>
+                    <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;">
+                        <select id="ai-review-action-filter" class="form-input" style="width:140px;">
+                            <option value="">全部动作</option>
+                            <option value="approve">通过</option>
+                            <option value="reject">拒绝</option>
+                            <option value="modify">建议修改</option>
+                        </select>
+                        <select id="ai-review-decision-filter" class="form-input" style="width:140px;">
+                            <option value="">全部决策</option>
+                            <option value="pending">待决策</option>
+                            <option value="accepted">已采纳</option>
+                            <option value="rejected">已拒绝</option>
+                            <option value="modified_accepted">编辑后采纳</option>
+                        </select>
+                        <input type="text" id="ai-review-search" class="form-input" placeholder="🔍 搜索用例..." style="width:200px;">
+                        <div style="flex:1;"></div>
+                        <button class="btn btn-primary" id="ai-review-batch-accept-btn" style="display:none;">批量采纳</button>
+                        <button class="btn btn-secondary" id="ai-review-batch-reject-btn" style="display:none;">批量拒绝</button>
+                        <button class="btn btn-primary" id="ai-review-batch-merge-btn" style="display:none;">📦 合并进库</button>
+                    </div>
+                    <table class="config-table" id="ai-review-results-table">
+                        <thead>
+                            <tr>
+                                <th style="width:30px;"><input type="checkbox" id="ai-review-select-all"></th>
+                                <th>用例名称</th>
+                                <th style="width:80px;">AI动作</th>
+                                <th style="width:70px;">AI评分</th>
+                                <th>Diff摘要</th>
+                                <th style="width:80px;">决策</th>
+                                <th style="width:60px;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ai-review-results-body">
+                            <tr><td colspan="7" class="no-data">加载中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -7564,6 +7749,33 @@ return rows[0];'></textarea>
                     <div class="char-count"><span id="review-comment-count">0</span>/500</div>
                 </div>
                 
+                <!-- AI辅助评审选项 -->
+                <div class="form-group" style="border:1px solid #e4e7ed;border-radius:8px;padding:16px;background:#f8f9ff;">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                        <input type="checkbox" id="enable-ai-review-checkbox" style="width:16px;height:16px;">
+                        <label for="enable-ai-review-checkbox" style="font-weight:600;color:#6366f1;cursor:pointer;">🤖 启用AI辅助评审</label>
+                    </div>
+                    <div id="ai-review-options" style="display:none;margin-top:12px;">
+                        <div class="form-group" style="margin-bottom:8px;">
+                            <label class="form-label">选择AI评审智能体:</label>
+                            <select id="ai-review-agent-select" class="form-input" style="width:100%;">
+                                <option value="">-- 请选择 --</option>
+                            </select>
+                        </div>
+                        <div id="ai-review-agent-info" style="display:none;padding:8px 12px;background:#fff;border:1px solid #e4e7ed;border-radius:6px;margin-bottom:8px;font-size:13px;"></div>
+                        <div style="display:flex;gap:12px;">
+                            <div class="form-group" style="flex:1;margin-bottom:0;">
+                                <label class="form-label">自动通过阈值:</label>
+                                <input type="number" id="ai-review-auto-score" class="form-input" value="8.0" min="0" max="10" step="0.5" style="width:100%;">
+                            </div>
+                            <div class="form-group" style="flex:1;margin-bottom:0;">
+                                <label class="form-label">并发数:</label>
+                                <input type="number" id="ai-review-concurrency" class="form-input" value="3" min="1" max="10" style="width:100%;">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- 提示信息 -->
                 <div class="info-message">
                     <span class="info-icon">ℹ️</span>
@@ -8589,6 +8801,7 @@ return rows[0];'></textarea>
     <!-- 知识库和AI生成模块 -->
     <script src="js/modules/knowledge-library.js?v=20260428d"></script>
     <script src="js/modules/ai-generation.js?v=20260428"></script>
+    <script src="js/modules/ai-review.js?v=20260429"></script>
     
     <!-- AI问答模态框 -->
     <div id="ai-assistant-modal" class="ai-modal">
@@ -8626,11 +8839,20 @@ return rows[0];'></textarea>
                 </div>
             </div>
             <div class="ai-modal-footer">
-                <div class="ai-model-selector">
-                    <label>选择模型:</label>
-                    <select id="ai-model-select">
-                        <option value="">加载中...</option>
-                    </select>
+                <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+                    <div class="ai-model-selector">
+                        <label>智能体:</label>
+                        <select id="ai-qa-agent-select" style="max-width:180px;">
+                            <option value="">通用助手</option>
+                        </select>
+                    </div>
+                    <div id="ai-qa-agent-info" style="display:none;font-size:11px;color:#6366f1;background:#f0f0ff;padding:2px 8px;border-radius:4px;"></div>
+                    <div class="ai-model-selector">
+                        <label>模型:</label>
+                        <select id="ai-model-select">
+                            <option value="">加载中...</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="ai-input-container">
                     <textarea id="ai-input" placeholder="输入您的问题，例如：统计M12项目的测试用例数量..." rows="1"></textarea>

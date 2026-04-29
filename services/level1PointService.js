@@ -150,15 +150,17 @@ ${materialContent.slice(0, 6000)}
       SELECT * FROM temp_level1_points WHERE task_id = ?
     `, [taskId]);
 
-    if (tempPoints.length === 0) return;
-
     const [tempCases] = await pool.execute(`
       SELECT id, temp_case_id, name, type FROM temp_test_cases 
       WHERE task_id = ? AND status = 'pending'
     `, [taskId]);
 
+    if (tempCases.length === 0) return;
+
+    const assignedCases = new Map();
+
     for (const caseItem of tempCases) {
-      const matchedPoint = this.matchCaseToLevel1(caseItem, tempPoints);
+      const matchedPoint = tempPoints.length > 0 ? this.matchCaseToLevel1(caseItem, tempPoints) : null;
 
       if (matchedPoint) {
         await pool.execute(`
@@ -166,8 +168,50 @@ ${materialContent.slice(0, 6000)}
           SET level1_name = ?, is_new_level1 = 1
           WHERE temp_case_id = ?
         `, [matchedPoint.name, caseItem.temp_case_id]);
+        
+        if (!assignedCases.has(matchedPoint.name)) {
+          assignedCases.set(matchedPoint.name, []);
+        }
+        assignedCases.get(matchedPoint.name).push(caseItem);
+      } else {
+        const extractedName = this.extractLevel1NameFromCase(caseItem);
+        
+        let existingPoint = tempPoints.find(p => p.name === extractedName);
+        
+        if (!existingPoint) {
+          const tempLevel1Id = `TEMP-L1-${require('uuid').v4().slice(0, 8).toUpperCase()}`;
+          const [taskInfo] = await pool.execute(`
+            SELECT module_id FROM ai_case_generation_tasks WHERE task_id = ?
+          `, [taskId]);
+          const moduleId = taskInfo.length > 0 ? taskInfo[0].module_id : null;
+          
+          await pool.execute(`
+            INSERT INTO temp_level1_points 
+              (temp_level1_id, task_id, module_id, name, test_type, description)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `, [tempLevel1Id, taskId, moduleId, extractedName, caseItem.type || '功能测试', `从用例"${caseItem.name}"提炼`]);
+          
+          tempPoints.push({
+            temp_level1_id: tempLevel1Id,
+            name: extractedName,
+            test_type: caseItem.type || '功能测试'
+          });
+        }
+        
+        await pool.execute(`
+          UPDATE temp_test_cases 
+          SET level1_name = ?, is_new_level1 = 1
+          WHERE temp_case_id = ?
+        `, [extractedName, caseItem.temp_case_id]);
+        
+        if (!assignedCases.has(extractedName)) {
+          assignedCases.set(extractedName, []);
+        }
+        assignedCases.get(extractedName).push(caseItem);
       }
     }
+
+    console.log(`[assignLevel1ToCases] 为 ${tempCases.length} 个用例分配了一级测试点，共 ${assignedCases.size} 个一级测试点`);
   }
 
   async assignExistingLevel1ToCases(taskId, level1Id) {
@@ -208,6 +252,42 @@ ${materialContent.slice(0, 6000)}
     }
 
     return bestScore > 0 ? bestMatch : null;
+  }
+
+  extractLevel1NameFromCase(caseItem) {
+    const caseName = caseItem.name || '';
+    const caseType = caseItem.type || '功能测试';
+    
+    const patterns = [
+      /^(.+?)测试/,
+      /^(.+?)验证/,
+      /^(.+?)检查/,
+      /^(.+?)功能/,
+      /^测试(.+?)$/,
+      /^验证(.+?)$/,
+      /^检查(.+?)$/
+    ];
+    
+    for (const pattern of patterns) {
+      const match = caseName.match(pattern);
+      if (match && match[1]) {
+        const extracted = match[1].trim();
+        if (extracted.length >= 2 && extracted.length <= 20) {
+          return `${extracted}测试`;
+        }
+      }
+    }
+    
+    const words = caseName.split(/[\s\-_,，、]+/);
+    if (words.length > 0 && words[0].length >= 2 && words[0].length <= 15) {
+      return `${words[0]}测试`;
+    }
+    
+    if (caseName.length <= 15) {
+      return `${caseName}测试`;
+    }
+    
+    return `${caseName.substring(0, 15)}测试`;
   }
 
   async mergeLevel1Points(taskId) {

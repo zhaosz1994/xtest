@@ -127,6 +127,22 @@ function aiEscapeHtml(str) {
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
 
+function aiFormatDateTime(dateStr) {
+    if (!dateStr) return '-';
+    try {
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return '-';
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        return `${year}/${month}/${day} ${hours}:${minutes}`;
+    } catch (e) {
+        return '-';
+    }
+}
+
 function aiGetAuthHeaders() {
     const token = localStorage.getItem('authToken') || localStorage.getItem('token');
     return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -429,12 +445,21 @@ function switchTab(tab, options) {
             loadTempCases();
         });
     }
-    if (tab === 'review') loadReviewList();
+    if (tab === 'review') {
+        if (typeof initAIReview === 'function') initAIReview();
+        loadReviewList();
+    }
 }
 
 async function loadModules() {
     const token = localStorage.getItem('authToken') || localStorage.getItem('token');
     if (!token) return;
+
+    // 从 URL 参数读取知识库传过来的上下文（libraryId, moduleId）
+    const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    const prefillLibraryId = urlParams.get('libraryId');
+    const prefillModuleId = urlParams.get('moduleId');
+
     try {
         const res = await aiApiGet('/api/libraries/list');
         if (res.success) {
@@ -447,10 +472,21 @@ async function loadModules() {
                 libSelect.appendChild(opt);
             });
 
-            if (libraries.length > 0) {
-                aiCurrentLibraryId = libraries[0].id;
+            // 优先使用 URL 参数中的 libraryId，否则默认选第一个
+            const targetLibraryId = prefillLibraryId || (libraries.length > 0 ? libraries[0].id : null);
+            if (targetLibraryId) {
+                aiCurrentLibraryId = parseInt(targetLibraryId);
                 document.getElementById('librarySelect').value = aiCurrentLibraryId;
                 await loadModulesByLibrary(aiCurrentLibraryId);
+
+                // 如果 URL 参数中有 moduleId，自动选中并加载文件和测试点
+                if (prefillModuleId) {
+                    const moduleSelect = document.getElementById('moduleSelect');
+                    if (moduleSelect) {
+                        moduleSelect.value = prefillModuleId;
+                        await onModuleChange();
+                    }
+                }
             }
         }
     } catch (e) {}
@@ -1548,6 +1584,26 @@ function renderCaseTable(cases) {
         return arr;
     }
 
+    const caseSubHeader = (l1Key, modKey) => `<tr class="ai-tree-sub-header ai-tree-case-sub-header" data-type="case-header" data-l1-key="${aiEscapeHtml(l1Key)}" data-mod-key="${aiEscapeHtml(modKey)}">
+        <th class="col-checkbox"></th>
+        <th class="col-name">用例名称</th>
+        <th class="col-purpose">测试目的</th>
+        <th class="col-priority">优先级</th>
+        <th class="col-type">类型</th>
+        <th class="col-similarity">相似度</th>
+        <th class="col-status">状态</th>
+        <th class="col-time">生成时间</th>
+        <th class="col-actions">操作</th>
+    </tr>`;
+
+    libraryGroups.forEach((modMap, libName) => {
+        if (!expandedLibraries.has(libName)) expandedLibraries.add(libName);
+        modMap.forEach((l1Map, modName) => {
+            const modKey = libName + '::' + modName;
+            if (!expandedModules.has(modKey)) expandedModules.add(modKey);
+        });
+    });
+
     libraryGroups.forEach((modMap, libName) => {
         const libExpanded = expandedLibraries.has(libName);
         const libAll = allCasesIn(modMap);
@@ -1557,7 +1613,7 @@ function renderCaseTable(cases) {
 
         rows += `<tr class="ai-tree-group-row" data-lib="${aiEscapeHtml(libName)}" data-type="library">
             <td class="col-checkbox"><input type="checkbox" class="ai-tree-checkbox" ${libChecked ? 'checked' : ''} ${libSome && !libChecked ? 'style="opacity:0.5"' : ''} data-lib-check="${aiEscapeHtml(libName)}"></td>
-            <td class="col-name" colspan="6">
+            <td class="col-name" colspan="8">
                 <div class="ai-tree-name-cell">
                     <span class="ai-tree-toggle ${libExpanded ? 'expanded' : ''}" data-lib-toggle="${aiEscapeHtml(libName)}">${libExpanded ? '▼' : '▶'}</span>
                     📁 ${aiEscapeHtml(libName)}
@@ -1566,6 +1622,17 @@ function renderCaseTable(cases) {
                 </div>
             </td>
         </tr>`;
+
+        const libSubHeader = `<tr class="ai-tree-sub-header ai-tree-module-sub-header ${libExpanded ? '' : 'ai-tree-row-hidden'}" data-lib="${aiEscapeHtml(libName)}" data-type="module-header">
+            <th class="col-checkbox"></th>
+            <th class="col-name">模块名称</th>
+            <th class="col-purpose" colspan="2">用例数</th>
+            <th class="col-type" colspan="5">状态统计</th>
+        </tr>`;
+
+        if (libExpanded) {
+            rows += libSubHeader;
+        }
 
         modMap.forEach((l1Map, modName) => {
             const modKey = libName + '::' + modName;
@@ -1578,7 +1645,7 @@ function renderCaseTable(cases) {
 
             rows += `<tr class="ai-tree-module-row ${libExpanded ? '' : 'ai-tree-row-hidden'}" data-lib="${aiEscapeHtml(libName)}" data-module="${aiEscapeHtml(modName)}" data-type="module" data-mod-key="${aiEscapeHtml(modKey)}">
                 <td class="col-checkbox"><input type="checkbox" class="ai-tree-checkbox" ${modChecked ? 'checked' : ''} ${modSome && !modChecked ? 'style="opacity:0.5"' : ''} data-mod-check="${aiEscapeHtml(modKey)}"></td>
-                <td class="col-name" colspan="6">
+                <td class="col-name" colspan="8">
                     <div class="ai-tree-name-cell">
                         <span class="ai-tree-indent"></span>
                         <span class="ai-tree-toggle ${modExpanded ? 'expanded' : ''}" data-mod-toggle="${aiEscapeHtml(modKey)}">${modExpanded ? '▼' : '▶'}</span>
@@ -1589,6 +1656,17 @@ function renderCaseTable(cases) {
                 </td>
             </tr>`;
 
+            const modSubHeader = `<tr class="ai-tree-sub-header ai-tree-level1-sub-header ${libExpanded && modExpanded ? '' : 'ai-tree-row-hidden'}" data-lib="${aiEscapeHtml(libName)}" data-module="${aiEscapeHtml(modName)}" data-type="level1-header" data-mod-key="${aiEscapeHtml(modKey)}">
+                <th class="col-checkbox"></th>
+                <th class="col-name">一级测试点</th>
+                <th class="col-purpose" colspan="2">用例数</th>
+                <th class="col-type" colspan="5">状态统计</th>
+            </tr>`;
+
+            if (libExpanded && modExpanded) {
+                rows += modSubHeader;
+            }
+
             l1Map.forEach((cases, level1Name) => {
                 const l1Key = modKey + '::' + level1Name;
                 const l1Expanded = expandedLevel1s.has(l1Key);
@@ -1598,7 +1676,7 @@ function renderCaseTable(cases) {
 
                 rows += `<tr class="ai-tree-level1-row ${libExpanded && modExpanded ? '' : 'ai-tree-row-hidden'}" data-lib="${aiEscapeHtml(libName)}" data-module="${aiEscapeHtml(modName)}" data-level1="${aiEscapeHtml(level1Name)}" data-type="level1" data-l1-key="${aiEscapeHtml(l1Key)}" data-mod-key="${aiEscapeHtml(modKey)}">
                     <td class="col-checkbox"><input type="checkbox" class="ai-tree-checkbox" ${l1Checked ? 'checked' : ''} ${l1Some && !l1Checked ? 'style="opacity:0.5"' : ''} data-l1-check="${aiEscapeHtml(l1Key)}"></td>
-                    <td class="col-name" colspan="6">
+                    <td class="col-name" colspan="8">
                         <div class="ai-tree-name-cell">
                             <span class="ai-tree-indent"></span>
                             <span class="ai-tree-indent"></span>
@@ -1610,12 +1688,18 @@ function renderCaseTable(cases) {
                     </td>
                 </tr>`;
 
+                if (libExpanded && modExpanded && l1Expanded) {
+                    rows += caseSubHeader(l1Key, modKey);
+                }
+
                 cases.forEach(c => {
                     const priorityClass = c.priority === '高' ? 'ai-tag-high' : c.priority === '低' ? 'ai-tag-low' : 'ai-tag-medium';
                     const statusClass = `ai-status-${c.status}`;
                     const duplicateTag = c.is_duplicate ? `<span class="ai-status-badge ai-status-duplicate">⚠️ ${c.duplicate_score}%</span>` : '-';
                     const checked = selectedCases.has(c.temp_case_id) ? 'checked' : '';
                     const visible = libExpanded && modExpanded && l1Expanded;
+                    const purposeText = c.purpose ? aiEscapeHtml(c.purpose.length > 80 ? c.purpose.substring(0, 80) + '...' : c.purpose) : '-';
+                    const timeText = aiFormatDateTime(c.created_at);
 
                     rows += `<tr class="ai-tree-case-row ${visible ? '' : 'ai-tree-row-hidden'}" data-lib="${aiEscapeHtml(libName)}" data-module="${aiEscapeHtml(modName)}" data-level1="${aiEscapeHtml(level1Name)}" data-type="case" data-case-id="${aiEscapeHtml(c.temp_case_id)}" data-l1-key="${aiEscapeHtml(l1Key)}" data-mod-key="${aiEscapeHtml(modKey)}">
                         <td class="col-checkbox"><input type="checkbox" class="ai-tree-checkbox" ${checked} data-case-check="${aiEscapeHtml(c.temp_case_id)}"></td>
@@ -1627,10 +1711,12 @@ function renderCaseTable(cases) {
                                 <a href="javascript:void(0)" class="ai-tree-case-name" data-view-case="${aiEscapeHtml(c.temp_case_id)}">${aiEscapeHtml(c.name)}</a>
                             </div>
                         </td>
+                        <td class="col-purpose" title="${aiEscapeHtml(c.purpose || '')}">${purposeText}</td>
                         <td class="col-priority"><span class="ai-tag ${priorityClass}">${aiEscapeHtml(c.priority)}</span></td>
                         <td class="col-type" style="font-size:12px;">${aiEscapeHtml(c.type)}</td>
                         <td class="col-similarity">${duplicateTag}</td>
                         <td class="col-status"><span class="ai-status-badge ${statusClass}">${statusMap[c.status] || aiEscapeHtml(c.status)}</span></td>
+                        <td class="col-time">${timeText}</td>
                         <td class="col-actions">
                             <div class="ai-tree-actions-cell">
                                 <button class="ai-btn ai-btn-sm ai-btn-ghost" data-view-case="${aiEscapeHtml(c.temp_case_id)}">👁️</button>
@@ -1645,7 +1731,7 @@ function renderCaseTable(cases) {
     });
 
     if (data.length === 0) {
-        rows = `<tr class="ai-tree-case-row"><td colspan="7" style="text-align:center;color:var(--ai-text-secondary);padding:40px;">暂无临时用例</td></tr>`;
+        rows = `<tr class="ai-tree-case-row"><td colspan="9" style="text-align:center;color:var(--ai-text-secondary);padding:40px;">暂无临时用例</td></tr>`;
     }
 
     tbody.innerHTML = rows;
@@ -1698,6 +1784,9 @@ function toggleLibraryExpand(libName) {
 
     let sibling = libRow.nextElementSibling;
     while (sibling && !sibling.classList.contains('ai-tree-group-row')) {
+        if (sibling.dataset.type === 'module-header' && sibling.dataset.lib === libName) {
+            sibling.classList.toggle('ai-tree-row-hidden', !isExpanded);
+        }
         if (sibling.dataset.type === 'module') {
             sibling.classList.toggle('ai-tree-row-hidden', !isExpanded);
             if (isExpanded) {
@@ -1708,6 +1797,15 @@ function toggleLibraryExpand(libName) {
                     modToggle.textContent = modExpanded ? '▼' : '▶';
                     modToggle.classList.toggle('expanded', modExpanded);
                 }
+            }
+        }
+        if (sibling.dataset.type === 'level1-header') {
+            if (isExpanded) {
+                const modKey = sibling.dataset.modKey;
+                const modExpanded = expandedModules.has(modKey);
+                sibling.classList.toggle('ai-tree-row-hidden', !modExpanded);
+            } else {
+                sibling.classList.add('ai-tree-row-hidden');
             }
         }
         if (sibling.dataset.type === 'level1') {
@@ -1724,6 +1822,17 @@ function toggleLibraryExpand(libName) {
                         l1Toggle.classList.toggle('expanded', l1Expanded);
                     }
                 }
+            } else {
+                sibling.classList.add('ai-tree-row-hidden');
+            }
+        }
+        if (sibling.dataset.type === 'case-header') {
+            if (isExpanded) {
+                const modKey = sibling.dataset.modKey;
+                const l1Key = sibling.dataset.l1Key;
+                const modExpanded = expandedModules.has(modKey);
+                const l1Expanded = expandedLevel1s.has(l1Key);
+                sibling.classList.toggle('ai-tree-row-hidden', !(modExpanded && l1Expanded));
             } else {
                 sibling.classList.add('ai-tree-row-hidden');
             }
@@ -1759,6 +1868,9 @@ function toggleModuleExpand(modKey) {
 
     let sibling = modRow.nextElementSibling;
     while (sibling && sibling.dataset.type !== 'library' && sibling.dataset.type !== 'module') {
+        if (sibling.dataset.type === 'level1-header' && sibling.dataset.modKey === modKey) {
+            sibling.classList.toggle('ai-tree-row-hidden', !isExpanded);
+        }
         if (sibling.dataset.type === 'level1' && sibling.dataset.modKey === modKey) {
             sibling.classList.toggle('ai-tree-row-hidden', !isExpanded);
             if (isExpanded) {
@@ -1769,6 +1881,15 @@ function toggleModuleExpand(modKey) {
                     l1Toggle.textContent = l1Expanded ? '▼' : '▶';
                     l1Toggle.classList.toggle('expanded', l1Expanded);
                 }
+            }
+        }
+        if (sibling.dataset.type === 'case-header' && sibling.dataset.modKey === modKey) {
+            if (isExpanded) {
+                const l1Key = sibling.dataset.l1Key;
+                const l1Expanded = expandedLevel1s.has(l1Key);
+                sibling.classList.toggle('ai-tree-row-hidden', !l1Expanded);
+            } else {
+                sibling.classList.add('ai-tree-row-hidden');
             }
         }
         if (sibling.dataset.type === 'case' && sibling.dataset.modKey === modKey) {
@@ -1799,9 +1920,18 @@ function toggleAiTreeLevel1Expand(l1Key) {
     if (!l1Row) return;
 
     let sibling = l1Row.nextElementSibling;
-    while (sibling && sibling.dataset.type === 'case' && sibling.dataset.l1Key === l1Key) {
-        sibling.classList.toggle('ai-tree-row-hidden', !isExpanded);
-        sibling = sibling.nextElementSibling;
+    while (sibling) {
+        if (sibling.dataset.type === 'case-header' && sibling.dataset.l1Key === l1Key) {
+            sibling.classList.toggle('ai-tree-row-hidden', !isExpanded);
+            sibling = sibling.nextElementSibling;
+            continue;
+        }
+        if (sibling.dataset.type === 'case' && sibling.dataset.l1Key === l1Key) {
+            sibling.classList.toggle('ai-tree-row-hidden', !isExpanded);
+            sibling = sibling.nextElementSibling;
+            continue;
+        }
+        break;
     }
 }
 
@@ -2435,18 +2565,6 @@ async function executeCrawl() {
     }
 }
 
-function aiFormatDateTime(dateStr) {
-    if (!dateStr) return '-';
-    const date = new Date(dateStr);
-    if (isNaN(date.getTime())) return '-';
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    return `${year}/${month}/${day} ${hours}:${minutes}`;
-}
-
 function initTaskHistoryDragResize() {
     const modal = document.getElementById('taskHistoryModal');
     if (!modal || modal.dataset.dragInit === '1') return;
@@ -2820,4 +2938,43 @@ function closeSkillsModal() {
     modal.style.height = '';
     hideCreateSkillForm();
     hideSkillViewPanel();
+}
+
+/**
+ * 从知识库跳转到 AI 生成页面时，自动填充上下文
+ * 在 script.js 的路由处理中调用
+ */
+function applyAIGenerationContext() {
+    const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    const libraryId = urlParams.get('libraryId');
+    const moduleId = urlParams.get('moduleId');
+
+    if (!libraryId && !moduleId) return;
+
+    // 清掉 URL 参数，避免刷新时重复填充
+    const cleanHash = window.location.hash.split('?')[0];
+    history.replaceState(null, '', cleanHash);
+
+    // 确保在 generate 标签页
+    switchTab('generate');
+
+    // 设置库
+    const libSelect = document.getElementById('librarySelect');
+    if (libraryId && libSelect) {
+        libSelect.value = libraryId;
+        aiCurrentLibraryId = parseInt(libraryId);
+    }
+
+    // 加载模块列表并选中目标模块
+    if (libraryId) {
+        loadModulesByLibrary(parseInt(libraryId)).then(() => {
+            if (moduleId) {
+                const moduleSelect = document.getElementById('moduleSelect');
+                if (moduleSelect) {
+                    moduleSelect.value = moduleId;
+                    onModuleChange();
+                }
+            }
+        });
+    }
 }

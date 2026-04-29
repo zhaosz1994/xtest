@@ -2164,6 +2164,7 @@ body.ai-skill-modal-resizing {
 .ai-tree-table .col-type,
 .ai-tree-table .col-similarity,
 .ai-tree-table .col-status,
+.ai-tree-table .col-time,
 .ai-tree-table .col-actions {
     white-space: nowrap;
     overflow: hidden;
@@ -2176,12 +2177,33 @@ body.ai-skill-modal-resizing {
 }
 
 .ai-tree-table .col-checkbox { width: 40px; min-width: 40px; text-align: center; overflow: visible !important; white-space: normal !important; text-overflow: unset !important; }
-.ai-tree-table .col-name { width: auto; min-width: 280px; }
-.ai-tree-table .col-priority { width: 80px; min-width: 70px; text-align: center; }
-.ai-tree-table .col-type { width: 90px; min-width: 80px; text-align: center; }
-.ai-tree-table .col-similarity { width: 90px; min-width: 80px; text-align: center; }
-.ai-tree-table .col-status { width: 90px; min-width: 80px; text-align: center; }
-.ai-tree-table .col-actions { width: 110px; min-width: 100px; text-align: center; }
+.ai-tree-table .col-name { width: 220px; min-width: 180px; }
+.ai-tree-table .col-purpose { width: 360px; min-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ai-tree-table .col-priority { width: 70px; min-width: 60px; text-align: center; }
+.ai-tree-table .col-type { width: 80px; min-width: 70px; text-align: center; }
+.ai-tree-table .col-similarity { width: 80px; min-width: 70px; text-align: center; }
+.ai-tree-table .col-status { width: 80px; min-width: 70px; text-align: center; }
+.ai-tree-table .col-time { width: 140px; min-width: 130px; text-align: center; white-space: nowrap; font-size: 12px; color: #94a3b8; }
+.ai-tree-table .col-actions { width: 100px; min-width: 90px; text-align: center; }
+
+.ai-tree-sub-header th {
+    background: #f8fafc !important;
+    font-weight: 600;
+    color: #94a3b8;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    padding: 6px 16px;
+    height: 32px;
+    border-bottom: 1px solid #e2e8f0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ai-tree-case-sub-header th {
+    font-size: 10px;
+}
 
 .ai-tree-group-row td {
     background: linear-gradient(90deg, #f0f4ff 0%, #f8fafc 100%);

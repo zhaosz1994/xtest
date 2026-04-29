@@ -142,7 +142,9 @@ function getTemplateRenderers() {
         defect_created: (d) => renderDefectCreated(d),
         defect_status: (d) => renderDefectStatus(d),
         task_assigned: (d) => renderTaskAssigned(d),
-        task_deadline: (d) => renderTaskDeadline(d)
+        task_deadline: (d) => renderTaskDeadline(d),
+        ai_review_complete: (d) => renderAIReviewComplete(d),
+        ai_review_result: (d) => renderAIReviewResult(d)
     };
 }
 
@@ -262,6 +264,26 @@ function renderTaskDeadline(d) {
 function renderGenericTemplate(d) {
     const base = emailBase('📢 系统通知', '#007bff');
     return `${base.header}<p>尊敬的用户，您好！</p><p>您有一条新的通知。</p>${d.content ? infoBox(d.content) : ''}${base.footer}`;
+}
+
+function renderAIReviewComplete(d) {
+    const base = emailBase('🤖 AI辅助评审完成', '#6366f1');
+    const statsHtml = `<div style="display:flex;gap:12px;margin:15px 0;">
+        <div style="flex:1;text-align:center;padding:10px;background:#f0fdf4;border-radius:6px;"><div style="font-size:24px;font-weight:bold;color:#16a34a;">${d.approvedCount || 0}</div><div style="font-size:12px;color:#666;">通过</div></div>
+        <div style="flex:1;text-align:center;padding:10px;background:#fef2f2;border-radius:6px;"><div style="font-size:24px;font-weight:bold;color:#dc2626;">${d.rejectedCount || 0}</div><div style="font-size:12px;color:#666;">拒绝</div></div>
+        <div style="flex:1;text-align:center;padding:10px;background:#fffbeb;border-radius:6px;"><div style="font-size:24px;font-weight:bold;color:#d97706;">${d.modifiedCount || 0}</div><div style="font-size:12px;color:#666;">建议修改</div></div>
+    </div>`;
+    const memoryNote = d.memoryContribution ? `<p style="color:#6366f1;font-size:13px;">💾 ${d.memoryContribution}</p>` : '';
+    return `${base.header}<p>尊敬的 <strong>${d.userName || ''}</strong>，您好！</p><p>AI辅助评审任务已完成，以下是评审摘要：</p>${infoBox(`<h3 style="margin:0 0 10px;color:#4338ca;">${d.taskName || 'AI评审任务'}</h3><p style="margin:5px 0;"><strong>评审智能体：</strong>${d.agentName || ''}</p><p style="margin:5px 0;"><strong>用例总数：</strong>${d.totalCases || 0}</p><p style="margin:5px 0;"><strong>完成时间：</strong>${d.completedAt || ''}</p>`)}${statsHtml}${memoryNote}${d.reviewLink ? actionButton('查看评审结果', d.reviewLink, '#6366f1') : ''}${base.footer}`;
+}
+
+function renderAIReviewResult(d) {
+    const base = emailBase('🤖 AI评审结果通知', '#6366f1');
+    const actionLabel = { approve: '✅ 通过', reject: '❌ 拒绝', modify: '✏️ 建议修改' }[d.action] || d.action;
+    const actionColor = { approve: '#16a34a', reject: '#dc2626', modify: '#d97706' }[d.action] || '#6366f1';
+    const diffHtml = d.diffSummary ? `<div style="background:#f8f9fa;padding:10px;border-radius:4px;margin:10px 0;font-size:13px;"><strong>修改摘要：</strong>${d.diffSummary}</div>` : '';
+    const memoryNote = d.memoryContribution ? `<p style="color:#6366f1;font-size:13px;">💾 ${d.memoryContribution}</p>` : '';
+    return `${base.header}<p>尊敬的 <strong>${d.reviewerName || ''}</strong>，您好！</p><p>AI评审智能体 <strong>${d.agentName || ''}</strong> 已完成对以下用例的评审：</p>${infoBox(`<h3 style="margin:0 0 10px;color:#4338ca;">${d.caseName || ''}</h3><p style="margin:5px 0;"><strong>AI评审动作：</strong><span style="color:${actionColor};font-weight:bold;">${actionLabel}</span></p><p style="margin:5px 0;"><strong>AI评分：</strong>${d.aiScore || '-'}/10</p>${d.aiComment ? `<p style="margin:5px 0;"><strong>AI意见：</strong>${d.aiComment}</p>` : ''}`)}${diffHtml}${memoryNote}${d.reviewLink ? actionButton('查看详情并决策', d.reviewLink, '#6366f1') : ''}${base.footer}`;
 }
 
 async function sendToSingleUser(emailType, userId, data, options = {}) {

@@ -1,23 +1,30 @@
 const ModuleLoader = {
     modules: [
-        { name: 'config/constants', loaded: false, required: true },
-        { name: 'utils/helpers', loaded: false, required: true },
-        { name: 'core/eventManager', loaded: false, required: true },
-        { name: 'core/apiClient', loaded: false, required: true },
-        { name: 'core/router', loaded: false, required: true },
-        { name: 'components/notifications/toast', loaded: false, required: true },
-        { name: 'services/storage', loaded: false, required: false },
-        { name: 'services/theme', loaded: false, required: false },
-        { name: 'services/websocket', loaded: false, required: false },
-        { name: 'testCase/testCaseService', loaded: false, required: false },
-        { name: 'testPlan/testPlanService', loaded: false, required: false },
-        { name: 'testReport/testReportService', loaded: false, required: false },
-        { name: 'module/moduleService', loaded: false, required: false },
-        { name: 'workspace/workspaceService', loaded: false, required: false },
-        { name: 'features/commandPalette', loaded: false, required: false },
-        { name: 'features/gamification', loaded: false, required: false },
-        { name: 'features/search', loaded: false, required: false }
+        // AI 扩展模块 — script.js 中未包含，需要动态加载
+        { name: 'ai-sub-agents', loaded: false, required: false },
+        { name: 'ai-tools', loaded: false, required: false },
+        { name: 'ai-memories', loaded: false, required: false },
+        { name: 'ai-review', loaded: false, required: false }
     ],
+
+    // 以下模块已内嵌在 script.js 中，不可重复加载（会导致 const/函数重定义冲突）：
+    // - config/constants     → API_BASE_URL, DataEvents, APP_CONFIG, ROUTES, STATUS, PRIORITY
+    // - utils/helpers        → 工具函数
+    // - core/eventManager    → DataEventManager
+    // - core/apiClient       → apiRequest, apiCache
+    // - core/router          → Router
+    // - components/notifications/toast → showLoading, hideLoading, showSuccessMessage 等
+    // - services/storage     → StorageService
+    // - services/theme       → ThemeService
+    // - services/websocket   → WebSocket
+    // - testCase/testCaseService  → TestCaseService
+    // - testPlan/testPlanService  → TestPlanService
+    // - testReport/testReportService → TestReportService
+    // - module/moduleService → ModuleService
+    // - workspace/workspaceService  → WorkspaceService, initWorkspace
+    // - features/commandPalette     → CommandPalette
+    // - features/gamification       → (不存在)
+    // - features/search             → (不存在)
 
     loadedCount: 0,
     totalCount: 0,
@@ -29,26 +36,26 @@ const ModuleLoader = {
 
     loadAllModules() {
         const startTime = performance.now();
-        
+
         this.modules.forEach(module => {
             try {
                 const script = document.createElement('script');
                 script.src = `/js/modules/${module.name}.js`;
                 script.async = false;
-                
+
                 script.onload = () => {
                     module.loaded = true;
                     this.loadedCount++;
                     this.updateProgress();
                 };
-                
+
                 script.onerror = () => {
                     console.error(`[ModuleLoader] ✗ ${module.name} 加载失败`);
                     if (module.required) {
                         this.handleRequiredModuleError(module.name);
                     }
                 };
-                
+
                 document.head.appendChild(script);
             } catch (error) {
                 console.error(`[ModuleLoader] 加载 ${module.name} 时出错:`, error);
@@ -61,41 +68,22 @@ const ModuleLoader = {
     },
 
     updateProgress() {
-        const progress = Math.round((this.loadedCount / this.totalCount) * 100);
-        
-        if (typeof showLoading === 'function') {
-            showLoading(`加载模块中... ${progress}%`);
-        }
+        // AI 模块加载进度 — 仅打印日志，不覆盖页面上的 loading 状态
+        console.log(`[ModuleLoader] 模块加载进度: ${this.loadedCount}/${this.totalCount}`);
     },
 
     handleRequiredModuleError(moduleName) {
         console.error(`[ModuleLoader] 必需模块 ${moduleName} 加载失败，应用可能无法正常运行`);
-        
+
         if (typeof showErrorMessage === 'function') {
             showErrorMessage(`核心模块 ${moduleName} 加载失败，请刷新页面重试`);
         }
     },
 
     initializeModules() {
-        if (typeof StorageService !== 'undefined') {
-        }
-        
-        if (typeof ThemeService !== 'undefined') {
-            ThemeService.init();
-        }
-        
-        if (typeof Router !== 'undefined') {
-            Router.init();
-        }
-        
-        if (typeof CommandPalette !== 'undefined') {
-            CommandPalette.init();
-        }
-        
-        if (typeof hideLoading === 'function') {
-            hideLoading();
-        }
-        
+        // 核心模块（Router, ThemeService, CommandPalette 等）已在 script.js 中初始化
+        // 这里只负责 AI 扩展模块的初始化通知
+        console.log('[ModuleLoader] AI 扩展模块加载完成:', this.getLoadedModules().join(', '));
         this.emit('modulesLoaded');
     },
 
@@ -152,20 +140,21 @@ const ModuleLoader = {
 
         const script = document.createElement('script');
         script.src = `/js/modules/${moduleName}.js`;
-        
+
         script.onload = () => {
             module.loaded = true;
             this.loadedCount++;
         };
-        
+
         script.onerror = () => {
             console.error(`[ModuleLoader] ✗ ${moduleName} 重新加载失败`);
         };
-        
+
         document.head.appendChild(script);
         return true;
     }
 };
 
 (function() {
+    ModuleLoader.init();
 })();
