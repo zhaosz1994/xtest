@@ -4,6 +4,7 @@ const sandboxExecutor = require('./sandboxExecutor');
 const llmResponseParser = require('./llmResponseParser');
 const diffGenerator = require('./diffGenerator');
 const logger = require('./logger');
+const agentToolUsageLogger = require('./agentToolUsageLogger');
 const axios = require('axios');
 
 const MAX_TOOL_CALL_ROUNDS = 5;
@@ -98,7 +99,7 @@ class AgentExecutionEngine {
 
                 const toolResults = await this._executeToolCalls(
                     llmResult.tool_calls,
-                    { userId, userRole: context.userRole, username: context.username }
+                    { userId, userRole: context.userRole, username: context.username, agentCode }
                 );
 
                 // 记录工具调用日志
@@ -138,6 +139,26 @@ class AgentExecutionEngine {
                 executionTimeMs
             });
 
+            agentToolUsageLogger.logSuccess({
+                userId,
+                username: context.username,
+                itemType: 'sub_agent',
+                itemCode: agentCode,
+                itemName: agent.display_name,
+                source: context.source || null,
+                executionTimeMs,
+                promptTokens: 0,
+                completionTokens: 0,
+                totalTokens: 0,
+                modelName: aiConfig.model_name || null,
+                contextInfo: {
+                    libraryId: context.libraryId,
+                    moduleId: context.moduleId,
+                    toolCallsCount: toolCallsLog.length,
+                    rounds
+                }
+            });
+
             return {
                 success: true,
                 result: finalContent,
@@ -153,6 +174,21 @@ class AgentExecutionEngine {
                 userId,
                 error: error.message,
                 executionTimeMs
+            });
+
+            agentToolUsageLogger.logFailure({
+                userId,
+                username: context.username,
+                itemType: 'sub_agent',
+                itemCode: agentCode,
+                itemName: null,
+                source: context.source || null,
+                executionTimeMs,
+                errorMessage: error.message,
+                contextInfo: {
+                    libraryId: context.libraryId,
+                    moduleId: context.moduleId
+                }
             });
 
             return {
@@ -499,10 +535,27 @@ class AgentExecutionEngine {
                 params = {};
             }
 
+            const toolStartTime = Date.now();
             const result = await sandboxExecutor.executeTool(toolName, params, {
                 userId: context.userId,
                 userRole: context.userRole,
                 username: context.username
+            });
+            const toolExecutionTimeMs = Date.now() - toolStartTime;
+
+            agentToolUsageLogger.log({
+                userId: context.userId,
+                username: context.username,
+                itemType: 'custom_tool',
+                itemCode: toolName,
+                itemName: null,
+                source: 'agent_loop',
+                executionTimeMs: toolExecutionTimeMs,
+                status: result.success ? 'success' : 'failed',
+                errorMessage: result.success ? null : (result.error || null),
+                contextInfo: {
+                    agentCode: context.agentCode || null
+                }
             });
 
             results.push(result);

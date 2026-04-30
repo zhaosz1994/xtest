@@ -6,17 +6,40 @@ const fs = require('fs').promises;
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
 
 class VFSService {
-  async buildDirectoryTree(moduleId, parentId = null) {
-    const [rows] = await pool.execute(`
-      SELECT 
-        id, parent_id, name, type, file_ext, file_size,
-        parse_status, chunk_count, total_tokens, created_at, updated_at,
-        description, tags, is_enabled, sort_order, created_by
-      FROM module_knowledge_files
-      WHERE module_id = ? AND parent_id ${parentId ? '= ?' : 'IS NULL'}
-        AND deleted_at IS NULL
-      ORDER BY type DESC, sort_order ASC, name ASC
-    `, parentId ? [moduleId, parentId] : [moduleId]);
+  async buildDirectoryTree(moduleId, parentId = null, libraryId = null) {
+    // 支持模块级别和用例库级别的文件树构建
+    let query, params;
+    if (moduleId) {
+      query = `
+        SELECT
+          id, parent_id, name, type, file_ext, file_size,
+          parse_status, chunk_count, total_tokens, created_at, updated_at,
+          description, tags, is_enabled, sort_order, created_by
+        FROM module_knowledge_files
+        WHERE module_id = ? AND parent_id ${parentId ? '= ?' : 'IS NULL'}
+          AND deleted_at IS NULL
+        ORDER BY type DESC, sort_order ASC, name ASC
+      `;
+      params = parentId ? [moduleId, parentId] : [moduleId];
+    } else if (libraryId) {
+      // 用例库级别的文件夹：module_id 为 NULL，挂在 library_id 下
+      query = `
+        SELECT
+          id, parent_id, name, type, file_ext, file_size,
+          parse_status, chunk_count, total_tokens, created_at, updated_at,
+          description, tags, is_enabled, sort_order, created_by
+        FROM module_knowledge_files
+        WHERE library_id = ? AND (module_id IS NULL OR module_id = 0)
+          AND parent_id ${parentId ? '= ?' : 'IS NULL'}
+          AND deleted_at IS NULL
+        ORDER BY type DESC, sort_order ASC, name ASC
+      `;
+      params = parentId ? [libraryId, parentId] : [libraryId];
+    } else {
+      return [];
+    }
+
+    const [rows] = await pool.execute(query, params);
 
     const tree = [];
     for (const row of rows) {
@@ -37,7 +60,7 @@ class VFSService {
       };
 
       if (row.type === 'folder') {
-        node.children = await this.buildDirectoryTree(moduleId, row.id);
+        node.children = await this.buildDirectoryTree(moduleId, row.id, libraryId);
       } else {
         node.fileExt = row.file_ext;
         node.fileSize = row.file_size;
@@ -49,33 +72,55 @@ class VFSService {
     return tree;
   }
 
-  async createFolder(moduleId, parentId, name, userId) {
-    const [existing] = await pool.execute(`
-      SELECT id FROM module_knowledge_files
-      WHERE module_id = ? AND parent_id ${parentId ? '= ?' : 'IS NULL'}
-        AND name = ? AND type = 'folder' AND deleted_at IS NULL
-    `, parentId ? [moduleId, parentId, name] : [moduleId, name]);
+  async createFolder(libraryId, moduleId, parentId, name, userId) {
+    // libraryId 必填，moduleId 可选（为 null 时表示文件夹挂在用例库层级）
+    if (!libraryId) {
+      throw new Error('缺少用例库ID');
+    }
+
+    // 检查同名文件夹
+    let checkQuery, checkParams;
+    if (moduleId) {
+      checkQuery = `
+        SELECT id FROM module_knowledge_files
+        WHERE module_id = ? AND parent_id ${parentId ? '= ?' : 'IS NULL'}
+          AND name = ? AND type = 'folder' AND deleted_at IS NULL
+      `;
+      checkParams = parentId ? [moduleId, parentId, name] : [moduleId, name];
+    } else {
+      // 用例库层级：module_id 为 NULL
+      checkQuery = `
+        SELECT id FROM module_knowledge_files
+        WHERE library_id = ? AND (module_id IS NULL OR module_id = 0)
+          AND parent_id ${parentId ? '= ?' : 'IS NULL'}
+          AND name = ? AND type = 'folder' AND deleted_at IS NULL
+      `;
+      checkParams = parentId ? [libraryId, parentId, name] : [libraryId, name];
+    }
+
+    const [existing] = await pool.execute(checkQuery, checkParams);
 
     if (existing.length > 0) {
       throw new Error('同名文件夹已存在');
     }
 
     const [result] = await pool.execute(`
-      INSERT INTO module_knowledge_files 
-        (module_id, parent_id, name, type, created_by)
-      VALUES (?, ?, ?, 'folder', ?)
-    `, [moduleId, parentId || null, name, userId]);
+      INSERT INTO module_knowledge_files
+        (library_id, module_id, parent_id, name, type, created_by)
+      VALUES (?, ?, ?, ?, 'folder', ?)
+    `, [libraryId, moduleId || null, parentId || null, name, userId]);
 
     return result.insertId;
   }
 
-  async uploadFile(file, moduleId, parentId, userId) {
+  async uploadFile(file, moduleId, parentId, userId, libraryId) {
     const fileUuid = uuidv4();
     const fileExt = path.extname(file.originalname).slice(1).toLowerCase();
-    const relativePath = `knowledge/${moduleId}/${fileUuid}.${fileExt}`;
+    const effectiveModuleId = moduleId || 'library_' + (libraryId || 'unknown');
+    const relativePath = `knowledge/${effectiveModuleId}/${fileUuid}.${fileExt}`;
     const absolutePath = path.join(UPLOAD_DIR, relativePath);
 
-    const dirPath = path.join(UPLOAD_DIR, 'knowledge', String(moduleId));
+    const dirPath = path.join(UPLOAD_DIR, 'knowledge', String(effectiveModuleId));
     await fs.mkdir(dirPath, { recursive: true });
 
     const connection = await pool.getConnection();
@@ -86,11 +131,11 @@ class VFSService {
       await fs.writeFile(absolutePath, file.buffer);
 
       const [result] = await connection.execute(`
-        INSERT INTO module_knowledge_files 
-          (module_id, parent_id, name, type, file_path, file_size, 
+        INSERT INTO module_knowledge_files
+          (library_id, module_id, parent_id, name, type, file_path, file_size,
            file_ext, mime_type, created_by)
-        VALUES (?, ?, ?, 'file', ?, ?, ?, ?, ?)
-      `, [moduleId, parentId || null, file.originalname, relativePath,
+        VALUES (?, ?, ?, ?, 'file', ?, ?, ?, ?, ?)
+      `, [libraryId || null, moduleId || null, parentId || null, file.originalname, relativePath,
           file.size, fileExt, file.mimetype, userId]);
 
       await connection.commit();
@@ -111,13 +156,30 @@ class VFSService {
     }
   }
 
-  async handleSameNameFile(moduleId, parentId, fileName) {
-    const [existing] = await pool.execute(`
-      SELECT id, name, created_at, chunk_count, parse_status
-      FROM module_knowledge_files
-      WHERE module_id = ? AND parent_id ${parentId ? '= ?' : 'IS NULL'}
-        AND name = ? AND deleted_at IS NULL
-    `, parentId ? [moduleId, parentId, fileName] : [moduleId, fileName]);
+  async handleSameNameFile(moduleId, parentId, fileName, libraryId) {
+    let query, params;
+    if (moduleId) {
+      query = `
+        SELECT id, name, created_at, chunk_count, parse_status
+        FROM module_knowledge_files
+        WHERE module_id = ? AND parent_id ${parentId ? '= ?' : 'IS NULL'}
+          AND name = ? AND deleted_at IS NULL
+      `;
+      params = parentId ? [moduleId, parentId, fileName] : [moduleId, fileName];
+    } else if (libraryId) {
+      query = `
+        SELECT id, name, created_at, chunk_count, parse_status
+        FROM module_knowledge_files
+        WHERE library_id = ? AND (module_id IS NULL OR module_id = 0)
+          AND parent_id ${parentId ? '= ?' : 'IS NULL'}
+          AND name = ? AND deleted_at IS NULL
+      `;
+      params = parentId ? [libraryId, parentId, fileName] : [libraryId, fileName];
+    } else {
+      return { hasConflict: false, existingFile: null };
+    }
+
+    const [existing] = await pool.execute(query, params);
 
     return {
       hasConflict: existing.length > 0,
@@ -125,7 +187,7 @@ class VFSService {
     };
   }
 
-  async overwriteFile(existingFileId, newFile, moduleId, parentId, userId) {
+  async overwriteFile(existingFileId, newFile, moduleId, parentId, userId, libraryId) {
     const connection = await pool.getConnection();
 
     try {
@@ -136,26 +198,27 @@ class VFSService {
       `, [existingFileId]);
 
       await connection.execute(`
-        UPDATE module_knowledge_files 
-        SET deleted_at = NOW() 
+        UPDATE module_knowledge_files
+        SET deleted_at = NOW()
         WHERE id = ?
       `, [existingFileId]);
 
       const fileUuid = uuidv4();
       const fileExt = path.extname(newFile.originalname).slice(1).toLowerCase();
-      const relativePath = `knowledge/${moduleId}/${fileUuid}.${fileExt}`;
+      const effectiveModuleId = moduleId || 'library_' + (libraryId || 'unknown');
+      const relativePath = `knowledge/${effectiveModuleId}/${fileUuid}.${fileExt}`;
       const absolutePath = path.join(UPLOAD_DIR, relativePath);
 
-      const dirPath = path.join(UPLOAD_DIR, 'knowledge', String(moduleId));
+      const dirPath = path.join(UPLOAD_DIR, 'knowledge', String(effectiveModuleId));
       await fs.mkdir(dirPath, { recursive: true });
       await fs.writeFile(absolutePath, newFile.buffer);
 
       const [result] = await connection.execute(`
-        INSERT INTO module_knowledge_files 
-          (module_id, parent_id, name, type, file_path, file_size, 
+        INSERT INTO module_knowledge_files
+          (library_id, module_id, parent_id, name, type, file_path, file_size,
            file_ext, mime_type, created_by)
-        VALUES (?, ?, ?, 'file', ?, ?, ?, ?, ?)
-      `, [moduleId, parentId || null, newFile.originalname, relativePath,
+        VALUES (?, ?, ?, ?, 'file', ?, ?, ?, ?, ?)
+      `, [libraryId || null, moduleId || null, parentId || null, newFile.originalname, relativePath,
           newFile.size, fileExt, newFile.mimetype, userId]);
 
       await connection.commit();
@@ -173,13 +236,14 @@ class VFSService {
     }
   }
 
-  async coexistFile(newFile, moduleId, parentId, userId) {
+  async coexistFile(newFile, moduleId, parentId, userId, libraryId) {
     const fileUuid = uuidv4();
     const fileExt = path.extname(newFile.originalname).slice(1).toLowerCase();
-    const relativePath = `knowledge/${moduleId}/${fileUuid}.${fileExt}`;
+    const effectiveModuleId = moduleId || 'library_' + (libraryId || 'unknown');
+    const relativePath = `knowledge/${effectiveModuleId}/${fileUuid}.${fileExt}`;
     const absolutePath = path.join(UPLOAD_DIR, relativePath);
 
-    const dirPath = path.join(UPLOAD_DIR, 'knowledge', String(moduleId));
+    const dirPath = path.join(UPLOAD_DIR, 'knowledge', String(effectiveModuleId));
     await fs.mkdir(dirPath, { recursive: true });
 
     const connection = await pool.getConnection();
@@ -188,11 +252,11 @@ class VFSService {
       await fs.writeFile(absolutePath, newFile.buffer);
 
       const [result] = await connection.execute(`
-        INSERT INTO module_knowledge_files 
-          (module_id, parent_id, name, type, file_path, file_size, 
+        INSERT INTO module_knowledge_files
+          (library_id, module_id, parent_id, name, type, file_path, file_size,
            file_ext, mime_type, created_by)
-        VALUES (?, ?, ?, 'file', ?, ?, ?, ?, ?)
-      `, [moduleId, parentId || null, newFile.originalname, relativePath,
+        VALUES (?, ?, ?, ?, 'file', ?, ?, ?, ?, ?)
+      `, [libraryId || null, moduleId || null, parentId || null, newFile.originalname, relativePath,
           newFile.size, fileExt, newFile.mimetype, userId]);
 
       await connection.commit();
@@ -210,28 +274,37 @@ class VFSService {
     }
   }
 
-  async deleteFile(fileId, moduleId) {
-    const [files] = await pool.execute(`
-      SELECT id, type, file_path FROM module_knowledge_files 
-      WHERE id = ? AND module_id = ? AND deleted_at IS NULL
-    `, [fileId, moduleId]);
+  async deleteFile(fileId, moduleId, libraryId) {
+    let query, params;
+    if (moduleId) {
+      query = `SELECT id, type, file_path FROM module_knowledge_files WHERE id = ? AND module_id = ? AND deleted_at IS NULL`;
+      params = [fileId, moduleId];
+    } else if (libraryId) {
+      query = `SELECT id, type, file_path FROM module_knowledge_files WHERE id = ? AND library_id = ? AND (module_id IS NULL OR module_id = 0) AND deleted_at IS NULL`;
+      params = [fileId, libraryId];
+    } else {
+      query = `SELECT id, type, file_path FROM module_knowledge_files WHERE id = ? AND deleted_at IS NULL`;
+      params = [fileId];
+    }
+
+    const [files] = await pool.execute(query, params);
 
     if (files.length === 0) return false;
 
     const file = files[0];
 
     if (file.type === 'folder') {
-      await this.recursiveDeleteFolder(fileId, moduleId);
+      await this.recursiveDeleteFolder(fileId, moduleId, libraryId);
     } else {
       await pool.execute(`
         DELETE FROM ai_material_chunks WHERE file_id = ?
       `, [fileId]);
 
       await pool.execute(`
-        UPDATE module_knowledge_files 
-        SET deleted_at = NOW() 
-        WHERE id = ? AND module_id = ?
-      `, [fileId, moduleId]);
+        UPDATE module_knowledge_files
+        SET deleted_at = NOW()
+        WHERE id = ?
+      `, [fileId]);
 
       if (file.file_path) {
         const absolutePath = path.join(UPLOAD_DIR, file.file_path);
@@ -242,15 +315,15 @@ class VFSService {
     return true;
   }
 
-  async recursiveDeleteFolder(folderId, moduleId) {
+  async recursiveDeleteFolder(folderId, moduleId, libraryId) {
     const [children] = await pool.execute(`
-      SELECT id, type, file_path FROM module_knowledge_files 
-      WHERE parent_id = ? AND module_id = ? AND deleted_at IS NULL
-    `, [folderId, moduleId]);
+      SELECT id, type, file_path FROM module_knowledge_files
+      WHERE parent_id = ? AND deleted_at IS NULL
+    `, [folderId]);
 
     for (const child of children) {
       if (child.type === 'folder') {
-        await this.recursiveDeleteFolder(child.id, moduleId);
+        await this.recursiveDeleteFolder(child.id, moduleId, libraryId);
       } else {
         await pool.execute(`
           DELETE FROM ai_material_chunks WHERE file_id = ?
@@ -264,23 +337,23 @@ class VFSService {
     }
 
     await pool.execute(`
-      UPDATE module_knowledge_files 
-      SET deleted_at = NOW() 
-      WHERE id = ? AND module_id = ?
-    `, [folderId, moduleId]);
+      UPDATE module_knowledge_files
+      SET deleted_at = NOW()
+      WHERE id = ?
+    `, [folderId]);
   }
 
-  async renameFile(fileId, moduleId, newName) {
+  async renameFile(fileId, newName) {
     const [result] = await pool.execute(`
-      UPDATE module_knowledge_files 
-      SET name = ? 
-      WHERE id = ? AND module_id = ? AND deleted_at IS NULL
-    `, [newName, fileId, moduleId]);
+      UPDATE module_knowledge_files
+      SET name = ?
+      WHERE id = ? AND deleted_at IS NULL
+    `, [newName, fileId]);
 
     return result.affectedRows > 0;
   }
 
-  async moveFile(fileId, moduleId, newParentId) {
+  async moveFile(fileId, newParentId) {
     if (fileId === newParentId) return false;
 
     if (newParentId) {
@@ -289,47 +362,71 @@ class VFSService {
         if (currentId === fileId) return false;
         const [parents] = await pool.execute(`
           SELECT parent_id FROM module_knowledge_files
-          WHERE id = ? AND module_id = ? AND deleted_at IS NULL
-        `, [currentId, moduleId]);
+          WHERE id = ? AND deleted_at IS NULL
+        `, [currentId]);
         currentId = parents.length > 0 ? parents[0].parent_id : null;
       }
     }
 
     const [result] = await pool.execute(`
-      UPDATE module_knowledge_files 
-      SET parent_id = ? 
-      WHERE id = ? AND module_id = ? AND deleted_at IS NULL
-    `, [newParentId || null, fileId, moduleId]);
+      UPDATE module_knowledge_files
+      SET parent_id = ?
+      WHERE id = ? AND deleted_at IS NULL
+    `, [newParentId || null, fileId]);
 
     return result.affectedRows > 0;
   }
 
-  async getFileDetail(fileId, moduleId) {
+  async getFileDetail(fileId) {
     const [files] = await pool.execute(`
-      SELECT f.*, 
+      SELECT f.*,
         (SELECT COUNT(*) FROM ai_material_chunks WHERE file_id = f.id) as actual_chunk_count
       FROM module_knowledge_files f
-      WHERE f.id = ? AND f.module_id = ? AND f.deleted_at IS NULL
-    `, [fileId, moduleId]);
+      WHERE f.id = ? AND f.deleted_at IS NULL
+    `, [fileId]);
 
     return files[0] || null;
   }
 
-  async getModuleFiles(moduleId, parentId) {
-    const [rows] = await pool.execute(`
-      SELECT f.id, f.parent_id, f.name, f.type, f.file_ext, f.file_size,
-        f.parse_status, f.chunk_count, f.total_tokens, f.created_at, f.updated_at,
-        f.description, f.created_by, f.sort_order,
-        CASE WHEN f.type = 'folder' THEN (
-          SELECT COUNT(*) FROM module_knowledge_files sub
-          WHERE sub.parent_id = f.id AND sub.deleted_at IS NULL
-        ) ELSE NULL END AS child_count
-      FROM module_knowledge_files f
-      WHERE f.module_id = ? AND f.parent_id ${parentId ? '= ?' : 'IS NULL'}
-        AND f.deleted_at IS NULL
-      ORDER BY f.type DESC, f.sort_order ASC, f.name ASC
-    `, parentId ? [moduleId, parentId] : [moduleId]);
+  async getModuleFiles(moduleId, parentId, libraryId) {
+    let query, params;
+    if (moduleId) {
+      query = `
+        SELECT f.id, f.parent_id, f.name, f.type, f.file_ext, f.file_size,
+          f.parse_status, f.chunk_count, f.total_tokens, f.created_at, f.updated_at,
+          f.description, f.created_by, f.sort_order, f.library_id,
+          CASE WHEN f.type = 'folder' THEN (
+            SELECT COUNT(*) FROM module_knowledge_files sub
+            WHERE sub.parent_id = f.id AND sub.deleted_at IS NULL
+          ) ELSE NULL END AS child_count
+        FROM module_knowledge_files f
+        WHERE f.module_id = ? AND f.parent_id ${parentId ? '= ?' : 'IS NULL'}
+          AND f.deleted_at IS NULL
+        ORDER BY f.type DESC, f.sort_order ASC, f.name ASC
+      `;
+      params = parentId ? [moduleId, parentId] : [moduleId];
+    } else if (libraryId) {
+      // 用例库级别的文件列表
+      query = `
+        SELECT f.id, f.parent_id, f.name, f.type, f.file_ext, f.file_size,
+          f.parse_status, f.chunk_count, f.total_tokens, f.created_at, f.updated_at,
+          f.description, f.created_by, f.sort_order, f.library_id,
+          CASE WHEN f.type = 'folder' THEN (
+            SELECT COUNT(*) FROM module_knowledge_files sub
+            WHERE sub.parent_id = f.id AND sub.deleted_at IS NULL
+          ) ELSE NULL END AS child_count
+        FROM module_knowledge_files f
+        WHERE f.library_id = ? AND (f.module_id IS NULL OR f.module_id = 0)
+          AND f.parent_id ${parentId ? '= ?' : 'IS NULL'}
+          AND f.deleted_at IS NULL
+        ORDER BY f.type DESC, f.sort_order ASC, f.name ASC
+      `;
+      params = parentId ? [libraryId, parentId] : [libraryId];
+    } else {
+      return [];
+    }
 
+    const [rows] = await pool.execute(query, params);
     return rows;
   }
 
@@ -342,26 +439,26 @@ class VFSService {
     return files[0] || null;
   }
 
-  async updateFileDescription(fileId, moduleId, description) {
+  async updateFileDescription(fileId, description) {
     const [result] = await pool.execute(`
-      UPDATE module_knowledge_files 
-      SET description = ? 
-      WHERE id = ? AND module_id = ? AND deleted_at IS NULL
-    `, [description, fileId, moduleId]);
+      UPDATE module_knowledge_files
+      SET description = ?
+      WHERE id = ? AND deleted_at IS NULL
+    `, [description, fileId]);
 
     return result.affectedRows > 0;
   }
 
-  async reorderFiles(moduleId, parentId, orderedIds) {
+  async reorderFiles(orderedIds) {
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
       for (let i = 0; i < orderedIds.length; i++) {
         await connection.execute(`
-          UPDATE module_knowledge_files 
-          SET sort_order = ? 
-          WHERE id = ? AND module_id = ? AND deleted_at IS NULL
-        `, [i, orderedIds[i], moduleId]);
+          UPDATE module_knowledge_files
+          SET sort_order = ?
+          WHERE id = ? AND deleted_at IS NULL
+        `, [i, orderedIds[i]]);
       }
       await connection.commit();
       return true;
@@ -382,11 +479,33 @@ class VFSService {
     for (const lib of libraries) {
       const libNode = {
         id: `lib_${lib.id}`,
+        realId: lib.id,
         name: lib.name,
         type: 'library',
         children: []
       };
 
+      // 1. 加载用例库级别的文件夹（module_id 为 NULL 的文件夹）
+      const [libFolders] = await pool.execute(`
+        SELECT id, name FROM module_knowledge_files
+        WHERE library_id = ? AND (module_id IS NULL OR module_id = 0)
+          AND parent_id IS NULL AND type = 'folder' AND deleted_at IS NULL
+        ORDER BY sort_order ASC, name ASC
+      `, [lib.id]);
+
+      for (const folder of libFolders) {
+        const folderNode = {
+          id: `folder_${folder.id}`,
+          realId: folder.id,
+          name: folder.name,
+          type: 'folder',
+          libraryId: lib.id,
+          children: await this.buildDirectoryTree(null, folder.id, lib.id)
+        };
+        libNode.children.push(folderNode);
+      }
+
+      // 2. 加载模块（一级测试点）
       const [modules] = await pool.execute(`
         SELECT id, name FROM modules WHERE library_id = ? ORDER BY name
       `, [lib.id]);
@@ -397,6 +516,7 @@ class VFSService {
           realId: mod.id,
           name: mod.name,
           type: 'module',
+          libraryId: lib.id,
           children: await this.buildDirectoryTree(mod.id)
         };
         libNode.children.push(modNode);

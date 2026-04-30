@@ -339,4 +339,251 @@ router.get('/token-stats', authenticateToken, async (req, res) => {
   }
 });
 
+router.get('/agent-stats', authenticateToken, async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 30;
+
+    const [agentStats] = await pool.execute(`
+      SELECT 
+        l.item_code AS agent_code,
+        l.item_name AS display_name,
+        COUNT(*) AS usage_count,
+        COUNT(CASE WHEN l.status = 'success' THEN 1 END) AS success_count,
+        COUNT(CASE WHEN l.status = 'failed' THEN 1 END) AS failed_count,
+        AVG(l.execution_time_ms) AS avg_execution_time,
+        MAX(l.execution_time_ms) AS max_execution_time,
+        MIN(l.execution_time_ms) AS min_execution_time,
+        SUM(l.total_tokens) AS total_tokens,
+        AVG(l.total_tokens) AS avg_tokens,
+        COUNT(DISTINCT l.user_id) AS unique_users,
+        COUNT(DISTINCT l.source) AS unique_sources
+      FROM ai_agent_tool_usage_logs l
+      WHERE l.item_type = 'sub_agent'
+        AND l.created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+      GROUP BY l.item_code, l.item_name
+      ORDER BY usage_count DESC
+    `);
+
+    const [sourceStats] = await pool.execute(`
+      SELECT 
+        source,
+        COUNT(*) AS usage_count,
+        COUNT(CASE WHEN status = 'success' THEN 1 END) AS success_count,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END) AS failed_count,
+        AVG(execution_time_ms) AS avg_execution_time
+      FROM ai_agent_tool_usage_logs
+      WHERE item_type = 'sub_agent'
+        AND created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+        AND source IS NOT NULL
+      GROUP BY source
+      ORDER BY usage_count DESC
+    `);
+
+    const [dailyTrend] = await pool.execute(`
+      SELECT 
+        DATE(created_at) AS date,
+        COUNT(*) AS total_count,
+        COUNT(CASE WHEN status = 'success' THEN 1 END) AS success_count,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END) AS failed_count
+      FROM ai_agent_tool_usage_logs
+      WHERE item_type = 'sub_agent'
+        AND created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+      GROUP BY DATE(created_at)
+      ORDER BY date DESC
+    `);
+
+    const [unregisteredAgents] = await pool.execute(`
+      SELECT l.item_code AS agent_code, l.item_name AS display_name
+      FROM ai_agent_tool_usage_logs l
+      LEFT JOIN ai_sub_agents a ON l.item_code = a.agent_code
+      WHERE l.item_type = 'sub_agent'
+        AND a.id IS NULL
+        AND l.created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+      GROUP BY l.item_code, l.item_name
+    `);
+
+    res.json({
+      success: true,
+      stats: {
+        agents: agentStats,
+        bySource: sourceStats,
+        daily: dailyTrend,
+        unregistered: unregisteredAgents
+      }
+    });
+  } catch (error) {
+    logger.error('获取Sub-Agent使用统计失败', { error: error.message });
+    res.status(500).json({
+      success: false,
+      message: '获取Sub-Agent使用统计失败'
+    });
+  }
+});
+
+router.get('/tool-stats', authenticateToken, async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 30;
+
+    const [toolStats] = await pool.execute(`
+      SELECT 
+        l.item_code AS tool_name,
+        l.item_name AS display_name,
+        COUNT(*) AS usage_count,
+        COUNT(CASE WHEN l.status = 'success' THEN 1 END) AS success_count,
+        COUNT(CASE WHEN l.status = 'failed' THEN 1 END) AS failed_count,
+        AVG(l.execution_time_ms) AS avg_execution_time,
+        MAX(l.execution_time_ms) AS max_execution_time,
+        MIN(l.execution_time_ms) AS min_execution_time,
+        COUNT(DISTINCT l.user_id) AS unique_users,
+        COUNT(DISTINCT l.source) AS unique_sources
+      FROM ai_agent_tool_usage_logs l
+      WHERE l.item_type = 'custom_tool'
+        AND l.created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+      GROUP BY l.item_code, l.item_name
+      ORDER BY usage_count DESC
+    `);
+
+    const [sourceStats] = await pool.execute(`
+      SELECT 
+        source,
+        COUNT(*) AS usage_count,
+        COUNT(CASE WHEN status = 'success' THEN 1 END) AS success_count,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END) AS failed_count,
+        AVG(execution_time_ms) AS avg_execution_time
+      FROM ai_agent_tool_usage_logs
+      WHERE item_type = 'custom_tool'
+        AND created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+        AND source IS NOT NULL
+      GROUP BY source
+      ORDER BY usage_count DESC
+    `);
+
+    const [dailyTrend] = await pool.execute(`
+      SELECT 
+        DATE(created_at) AS date,
+        COUNT(*) AS total_count,
+        COUNT(CASE WHEN status = 'success' THEN 1 END) AS success_count,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END) AS failed_count
+      FROM ai_agent_tool_usage_logs
+      WHERE item_type = 'custom_tool'
+        AND created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+      GROUP BY DATE(created_at)
+      ORDER BY date DESC
+    `);
+
+    const [unregisteredTools] = await pool.execute(`
+      SELECT l.item_code AS tool_name, l.item_name AS display_name
+      FROM ai_agent_tool_usage_logs l
+      LEFT JOIN ai_custom_tools t ON l.item_code = t.tool_name
+      WHERE l.item_type = 'custom_tool'
+        AND t.id IS NULL
+        AND l.created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+      GROUP BY l.item_code, l.item_name
+    `);
+
+    const [agentToolRelation] = await pool.execute(`
+      SELECT 
+        JSON_UNQUOTE(JSON_EXTRACT(l.context_info, '$.agentCode')) AS agent_code,
+        l.item_code AS tool_name,
+        COUNT(*) AS usage_count
+      FROM ai_agent_tool_usage_logs l
+      WHERE l.item_type = 'custom_tool'
+        AND l.source = 'agent_loop'
+        AND l.created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+        AND JSON_EXTRACT(l.context_info, '$.agentCode') IS NOT NULL
+      GROUP BY agent_code, l.item_code
+      ORDER BY usage_count DESC
+    `);
+
+    res.json({
+      success: true,
+      stats: {
+        tools: toolStats,
+        bySource: sourceStats,
+        daily: dailyTrend,
+        unregistered: unregisteredTools,
+        agentToolRelation: agentToolRelation
+      }
+    });
+  } catch (error) {
+    logger.error('获取自定义工具使用统计失败', { error: error.message });
+    res.status(500).json({
+      success: false,
+      message: '获取自定义工具使用统计失败'
+    });
+  }
+});
+
+router.get('/agent-tool-overview', authenticateToken, async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 30;
+
+    const [agentOverview] = await pool.execute(`
+      SELECT 
+        COUNT(*) AS total_agent_calls,
+        COUNT(CASE WHEN status = 'success' THEN 1 END) AS success_count,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END) AS failed_count,
+        COUNT(DISTINCT item_code) AS unique_agents,
+        AVG(execution_time_ms) AS avg_execution_time
+      FROM ai_agent_tool_usage_logs
+      WHERE item_type = 'sub_agent'
+        AND created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+    `);
+
+    const [toolOverview] = await pool.execute(`
+      SELECT 
+        COUNT(*) AS total_tool_calls,
+        COUNT(CASE WHEN status = 'success' THEN 1 END) AS success_count,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END) AS failed_count,
+        COUNT(DISTINCT item_code) AS unique_tools,
+        AVG(execution_time_ms) AS avg_execution_time
+      FROM ai_agent_tool_usage_logs
+      WHERE item_type = 'custom_tool'
+        AND created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+    `);
+
+    const [topAgents] = await pool.execute(`
+      SELECT 
+        item_code AS agent_code,
+        item_name AS display_name,
+        COUNT(*) AS usage_count
+      FROM ai_agent_tool_usage_logs
+      WHERE item_type = 'sub_agent'
+        AND created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+      GROUP BY item_code, item_name
+      ORDER BY usage_count DESC
+      LIMIT 5
+    `);
+
+    const [topTools] = await pool.execute(`
+      SELECT 
+        item_code AS tool_name,
+        item_name AS display_name,
+        COUNT(*) AS usage_count
+      FROM ai_agent_tool_usage_logs
+      WHERE item_type = 'custom_tool'
+        AND created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+      GROUP BY item_code, item_name
+      ORDER BY usage_count DESC
+      LIMIT 5
+    `);
+
+    res.json({
+      success: true,
+      overview: {
+        agent: agentOverview[0],
+        tool: toolOverview[0],
+        topAgents,
+        topTools
+      }
+    });
+  } catch (error) {
+    logger.error('获取Agent/Tool概览统计失败', { error: error.message });
+    res.status(500).json({
+      success: false,
+      message: '获取Agent/Tool概览统计失败'
+    });
+  }
+});
+
 module.exports = router;

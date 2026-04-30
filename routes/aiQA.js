@@ -134,7 +134,8 @@ router.post('/ask', authenticateToken, async (req, res) => {
       libraryId: library_id || null,
       moduleId: module_id || null,
       userRole,
-      username
+      username,
+      source: 'qa'
     };
 
     const result = await agentExecutionEngine.executeAgent(

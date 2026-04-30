@@ -316,18 +316,37 @@ router.post('/test-run/:toolName', authenticateToken, async (req, res) => {
 
     const startTime = Date.now();
 
-    // 通过 sandboxExecutor 执行
-    const result = await sandboxExecutor.execute({
-      language: tool.language,
-      code: tool.code_content,
-      params: runParams || {},
-      timeout_ms: tool.timeout_ms || 30000,
-      max_memory_mb: tool.max_memory_mb || 128,
-      requires_docker: tool.requires_docker === 1,
-      allowed_tables: typeof tool.allowed_tables === 'string'
+    // 根据语言选择执行器
+    const executionContext = {
+      userId,
+      userRole: req.user.role,
+      username: req.user.username,
+      toolName: tool.tool_name,
+      toolId: tool.id,
+      timeoutMs: tool.timeout_ms || 30000,
+      allowedTables: typeof tool.allowed_tables === 'string'
         ? JSON.parse(tool.allowed_tables || '[]')
         : (tool.allowed_tables || [])
-    });
+    };
+
+    let result;
+    const language = tool.language || 'javascript';
+
+    if (language === 'javascript') {
+      result = await sandboxExecutor.executeJavaScript(
+        tool.code_content,
+        runParams || {},
+        executionContext
+      );
+    } else if (language === 'python') {
+      result = await sandboxExecutor.executePython(
+        tool.code_content,
+        runParams || {},
+        executionContext
+      );
+    } else {
+      return res.json({ success: false, message: `不支持的语言: ${language}` });
+    }
 
     const executionTimeMs = Date.now() - startTime;
 

@@ -232,14 +232,14 @@ class MemoryEngine {
             const params = [agentId];
 
             if (libraryId === null || libraryId === undefined) {
-                sql += ' AND library_id IS NULL';
+                sql += ' AND (library_id IS NULL OR library_id = 0)';
             } else {
                 sql += ' AND library_id = ?';
                 params.push(libraryId);
             }
 
             if (moduleId === null || moduleId === undefined) {
-                sql += ' AND module_id IS NULL';
+                sql += ' AND (module_id IS NULL OR module_id = 0)';
             } else {
                 sql += ' AND module_id = ?';
                 params.push(moduleId);
@@ -267,7 +267,6 @@ class MemoryEngine {
         try {
             const charCount = content ? content.length : 0;
 
-            // 确定level
             let level = 'global';
             if (libraryId && moduleId) {
                 level = 'module';
@@ -275,11 +274,27 @@ class MemoryEngine {
                 level = 'library';
             }
 
-            await pool.execute(`
-                INSERT INTO ai_sub_agent_memories (agent_id, library_id, module_id, level, content, char_count)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE content = VALUES(content), char_count = VALUES(char_count), level = VALUES(level), updated_at = CURRENT_TIMESTAMP
-            `, [agentId, libraryId || null, moduleId || null, level, content || '', charCount]);
+            const libVal = libraryId || null;
+            const modVal = moduleId || null;
+
+            const [existing] = await pool.execute(
+                `SELECT id FROM ai_sub_agent_memories 
+                 WHERE agent_id = ? AND (library_id = ? OR (library_id IS NULL AND ? IS NULL))
+                 AND (module_id = ? OR (module_id IS NULL AND ? IS NULL))`,
+                [agentId, libVal, libVal, modVal, modVal]
+            );
+
+            if (existing.length > 0) {
+                await pool.execute(
+                    `UPDATE ai_sub_agent_memories SET content = ?, char_count = ?, level = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+                    [content || '', charCount, level, existing[0].id]
+                );
+            } else {
+                await pool.execute(
+                    `INSERT INTO ai_sub_agent_memories (agent_id, library_id, module_id, level, content, char_count) VALUES (?, ?, ?, ?, ?, ?)`,
+                    [agentId, libVal, modVal, level, content || '', charCount]
+                );
+            }
 
             logger.info('记忆更新成功', { agentId, libraryId, moduleId, level, charCount });
 

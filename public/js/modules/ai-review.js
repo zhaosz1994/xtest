@@ -2,7 +2,10 @@
  * AI Review Module
  * AI辅助评审功能前端模块
  */
-let aiReviewInitialized = false;
+(function() {
+    'use strict';
+
+    let aiReviewInitialized = false;
 
 // 模块状态
 let aiReviewCurrentTaskId = null;
@@ -1114,10 +1117,11 @@ function debounce(func, wait) {
     };
 }
 
-window.initAIReview = initAIReview;
-window.loadAIReviewTasks = loadAIReviewTasks;
-window.showAIReviewResults = showAIReviewResults;
-window.openCompareModal = openCompareModal;
-window.decideReviewResult = decideReviewResult;
-window.batchDecide = batchDecide;
-window.batchMerge = batchMerge;
+    window.initAIReview = initAIReview;
+    window.loadAIReviewTasks = loadAIReviewTasks;
+    window.showAIReviewResults = showAIReviewResults;
+    window.openCompareModal = openCompareModal;
+    window.decideReviewResult = decideReviewResult;
+    window.batchDecide = batchDecide;
+    window.batchMerge = batchMerge;
+})();

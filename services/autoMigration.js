@@ -567,6 +567,34 @@ class AutoMigration {
                 detail += '插入内置 review_test_cases 智能体; ';
             }
 
+            // 2.1 确保内置 generate_overview 智能体存在
+            const [overviewAgent] = await pool.query(
+                "SELECT id FROM ai_sub_agents WHERE agent_code = 'generate_overview' AND is_system = 1 LIMIT 1"
+            );
+
+            if (overviewAgent.length === 0) {
+                await pool.execute(
+                    `INSERT INTO ai_sub_agents
+                        (agent_code, display_name, description, category, is_system, allow_qa, is_enabled, visibility, memory_enabled, memory_distill_threshold)
+                     VALUES ('generate_overview', '概述生成', '根据一级测试点下的测试用例内容，AI自动生成简洁的测试点概述（summary），帮助快速了解测试范围和重点', 'test_generation', 1, 0, 1, 'public', 1, 2000)`
+                );
+                detail += '插入内置 generate_overview 智能体; ';
+            }
+
+            // 2.2 确保内置 generate_key_config 智能体存在
+            const [keyConfigAgent] = await pool.query(
+                "SELECT id FROM ai_sub_agents WHERE agent_code = 'generate_key_config' AND is_system = 1 LIMIT 1"
+            );
+
+            if (keyConfigAgent.length === 0) {
+                await pool.execute(
+                    `INSERT INTO ai_sub_agents
+                        (agent_code, display_name, description, category, is_system, allow_qa, is_enabled, visibility, memory_enabled, memory_distill_threshold)
+                     VALUES ('generate_key_config', '关键配置生成', '根据测试用例的名称、前置条件、目的、步骤和预期结果，AI自动生成关键配置信息（命令、参数、环境变量等）', 'test_generation', 1, 0, 1, 'public', 1, 2000)`
+                );
+                detail += '插入内置 generate_key_config 智能体; ';
+            }
+
             // 3. 为每个没有记忆的系统智能体，插入 global 级别记忆种子
             const memoriesExists = await this.checkTableExists('ai_sub_agent_memories');
             if (!memoriesExists) {
@@ -602,6 +630,14 @@ class AutoMigration {
                 'generate_test_cases': {
                     content: '## 用例生成知识\n- 生成前需了解模块上下文和已有用例\n- 每条用例需包含: 名称、前置条件、步骤、预期结果\n- 需覆盖正常/异常/边界三类场景\n- 优先级根据功能重要性设定',
                     charCount: 85
+                },
+                'generate_overview': {
+                    content: '## 概述生成知识\n- 概述长度控制在50-200字\n- 概括测试点的主要测试内容和方向\n- 多个方向按重要性简要列举\n- 语言简洁专业，避免冗余\n- 优先参考该测试点下的用例实际内容',
+                    charCount: 82
+                },
+                'generate_key_config': {
+                    content: '## 关键配置生成知识\n- 关键配置包括: 命令、参数值、环境变量、数据准备、端口配置等\n- 从前置条件中提取环境要求\n- 从步骤中提取操作命令和参数\n- 格式: "配置项: 值" 或 "- 配置说明"\n- 无特殊配置时输出 "无特殊配置要求"',
+                    charCount: 95
                 }
             };
 

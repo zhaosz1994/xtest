@@ -21,6 +21,7 @@ const KL_API_BASE = '';
 let klCurrentLibraryId = null;
 let klCurrentModuleId = null;
 let klCurrentParentId = null;
+let klCurrentFolderId = null; // 用于跟踪用例库级别的文件夹
 let klCurrentFiles = [];
 let klSelectedFiles = new Set();
 let klViewMode = 'list';
@@ -28,6 +29,7 @@ let klSortField = 'name';
 let klSortOrder = 'asc';
 let klLibraries = [];
 let klModulesMap = {};
+let klLibraryFoldersMap = {}; // 用例库级别的文件夹 { libraryId: [folders] }
 let klModuleFileCounts = {};
 let klTreeData = [];
 let klConfirmCallback = null;
@@ -218,6 +220,14 @@ async function loadKLLibraries() {
                         klModulesMap[lib.id] = Array.isArray(mods) ? mods : [];
                     }
                 } catch (e) { klModulesMap[lib.id] = []; }
+
+                // 加载用例库级别的文件夹
+                try {
+                    const folderRes = await klApiGet(`/api/knowledge/library-files/${lib.id}`);
+                    if (folderRes && folderRes.success) {
+                        klLibraryFoldersMap[lib.id] = (folderRes.data || []).filter(f => f.type === 'folder');
+                    }
+                } catch (e) { klLibraryFoldersMap[lib.id] = []; }
             }
             await loadModuleFileCounts();
             renderTree();
@@ -265,16 +275,35 @@ function renderTree() {
     let html = '';
     for (const lib of klLibraries) {
         const modules = klModulesMap[lib.id] || [];
+        const folders = klLibraryFoldersMap[lib.id] || [];
         const isCollapsed = savedCollapsed.has(String(lib.id));
+        const totalChildren = modules.length + folders.length;
         html += `<div class="kl-tree-node" data-type="library" data-id="${lib.id}">
             <div class="kl-tree-node-row" data-type="library" data-id="${lib.id}">
                 <span class="kl-tree-expand ${isCollapsed ? '' : 'expanded'}">▶</span>
                 <span class="kl-tree-icon">📚</span>
                 <span class="kl-tree-label">${klEscapeHtml(lib.name)}</span>
-                <span class="kl-tree-count">${modules.length}</span>
+                <span class="kl-tree-count">${totalChildren}</span>
                 <button class="kl-tree-action-btn kl-tree-add-btn" data-type="library" data-lib-id="${lib.id}" title="新建文件夹">+</button>
             </div>
             <div class="kl-tree-children ${isCollapsed ? 'collapsed' : ''}">`;
+
+        // 渲染用例库级别的文件夹
+        for (const folder of folders) {
+            const childCount = folder.child_count || 0;
+            const isActive = klCurrentFolderId === folder.id && !klCurrentModuleId;
+            html += `<div class="kl-tree-node" data-type="folder" data-id="${folder.id}" data-lib-id="${lib.id}">
+                <div class="kl-tree-node-row ${isActive ? 'active' : ''}" data-type="folder" data-id="${folder.id}" data-lib-id="${lib.id}">
+                    <span class="kl-tree-expand empty">▶</span>
+                    <span class="kl-tree-icon">📁</span>
+                    <span class="kl-tree-label">${klEscapeHtml(folder.name)}</span>
+                    ${childCount > 0 ? `<span class="kl-tree-count">${childCount}</span>` : ''}
+                    <button class="kl-tree-action-btn kl-tree-add-btn" data-type="folder" data-folder-id="${folder.id}" data-lib-id="${lib.id}" title="新建子文件夹">+</button>
+                </div>
+            </div>`;
+        }
+
+        // 渲染模块（一级测试点）
         for (const mod of modules) {
             const fileCount = klModuleFileCounts[mod.id] || 0;
             const isActive = klCurrentModuleId === mod.id;
@@ -311,7 +340,18 @@ function renderTree() {
                 klCurrentLibraryId = parseInt(this.dataset.libId);
                 klCurrentModuleId = id;
                 klCurrentParentId = null;
+                klCurrentFolderId = null;
                 loadModuleFiles();
+                updateBreadcrumb();
+            } else if (type === 'folder') {
+                // 点击用例库级别的文件夹 — 右侧显示该文件夹内部的内容
+                container.querySelectorAll('.kl-tree-node-row').forEach(r => r.classList.remove('active'));
+                this.classList.add('active');
+                klCurrentLibraryId = parseInt(this.dataset.libId);
+                klCurrentModuleId = null;
+                klCurrentFolderId = id;
+                klCurrentParentId = id; // parentId 设为当前文件夹ID，这样右侧显示的是文件夹内部内容
+                loadLibraryFolderFiles();
                 updateBreadcrumb();
             }
         });
@@ -328,6 +368,11 @@ function renderTree() {
                 } else if (type === 'module') {
                     const moduleId = parseInt(this.dataset.moduleId);
                     showNewFolderModalForModule(moduleId);
+                } else if (type === 'folder') {
+                    // 在用例库级别文件夹下新建子文件夹
+                    const folderId = parseInt(this.dataset.folderId);
+                    const libId = parseInt(this.dataset.libId);
+                    showNewFolderModalForLibraryFolder(folderId, libId);
                 }
             } else {
                 const moduleId = parseInt(this.dataset.moduleId);
@@ -356,6 +401,14 @@ function updateBreadcrumb() {
             html += '<span class="kl-breadcrumb-sep">›</span>';
             html += `<div class="kl-breadcrumb-item current" data-type="module" data-id="${mod.id}">📦 ${klEscapeHtml(mod.name)}</div>`;
         }
+    } else if (klCurrentFolderId) {
+        // 用例库级别的文件夹
+        const folders = klLibraryFoldersMap[klCurrentLibraryId] || [];
+        const folder = folders.find(f => f.id === klCurrentFolderId);
+        if (folder) {
+            html += '<span class="kl-breadcrumb-sep">›</span>';
+            html += `<div class="kl-breadcrumb-item current" data-type="folder" data-id="${folder.id}">📁 ${klEscapeHtml(folder.name)}</div>`;
+        }
     } else {
         html = html.replace('kl-breadcrumb-item"', 'kl-breadcrumb-item current"');
     }
@@ -369,6 +422,7 @@ function updateBreadcrumb() {
                 klCurrentLibraryId = null;
                 klCurrentModuleId = null;
                 klCurrentParentId = null;
+                klCurrentFolderId = null;
                 klCurrentFiles = [];
                 renderFileArea();
                 updateBreadcrumb();
@@ -376,8 +430,9 @@ function updateBreadcrumb() {
             } else if (type === 'library') {
                 klCurrentModuleId = null;
                 klCurrentParentId = null;
+                klCurrentFolderId = null;
                 klCurrentFiles = [];
-                renderFileArea();
+                loadLibraryFolderFiles();
                 updateBreadcrumb();
                 updateStats();
             }
@@ -389,6 +444,21 @@ async function loadModuleFiles() {
     if (!klCurrentModuleId) return;
     try {
         const res = await klApiGet(`/api/knowledge/files/${klCurrentModuleId}${klCurrentParentId ? '?parentId=' + klCurrentParentId : ''}`);
+        if (res && res.success) {
+            klCurrentFiles = res.data || [];
+            renderFileArea();
+            updateStats();
+        }
+    } catch (e) {
+        klNotify('加载文件列表失败', 'error');
+    }
+}
+
+// 加载用例库级别文件夹的文件列表
+async function loadLibraryFolderFiles() {
+    if (!klCurrentLibraryId) return;
+    try {
+        const res = await klApiGet(`/api/knowledge/library-files/${klCurrentLibraryId}${klCurrentParentId ? '?parentId=' + klCurrentParentId : ''}`);
         if (res && res.success) {
             klCurrentFiles = res.data || [];
             renderFileArea();
@@ -435,7 +505,7 @@ function renderFileArea() {
     const listView = document.getElementById('fileListView');
     const gridView = document.getElementById('fileGridView');
 
-    if (!klCurrentModuleId) {
+    if (!klCurrentModuleId && !klCurrentFolderId && !klCurrentLibraryId) {
         emptyState.style.display = 'flex';
         listView.style.display = 'none';
         gridView.style.display = 'none';
@@ -601,7 +671,12 @@ function bindFileRowEvents(container) {
 
 function enterFolder(folderId) {
     klCurrentParentId = folderId;
-    loadModuleFiles();
+    if (klCurrentModuleId) {
+        loadModuleFiles();
+    } else if (klCurrentFolderId || klCurrentLibraryId) {
+        // 用例库级别文件夹中进入子文件夹
+        loadLibraryFolderFiles();
+    }
 }
 
 function klToggleFileSelection(id) {
@@ -780,14 +855,21 @@ async function batchDelete() {
         let successCount = 0;
         for (const fileId of klSelectedFiles) {
             try {
-                await klApiDelete(`/api/knowledge/file/${klCurrentModuleId}/${fileId}`);
+                const params = new URLSearchParams();
+                if (klCurrentModuleId) params.set('moduleId', klCurrentModuleId);
+                if (klCurrentLibraryId) params.set('libraryId', klCurrentLibraryId);
+                await klApiDelete(`/api/knowledge/file/${fileId}?${params.toString()}`);
                 successCount++;
             } catch (e) {}
         }
         klSelectedFiles.clear();
         klSelectedFileModuleMap = {};
         updateBatchBar();
-        loadModuleFiles();
+        if (klCurrentModuleId) {
+            loadModuleFiles();
+        } else {
+            loadLibraryFolderFiles();
+        }
         klNotify(`已删除 ${successCount} 个文件`, 'success');
     }, '🗑️');
 }
@@ -839,9 +921,8 @@ function renderPreviewContent(data) {
 }
 
 async function showFileDetail(fileId) {
-    if (!klCurrentModuleId) return;
     try {
-        const res = await klApiGet(`/api/knowledge/file/detail/${klCurrentModuleId}/${fileId}`);
+        const res = await klApiGet(`/api/knowledge/file/detail/${fileId}`);
         if (res && res.success && res.data) {
             renderDetailPanel(res.data);
             openDetailPanel();
@@ -931,12 +1012,18 @@ function renderDetailPanel(file) {
 }
 
 async function deleteFile(fileId) {
-    if (!klCurrentModuleId) { klNotify('请先选择模块', 'warning'); return; }
     try {
-        await klApiDelete(`/api/knowledge/file/${klCurrentModuleId}/${fileId}`);
+        const params = new URLSearchParams();
+        if (klCurrentModuleId) params.set('moduleId', klCurrentModuleId);
+        if (klCurrentLibraryId) params.set('libraryId', klCurrentLibraryId);
+        await klApiDelete(`/api/knowledge/file/${fileId}?${params.toString()}`);
         klSelectedFiles.delete(fileId);
         delete klSelectedFileModuleMap[fileId];
-        loadModuleFiles();
+        if (klCurrentModuleId) {
+            loadModuleFiles();
+        } else {
+            loadLibraryFolderFiles();
+        }
         updateBatchBar();
         refreshTreeCounts();
         klNotify('删除成功', 'success');
@@ -956,9 +1043,13 @@ function startRename(fileId, currentName) {
         const newName = document.getElementById('renameInput').value.trim();
         if (!newName) { klNotify('请输入新名称', 'warning'); return; }
         try {
-            await klApiPut('/api/knowledge/file/rename', { fileId, moduleId: klCurrentModuleId, newName });
+            await klApiPut('/api/knowledge/file/rename', { fileId, newName });
             klCloseModal('renameModal');
-            loadModuleFiles();
+            if (klCurrentModuleId) {
+                loadModuleFiles();
+            } else {
+                loadLibraryFolderFiles();
+            }
             klNotify('重命名成功', 'success');
         } catch (e) {
             klNotify('重命名失败', 'error');
@@ -977,6 +1068,11 @@ function populateModuleSelects() {
             if (modules.length > 0) {
                 const group = document.createElement('optgroup');
                 group.label = lib.name;
+                // 添加用例库根目录选项
+                const libOpt = document.createElement('option');
+                libOpt.value = '';
+                libOpt.textContent = `📁 ${lib.name}（用例库根目录）`;
+                group.appendChild(libOpt);
                 modules.forEach(mod => {
                     const opt = document.createElement('option');
                     opt.value = mod.id;
@@ -993,50 +1089,33 @@ function populateModuleSelects() {
 function showNewFolderModalForLibrary(libId) {
     const lib = klLibraries.find(l => l.id === libId);
     if (!lib) return;
-    
+
     const modules = klModulesMap[libId] || [];
-    if (modules.length === 0) {
-        klNotify('该用例库下暂无模块，请先创建模块', 'warning');
-        return;
-    }
-    
+
     const hintGroup = document.getElementById('folderHintGroup');
     const hintText = document.getElementById('folderHintText');
     const moduleGroup = document.getElementById('folderModuleGroup');
     const select = document.getElementById('folderModuleSelect');
-    
-    if (modules.length === 1) {
-        hintText.textContent = `将在「${lib.name}」的「${modules[0].name}」模块下创建文件夹`;
-        hintGroup.style.display = 'block';
-        moduleGroup.style.display = 'none';
-        
-        select.innerHTML = '';
+
+    // 提供选项：直接在用例库下创建文件夹，或选择某个模块
+    hintText.textContent = `将在「${lib.name}」下创建文件夹`;
+    hintGroup.style.display = 'block';
+    moduleGroup.style.display = 'block';
+
+    select.innerHTML = '<option value="">用例库根目录（直接挂在用例库下）</option>';
+    const group = document.createElement('optgroup');
+    group.label = '选择模块（测试点）';
+    modules.forEach(mod => {
         const opt = document.createElement('option');
-        opt.value = modules[0].id;
-        opt.textContent = modules[0].name;
-        opt.selected = true;
-        select.appendChild(opt);
-    } else {
-        hintText.textContent = `将在「${lib.name}」下创建文件夹，请选择目标模块`;
-        hintGroup.style.display = 'block';
-        moduleGroup.style.display = 'block';
-        
-        select.innerHTML = '<option value="">请选择模块</option>';
-        const group = document.createElement('optgroup');
-        group.label = lib.name;
-        modules.forEach(mod => {
-            const opt = document.createElement('option');
-            opt.value = mod.id;
-            opt.textContent = mod.name;
-            group.appendChild(opt);
-        });
-        select.appendChild(group);
-        
-        if (modules.length > 0) {
-            select.value = modules[0].id;
-        }
-    }
-    
+        opt.value = mod.id;
+        opt.textContent = mod.name;
+        group.appendChild(opt);
+    });
+    select.appendChild(group);
+
+    // 存储当前用例库ID供创建时使用
+    select.dataset.libraryId = libId;
+
     document.getElementById('newFolderName').value = '';
     klOpenModal('newFolderModal');
     setTimeout(() => document.getElementById('newFolderName').focus(), 100);
@@ -1047,31 +1126,56 @@ function showNewFolderModalForModule(moduleId) {
     const hintText = document.getElementById('folderHintText');
     const moduleGroup = document.getElementById('folderModuleGroup');
     const select = document.getElementById('folderModuleSelect');
-    
+
     let moduleName = '';
     let libName = '';
-    
+
     for (const lib of klLibraries) {
         const modules = klModulesMap[lib.id] || [];
         const mod = modules.find(m => m.id === moduleId);
         if (mod) {
             moduleName = mod.name;
             libName = lib.name;
+            select.dataset.libraryId = lib.id;
             break;
         }
     }
-    
+
     hintText.textContent = `将在「${libName}」的「${moduleName}」模块下创建文件夹`;
     hintGroup.style.display = 'block';
     moduleGroup.style.display = 'none';
-    
+
     select.innerHTML = '';
     const opt = document.createElement('option');
     opt.value = moduleId;
     opt.textContent = moduleName;
     opt.selected = true;
     select.appendChild(opt);
-    
+
+    document.getElementById('newFolderName').value = '';
+    klOpenModal('newFolderModal');
+    setTimeout(() => document.getElementById('newFolderName').focus(), 100);
+}
+
+// 在用例库级别文件夹下新建子文件夹
+function showNewFolderModalForLibraryFolder(folderId, libId) {
+    const lib = klLibraries.find(l => l.id === libId);
+    const folders = klLibraryFoldersMap[libId] || [];
+    const folder = folders.find(f => f.id === folderId);
+
+    const hintGroup = document.getElementById('folderHintGroup');
+    const hintText = document.getElementById('folderHintText');
+    const moduleGroup = document.getElementById('folderModuleGroup');
+    const select = document.getElementById('folderModuleSelect');
+
+    hintText.textContent = `将在「${lib ? lib.name : ''}」的文件夹「${folder ? folder.name : ''}」下创建子文件夹`;
+    hintGroup.style.display = 'block';
+    moduleGroup.style.display = 'none';
+
+    select.innerHTML = '';
+    select.dataset.libraryId = libId;
+    select.dataset.parentFolderId = folderId;
+
     document.getElementById('newFolderName').value = '';
     klOpenModal('newFolderModal');
     setTimeout(() => document.getElementById('newFolderName').focus(), 100);
@@ -1232,17 +1336,17 @@ function formatFileSize(bytes) {
 
 async function handleFileUpload(files) {
     console.log('[Knowledge Library] handleFileUpload called with', files.length, 'files');
-    
+
     const moduleSelect = document.getElementById('uploadModuleSelect');
     const moduleIdValue = moduleSelect ? moduleSelect.value : null;
-    const moduleId = parseInt(moduleIdValue);
+    const moduleId = moduleIdValue ? parseInt(moduleIdValue) : null;
     console.log('[Knowledge Library] moduleSelect element:', !!moduleSelect);
     console.log('[Knowledge Library] moduleIdValue:', moduleIdValue, 'typeof:', typeof moduleIdValue);
     console.log('[Knowledge Library] moduleId (parsed):', moduleId, 'isNaN:', isNaN(moduleId));
-    
-    if (!moduleId || isNaN(moduleId)) { 
-        klNotify('请先选择目标模块', 'warning'); 
-        return; 
+
+    if ((!moduleId || isNaN(moduleId)) && !klCurrentLibraryId) {
+        klNotify('请先选择目标模块或用例库', 'warning');
+        return;
     }
 
     const progressContainer = document.getElementById('uploadProgress');
@@ -1282,6 +1386,10 @@ async function handleFileUpload(files) {
         formData.append('moduleId', moduleId);
         if (klCurrentParentId) {
             formData.append('parentId', klCurrentParentId);
+        }
+        // 传递 libraryId 以支持用例库级别的文件上传
+        if (klCurrentLibraryId) {
+            formData.append('libraryId', klCurrentLibraryId);
         }
 
         const progressBar = itemEl.querySelector('.upload-progress-bar');
@@ -1343,6 +1451,8 @@ async function handleFileUpload(files) {
 
     if (klCurrentModuleId === moduleId) {
         setTimeout(() => loadModuleFiles(), 500);
+    } else if (klCurrentFolderId) {
+        setTimeout(() => loadLibraryFolderFiles(), 500);
     }
     refreshTreeCounts();
 }
@@ -1603,11 +1713,13 @@ function initKLEventListeners() {
 
     document.getElementById('btnNewFolder').addEventListener('click', () => {
         populateModuleSelects();
-        
+
         const hintGroup = document.getElementById('folderHintGroup');
         const moduleGroup = document.getElementById('folderModuleGroup');
-        
+        const select = document.getElementById('folderModuleSelect');
+
         if (klCurrentModuleId) {
+            // 当前在模块（测试点）下
             const modules = klModulesMap[klCurrentLibraryId] || [];
             const mod = modules.find(m => m.id === klCurrentModuleId);
             const lib = klLibraries.find(l => l.id === klCurrentLibraryId);
@@ -1615,15 +1727,30 @@ function initKLEventListeners() {
                 document.getElementById('folderHintText').textContent = `将在「${lib.name}」的「${mod.name}」模块下创建文件夹`;
                 hintGroup.style.display = 'block';
                 moduleGroup.style.display = 'none';
+                select.dataset.libraryId = klCurrentLibraryId;
             } else {
                 hintGroup.style.display = 'none';
                 moduleGroup.style.display = 'block';
             }
+        } else if (klCurrentFolderId && klCurrentLibraryId) {
+            // 当前在用例库级别的文件夹中
+            const lib = klLibraries.find(l => l.id === klCurrentLibraryId);
+            const folders = klLibraryFoldersMap[klCurrentLibraryId] || [];
+            const folder = folders.find(f => f.id === klCurrentFolderId);
+            document.getElementById('folderHintText').textContent = `将在文件夹「${folder ? folder.name : ''}」下创建子文件夹`;
+            hintGroup.style.display = 'block';
+            moduleGroup.style.display = 'none';
+            select.dataset.libraryId = klCurrentLibraryId;
+            select.dataset.parentFolderId = klCurrentFolderId;
+        } else if (klCurrentLibraryId) {
+            // 当前选中了用例库但没选模块
+            showNewFolderModalForLibrary(klCurrentLibraryId);
+            return;
         } else {
             hintGroup.style.display = 'none';
             moduleGroup.style.display = 'block';
         }
-        
+
         document.getElementById('newFolderName').value = '';
         klOpenModal('newFolderModal');
         setTimeout(() => document.getElementById('newFolderName').focus(), 100);
@@ -1713,18 +1840,40 @@ function initKLEventListeners() {
     });
 
     document.getElementById('btnConfirmNewFolder').addEventListener('click', async () => {
-        const moduleId = parseInt(document.getElementById('folderModuleSelect').value);
+        const select = document.getElementById('folderModuleSelect');
+        const moduleIdValue = select.value;
+        const moduleId = moduleIdValue ? parseInt(moduleIdValue) : null;
         const name = document.getElementById('newFolderName').value.trim();
-        if (!moduleId) { klNotify('请选择目标模块', 'warning'); return; }
+        const libraryId = parseInt(select.dataset.libraryId);
+        const parentFolderId = select.dataset.parentFolderId ? parseInt(select.dataset.parentFolderId) : null;
+
         if (!name) { klNotify('请输入文件夹名称', 'warning'); return; }
+        if (!libraryId) { klNotify('缺少用例库信息', 'warning'); return; }
+
         try {
-            await klApiPost('/api/knowledge/folder', { moduleId, parentId: klCurrentParentId || null, name });
+            await klApiPost('/api/knowledge/folder', {
+                libraryId,
+                moduleId: moduleId || null,
+                parentId: parentFolderId || klCurrentParentId || null,
+                name
+            });
             klCloseModal('newFolderModal');
-            if (klCurrentModuleId === moduleId) loadModuleFiles();
-            refreshTreeCounts();
+
+            // 清理临时数据属性
+            delete select.dataset.parentFolderId;
+
+            // 刷新对应区域
+            if (moduleId && klCurrentModuleId === moduleId) {
+                loadModuleFiles();
+            } else if (klCurrentFolderId || !moduleId) {
+                loadLibraryFolderFiles();
+            }
+
+            // 重新加载左侧树（包括用例库级别的文件夹）
+            await loadKLLibraries();
             klNotify('文件夹创建成功', 'success');
         } catch (e) {
-            klNotify('创建失败', 'error');
+            klNotify('创建失败: ' + e.message, 'error');
         }
     });
 

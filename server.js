@@ -1331,7 +1331,19 @@ app.post('/api/cases/list', authenticateToken, async (req, res) => {
     const { libraryId, moduleId, level1Id, page = 1, pageSize = 32 } = req.body;
     const offset = (page - 1) * pageSize;
     
-    let query = 'SELECT id, case_id, name, priority, type, method, status, key_config, precondition, purpose, steps, expected, remark, creator, owner, library_id, module_id, level1_id, created_at, updated_at FROM test_cases WHERE 1=1';
+    let query = `SELECT tc.id, tc.case_id, tc.name, tc.priority, tc.type, tc.method, tc.status, tc.key_config, tc.precondition, tc.purpose, tc.steps, tc.expected, tc.remark, tc.creator, tc.owner, tc.library_id, tc.module_id, tc.level1_id, tc.created_at, tc.updated_at,
+      (SELECT COUNT(*) FROM case_execution_records cer WHERE cer.case_id = tc.id AND cer.record_type = 'defect') as bug_count,
+      CASE 
+        WHEN EXISTS (
+          SELECT 1 FROM case_execution_records cer 
+          WHERE cer.case_id = tc.id AND cer.record_type = 'defect'
+        ) OR EXISTS (
+          SELECT 1 FROM test_plan_cases tpc 
+          WHERE tpc.case_id = tc.id AND tpc.bug_id IS NOT NULL AND tpc.bug_id != ''
+        ) THEN 1 
+        ELSE 0 
+      END as has_defect
+      FROM test_cases tc WHERE 1=1`;
     let params = [];
     
     // 转换为正确的数据类型，并确保是有效的数字
@@ -1519,6 +1531,8 @@ app.post('/api/cases/list', authenticateToken, async (req, res) => {
           libraryId: testCase.library_id,
           moduleId: testCase.module_id,
           level1Id: testCase.level1_id,
+          bug_count: testCase.bug_count || 0,
+          has_defect: testCase.has_defect || 0,
           environments: environmentsMap.get(testCase.id) || [],
           sources: sourcesMap.get(testCase.id) || [],
           methods: methods,
@@ -7069,7 +7083,41 @@ async function initDatabase() {
         }
       }
       logger.info('性能优化索引创建完成');
-      
+
+      // 创建 AI Agent/工具使用日志表
+      try {
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS ai_agent_tool_usage_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            username VARCHAR(100),
+            item_type VARCHAR(20) NOT NULL COMMENT 'sub_agent | custom_tool',
+            item_code VARCHAR(100) NOT NULL COMMENT 'agent_code 或 tool_name',
+            item_name VARCHAR(200) COMMENT '显示名称',
+            source VARCHAR(50) COMMENT '来源: review, qa, generation, test_run, agent_loop',
+            execution_time_ms INT,
+            prompt_tokens INT DEFAULT 0,
+            completion_tokens INT DEFAULT 0,
+            total_tokens INT DEFAULT 0,
+            model_name VARCHAR(100),
+            status VARCHAR(20) NOT NULL DEFAULT 'success',
+            error_message TEXT,
+            context_info JSON COMMENT '上下文信息如 libraryId, moduleId 等',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_item_type (item_type),
+            INDEX idx_item_code (item_code),
+            INDEX idx_user_id (user_id),
+            INDEX idx_status (status),
+            INDEX idx_created_at (created_at),
+            INDEX idx_item_type_code (item_type, item_code),
+            INDEX idx_source (source)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        logger.info('AI Agent/工具使用日志表创建成功');
+      } catch (agentLogError) {
+        logger.warn('AI Agent/工具使用日志表创建警告:', { error: agentLogError.message });
+      }
+
       logger.info('数据库初始化完成');
     } finally {
       connection.release();

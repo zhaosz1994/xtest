@@ -1453,7 +1453,9 @@ async function deleteKnowledgeFile(fileId) {
     try {
         const moduleId = aiCurrentModuleId || document.getElementById('moduleSelect').value;
         if (!moduleId) { aiNotify('请先选择模块', 'warning'); return; }
-        await aiApiDelete(`/api/knowledge/file/${moduleId}/${fileId}`);
+        const params = new URLSearchParams();
+        params.set('moduleId', moduleId);
+        await aiApiDelete(`/api/knowledge/file/${fileId}?${params.toString()}`);
         aiSelectedFiles.delete(fileId);
         loadKnowledgeTree();
         loadKnowledgeFiles();

@@ -28,6 +28,7 @@ class DatabaseMigrator {
     this.registerAIOperationLogsMigration();
     this.registerUserAITimeoutConfigMigration();
     this.registerAISubAgentPlatformV2Migration();
+    this.registerKnowledgeLibraryIdMigration();
     
     logger.info('[数据库迁移] 开始检查...');
     console.log('\n🔄 数据库自动迁移检查...\n');
@@ -414,6 +415,139 @@ class DatabaseMigrator {
       }
 
       return { status: 'ok', message: '无需修复' };
+    });
+  }
+
+  registerKnowledgeLibraryIdMigration() {
+    this.registerMigration('knowledge_library_id_support', async () => {
+      console.log('  检查知识库 library_id 字段支持...');
+
+      let fixedCount = 0;
+      let allExist = true;
+
+      // 检查 module_knowledge_files 表是否存在
+      const tableExists = await this.tableExists('module_knowledge_files');
+      if (!tableExists) {
+        console.log('    ⚠️ module_knowledge_files 表不存在，跳过迁移');
+        return { status: 'ok', message: 'module_knowledge_files 表尚未创建，跳过' };
+      }
+
+      // 1. 给 module_knowledge_files 增加 library_id 字段
+      const libIdExists = await this.columnExists('module_knowledge_files', 'library_id');
+      if (libIdExists) {
+        console.log('    ✅ module_knowledge_files.library_id 存在');
+      } else {
+        console.log('    ⚠️ 缺失字段: module_knowledge_files.library_id, 正在添加...');
+        allExist = false;
+        const added = await this.addColumnSafe('module_knowledge_files', 'library_id', "int DEFAULT NULL COMMENT '所属用例库ID(用于用例库层级文件夹)' AFTER module_id");
+        if (added === true) {
+          fixedCount++;
+          console.log('    ✅ 已添加: module_knowledge_files.library_id');
+          // 创建索引
+          await this.createIndexSafe('module_knowledge_files', 'idx_library_id', 'library_id');
+          // 回填已有数据
+          try {
+            await pool.query(`
+              UPDATE module_knowledge_files mkf
+              INNER JOIN modules m ON mkf.module_id = m.id
+              SET mkf.library_id = m.library_id
+              WHERE mkf.library_id IS NULL AND mkf.module_id IS NOT NULL
+            `);
+            console.log('    ✅ 已回填 library_id 数据');
+          } catch (e) {
+            console.log('    ⚠️ 回填 library_id 数据失败（可忽略）:', e.message);
+          }
+        } else if (added === false) {
+          return { status: 'error', message: '无法添加字段: module_knowledge_files.library_id' };
+        }
+      }
+
+      // 2. 允许 module_knowledge_files.module_id 为 NULL
+      try {
+        const [columns] = await pool.query("SHOW COLUMNS FROM module_knowledge_files WHERE Field = 'module_id'");
+        if (columns.length > 0 && columns[0].Null === 'NO') {
+          console.log('    ⚠️ module_knowledge_files.module_id 不允许 NULL, 正在修改...');
+          allExist = false;
+          await pool.query("ALTER TABLE module_knowledge_files MODIFY COLUMN module_id int DEFAULT NULL COMMENT '所属模块ID，NULL表示挂在用例库层级'");
+          fixedCount++;
+          console.log('    ✅ 已修改: module_knowledge_files.module_id 允许 NULL');
+        } else {
+          console.log('    ✅ module_knowledge_files.module_id 已允许 NULL');
+        }
+      } catch (e) {
+        console.log('    ⚠️ 修改 module_id 字段失败:', e.message);
+      }
+
+      // 3. 检查 ai_material_chunks 表
+      const chunksTableExists = await this.tableExists('ai_material_chunks');
+      if (chunksTableExists) {
+        // 给 ai_material_chunks 增加 library_id 字段
+        const chunkLibIdExists = await this.columnExists('ai_material_chunks', 'library_id');
+        if (chunkLibIdExists) {
+          console.log('    ✅ ai_material_chunks.library_id 存在');
+        } else {
+          console.log('    ⚠️ 缺失字段: ai_material_chunks.library_id, 正在添加...');
+          allExist = false;
+          const added = await this.addColumnSafe('ai_material_chunks', 'library_id', "int DEFAULT NULL COMMENT '所属用例库ID(冗余)' AFTER module_id");
+          if (added === true) {
+            fixedCount++;
+            console.log('    ✅ 已添加: ai_material_chunks.library_id');
+            await this.createIndexSafe('ai_material_chunks', 'idx_library_id', 'library_id');
+            // 回填
+            try {
+              await pool.query(`
+                UPDATE ai_material_chunks ac
+                INNER JOIN module_knowledge_files mkf ON ac.file_id = mkf.id
+                SET ac.library_id = mkf.library_id
+                WHERE ac.library_id IS NULL AND mkf.library_id IS NOT NULL
+              `);
+              console.log('    ✅ 已回填 ai_material_chunks.library_id 数据');
+            } catch (e) {
+              console.log('    ⚠️ 回填 ai_material_chunks.library_id 失败（可忽略）:', e.message);
+            }
+          } else if (added === false) {
+            return { status: 'error', message: '无法添加字段: ai_material_chunks.library_id' };
+          }
+        }
+
+        // 允许 ai_material_chunks.module_id 为 NULL
+        try {
+          const [columns] = await pool.query("SHOW COLUMNS FROM ai_material_chunks WHERE Field = 'module_id'");
+          if (columns.length > 0 && columns[0].Null === 'NO') {
+            console.log('    ⚠️ ai_material_chunks.module_id 不允许 NULL, 正在修改...');
+            allExist = false;
+            // 先删除外键约束
+            try {
+              await pool.query("ALTER TABLE ai_material_chunks DROP FOREIGN KEY fk_chunk_module");
+            } catch (e) {
+              // 外键可能不存在，忽略
+            }
+            await pool.query("ALTER TABLE ai_material_chunks MODIFY COLUMN module_id int DEFAULT NULL COMMENT '所属模块ID(冗余)，NULL表示用例库层级文件'");
+            fixedCount++;
+            console.log('    ✅ 已修改: ai_material_chunks.module_id 允许 NULL');
+            // 重新添加外键
+            try {
+              await pool.query("ALTER TABLE ai_material_chunks ADD CONSTRAINT fk_chunk_module FOREIGN KEY (module_id) REFERENCES modules (id) ON DELETE CASCADE");
+            } catch (e) {
+              console.log('    ⚠️ 重新添加外键失败（可忽略）:', e.message);
+            }
+          } else {
+            console.log('    ✅ ai_material_chunks.module_id 已允许 NULL');
+          }
+        } catch (e) {
+          console.log('    ⚠️ 修改 ai_material_chunks.module_id 失败:', e.message);
+        }
+      } else {
+        console.log('    ⚠️ ai_material_chunks 表不存在，跳过');
+      }
+
+      if (allExist) {
+        return { status: 'ok', message: '知识库 library_id 字段结构完整' };
+      } else if (fixedCount > 0) {
+        return { status: 'fixed', message: `知识库 library_id 支持已修复 ${fixedCount} 个结构问题` };
+      } else {
+        return { status: 'ok', message: '无需修复' };
+      }
     });
   }
 }

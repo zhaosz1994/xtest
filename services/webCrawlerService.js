@@ -256,23 +256,25 @@ class WebCrawlerService {
     const fs = require('fs').promises;
     const path = require('path');
 
+    const libraryId = options.libraryId || null;
     const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
     const fileUuid = uuidv4();
-    const relativePath = `knowledge/${moduleId}/${fileUuid}.md`;
+    const effectiveModuleId = moduleId || 'library_' + (libraryId || 'unknown');
+    const relativePath = `knowledge/${effectiveModuleId}/${fileUuid}.md`;
     const absolutePath = path.join(UPLOAD_DIR, relativePath);
 
-    const dirPath = path.join(UPLOAD_DIR, 'knowledge', String(moduleId));
+    const dirPath = path.join(UPLOAD_DIR, 'knowledge', String(effectiveModuleId));
     await fs.mkdir(dirPath, { recursive: true });
     await fs.writeFile(absolutePath, result.markdown || result.content, 'utf-8');
 
     const fileName = result.title ? `${result.title}.md` : `webpage-${fileUuid.slice(0, 8)}.md`;
 
     const [fileResult] = await pool.execute(`
-      INSERT INTO module_knowledge_files 
-        (module_id, parent_id, name, type, file_path, file_size, 
+      INSERT INTO module_knowledge_files
+        (library_id, module_id, parent_id, name, type, file_path, file_size,
          file_ext, mime_type, created_by, parse_status)
-      VALUES (?, ?, ?, 'file', ?, ?, 'md', 'text/markdown', ?, 'pending')
-    `, [moduleId, parentId || null, fileName, relativePath,
+      VALUES (?, ?, ?, ?, 'file', ?, ?, 'md', 'text/markdown', ?, 'pending')
+    `, [libraryId, moduleId || null, parentId || null, fileName, relativePath,
         Buffer.byteLength(result.markdown || result.content), userId]);
 
     const FileParserService = require('./fileParserService');

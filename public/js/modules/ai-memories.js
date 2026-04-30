@@ -223,6 +223,7 @@ async function loadMemoryTree(agentId) {
     const treeContainer = document.getElementById('aimem-tree-container');
     if (!treeContainer) return;
 
+    aiMemoriesCurrentAgentId = agentId;
     treeContainer.innerHTML = '<div class="aimem-tree-loading">加载中...</div>';
 
     try {
@@ -257,8 +258,8 @@ function renderMemoryTree(data) {
     if (globalNodes.length > 0) {
         const totalRules = countRules(globalNodes);
         const totalChars = globalNodes.reduce((sum, n) => sum + (n.charCount || 0), 0);
-        html += `<div class="aimem-tree-node aimem-tree-global" data-agent-id="${escapeHtml(aiMemoriesCurrentAgentId)}" data-level="global">`;
-        html += `<div class="aimem-tree-node-content">`;
+        html += `<div class="aimem-tree-node aimem-tree-global">`;
+        html += `<div class="aimem-tree-node-content" data-agent-id="${escapeHtml(String(aiMemoriesCurrentAgentId))}" data-level="global">`;
         html += `<span class="aimem-tree-icon">&#127760;</span>`;
         html += `<span class="aimem-tree-label">全局基础记忆</span>`;
         html += `<span class="aimem-tree-badge">${totalRules}条规则, ${totalChars}字</span>`;

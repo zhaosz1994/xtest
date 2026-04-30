@@ -425,6 +425,48 @@
             font-weight: bold;
             color: #333;
         }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            margin: 20px 0 10px 0;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .unregistered-notice {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 6px;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+            color: #856404;
+            font-size: 14px;
+        }
+
+        .unregistered-notice strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .relation-matrix {
+            margin-top: 20px;
+        }
+
+        .source-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+
+        .source-badge.review { background: #e3f2fd; color: #1565c0; }
+        .source-badge.qa { background: #f3e5f5; color: #7b1fa2; }
+        .source-badge.generation { background: #e8f5e9; color: #2e7d32; }
+        .source-badge.agent_loop { background: #fff3e0; color: #e65100; }
+        .source-badge.test_run { background: #fce4ec; color: #c62828; }
         
         @media (max-width: 768px) {
             .overview-cards {
@@ -489,6 +531,25 @@
                 <div class="value" id="avg-tokens">-</div>
             </div>
         </div>
+
+        <div class="overview-cards" id="agent-tool-overview-cards" style="margin-bottom: 30px;">
+            <div class="overview-card" style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white;">
+                <h3 style="color: rgba(255,255,255,0.9);">🤖 Sub-Agent 调用次数</h3>
+                <div class="value" id="agent-total-calls">-</div>
+            </div>
+            <div class="overview-card" style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white;">
+                <h3 style="color: rgba(255,255,255,0.9);">🤖 Sub-Agent 种类数</h3>
+                <div class="value" id="agent-unique-count">-</div>
+            </div>
+            <div class="overview-card" style="background: linear-gradient(135deg, #fc5c7d 0%, #6a82fb 100%); color: white;">
+                <h3 style="color: rgba(255,255,255,0.9);">🔧 自定义工具 调用次数</h3>
+                <div class="value" id="tool-total-calls">-</div>
+            </div>
+            <div class="overview-card" style="background: linear-gradient(135deg, #fc5c7d 0%, #6a82fb 100%); color: white;">
+                <h3 style="color: rgba(255,255,255,0.9);">🔧 自定义工具 种类数</h3>
+                <div class="value" id="tool-unique-count">-</div>
+            </div>
+        </div>
         
         <!-- 时间范围选择器 -->
         <div class="time-range-selector">
@@ -506,6 +567,8 @@
                 <button class="tab-btn" data-tab="failed">❌ 失败操作</button>
                 <button class="tab-btn" data-tab="skill-stats">🤖 技能统计</button>
                 <button class="tab-btn" data-tab="user-stats">👥 用户统计</button>
+                <button class="tab-btn" data-tab="agent-stats">🧠 Sub-Agent统计</button>
+                <button class="tab-btn" data-tab="tool-stats">🔧 自定义工具统计</button>
             </div>
             
             <!-- 概览标签页 -->
@@ -576,6 +639,20 @@
                     <div class="loading">加载中...</div>
                 </div>
             </div>
+
+            <!-- Sub-Agent统计标签页 -->
+            <div class="tab-content" id="agent-stats-tab">
+                <div id="agent-stats-container">
+                    <div class="loading">点击标签页加载数据...</div>
+                </div>
+            </div>
+
+            <!-- 自定义工具统计标签页 -->
+            <div class="tab-content" id="tool-stats-tab">
+                <div id="tool-stats-container">
+                    <div class="loading">点击标签页加载数据...</div>
+                </div>
+            </div>
         </div>
     </div>
     
@@ -598,6 +675,7 @@
     <script>
         let currentDays = 30;
         let dailyChart, topSkillsChart, topUsersChart;
+        let agentDailyChart, agentTopChart, toolDailyChart, toolTopChart;
         
         function showErrorMessage(message) {
             const toast = document.createElement('div');
@@ -711,6 +789,15 @@
                 if (error.message !== '未登录' && error.message !== '认证失败') {
                     showErrorMessage('加载数据失败，请检查网络连接');
                 }
+            }
+
+            try {
+                const atData = await apiRequest(`/api/ai-operation-logs/agent-tool-overview?days=${currentDays}`);
+                if (atData.success) {
+                    updateAgentToolOverviewCards(atData.overview);
+                }
+            } catch (error) {
+                console.error('加载Agent/Tool概览失败:', error);
             }
         }
         
@@ -1141,6 +1228,12 @@
                 case 'user-stats':
                     loadUserStats();
                     break;
+                case 'agent-stats':
+                    loadAgentStats();
+                    break;
+                case 'tool-stats':
+                    loadToolStats();
+                    break;
             }
         }
         
@@ -1392,6 +1485,405 @@
                 closeSqlModal();
             }
         });
+
+        function updateAgentToolOverviewCards(overview) {
+            const agent = overview.agent || {};
+            const tool = overview.tool || {};
+
+            document.getElementById('agent-total-calls').textContent = agent.total_agent_calls || 0;
+            document.getElementById('agent-unique-count').textContent = agent.unique_agents || 0;
+            document.getElementById('tool-total-calls').textContent = tool.total_tool_calls || 0;
+            document.getElementById('tool-unique-count').textContent = tool.unique_tools || 0;
+        }
+
+        function getSourceLabel(source) {
+            const map = {
+                'review': 'AI评审',
+                'qa': 'AI问答',
+                'generation': 'AI生成',
+                'agent_loop': 'Agent调用',
+                'test_run': '测试运行'
+            };
+            return map[source] || source || '-';
+        }
+
+        function getSourceBadgeClass(source) {
+            const map = {
+                'review': 'review',
+                'qa': 'qa',
+                'generation': 'generation',
+                'agent_loop': 'agent_loop',
+                'test_run': 'test_run'
+            };
+            return map[source] || '';
+        }
+
+        async function loadAgentStats() {
+            const container = document.getElementById('agent-stats-container');
+            container.innerHTML = '<div class="loading">加载中...</div>';
+
+            try {
+                const data = await apiRequest(`/api/ai-operation-logs/agent-stats?days=${currentDays}`);
+
+                if (data.success) {
+                    container.innerHTML = renderAgentStats(data.stats);
+                } else {
+                    container.innerHTML = '<div class="no-data">暂无数据</div>';
+                }
+            } catch (error) {
+                container.innerHTML = '<div class="no-data">加载失败</div>';
+                console.error('加载Sub-Agent统计失败:', error);
+            }
+        }
+
+        function renderAgentStats(stats) {
+            let html = '';
+
+            if (stats.unregistered && stats.unregistered.length > 0) {
+                html += '<div class="unregistered-notice">';
+                html += '<strong>⚠️ 检测到已删除的Sub-Agent仍有使用记录</strong>';
+                html += '<span>以下Agent在配置中心中已不存在，但仍有历史使用记录：';
+                stats.unregistered.forEach(a => {
+                    html += '<code>' + escapeHtml(a.agent_code) + '</code> ';
+                });
+                html += '</span></div>';
+            }
+
+            html += '<h3 class="section-title">📊 Sub-Agent 使用排行</h3>';
+            html += renderAgentStatsTable(stats.agents || []);
+
+            if (stats.bySource && stats.bySource.length > 0) {
+                html += '<h3 class="section-title">📂 按调用来源统计</h3>';
+                html += renderSourceStatsTable(stats.bySource);
+            }
+
+            if (stats.daily && stats.daily.length > 0) {
+                html += '<h3 class="section-title">📈 每日调用趋势</h3>';
+                html += '<div class="chart-container"><canvas id="agent-daily-chart"></canvas></div>';
+            }
+
+            setTimeout(() => {
+                if (stats.daily && stats.daily.length > 0) {
+                    renderAgentDailyChart(stats.daily);
+                }
+            }, 100);
+
+            return html;
+        }
+
+        function renderAgentStatsTable(agents) {
+            if (!agents || agents.length === 0) {
+                return '<div class="no-data">暂无Sub-Agent使用数据</div>';
+            }
+
+            let html = `
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>Agent Code</th>
+                            <th>显示名称</th>
+                            <th>调用次数</th>
+                            <th>成功次数</th>
+                            <th>失败次数</th>
+                            <th>平均耗时</th>
+                            <th>最大耗时</th>
+                            <th>总Token</th>
+                            <th>平均Token</th>
+                            <th>使用用户数</th>
+                            <th>来源数</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            agents.forEach(agent => {
+                html += `
+                    <tr>
+                        <td><code>${escapeHtml(agent.agent_code)}</code></td>
+                        <td>${escapeHtml(agent.display_name || '-')}</td>
+                        <td><strong>${agent.usage_count}</strong></td>
+                        <td style="color: #4CAF50">${agent.success_count}</td>
+                        <td style="color: #f44336">${agent.failed_count}</td>
+                        <td>${agent.avg_execution_time ? Math.round(agent.avg_execution_time) + 'ms' : '-'}</td>
+                        <td>${agent.max_execution_time ? agent.max_execution_time + 'ms' : '-'}</td>
+                        <td>${agent.total_tokens ? formatNumber(agent.total_tokens) : '-'}</td>
+                        <td>${agent.avg_tokens ? Math.round(agent.avg_tokens) : '-'}</td>
+                        <td>${agent.unique_users || 0}</td>
+                        <td>${agent.unique_sources || 0}</td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+            return html;
+        }
+
+        function renderSourceStatsTable(sources) {
+            let html = `
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>来源</th>
+                            <th>调用次数</th>
+                            <th>成功次数</th>
+                            <th>失败次数</th>
+                            <th>平均耗时</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            sources.forEach(s => {
+                html += `
+                    <tr>
+                        <td><span class="source-badge ${getSourceBadgeClass(s.source)}">${escapeHtml(getSourceLabel(s.source))}</span></td>
+                        <td><strong>${s.usage_count}</strong></td>
+                        <td style="color: #4CAF50">${s.success_count}</td>
+                        <td style="color: #f44336">${s.failed_count}</td>
+                        <td>${s.avg_execution_time ? Math.round(s.avg_execution_time) + 'ms' : '-'}</td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+            return html;
+        }
+
+        function renderAgentDailyChart(dailyData) {
+            const ctx = document.getElementById('agent-daily-chart');
+            if (!ctx) return;
+
+            if (agentDailyChart) {
+                agentDailyChart.destroy();
+            }
+
+            const labels = dailyData.map(d => formatDate(d.date)).reverse();
+            const successData = dailyData.map(d => d.success_count).reverse();
+            const failedData = dailyData.map(d => d.failed_count).reverse();
+
+            agentDailyChart = new Chart(ctx.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: '成功调用',
+                            data: successData,
+                            borderColor: '#4CAF50',
+                            backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                            tension: 0.4,
+                            fill: true,
+                            pointRadius: 4,
+                            pointHoverRadius: 6
+                        },
+                        {
+                            label: '失败调用',
+                            data: failedData,
+                            borderColor: '#f44336',
+                            backgroundColor: 'rgba(244, 67, 54, 0.1)',
+                            tension: 0.4,
+                            fill: true,
+                            pointRadius: 4,
+                            pointHoverRadius: 6
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: { mode: 'index', intersect: false }
+                    },
+                    scales: {
+                        y: { beginAtZero: true },
+                        x: { }
+                    }
+                }
+            });
+        }
+
+        async function loadToolStats() {
+            const container = document.getElementById('tool-stats-container');
+            container.innerHTML = '<div class="loading">加载中...</div>';
+
+            try {
+                const data = await apiRequest(`/api/ai-operation-logs/tool-stats?days=${currentDays}`);
+
+                if (data.success) {
+                    container.innerHTML = renderToolStats(data.stats);
+                } else {
+                    container.innerHTML = '<div class="no-data">暂无数据</div>';
+                }
+            } catch (error) {
+                container.innerHTML = '<div class="no-data">加载失败</div>';
+                console.error('加载自定义工具统计失败:', error);
+            }
+        }
+
+        function renderToolStats(stats) {
+            let html = '';
+
+            if (stats.unregistered && stats.unregistered.length > 0) {
+                html += '<div class="unregistered-notice">';
+                html += '<strong>⚠️ 检测到已删除的自定义工具仍有使用记录</strong>';
+                html += '<span>以下工具在配置中心中已不存在，但仍有历史使用记录：';
+                stats.unregistered.forEach(t => {
+                    html += '<code>' + escapeHtml(t.tool_name) + '</code> ';
+                });
+                html += '</span></div>';
+            }
+
+            html += '<h3 class="section-title">🔧 自定义工具 使用排行</h3>';
+            html += renderToolStatsTable(stats.tools || []);
+
+            if (stats.bySource && stats.bySource.length > 0) {
+                html += '<h3 class="section-title">📂 按调用来源统计</h3>';
+                html += renderSourceStatsTable(stats.bySource);
+            }
+
+            if (stats.agentToolRelation && stats.agentToolRelation.length > 0) {
+                html += '<h3 class="section-title">🔗 Agent-Tool 调用关系</h3>';
+                html += renderAgentToolRelationTable(stats.agentToolRelation);
+            }
+
+            if (stats.daily && stats.daily.length > 0) {
+                html += '<h3 class="section-title">📈 每日调用趋势</h3>';
+                html += '<div class="chart-container"><canvas id="tool-daily-chart"></canvas></div>';
+            }
+
+            setTimeout(() => {
+                if (stats.daily && stats.daily.length > 0) {
+                    renderToolDailyChart(stats.daily);
+                }
+            }, 100);
+
+            return html;
+        }
+
+        function renderToolStatsTable(tools) {
+            if (!tools || tools.length === 0) {
+                return '<div class="no-data">暂无自定义工具使用数据</div>';
+            }
+
+            let html = `
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>工具名称</th>
+                            <th>显示名称</th>
+                            <th>调用次数</th>
+                            <th>成功次数</th>
+                            <th>失败次数</th>
+                            <th>平均耗时</th>
+                            <th>最大耗时</th>
+                            <th>使用用户数</th>
+                            <th>来源数</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            tools.forEach(tool => {
+                html += `
+                    <tr>
+                        <td><code>${escapeHtml(tool.tool_name)}</code></td>
+                        <td>${escapeHtml(tool.display_name || '-')}</td>
+                        <td><strong>${tool.usage_count}</strong></td>
+                        <td style="color: #4CAF50">${tool.success_count}</td>
+                        <td style="color: #f44336">${tool.failed_count}</td>
+                        <td>${tool.avg_execution_time ? Math.round(tool.avg_execution_time) + 'ms' : '-'}</td>
+                        <td>${tool.max_execution_time ? tool.max_execution_time + 'ms' : '-'}</td>
+                        <td>${tool.unique_users || 0}</td>
+                        <td>${tool.unique_sources || 0}</td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+            return html;
+        }
+
+        function renderAgentToolRelationTable(relations) {
+            let html = `
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>Sub-Agent</th>
+                            <th>自定义工具</th>
+                            <th>调用次数</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            relations.forEach(r => {
+                html += `
+                    <tr>
+                        <td><code>${escapeHtml(r.agent_code || '-')}</code></td>
+                        <td><code>${escapeHtml(r.tool_name)}</code></td>
+                        <td><strong>${r.usage_count}</strong></td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+            return html;
+        }
+
+        function renderToolDailyChart(dailyData) {
+            const ctx = document.getElementById('tool-daily-chart');
+            if (!ctx) return;
+
+            if (toolDailyChart) {
+                toolDailyChart.destroy();
+            }
+
+            const labels = dailyData.map(d => formatDate(d.date)).reverse();
+            const successData = dailyData.map(d => d.success_count).reverse();
+            const failedData = dailyData.map(d => d.failed_count).reverse();
+
+            toolDailyChart = new Chart(ctx.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: '成功调用',
+                            data: successData,
+                            borderColor: '#4CAF50',
+                            backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                            tension: 0.4,
+                            fill: true,
+                            pointRadius: 4,
+                            pointHoverRadius: 6
+                        },
+                        {
+                            label: '失败调用',
+                            data: failedData,
+                            borderColor: '#f44336',
+                            backgroundColor: 'rgba(244, 67, 54, 0.1)',
+                            tension: 0.4,
+                            fill: true,
+                            pointRadius: 4,
+                            pointHoverRadius: 6
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: { mode: 'index', intersect: false }
+                    },
+                    scales: {
+                        y: { beginAtZero: true },
+                        x: { }
+                    }
+                }
+            });
+        }
     </script>
 </body>
 </html>

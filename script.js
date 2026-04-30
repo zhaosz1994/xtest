@@ -10949,18 +10949,22 @@ function initLevel1PointModalResizer(type) {
     let startX = 0;
     let startY = 0;
     let startWidth = 0;
+    let startHeight = 0;
     let startLeft = 0;
     let startTop = 0;
     const minWidth = 400;
+    const minHeight = 420;
     const maxWidthRatio = 0.95;
+    const maxHeightRatio = 0.95;
 
-    // 调整宽度功能
+    // 调整宽度 + 高度功能
     resizer.addEventListener('mousedown', (e) => {
-        console.log('调整手柄被点击');
         isResizing = true;
         startX = e.clientX;
+        startY = e.clientY;
         startWidth = modalContent.offsetWidth;
-        
+        startHeight = modalContent.offsetHeight;
+
         // 确保模态框在调整大小时有正确的定位
         if (modalContent.style.position !== 'fixed') {
             const rect = modalContent.getBoundingClientRect();
@@ -10969,10 +10973,10 @@ function initLevel1PointModalResizer(type) {
             modalContent.style.top = rect.top + 'px';
             modalContent.style.margin = '0';
         }
-        
+
         resizer.classList.add('dragging');
         document.body.classList.add('modal-resizing');
-        
+
         e.preventDefault();
         e.stopPropagation();
     });
@@ -11002,14 +11006,15 @@ function initLevel1PointModalResizer(type) {
     }
 
     document.addEventListener('mousemove', (e) => {
-        // 调整宽度
+        // 调整宽度和高度
         if (isResizing) {
             const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
             const newWidth = startWidth + deltaX;
+            const newHeight = startHeight + deltaY;
             const maxWidth = window.innerWidth * maxWidthRatio;
-            
-            console.log('调整宽度:', { deltaX, newWidth, minWidth, maxWidth });
-            
+            const maxHeight = window.innerHeight * maxHeightRatio;
+
             if (newWidth >= minWidth && newWidth <= maxWidth) {
                 modalContent.style.width = newWidth + 'px';
                 modalContent.style.maxWidth = newWidth + 'px';
@@ -11019,6 +11024,14 @@ function initLevel1PointModalResizer(type) {
             } else if (newWidth > maxWidth) {
                 modalContent.style.width = maxWidth + 'px';
                 modalContent.style.maxWidth = maxWidth + 'px';
+            }
+
+            if (newHeight >= minHeight && newHeight <= maxHeight) {
+                modalContent.style.height = newHeight + 'px';
+            } else if (newHeight < minHeight) {
+                modalContent.style.height = minHeight + 'px';
+            } else if (newHeight > maxHeight) {
+                modalContent.style.height = maxHeight + 'px';
             }
         }
         
@@ -11054,11 +11067,13 @@ function initLevel1PointModalResizer(type) {
         }
     });
 
-    // 双击重置宽度
+    // 双击重置宽高
     resizer.addEventListener('dblclick', () => {
-        const defaultWidth = type === 'add' ? '520px' : '680px';
+        const defaultWidth = type === 'add' ? '520px' : '950px';
+        const defaultHeight = type === 'add' ? '' : '620px';
         modalContent.style.width = defaultWidth;
         modalContent.style.maxWidth = defaultWidth;
+        modalContent.style.height = defaultHeight;
     });
 }
 
@@ -11072,7 +11087,9 @@ function resetLevel1PointModalPosition(type) {
         modalContent.style.top = '';
         modalContent.style.margin = '';
         modalContent.style.width = '';
-        modalContent.style.maxWidth = type === 'add' ? '520px' : '680px';
+        modalContent.style.maxWidth = type === 'add' ? '520px' : '950px';
+        modalContent.style.height = type === 'add' ? '' : '';
+        modalContent.dataset.resizerInitialized = '';
     }
 }
 
@@ -23193,12 +23210,23 @@ async function generateLevel1PointSummary() {
     const pointId = document.getElementById('edit-level1-point-id').value;
     const summaryTextarea = document.getElementById('edit-level1-point-summary');
     const generateBtn = document.getElementById('ai-generate-summary-btn');
-    
+
     if (!pointId) {
         showErrorMessage('无法获取测试点ID');
         return;
     }
-    
+
+    // 如果已有概述内容，弹窗让用户选择处理方式
+    const existingSummary = summaryTextarea.value.trim();
+    if (existingSummary) {
+        const choice = await showSummaryChoiceDialog(existingSummary);
+        if (choice === 'cancel') return;
+        // choice: 'replace' | 'append' | 'cancel'
+        summaryTextarea._aiAppendMode = (choice === 'append');
+    } else {
+        summaryTextarea._aiAppendMode = false;
+    }
+
     try {
         generateBtn.disabled = true;
         generateBtn.innerHTML = `
@@ -23207,15 +23235,31 @@ async function generateLevel1PointSummary() {
             </svg>
             生成中...
         `;
-        
+
         showLoading('AI正在生成概述...');
-        
-        // TODO: 这里后续实现AI生成概述的逻辑
-        // 目前先显示提示信息
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        showInfoMessage('AI生成概述功能即将上线，敬请期待！');
-        
+
+        const response = await apiRequest('/ai-generation/generate-overview', {
+            method: 'POST',
+            body: JSON.stringify({ level1PointId: pointId })
+        });
+
+        if (response.success && response.data && response.data.overview) {
+            const newOverview = response.data.overview;
+            if (summaryTextarea._aiAppendMode && existingSummary) {
+                summaryTextarea.value = existingSummary + '\n' + newOverview;
+            } else {
+                summaryTextarea.value = newOverview;
+            }
+            // 触发输入事件以更新字数统计
+            summaryTextarea.dispatchEvent(new Event('input'));
+            showSuccessMessage('AI概述生成成功');
+
+            // 即时更新列表中对应测试点的概述显示
+            updateLevel1SummaryInList(parseInt(pointId), summaryTextarea.value);
+        } else {
+            showErrorMessage(response.message || 'AI生成概述失败');
+        }
+
     } catch (error) {
         console.error('生成概述失败:', error);
         showErrorMessage('生成概述失败: ' + error.message);
@@ -23233,15 +23277,144 @@ async function generateLevel1PointSummary() {
     }
 }
 
+// 即时更新一级测试点列表中的概述显示（无需重新加载整个列表）
+function updateLevel1SummaryInList(pointId, newSummary) {
+    // 更新内存数据
+    if (typeof level1Points !== 'undefined' && Array.isArray(level1Points)) {
+        const point = level1Points.find(p => p.id == pointId);
+        if (point) {
+            point.summary = newSummary;
+        }
+    }
+    // 更新 DOM
+    const listItem = document.querySelector(`.level1-list-item[data-point-id="${pointId}"]`);
+    if (listItem) {
+        const summaryDiv = listItem.querySelector('.level1-summary');
+        if (summaryDiv) {
+            const displayText = newSummary.trim() || '';
+            summaryDiv.textContent = displayText;
+            summaryDiv.title = displayText;
+            if (!displayText) {
+                summaryDiv.innerHTML = '<span style="color:#cbd5e1">暂无概述</span>';
+            }
+        }
+    }
+}
+
+// 概述覆盖选择对话框（支持拖拽移动和调整大小）
+function showSummaryChoiceDialog(existingSummary) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:999999;';
+
+        const dialog = document.createElement('div');
+        // 初始尺寸: 宽800 高560, 居中
+        const initW = 800, initH = 560;
+        const initLeft = Math.max(60, (window.innerWidth - initW) / 2);
+        const initTop = Math.max(40, (window.innerHeight - initH) / 2);
+        dialog.style.cssText = `position:fixed;left:${initLeft}px;top:${initTop}px;width:${initW}px;height:${initH}px;min-width:500px;min-height:400px;background:white;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.3);display:flex;flex-direction:column;overflow:hidden;`;
+
+        dialog.innerHTML = `
+            <div id="ai-choice-drag-handle" style="display:flex;align-items:center;gap:12px;padding:20px 24px 16px;cursor:move;user-select:none;flex-shrink:0;border-bottom:1px solid #f1f5f9;">
+                <div style="width:40px;height:40px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:10px;display:flex;align-items:center;justify-content:center;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                        <path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </div>
+                <div style="flex:1;">
+                    <div style="font-size:17px;font-weight:600;color:#1e293b;">概述已存在</div>
+                    <div style="font-size:13px;color:#64748b;margin-top:2px;">当前已有 ${existingSummary.length} 字概述内容</div>
+                </div>
+                <div style="font-size:11px;color:#94a3b8;">拖拽标题栏移动 · 拖拽右下角调整大小</div>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;padding:20px 24px;overflow:hidden;">
+                <div style="flex:1;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px;overflow-y:auto;margin-bottom:16px;">
+                    <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">当前内容</div>
+                    <div style="font-size:14px;color:#475569;line-height:1.7;white-space:pre-wrap;">${escapeHtml(existingSummary)}</div>
+                </div>
+                <div style="font-size:14px;color:#64748b;margin-bottom:16px;flex-shrink:0;">AI 生成的新概述将如何处理？</div>
+                <div style="display:flex;gap:12px;justify-content:flex-end;flex-shrink:0;">
+                    <button id="ai-summary-cancel" style="padding:10px 22px;border:1px solid #e2e8f0;background:white;color:#64748b;border-radius:8px;font-size:14px;cursor:pointer;transition:all 0.15s;">取消</button>
+                    <button id="ai-summary-append" style="padding:10px 22px;border:1px solid #8b5cf6;background:#8b5cf6;color:white;border-radius:8px;font-size:14px;cursor:pointer;transition:all 0.15s;">追加到原有</button>
+                    <button id="ai-summary-replace" style="padding:10px 22px;border:1px solid #ef4444;background:#ef4444;color:white;border-radius:8px;font-size:14px;cursor:pointer;transition:all 0.15s;">替换原有</button>
+                </div>
+            </div>
+            <div id="ai-choice-resize-handle" style="position:absolute;right:0;bottom:0;width:20px;height:20px;cursor:se-resize;display:flex;align-items:center;justify-content:center;opacity:0.4;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2">
+                    <path d="M21 21H7M21 15v6M21 21H15"/>
+                </svg>
+            </div>
+        `;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        // --- 拖拽移动 ---
+        const dragHandle = dialog.querySelector('#ai-choice-drag-handle');
+        let isDragging = false, dragStartX, dragStartY, dialogStartLeft, dialogStartTop;
+        dragHandle.addEventListener('mousedown', (e) => {
+            if (e.target.tagName === 'BUTTON') return;
+            isDragging = true;
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            dialogStartLeft = dialog.offsetLeft;
+            dialogStartTop = dialog.offsetTop;
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const dx = e.clientX - dragStartX;
+            const dy = e.clientY - dragStartY;
+            dialog.style.left = Math.max(0, dialogStartLeft + dx) + 'px';
+            dialog.style.top = Math.max(0, dialogStartTop + dy) + 'px';
+        });
+        document.addEventListener('mouseup', () => { isDragging = false; });
+
+        // --- 拖拽调整大小 ---
+        const resizeHandle = dialog.querySelector('#ai-choice-resize-handle');
+        let isResizing = false, resizeStartX, resizeStartY, startW, startH;
+        resizeHandle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            resizeStartX = e.clientX;
+            resizeStartY = e.clientY;
+            startW = dialog.offsetWidth;
+            startH = dialog.offsetHeight;
+            e.preventDefault();
+            e.stopPropagation();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            const newW = Math.max(500, startW + (e.clientX - resizeStartX));
+            const newH = Math.max(400, startH + (e.clientY - resizeStartY));
+            dialog.style.width = newW + 'px';
+            dialog.style.height = newH + 'px';
+        });
+        document.addEventListener('mouseup', () => { isResizing = false; });
+
+        const cleanup = () => {
+            isDragging = false;
+            isResizing = false;
+            if (overlay.parentNode) document.body.removeChild(overlay);
+        };
+
+        dialog.querySelector('#ai-summary-cancel').onclick = () => { cleanup(); resolve('cancel'); };
+        dialog.querySelector('#ai-summary-append').onclick = () => { cleanup(); resolve('append'); };
+        dialog.querySelector('#ai-summary-replace').onclick = () => { cleanup(); resolve('replace'); };
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) { cleanup(); resolve('cancel'); }
+        });
+    });
+}
+
 // AI生成关键配置
 async function generateKeyConfig() {
     // 检测当前是在哪个表单中（右侧滑屉或详情模态框）
     const isDrawer = document.getElementById('drawer-testcase-key-config') !== null;
     const isModal = document.getElementById('detail-case-key-config') !== null;
-    
+
     let keyConfigTextarea, generateBtn;
     let precondition, purpose, steps, expected, caseName;
-    
+
     if (isDrawer) {
         // 右侧滑屉表单
         keyConfigTextarea = document.getElementById('drawer-testcase-key-config');
@@ -23264,7 +23437,17 @@ async function generateKeyConfig() {
         showErrorMessage('未找到关键配置表单');
         return;
     }
-    
+
+    // 如果已有内容，弹窗让用户选择处理方式
+    const existingConfig = keyConfigTextarea.value.trim();
+    if (existingConfig) {
+        const choice = await showKeyConfigChoiceDialog(existingConfig);
+        if (choice === 'cancel') return;
+        keyConfigTextarea._aiAppendMode = (choice === 'append');
+    } else {
+        keyConfigTextarea._aiAppendMode = false;
+    }
+
     try {
         generateBtn.disabled = true;
         generateBtn.innerHTML = `
@@ -23273,15 +23456,33 @@ async function generateKeyConfig() {
             </svg>
             生成中...
         `;
-        
+
         showLoading('AI正在生成关键配置...');
-        
-        // TODO: 这里后续实现AI生成关键配置的逻辑
-        // 目前先显示提示信息
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        showInfoMessage('AI生成关键配置功能即将上线，敬请期待！');
-        
+
+        const response = await apiRequest('/ai-generation/generate-key-config', {
+            method: 'POST',
+            body: JSON.stringify({
+                caseName,
+                precondition,
+                purpose,
+                steps,
+                expected
+            })
+        });
+
+        if (response.success && response.data && response.data.keyConfig) {
+            const newConfig = response.data.keyConfig;
+            if (keyConfigTextarea._aiAppendMode && existingConfig) {
+                keyConfigTextarea.value = existingConfig + '\n' + newConfig;
+            } else {
+                keyConfigTextarea.value = newConfig;
+            }
+            keyConfigTextarea.dispatchEvent(new Event('input'));
+            showSuccessMessage('AI关键配置生成成功');
+        } else {
+            showErrorMessage(response.message || 'AI生成关键配置失败');
+        }
+
     } catch (error) {
         console.error('生成关键配置失败:', error);
         showErrorMessage('生成关键配置失败: ' + error.message);
@@ -23295,6 +23496,110 @@ async function generateKeyConfig() {
             AI生成
         `;
     }
+}
+
+// 关键配置覆盖选择对话框（支持拖拽移动和调整大小）
+function showKeyConfigChoiceDialog(existingConfig) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:999999;';
+
+        const dialog = document.createElement('div');
+        const initW = 800, initH = 560;
+        const initLeft = Math.max(60, (window.innerWidth - initW) / 2);
+        const initTop = Math.max(40, (window.innerHeight - initH) / 2);
+        dialog.style.cssText = `position:fixed;left:${initLeft}px;top:${initTop}px;width:${initW}px;height:${initH}px;min-width:500px;min-height:400px;background:white;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.3);display:flex;flex-direction:column;overflow:hidden;`;
+
+        dialog.innerHTML = `
+            <div id="ai-kc-drag-handle" style="display:flex;align-items:center;gap:12px;padding:20px 24px 16px;cursor:move;user-select:none;flex-shrink:0;border-bottom:1px solid #f1f5f9;">
+                <div style="width:40px;height:40px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:10px;display:flex;align-items:center;justify-content:center;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                        <path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </div>
+                <div style="flex:1;">
+                    <div style="font-size:17px;font-weight:600;color:#1e293b;">关键配置已存在</div>
+                    <div style="font-size:13px;color:#64748b;margin-top:2px;">当前已有 ${existingConfig.length} 字配置内容</div>
+                </div>
+                <div style="font-size:11px;color:#94a3b8;">拖拽标题栏移动 · 拖拽右下角调整大小</div>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;padding:20px 24px;overflow:hidden;">
+                <div style="flex:1;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px;overflow-y:auto;margin-bottom:16px;">
+                    <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">当前内容</div>
+                    <div style="font-size:14px;color:#475569;line-height:1.7;white-space:pre-wrap;">${escapeHtml(existingConfig)}</div>
+                </div>
+                <div style="font-size:14px;color:#64748b;margin-bottom:16px;flex-shrink:0;">AI 生成的新关键配置将如何处理？</div>
+                <div style="display:flex;gap:12px;justify-content:flex-end;flex-shrink:0;">
+                    <button id="ai-kc-cancel" style="padding:10px 22px;border:1px solid #e2e8f0;background:white;color:#64748b;border-radius:8px;font-size:14px;cursor:pointer;transition:all 0.15s;">取消</button>
+                    <button id="ai-kc-append" style="padding:10px 22px;border:1px solid #8b5cf6;background:#8b5cf6;color:white;border-radius:8px;font-size:14px;cursor:pointer;transition:all 0.15s;">追加到原有</button>
+                    <button id="ai-kc-replace" style="padding:10px 22px;border:1px solid #ef4444;background:#ef4444;color:white;border-radius:8px;font-size:14px;cursor:pointer;transition:all 0.15s;">替换原有</button>
+                </div>
+            </div>
+            <div id="ai-kc-resize-handle" style="position:absolute;right:0;bottom:0;width:20px;height:20px;cursor:se-resize;display:flex;align-items:center;justify-content:center;opacity:0.4;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2">
+                    <path d="M21 21H7M21 15v6M21 21H15"/>
+                </svg>
+            </div>
+        `;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        // --- 拖拽移动 ---
+        const dragHandle = dialog.querySelector('#ai-kc-drag-handle');
+        let isDragging = false, dragStartX, dragStartY, dialogStartLeft, dialogStartTop;
+        dragHandle.addEventListener('mousedown', (e) => {
+            if (e.target.tagName === 'BUTTON') return;
+            isDragging = true;
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            dialogStartLeft = dialog.offsetLeft;
+            dialogStartTop = dialog.offsetTop;
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const dx = e.clientX - dragStartX;
+            const dy = e.clientY - dragStartY;
+            dialog.style.left = Math.max(0, dialogStartLeft + dx) + 'px';
+            dialog.style.top = Math.max(0, dialogStartTop + dy) + 'px';
+        });
+        document.addEventListener('mouseup', () => { isDragging = false; });
+
+        // --- 拖拽调整大小 ---
+        const resizeHandle = dialog.querySelector('#ai-kc-resize-handle');
+        let isResizing = false, resizeStartX, resizeStartY, startW, startH;
+        resizeHandle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            resizeStartX = e.clientX;
+            resizeStartY = e.clientY;
+            startW = dialog.offsetWidth;
+            startH = dialog.offsetHeight;
+            e.preventDefault();
+            e.stopPropagation();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            const newW = Math.max(500, startW + (e.clientX - resizeStartX));
+            const newH = Math.max(400, startH + (e.clientY - resizeStartY));
+            dialog.style.width = newW + 'px';
+            dialog.style.height = newH + 'px';
+        });
+        document.addEventListener('mouseup', () => { isResizing = false; });
+
+        const cleanup = () => {
+            isDragging = false;
+            isResizing = false;
+            if (overlay.parentNode) document.body.removeChild(overlay);
+        };
+
+        dialog.querySelector('#ai-kc-cancel').onclick = () => { cleanup(); resolve('cancel'); };
+        dialog.querySelector('#ai-kc-append').onclick = () => { cleanup(); resolve('append'); };
+        dialog.querySelector('#ai-kc-replace').onclick = () => { cleanup(); resolve('replace'); };
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) { cleanup(); resolve('cancel'); }
+        });
+    });
 }
 
 // 提交编辑一级测试点表单
@@ -23538,6 +23843,9 @@ async function openEditLevel1PointFromList(pointId) {
             }
 
             document.getElementById('edit-level1-point-modal').style.display = 'block';
+            
+            // 初始化拖拽调整宽度功能
+            initLevel1PointModalResizer('edit');
         } else {
             showErrorMessage('获取测试点信息失败');
         }

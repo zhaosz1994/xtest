@@ -7,9 +7,9 @@ const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads
 class FileParserService {
   async parseAndChunk(fileId) {
     const [files] = await pool.execute(`
-      SELECT f.*, m.name as module_name
+      SELECT f.*, COALESCE(m.name, '用例库文件') as module_name
       FROM module_knowledge_files f
-      JOIN modules m ON f.module_id = m.id
+      LEFT JOIN modules m ON f.module_id = m.id
       WHERE f.id = ? AND f.deleted_at IS NULL
     `, [fileId]);
 
@@ -53,7 +53,7 @@ class FileParserService {
         minChunkSize: 100
       });
 
-      await this.saveChunks(fileId, file.module_id, chunks);
+      await this.saveChunks(fileId, file.module_id, chunks, file.library_id);
 
       await pool.execute(`
         UPDATE module_knowledge_files 
@@ -173,7 +173,7 @@ class FileParserService {
     return Math.ceil(chineseChars * 0.6 + englishCharCount * 0.25 + numberCharCount * 0.3 + others * 0.3);
   }
 
-  async saveChunks(fileId, moduleId, chunks) {
+  async saveChunks(fileId, moduleId, chunks, libraryId) {
     const connection = await pool.getConnection();
 
     try {
@@ -185,10 +185,10 @@ class FileParserService {
 
       for (const chunk of chunks) {
         await connection.execute(`
-          INSERT INTO ai_material_chunks 
-            (file_id, module_id, chunk_index, chunk_content, token_count, char_count)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `, [fileId, moduleId, chunk.chunkIndex, chunk.chunkContent,
+          INSERT INTO ai_material_chunks
+            (file_id, module_id, library_id, chunk_index, chunk_content, token_count, char_count)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `, [fileId, moduleId || null, libraryId || null, chunk.chunkIndex, chunk.chunkContent,
             chunk.tokenCount, chunk.charCount]);
       }
 

@@ -136,7 +136,8 @@ class AIReviewService {
                                 moduleId: options.moduleId || tempCase.module_id,
                                 sourceTaskId: tempCase.task_id,
                                 userRole,
-                                username
+                                username,
+                                source: 'review'
                             }
                         );
 

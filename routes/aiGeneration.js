@@ -129,6 +129,222 @@ router.post('/temp-level1-reject', authenticateToken, async (req, res) => {
   }
 });
 
+// AI生成一级测试点概述
+router.post('/generate-overview', authenticateToken, async (req, res) => {
+  try {
+    const { level1PointId } = req.body;
+    if (!level1PointId) {
+      return res.status(400).json({ success: false, message: '缺少测试点ID' });
+    }
+
+    // 获取一级测试点信息
+    const [points] = await pool.execute(
+      'SELECT id, name, test_type, summary, module_id FROM level1_points WHERE id = ?',
+      [level1PointId]
+    );
+    if (points.length === 0) {
+      return res.status(404).json({ success: false, message: '测试点不存在' });
+    }
+    const point = points[0];
+
+    // 获取该测试点下的所有测试用例
+    const [cases] = await pool.execute(
+      `SELECT name, purpose, steps, expected, key_config, precondition
+       FROM test_cases
+       WHERE level1_id = ? AND is_deleted = 0
+       ORDER BY created_at ASC`,
+      [level1PointId]
+    );
+
+    const aiService = require('../services/aiService');
+    const aiConfig = await aiService.getUserAIConfig(req.user.id);
+    if (!aiConfig || !aiConfig.api_key) {
+      return res.json({ success: false, message: '未找到可用的AI模型配置，请先在配置中心配置AI模型' });
+    }
+
+    const caseInfo = cases.length > 0
+      ? cases.map((c, i) => `${i + 1}. 【${c.name}】\n   目的: ${c.purpose || '无'}\n   前置条件: ${c.precondition || '无'}\n   步骤: ${c.steps || '无'}\n   预期: ${c.expected || '无'}${c.key_config ? '\n   关键配置: ' + c.key_config : ''}`).join('\n\n')
+      : '该测试点下暂无测试用例';
+
+    // 优先尝试通过 Sub-Agent 执行
+    try {
+      const agentEngine = require('../services/agentExecutionEngine');
+      const [agentCheck] = await pool.execute(
+        "SELECT id FROM ai_sub_agents WHERE agent_code = 'generate_overview' AND is_enabled = 1 LIMIT 1"
+      );
+      if (agentCheck.length > 0) {
+        const agentResult = await agentEngine.executeAgent('generate_overview', req.user.id, {
+          pointName: point.name,
+          testType: point.test_type || '未指定',
+          caseCount: String(cases.length),
+          caseInfo: caseInfo.slice(0, 8000)
+        }, {
+          libraryId: null,
+          moduleId: point.module_id,
+          userRole: req.user.role,
+          username: req.user.username,
+          source: 'generation'
+        });
+
+        if (agentResult.success && agentResult.result) {
+          const overview = agentResult.result.trim();
+          console.log('[generate-overview] 通过 Sub-Agent generate_overview 生成成功');
+          return res.json({ success: true, data: { overview, agent: 'generate_overview' } });
+        } else {
+          console.warn('[generate-overview] Sub-Agent 执行失败，回退到直接LLM调用:', agentResult.error);
+        }
+      }
+    } catch (agentErr) {
+      console.warn('[generate-overview] Sub-Agent 调用异常，回退到直接LLM调用:', agentErr.message);
+    }
+
+    // 回退：直接 LLM 调用
+    const systemPrompt = `你是一个专业的测试管理专家。你的任务是根据一级测试点下的所有测试用例内容，生成一段简洁的概述（summary），帮助测试人员快速了解该测试点的测试范围和重点。
+
+要求：
+1. 概述长度控制在50-200字
+2. 概括该测试点的主要测试内容和方向
+3. 如果有多个测试方向，按重要性简要列举
+4. 语言简洁专业，避免冗余
+5. 只输出概述文本，不要输出其他任何内容`;
+
+    const userPrompt = `测试点名称: ${point.name}
+测试类型: ${point.test_type || '未指定'}
+
+该测试点下的测试用例:
+${caseInfo}
+
+请为该测试点生成一段概述：`;
+
+    const axios = require('axios');
+    const timeoutConfig = await aiService.getUserAITimeoutConfig(req.user.id);
+    const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
+    const model = aiConfig.model_name || 'deepseek-chat';
+
+    const response = await axios.post(apiUrl, {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.5,
+      max_tokens: 500
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${aiConfig.api_key}`
+      },
+      timeout: timeoutConfig.generalAITask
+    });
+
+    const overview = response.data?.choices?.[0]?.message?.content?.trim() || '';
+
+    res.json({ success: true, data: { overview } });
+  } catch (error) {
+    console.error('AI生成概述失败:', error.message);
+    res.status(500).json({ success: false, message: 'AI生成概述失败: ' + error.message });
+  }
+});
+
+// AI生成关键配置
+router.post('/generate-key-config', authenticateToken, async (req, res) => {
+  try {
+    const { caseName, precondition, purpose, steps, expected } = req.body;
+
+    if (!caseName && !purpose && !steps) {
+      return res.status(400).json({ success: false, message: '请至少填写用例名称、目的或步骤' });
+    }
+
+    const aiService = require('../services/aiService');
+    const aiConfig = await aiService.getUserAIConfig(req.user.id);
+    if (!aiConfig || !aiConfig.api_key) {
+      return res.json({ success: false, message: '未找到可用的AI模型配置，请先在配置中心配置AI模型' });
+    }
+
+    // 优先尝试通过 Sub-Agent 执行
+    try {
+      const agentEngine = require('../services/agentExecutionEngine');
+      const [agentCheck] = await pool.execute(
+        "SELECT id FROM ai_sub_agents WHERE agent_code = 'generate_key_config' AND is_enabled = 1 LIMIT 1"
+      );
+      if (agentCheck.length > 0) {
+        const agentResult = await agentEngine.executeAgent('generate_key_config', req.user.id, {
+          caseName: caseName || '未命名',
+          precondition: precondition || '无',
+          purpose: purpose || '无',
+          steps: steps || '无',
+          expected: expected || '无'
+        }, {
+          libraryId: null,
+          moduleId: null,
+          userRole: req.user.role,
+          username: req.user.username,
+          source: 'generation'
+        });
+
+        if (agentResult.success && agentResult.result) {
+          const keyConfig = agentResult.result.trim();
+          console.log('[generate-key-config] 通过 Sub-Agent generate_key_config 生成成功');
+          return res.json({ success: true, data: { keyConfig, agent: 'generate_key_config' } });
+        } else {
+          console.warn('[generate-key-config] Sub-Agent 执行失败，回退到直接LLM调用:', agentResult.error);
+        }
+      }
+    } catch (agentErr) {
+      console.warn('[generate-key-config] Sub-Agent 调用异常，回退到直接LLM调用:', agentErr.message);
+    }
+
+    // 回退：直接 LLM 调用
+    const systemPrompt = `你是一个专业的测试工程师。你的任务是根据测试用例的信息，生成该用例的"关键配置"内容。
+
+关键配置是指：执行该测试用例时需要特别注意的配置项、命令、参数、环境变量、数据准备等关键技术信息。
+
+要求：
+1. 内容精确具体，包含实际的命令、参数值、配置项等
+2. 如果有前置条件中提到的环境要求，提取关键配置点
+3. 如果步骤中涉及具体操作命令或参数，提取出来
+4. 格式清晰，每行一个配置点，使用 "配置项: 值" 或 "- 配置说明" 的格式
+5. 只输出关键配置内容，不要输出其他任何解释
+6. 如果没有需要特别配置的内容，输出 "无特殊配置要求"`;
+
+    const userPrompt = `请为以下测试用例生成关键配置：
+
+用例名称: ${caseName || '未命名'}
+前置条件: ${precondition || '无'}
+测试目的: ${purpose || '无'}
+测试步骤: ${steps || '无'}
+预期结果: ${expected || '无'}`;
+
+    const axios = require('axios');
+    const timeoutConfig = await aiService.getUserAITimeoutConfig(req.user.id);
+    const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
+    const model = aiConfig.model_name || 'deepseek-chat';
+
+    const response = await axios.post(apiUrl, {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.4,
+      max_tokens: 1000
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${aiConfig.api_key}`
+      },
+      timeout: timeoutConfig.generalAITask
+    });
+
+    const keyConfig = response.data?.choices?.[0]?.message?.content?.trim() || '';
+
+    res.json({ success: true, data: { keyConfig } });
+  } catch (error) {
+    console.error('AI生成关键配置失败:', error.message);
+    res.status(500).json({ success: false, message: 'AI生成关键配置失败: ' + error.message });
+  }
+});
+
 router.get('/skills', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;

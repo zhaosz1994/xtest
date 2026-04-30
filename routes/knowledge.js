@@ -56,8 +56,28 @@ router.get('/tree/:moduleId', authenticateToken, async (req, res) => {
 router.get('/files/:moduleId', authenticateToken, async (req, res) => {
   try {
     const { moduleId } = req.params;
+    const { parentId, libraryId } = req.query;
+    const files = await vfsService.getModuleFiles(
+      parseInt(moduleId),
+      parentId ? parseInt(parentId) : null,
+      libraryId ? parseInt(libraryId) : null
+    );
+    res.json({ success: true, data: files });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 获取用例库级别的文件列表（用于浏览用例库下的文件夹内容）
+router.get('/library-files/:libraryId', authenticateToken, async (req, res) => {
+  try {
+    const { libraryId } = req.params;
     const { parentId } = req.query;
-    const files = await vfsService.getModuleFiles(parseInt(moduleId), parentId ? parseInt(parentId) : null);
+    const files = await vfsService.getModuleFiles(
+      null,
+      parentId ? parseInt(parentId) : null,
+      parseInt(libraryId)
+    );
     res.json({ success: true, data: files });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -66,12 +86,13 @@ router.get('/files/:moduleId', authenticateToken, async (req, res) => {
 
 router.post('/folder', authenticateToken, async (req, res) => {
   try {
-    const { moduleId, parentId, name } = req.body;
-    if (!moduleId || !name) {
-      return res.status(400).json({ success: false, message: '缺少必要参数' });
+    const { libraryId, moduleId, parentId, name } = req.body;
+    if (!libraryId || !name) {
+      return res.status(400).json({ success: false, message: '缺少必要参数（libraryId 和 name 为必填）' });
     }
     const folderId = await vfsService.createFolder(
-      parseInt(moduleId),
+      parseInt(libraryId),
+      moduleId ? parseInt(moduleId) : null,
       parentId ? parseInt(parentId) : null,
       name,
       req.user.username
@@ -84,24 +105,28 @@ router.post('/folder', authenticateToken, async (req, res) => {
 
 router.post('/upload', authenticateToken, upload.single('file'), async (req, res) => {
   try {
-    const { moduleId, parentId, conflictAction } = req.body;
-    if (!req.file || !moduleId) {
-      return res.status(400).json({ success: false, message: '缺少文件或模块ID' });
+    const { moduleId, parentId, conflictAction, libraryId } = req.body;
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: '缺少文件' });
+    }
+    if (!moduleId && !libraryId) {
+      return res.status(400).json({ success: false, message: '缺少模块ID或用例库ID' });
     }
 
-    const parsedModuleId = parseInt(moduleId);
+    const parsedModuleId = moduleId ? parseInt(moduleId) : null;
     const parsedParentId = parentId ? parseInt(parentId) : null;
+    const parsedLibraryId = libraryId ? parseInt(libraryId) : null;
 
-    const conflict = await vfsService.handleSameNameFile(parsedModuleId, parsedParentId, req.file.originalname);
+    const conflict = await vfsService.handleSameNameFile(parsedModuleId, parsedParentId, req.file.originalname, parsedLibraryId);
 
     if (conflict.hasConflict) {
       if (conflictAction === 'overwrite') {
         const result = await vfsService.overwriteFile(
-          conflict.existingFile.id, req.file, parsedModuleId, parsedParentId, req.user.username
+          conflict.existingFile.id, req.file, parsedModuleId, parsedParentId, req.user.username, parsedLibraryId
         );
         return res.json({ success: true, data: result });
       } else if (conflictAction === 'coexist') {
-        const result = await vfsService.coexistFile(req.file, parsedModuleId, parsedParentId, req.user.username);
+        const result = await vfsService.coexistFile(req.file, parsedModuleId, parsedParentId, req.user.username, parsedLibraryId);
         return res.json({ success: true, data: result });
       } else {
         return res.json({
@@ -112,7 +137,7 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
       }
     }
 
-    const result = await vfsService.uploadFile(req.file, parsedModuleId, parsedParentId, req.user.username);
+    const result = await vfsService.uploadFile(req.file, parsedModuleId, parsedParentId, req.user.username, parsedLibraryId);
     res.json({ success: true, data: result });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -121,16 +146,21 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
 
 router.post('/upload-batch', authenticateToken, upload.array('files', 10), async (req, res) => {
   try {
-    const { moduleId, parentId } = req.body;
-    if (!req.files || req.files.length === 0 || !moduleId) {
-      return res.status(400).json({ success: false, message: '缺少文件或模块ID' });
+    const { moduleId, parentId, libraryId } = req.body;
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ success: false, message: '缺少文件' });
     }
+    if (!moduleId && !libraryId) {
+      return res.status(400).json({ success: false, message: '缺少模块ID或用例库ID' });
+    }
+
+    const parsedLibraryId = libraryId ? parseInt(libraryId) : null;
 
     const results = [];
     for (const file of req.files) {
       try {
         const result = await vfsService.uploadFile(
-          file, parseInt(moduleId), parentId ? parseInt(parentId) : null, req.user.username
+          file, parseInt(moduleId), parentId ? parseInt(parentId) : null, req.user.username, parsedLibraryId
         );
         results.push({ filename: file.originalname, ...result });
       } catch (error) {
@@ -144,10 +174,15 @@ router.post('/upload-batch', authenticateToken, upload.array('files', 10), async
   }
 });
 
-router.delete('/file/:moduleId/:fileId', authenticateToken, async (req, res) => {
+router.delete('/file/:fileId', authenticateToken, async (req, res) => {
   try {
-    const { moduleId, fileId } = req.params;
-    const result = await vfsService.deleteFile(parseInt(fileId), parseInt(moduleId));
+    const { fileId } = req.params;
+    const { moduleId, libraryId } = req.query;
+    const result = await vfsService.deleteFile(
+      parseInt(fileId),
+      moduleId ? parseInt(moduleId) : null,
+      libraryId ? parseInt(libraryId) : null
+    );
     res.json({ success: result });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -156,8 +191,8 @@ router.delete('/file/:moduleId/:fileId', authenticateToken, async (req, res) => 
 
 router.put('/file/rename', authenticateToken, async (req, res) => {
   try {
-    const { fileId, moduleId, newName } = req.body;
-    const result = await vfsService.renameFile(parseInt(fileId), parseInt(moduleId), newName);
+    const { fileId, newName } = req.body;
+    const result = await vfsService.renameFile(parseInt(fileId), newName);
     res.json({ success: result });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -166,18 +201,18 @@ router.put('/file/rename', authenticateToken, async (req, res) => {
 
 router.put('/file/move', authenticateToken, async (req, res) => {
   try {
-    const { fileId, moduleId, newParentId } = req.body;
-    const result = await vfsService.moveFile(parseInt(fileId), parseInt(moduleId), newParentId ? parseInt(newParentId) : null);
+    const { fileId, newParentId } = req.body;
+    const result = await vfsService.moveFile(parseInt(fileId), newParentId ? parseInt(newParentId) : null);
     res.json({ success: result });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-router.get('/file/detail/:moduleId/:fileId', authenticateToken, async (req, res) => {
+router.get('/file/detail/:fileId', authenticateToken, async (req, res) => {
   try {
-    const { moduleId, fileId } = req.params;
-    const detail = await vfsService.getFileDetail(parseInt(fileId), parseInt(moduleId));
+    const { fileId } = req.params;
+    const detail = await vfsService.getFileDetail(parseInt(fileId));
     if (!detail) {
       return res.status(404).json({ success: false, message: '文件不存在' });
     }
@@ -189,8 +224,8 @@ router.get('/file/detail/:moduleId/:fileId', authenticateToken, async (req, res)
 
 router.put('/file/description', authenticateToken, async (req, res) => {
   try {
-    const { fileId, moduleId, description } = req.body;
-    const result = await vfsService.updateFileDescription(parseInt(fileId), parseInt(moduleId), description);
+    const { fileId, description } = req.body;
+    const result = await vfsService.updateFileDescription(parseInt(fileId), description);
     res.json({ success: result });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -199,8 +234,8 @@ router.put('/file/description', authenticateToken, async (req, res) => {
 
 router.put('/reorder', authenticateToken, async (req, res) => {
   try {
-    const { moduleId, parentId, orderedIds } = req.body;
-    const result = await vfsService.reorderFiles(parseInt(moduleId), parentId, orderedIds);
+    const { orderedIds } = req.body;
+    const result = await vfsService.reorderFiles(orderedIds);
     res.json({ success: result });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -261,16 +296,19 @@ router.post('/reparse/:fileId', authenticateToken, async (req, res) => {
 
 router.post('/crawl', authenticateToken, crawlLimiter, async (req, res) => {
   try {
-    const { url, moduleId, parentId, username, password, loginUrl, loginSelectors, waitFor, selector } = req.body;
+    const { url, moduleId, parentId, libraryId, username, password, loginUrl, loginSelectors, waitFor, selector } = req.body;
 
-    if (!url || !moduleId) {
-      return res.status(400).json({ success: false, message: '缺少URL或模块ID' });
+    if (!url) {
+      return res.status(400).json({ success: false, message: '缺少URL' });
+    }
+    if (!moduleId && !libraryId) {
+      return res.status(400).json({ success: false, message: '缺少模块ID或用例库ID' });
     }
 
     const result = await webCrawlerService.crawlAndSaveAsKnowledge(
       url, parseInt(moduleId), parentId ? parseInt(parentId) : null,
       req.user.username,
-      { username, password, loginUrl, loginSelectors, waitFor, selector }
+      { username, password, loginUrl, loginSelectors, waitFor, selector, libraryId: libraryId ? parseInt(libraryId) : null }
     );
 
     res.json({ success: result.success, data: result });

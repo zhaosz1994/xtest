@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>xTest - 测试管理平台</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="styles-dashboard.css">
     <link rel="stylesheet" href="styles-theme.css">
@@ -57,44 +58,9 @@
             to { transform: rotate(360deg); }
         }
         
-        /* 模态框调整大小手柄 */
-        .modal-resizer {
-            position: absolute;
-            right: 0;
-            top: 0;
-            bottom: 0;
-            width: 8px;
-            cursor: ew-resize;
-            background: transparent;
-            z-index: 9999;
-            pointer-events: auto;
-        }
-        
-        .modal-resizer:hover,
-        .modal-resizer.dragging {
-            background: linear-gradient(to bottom, #10b981, #059669);
-        }
-        
-        .modal-resizer::after {
-            content: '';
-            position: absolute;
-            right: 3px;
-            top: 50%;
-            transform: translateY(-50%);
-            width: 2px;
-            height: 40px;
-            background: #cbd5e1;
-            border-radius: 2px;
-        }
-        
-        .modal-resizer:hover::after,
-        .modal-resizer.dragging::after {
-            background: white;
-        }
-        
         /* 拖拽和调整大小时的样式 */
         body.modal-resizing {
-            cursor: ew-resize !important;
+            cursor: nwse-resize !important;
             user-select: none;
         }
         
@@ -6312,9 +6278,8 @@ return rows[0];'></textarea>
     
     <!-- 编辑一级测试点模态框 -->
     <div id="edit-level1-point-modal" class="modal" style="display: none;">
-        <div class="modal-content" id="edit-level1-point-content" style="max-width: 680px; min-width: 500px; width: 680px;">
-            <div class="modal-resizer" id="edit-level1-point-resizer"></div>
-            <div class="modal-header" style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-bottom: 1px solid #e2e8f0; padding: 20px 24px; cursor: move;">
+        <div class="modal-content" id="edit-level1-point-content">
+            <div class="modal-header">
                 <div style="display: flex; align-items: center; gap: 12px;">
                     <div style="width: 40px; height: 40px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 10px; display: flex; align-items: center; justify-content: center;">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
@@ -6331,7 +6296,7 @@ return rows[0];'></textarea>
                     &times;
                 </button>
             </div>
-            <div class="modal-body" style="padding: 24px;">
+            <div class="modal-body">
                 <form id="edit-level1-point-form">
                     <input type="hidden" id="edit-level1-point-id">
                     <div class="form-row">
@@ -6340,7 +6305,7 @@ return rows[0];'></textarea>
                                 测试点名称
                                 <span style="color: #ef4444;">*</span>
                             </label>
-                            <input type="text" id="edit-level1-point-name" class="form-input" required maxlength="64" placeholder="请输入一级测试点名称" style="width: 100%; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; transition: all 0.2s ease;">
+                            <input type="text" id="edit-level1-point-name" class="form-input" required maxlength="64" placeholder="请输入一级测试点名称">
                             <div style="display: flex; justify-content: space-between; margin-top: 6px;">
                                 <span style="font-size: 12px; color: #94a3b8;">建议使用简洁明了的名称</span>
                                 <span id="edit-level1-point-name-counter" style="font-size: 12px; color: #94a3b8;">0/64</span>
@@ -6353,7 +6318,7 @@ return rows[0];'></textarea>
                                 测试类型
                                 <span style="color: #ef4444;">*</span>
                             </label>
-                            <select id="edit-level1-point-type" class="form-select" style="width: 100%; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; background: #fff; cursor: pointer; height: 42px; line-height: 1.5;">
+                            <select id="edit-level1-point-type" class="form-select">
                                 <option value="功能测试">🧪 功能测试</option>
                                 <option value="性能测试">⚡ 性能测试</option>
                                 <option value="兼容性测试">🔄 兼容性测试</option>
@@ -6364,11 +6329,11 @@ return rows[0];'></textarea>
                     </div>
                     <div class="form-row">
                         <div class="form-group full-width">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-shrink: 0;">
                                 <label style="font-size: 14px; font-weight: 500; color: #374151; margin: 0;">
                                     概述
                                 </label>
-                                <button type="button" id="ai-generate-summary-btn" onclick="generateLevel1PointSummary()" style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all 0.2s ease;">
+                                <button type="button" id="ai-generate-summary-btn" onclick="generateLevel1PointSummary()">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"></path>
                                         <path d="M12 16v-4"></path>
@@ -6377,8 +6342,8 @@ return rows[0];'></textarea>
                                     AI生成概述
                                 </button>
                             </div>
-                            <textarea id="edit-level1-point-summary" class="form-input" maxlength="300" placeholder="请输入一级测试点概述（可由AI自动生成）" rows="5" style="width: 100%; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; transition: all 0.2s ease; resize: vertical; min-height: 100px;"></textarea>
-                            <div style="display: flex; justify-content: space-between; margin-top: 6px;">
+                            <textarea id="edit-level1-point-summary" class="form-input" maxlength="300" placeholder="请输入一级测试点概述（可由AI自动生成）"></textarea>
+                            <div style="display: flex; justify-content: space-between; margin-top: 6px; flex-shrink: 0;">
                                 <span style="font-size: 12px; color: #94a3b8;">概述由AI总结子测试点内容生成，也可手动编辑</span>
                                 <span id="edit-level1-point-summary-counter" style="font-size: 12px; color: #94a3b8;">0/300</span>
                             </div>
@@ -6386,15 +6351,15 @@ return rows[0];'></textarea>
                     </div>
                 </form>
             </div>
-            <div class="modal-footer" style="padding: 16px 24px; background: #f8fafc; border-top: 1px solid #e2e8f0; display: flex; justify-content: flex-end; gap: 12px;">
-                <button type="button" class="btn btn-secondary" onclick="closeEditLevel1PointModal()" style="padding: 10px 20px; border-radius: 8px; font-size: 14px; display: flex; align-items: center; gap: 6px;">
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeEditLevel1PointModal()">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18"></line>
                         <line x1="6" y1="6" x2="18" y2="18"></line>
                     </svg>
                     取消
                 </button>
-                <button type="button" class="btn btn-primary" onclick="submitEditLevel1PointForm()" style="padding: 10px 20px; border-radius: 8px; font-size: 14px; display: flex; align-items: center; gap: 6px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border: none; color: white;">
+                <button type="button" class="btn btn-primary" onclick="submitEditLevel1PointForm()">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
                         <polyline points="17 21 17 13 7 13 7 21"></polyline>
@@ -6403,6 +6368,7 @@ return rows[0];'></textarea>
                     保存修改
                 </button>
             </div>
+            <div class="modal-resizer" id="edit-level1-point-resizer"></div>
         </div>
     </div>
 

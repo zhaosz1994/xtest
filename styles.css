@@ -4144,6 +4144,194 @@ body.nav-resizing * {
 #add-level1-point-content.modal-content {
     position: relative;
     margin: 5% auto;
+    overflow: visible;
+    max-width: 950px;
+    min-width: 500px;
+    width: 950px;
+    height: 920px;
+    min-height: 500px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* 编辑模态框的 modal-header */
+#edit-level1-point-content .modal-header {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-bottom: 1px solid #e2e8f0;
+    padding: 20px 24px;
+    cursor: move;
+    flex-shrink: 0;
+}
+
+/* 编辑模态框的 modal-body 处理内容滚动 */
+#edit-level1-point-content .modal-body {
+    padding: 24px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* 编辑模态框的 modal-footer */
+#edit-level1-point-content .modal-footer {
+    padding: 16px 24px;
+    background: #f8fafc;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+}
+
+/* 编辑模态框的表单 */
+#edit-level1-point-form {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+#edit-level1-point-content .form-row {
+    margin-bottom: 20px;
+}
+
+#edit-level1-point-content .form-row:last-child {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    margin-bottom: 0;
+}
+
+#edit-level1-point-content .form-group.full-width {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+#edit-level1-point-content .form-input,
+#edit-level1-point-content .form-select {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+#edit-level1-point-content .form-select {
+    background: #fff;
+    cursor: pointer;
+    height: 42px;
+    line-height: 1.5;
+}
+
+#edit-level1-point-content .form-input:focus,
+#edit-level1-point-content .form-select:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    outline: none;
+}
+
+#edit-level1-point-summary {
+    flex: 1;
+    resize: none;
+    min-height: 140px;
+}
+
+/* AI 生成按钮 */
+#ai-generate-summary-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+#ai-generate-summary-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+}
+
+#ai-generate-summary-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* 编辑一级测试点 - 右下角调整大小手柄（完全覆盖全局 .modal-resizer） */
+#edit-level1-point-resizer {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    left: auto;
+    width: 24px;
+    height: 24px;
+    cursor: nwse-resize;
+    background: transparent;
+    z-index: 1000;
+    pointer-events: auto;
+}
+#edit-level1-point-resizer::before {
+    content: '';
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    top: auto;
+    width: 14px;
+    height: 14px;
+    background: transparent;
+    border-right: 2px solid #94a3b8;
+    border-bottom: 2px solid #94a3b8;
+    border-radius: 0 0 2px 0;
+    opacity: 1;
+    transform: none;
+}
+#edit-level1-point-resizer::after {
+    display: none;
+    content: none;
+}
+#edit-level1-point-resizer:hover,
+#edit-level1-point-resizer.dragging {
+    background: transparent;
+}
+#edit-level1-point-resizer:hover::before,
+#edit-level1-point-resizer.dragging::before {
+    border-color: #3b82f6;
+}
+
+/* 编辑一级测试点弹窗按钮样式 */
+#edit-level1-point-content .btn-primary {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    border: none;
+    color: white;
+}
+
+#edit-level1-point-content .btn-primary:hover:not(:disabled) {
+    background: linear-gradient(135deg, #059669 0%, #047857 100%);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+#edit-level1-point-content .btn-secondary {
+    background: white;
+    color: #374151;
+    border: 1px solid #d1d5db;
+}
+
+#edit-level1-point-content .btn-secondary:hover:not(:disabled) {
+    background: #f9fafb;
+    border-color: #9ca3af;
 }
 
 @keyframes modal-fade-in {
@@ -6071,7 +6259,8 @@ body.nav-resizing * {
     height: 100%;
     cursor: ew-resize;
     background: transparent;
-    z-index: 10;
+    z-index: 9999;
+    pointer-events: auto;
 }
 
 .modal-resizer::before {
@@ -6147,7 +6336,7 @@ body.modal-resizing {
 }
 
 body.modal-resizing * {
-    cursor: ew-resize !important;
+    cursor: nwse-resize !important;
 }
 
 body.modal-dragging {
