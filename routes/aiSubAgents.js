@@ -222,8 +222,9 @@ router.get('/detail/:agentCode', authenticateToken, async (req, res) => {
 
 // POST /create - 创建新的Sub-Agent（元数据 + 配置文件在单个事务中）
 router.post('/create', authenticateToken, async (req, res) => {
-  const connection = await pool.getConnection();
+  let connection;
   try {
+    connection = await pool.getConnection();
     const {
       agent_code, display_name, description, category,
       allow_qa, memory_enabled, memory_distill_threshold,
@@ -343,21 +344,22 @@ router.post('/create', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    await connection.rollback();
+    if (connection) await connection.rollback();
     logger.error('创建Sub-Agent失败', { error: error.message });
     if (error.code === 'ER_DUP_ENTRY') {
       return res.json({ success: false, message: '代理编码已存在' });
     }
     res.status(500).json({ success: false, message: '创建代理失败' });
   } finally {
-    connection.release();
+    if (connection) connection.release();
   }
 });
 
 // PUT /update/:id - 更新代理（含Override逻辑）
 router.put('/update/:id', authenticateToken, async (req, res) => {
-  const connection = await pool.getConnection();
+  let connection;
   try {
+    connection = await pool.getConnection();
     const { id } = req.params;
     const userId = req.user.id;
     const userIsAdmin = isAdmin(req.user);
@@ -538,11 +540,11 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
       });
     }
   } catch (error) {
-    await connection.rollback();
+    if (connection) await connection.rollback();
     logger.error('更新Sub-Agent失败', { error: error.message, id: req.params.id });
     res.status(500).json({ success: false, message: '更新代理失败' });
   } finally {
-    connection.release();
+    if (connection) connection.release();
   }
 });
 

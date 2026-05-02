@@ -436,6 +436,9 @@ async function handleLike(btn) {
         return;
     }
     
+    if (btn.dataset.liking === 'true') return;
+    btn.dataset.liking = 'true';
+    
     const postId = btn.dataset.postId;
     const isLiked = btn.classList.contains('liked');
     
@@ -479,6 +482,8 @@ async function handleLike(btn) {
         iconEl.textContent = isLiked ? '❤️' : '🤍';
         countEl.textContent = currentCount;
         showToast('网络错误，请重试', 'error');
+    } finally {
+        btn.dataset.liking = 'false';
     }
 }
 
@@ -626,7 +631,7 @@ function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML.replace(/'/g, '&#039;');
+    return div.innerHTML.replace(/'/g, '&#039;').replace(/"/g, '&quot;');
 }
 
 function formatTime(dateStr) {

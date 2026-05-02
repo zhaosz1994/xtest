@@ -9,6 +9,7 @@ function initAIGeneration() {
     aiGenInitialized = true;
     console.log('[AI Generation] Initializing...');
     loadModules();
+    loadAgents();
 
     const btnCreateSkill = document.getElementById('btnCreateSkill');
     const btnCancelSkill = document.getElementById('btnCancelSkill');
@@ -47,6 +48,7 @@ function restoreTabFromHash() {
 const AI_API_BASE = '';
 let aiCurrentModuleId = null;
 let aiCurrentLibraryId = null;
+let aiCurrentParentId = null;
 let aiSelectedFiles = new Set();
 let aiCurrentTaskId = null;
 let aiProgressInterval = null;
@@ -206,7 +208,7 @@ function aiNotify(message, type = 'info') {
     }, 2700);
 }
 
-function showConfirmMessage(message) {
+function aiShowConfirmMessage(message) {
     return new Promise((resolve) => {
         let modal = document.getElementById('ai-confirm-modal');
         if (!modal) {
@@ -529,8 +531,7 @@ async function onModuleChange() {
     aiSelectedFiles.clear();
     if (aiCurrentModuleId) {
         await loadKnowledgeFiles();
-        await loadLevel1Points();
-        await loadSkills();
+        await loadAILevel1Points();
     } else {
         document.getElementById('fileList').innerHTML = '<div class="ai-empty"><div class="icon">📁</div><p>请先选择模块</p></div>';
     }
@@ -559,7 +560,7 @@ function renderFileList(files) {
         const isSelected = aiSelectedFiles.has(f.id);
         const icon = f.type === 'folder' ? '📁' : getFileIcon(f.file_ext);
         const statusBadge = f.type === 'file' ? getStatusBadge(f.parse_status) : '';
-        const sizeStr = f.file_size ? formatSize(f.file_size) : '';
+        const sizeStr = f.file_size ? aiFormatSize(f.file_size) : '';
 
         return `<div class="ai-file-item ${isSelected ? 'selected' : ''}" onclick="toggleFileSelection(${f.id})">
             <span class="ai-file-icon">${icon}</span>
@@ -582,7 +583,7 @@ function getStatusBadge(status) {
     return `<span class="ai-status-badge ${cls[status] || ''}">${map[status] || status}</span>`;
 }
 
-function formatSize(bytes) {
+function aiFormatSize(bytes) {
     if (bytes == null || bytes === 0) return '-';
     if (bytes < 1024) return bytes + 'B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'KB';
@@ -598,7 +599,7 @@ function toggleFileSelection(fileId) {
     updateFileRowSelection(fileId);
 }
 
-async function loadLevel1Points() {
+async function loadAILevel1Points() {
     if (!aiCurrentModuleId) return;
     try {
         const res = await aiApiGet(`/api/ai-generation/level1-points/${aiCurrentModuleId}`);
@@ -664,20 +665,33 @@ function deselectAllLevel1() {
     updateLevel1Count();
 }
 
-async function loadSkills() {
+async function loadAgents() {
     try {
-        const res = await aiApiGet('/api/ai-generation/skills');
-        if (res.success) {
-            const select = document.getElementById('skillSelect');
-            select.innerHTML = '<option value="">默认测试用例生成</option>';
-            (res.data || []).forEach(s => {
+        const res = await aiApiGet('/api/ai-sub-agents/list?category=test_generation&is_enabled=true');
+        const select = document.getElementById('agentSelect');
+        if (res.success && res.data && res.data.length > 0) {
+            select.innerHTML = '';
+            let defaultSelected = false;
+            (res.data || []).forEach(a => {
                 const opt = document.createElement('option');
-                opt.value = s.id;
-                opt.textContent = s.displayName + (s.isSystem ? ' (内置)' : ' (自定义)');
+                opt.value = a.id;
+                opt.textContent = a.displayName + (a.isSystem ? ' (内置)' : ' (自定义)');
+                if (a.agentCode === 'generate_test_cases' && !defaultSelected) {
+                    opt.selected = true;
+                    defaultSelected = true;
+                }
                 select.appendChild(opt);
             });
+            if (!defaultSelected && select.options.length > 0) {
+                select.options[0].selected = true;
+            }
+        } else {
+            select.innerHTML = '<option value="">暂无可用代理</option>';
         }
-    } catch (e) {}
+    } catch (e) {
+        const select = document.getElementById('agentSelect');
+        if (select) select.innerHTML = '<option value="">加载失败</option>';
+    }
 }
 
 function selectLevel1Mode(mode) {
@@ -826,7 +840,7 @@ async function createTask() {
         moduleId: aiCurrentModuleId,
         libraryId: document.getElementById('librarySelect').value || null,
         selectedFiles: Array.from(aiSelectedFiles),
-        skillId: document.getElementById('skillSelect').value || null,
+        agentId: document.getElementById('agentSelect').value || null,
         caseCountLimit: parseInt(document.getElementById('caseCountLimit').value) || 20,
         enableDedup: document.getElementById('enableDedup').checked,
         similarityThreshold: parseInt(document.getElementById('similarityThreshold').value) / 100,
@@ -1188,7 +1202,7 @@ function renderKnowledgeRow(file) {
     const statusBadge = getStatusBadge(file.parseStatus || file.parse_status);
     const isSelected = aiSelectedFiles.has(file.id);
     const fileType = (file.fileExt || file.file_ext || '').toUpperCase() || '文件';
-    const fileSize = file.fileSize || file.file_size ? formatSize(file.fileSize || file.file_size) : '-';
+    const fileSize = file.fileSize || file.file_size ? aiFormatSize(file.fileSize || file.file_size) : '-';
 
     return `<div class="ai-knowledge-row ${isSelected ? 'selected' : ''}" data-file-id="${file.id}" data-name="${aiEscapeHtml(file.name).toLowerCase()}" data-type="${fileType}" data-size="${file.fileSize || file.file_size || 0}" data-status="${file.parseStatus || file.parse_status || ''}">
         <div class="col-checkbox">
@@ -1343,7 +1357,9 @@ async function handleFileUpload() {
     for (const file of files) {
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('moduleId', aiCurrentModuleId);
+        if (aiCurrentModuleId) {
+            formData.append('moduleId', aiCurrentModuleId);
+        }
         if (aiCurrentParentId) {
             formData.append('parentId', aiCurrentParentId);
         }
@@ -1355,6 +1371,7 @@ async function handleFileUpload() {
                 headers: { 'Authorization': `Bearer ${token}` },
                 body: formData
             });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const result = await res.json();
             if (result.success) {
                 if (result.data?.hasConflict) {
@@ -1367,7 +1384,7 @@ async function handleFileUpload() {
                 aiNotify(`${file.name} 上传失败: ${result.message}`, 'error');
             }
         } catch (e) {
-            aiNotify(`${file.name} 上传失败`, 'error');
+            aiNotify(`${file.name} 上传失败: ${e.message}`, 'error');
         }
     }
 
@@ -1400,7 +1417,9 @@ async function resolveConflict() {
     const action = document.querySelector('#conflictOptions .ai-radio-item.active')?.dataset.value || 'coexist';
     const formData = new FormData();
     formData.append('file', conflictFileData.file);
-    formData.append('moduleId', aiCurrentModuleId);
+    if (aiCurrentModuleId) {
+        formData.append('moduleId', aiCurrentModuleId);
+    }
     formData.append('conflictAction', action);
     if (aiCurrentParentId) {
         formData.append('parentId', aiCurrentParentId);
@@ -1413,14 +1432,19 @@ async function resolveConflict() {
             headers: { 'Authorization': `Bearer ${token}` },
             body: formData
         });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const result = await res.json();
         if (result.success) {
             aiNotify('文件处理成功', 'success');
             closeConflictModal();
             loadKnowledgeTree();
             loadKnowledgeFiles();
+        } else {
+            aiNotify(result.message || '文件处理失败', 'error');
         }
-    } catch (e) {}
+    } catch (e) {
+        aiNotify('文件处理失败: ' + e.message, 'error');
+    }
 }
 
 async function viewFileContent(fileId) {
@@ -1449,7 +1473,7 @@ function closeFileContentModal() {
 }
 
 async function deleteKnowledgeFile(fileId) {
-    if (!(await showConfirmMessage('确定要删除吗？'))) return;
+    if (!(await aiShowConfirmMessage('确定要删除吗？'))) return;
     try {
         const moduleId = aiCurrentModuleId || document.getElementById('moduleSelect').value;
         if (!moduleId) { aiNotify('请先选择模块', 'warning'); return; }
@@ -2279,7 +2303,7 @@ function initCaseDetailDragResize() {
 }
 
 async function deleteCase(tempCaseId) {
-    if (!(await showConfirmMessage('确定要删除此用例吗？'))) return;
+    if (!(await aiShowConfirmMessage('确定要删除此用例吗？'))) return;
     try {
         await aiApiPost('/api/temp-cases/batch-delete', { tempCaseIds: [tempCaseId] });
         aiNotify('删除成功', 'success');
@@ -2386,7 +2410,7 @@ async function batchReject() {
 
 async function batchDelete() {
     if (selectedCases.size === 0) { aiNotify('请先选择用例', 'warning'); return; }
-    if (!(await showConfirmMessage(`确定要删除 ${selectedCases.size} 个用例吗？`))) return;
+    if (!(await aiShowConfirmMessage(`确定要删除 ${selectedCases.size} 个用例吗？`))) return;
     try {
         await aiApiPost('/api/temp-cases/batch-delete', { tempCaseIds: Array.from(selectedCases) });
         aiNotify('批量删除成功', 'success');
@@ -2509,7 +2533,7 @@ async function startReview(taskId) {
 
             const reviews = [];
             for (const c of cases) {
-                const approved = await showConfirmMessage(`用例: ${c.name}\n\n点击"确认"批准，点击"取消"拒绝`);
+                const approved = await aiShowConfirmMessage(`用例: ${c.name}\n\n点击"确认"批准，点击"取消"拒绝`);
                 let comment = '';
                 if (!approved) {
                     comment = await showPromptModal('请输入拒绝原因:') || '';
@@ -2924,7 +2948,7 @@ async function editSkill(id) {
 }
 
 async function deleteSkill(id) {
-    if (!(await showConfirmMessage('确定要删除此Skill吗？'))) return;
+    if (!(await aiShowConfirmMessage('确定要删除此Skill吗？'))) return;
     try {
         await aiApiDelete(`/api/ai-generation/skills/${id}`);
         aiNotify('Skill已删除', 'success');

@@ -29,7 +29,7 @@ function validateSearchParams({ keyword, types, limit, offset }) {
     }
     
     if (types && types !== 'all') {
-        const validTypes = ['testplan', 'case', 'post', 'comment', 'script'];
+        const validTypes = ['testplan', 'case', 'post', 'comment', 'script', 'agent', 'aitool', 'memory'];
         const inputTypes = types.split(',').map(t => t.trim());
         const invalidTypes = inputTypes.filter(t => !validTypes.includes(t));
         if (invalidTypes.length > 0) {
@@ -394,6 +394,196 @@ async function searchScripts(keyword, limit, offset) {
     }
 }
 
+async function searchAgents(keyword, limit, offset, userId, isAdmin) {
+    const searchPattern = `%${keyword}%`;
+    
+    try {
+        let visibilityFilter = '';
+        const params = [searchPattern, searchPattern, searchPattern];
+        
+        if (!isAdmin) {
+            visibilityFilter = ' AND (a.visibility = \'public\' OR a.creator_id = ?)';
+            params.push(userId);
+        }
+        
+        const countParams = [...params];
+        const [countResult] = await pool.execute(`
+            SELECT COUNT(*) as total
+            FROM ai_sub_agents a
+            WHERE (a.display_name LIKE ? 
+               OR a.description LIKE ?
+               OR a.agent_code LIKE ?)${visibilityFilter}
+        `, countParams);
+        
+        const total = countResult[0].total;
+        
+        const queryParams = [...params];
+        const [rows] = await pool.execute(`
+            SELECT 
+                a.id,
+                a.agent_code,
+                a.display_name,
+                a.description,
+                a.category,
+                a.agent_type,
+                a.is_enabled,
+                a.visibility,
+                a.avatar,
+                a.updated_at
+            FROM ai_sub_agents a
+            WHERE (a.display_name LIKE ? 
+               OR a.description LIKE ?
+               OR a.agent_code LIKE ?)${visibilityFilter}
+            ORDER BY a.updated_at DESC
+            LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
+        `, queryParams);
+        
+        return {
+            total,
+            hasMore: total > offset + limit,
+            items: rows.map(row => ({
+                id: row.id,
+                agentCode: row.agent_code,
+                name: row.display_name,
+                description: row.description ? row.description.substring(0, 100) : '',
+                category: row.category,
+                agentType: row.agent_type,
+                isEnabled: row.is_enabled === 1,
+                visibility: row.visibility,
+                avatar: row.avatar,
+                updatedAt: row.updated_at
+            }))
+        };
+    } catch (error) {
+        logger.error('搜索智能体错误:', { error: error.message });
+        return { total: 0, hasMore: false, items: [], error: error.message };
+    }
+}
+
+async function searchAITools(keyword, limit, offset, userId, isAdmin) {
+    const searchPattern = `%${keyword}%`;
+    
+    try {
+        let visibilityFilter = '';
+        const params = [searchPattern, searchPattern, searchPattern];
+        
+        if (!isAdmin) {
+            visibilityFilter = ' AND (t.is_public = 1 OR t.creator_id = ?)';
+            params.push(userId);
+        }
+        
+        const countParams = [...params];
+        const [countResult] = await pool.execute(`
+            SELECT COUNT(*) as total
+            FROM ai_custom_tools t
+            WHERE (t.tool_name LIKE ? 
+               OR t.display_name LIKE ?
+               OR t.description LIKE ?)${visibilityFilter}
+        `, countParams);
+        
+        const total = countResult[0].total;
+        
+        const queryParams = [...params];
+        const [rows] = await pool.execute(`
+            SELECT 
+                t.id,
+                t.tool_name,
+                t.display_name,
+                t.description,
+                t.language,
+                t.is_public,
+                t.is_system,
+                t.updated_at
+            FROM ai_custom_tools t
+            WHERE (t.tool_name LIKE ? 
+               OR t.display_name LIKE ?
+               OR t.description LIKE ?)${visibilityFilter}
+            ORDER BY t.updated_at DESC
+            LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
+        `, queryParams);
+        
+        return {
+            total,
+            hasMore: total > offset + limit,
+            items: rows.map(row => ({
+                id: row.id,
+                toolName: row.tool_name,
+                name: row.display_name || row.tool_name,
+                description: row.description ? row.description.substring(0, 100) : '',
+                language: row.language,
+                isPublic: row.is_public === 1,
+                isSystem: row.is_system === 1,
+                updatedAt: row.updated_at
+            }))
+        };
+    } catch (error) {
+        logger.error('搜索AI工具错误:', { error: error.message });
+        return { total: 0, hasMore: false, items: [], error: error.message };
+    }
+}
+
+async function searchMemories(keyword, limit, offset) {
+    const searchPattern = `%${keyword}%`;
+    
+    try {
+        const [countResult] = await pool.execute(`
+            SELECT COUNT(*) as total
+            FROM ai_sub_agent_memories m
+            LEFT JOIN ai_sub_agents a ON m.agent_id = a.id
+            WHERE (m.title LIKE ? 
+               OR m.content LIKE ?)
+               AND m.is_active = 1
+        `, [searchPattern, searchPattern]);
+        
+        const total = countResult[0].total;
+        
+        const [rows] = await pool.execute(`
+            SELECT 
+                m.id,
+                m.agent_id,
+                m.title,
+                m.content,
+                m.memory_type,
+                m.level,
+                m.source,
+                m.relevance_score,
+                m.access_count,
+                m.updated_at,
+                a.display_name as agent_name,
+                a.agent_code
+            FROM ai_sub_agent_memories m
+            LEFT JOIN ai_sub_agents a ON m.agent_id = a.id
+            WHERE (m.title LIKE ? 
+               OR m.content LIKE ?)
+               AND m.is_active = 1
+            ORDER BY m.updated_at DESC
+            LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
+        `, [searchPattern, searchPattern]);
+        
+        return {
+            total,
+            hasMore: total > offset + limit,
+            items: rows.map(row => ({
+                id: row.id,
+                agentId: row.agent_id,
+                name: row.title || `记忆 #${row.id}`,
+                contentPreview: row.content ? row.content.substring(0, 150) : '',
+                memoryType: row.memory_type,
+                level: row.level,
+                source: row.source,
+                relevanceScore: row.relevance_score,
+                accessCount: row.access_count,
+                agentName: row.agent_name,
+                agentCode: row.agent_code,
+                updatedAt: row.updated_at
+            }))
+        };
+    } catch (error) {
+        logger.error('搜索AI记忆错误:', { error: error.message });
+        return { total: 0, hasMore: false, items: [], error: error.message };
+    }
+}
+
 router.get('/search', authenticateToken, async (req, res) => {
     const startTime = Date.now();
     
@@ -424,9 +614,9 @@ router.get('/search', authenticateToken, async (req, res) => {
         const offsetNum = Math.max(0, parseInt(offset) || 0);
         
         const typeList = types === 'all' 
-            ? ['testplan', 'case', 'post', 'comment', 'script'] 
+            ? ['testplan', 'case', 'post', 'comment', 'script', 'agent', 'aitool', 'memory'] 
             : types.split(',').map(t => t.trim()).filter(t => 
-                ['testplan', 'case', 'post', 'comment', 'script'].includes(t)
+                ['testplan', 'case', 'post', 'comment', 'script', 'agent', 'aitool', 'memory'].includes(t)
               );
         
         const results = {};
@@ -469,6 +659,30 @@ router.get('/search', authenticateToken, async (req, res) => {
                 searchScripts(searchTerm, limitNum, offsetNum)
                     .then(r => { results.scripts = r; })
                     .catch(e => { results.scripts = { total: 0, items: [], error: e.message }; })
+            );
+        }
+        
+        if (typeList.includes('agent')) {
+            searchPromises.push(
+                searchAgents(searchTerm, limitNum, offsetNum, userId, isAdmin)
+                    .then(r => { results.agents = r; })
+                    .catch(e => { results.agents = { total: 0, items: [], error: e.message }; })
+            );
+        }
+        
+        if (typeList.includes('aitool')) {
+            searchPromises.push(
+                searchAITools(searchTerm, limitNum, offsetNum, userId, isAdmin)
+                    .then(r => { results.aiTools = r; })
+                    .catch(e => { results.aiTools = { total: 0, items: [], error: e.message }; })
+            );
+        }
+        
+        if (typeList.includes('memory')) {
+            searchPromises.push(
+                searchMemories(searchTerm, limitNum, offsetNum)
+                    .then(r => { results.memories = r; })
+                    .catch(e => { results.memories = { total: 0, items: [], error: e.message }; })
             );
         }
         

@@ -1212,6 +1212,12 @@
     color: var(--kl-text);
 }
 
+.kl-preview-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
 .kl-preview-list {
     max-height: 200px;
     overflow-y: auto;

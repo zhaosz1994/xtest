@@ -405,17 +405,23 @@ function closeEditModal() {
 }
 
 async function saveEditPost() {
+    const saveBtn = document.querySelector('#edit-modal .save-btn');
+    if (saveBtn && saveBtn.disabled) return;
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '保存中...'; }
+
     const postId = document.getElementById('edit-post-id').value;
     const title = document.getElementById('edit-title').value.trim();
     const content = document.getElementById('edit-content').value.trim();
     
     if (!title) {
         showToast('请输入标题', 'error');
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '保存'; }
         return;
     }
     
     if (!content) {
         showToast('请输入内容', 'error');
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '保存'; }
         return;
     }
     
@@ -435,6 +441,8 @@ async function saveEditPost() {
     } catch (error) {
         console.error('更新帖子失败:', error);
         showToast('更新失败', 'error');
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '保存'; }
     }
 }
 
@@ -464,7 +472,7 @@ function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML.replace(/'/g, '&#039;');
+    return div.innerHTML.replace(/'/g, '&#039;').replace(/"/g, '&quot;');
 }
 
 function escapeForJs(text) {

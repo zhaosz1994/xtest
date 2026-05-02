@@ -31,7 +31,7 @@ const CommandPalette = {
             {
                 id: 'global-search',
                 title: '全局搜索',
-                description: '搜索测试计划、用例、帖子、评论',
+                description: '搜索测试计划、用例、帖子、智能体、工具、记忆',
                 icon: '🔍',
                 shortcut: ['/'],
                 action: () => this.switchToSearchMode()
@@ -115,6 +115,22 @@ const CommandPalette = {
                 icon: '🤖',
                 shortcut: ['A', 'I'],
                 action: () => { this.close(); if (typeof openAIAssistant === 'function') openAIAssistant(); }
+            },
+            {
+                id: 'ai-generation',
+                title: 'AI生成',
+                description: 'AI用例生成',
+                icon: '✨',
+                shortcut: ['G', 'A'],
+                action: () => { this.close(); Router.navigateTo('ai-generation'); }
+            },
+            {
+                id: 'knowledge',
+                title: '知识库',
+                description: '管理知识库文件',
+                icon: '📚',
+                shortcut: ['G', 'K'],
+                action: () => { this.close(); Router.navigateTo('knowledge'); }
             },
             {
                 id: 'forum',
@@ -270,7 +286,7 @@ const CommandPalette = {
         this.mode = 'search';
         this.selectedIndex = 0;
         this.selectedCategory = 0;
-        this.input.placeholder = '搜索测试计划、用例、帖子、评论...';
+        this.input.placeholder = '搜索测试计划、用例、帖子、智能体、工具、记忆...';
         this.input.value = '';
         this.modeIndicator.textContent = '搜索';
         this.modeIndicator.classList.add('active');
@@ -468,13 +484,16 @@ const CommandPalette = {
     },
 
     renderSearchResults(keyword) {
-        const { testPlans, testCases, posts, comments } = this.searchResults;
+        const { testPlans, testCases, posts, comments, agents, aiTools, memories } = this.searchResults;
         
         const categories = [
             { key: 'testPlans', data: testPlans, icon: '📋', title: '测试计划' },
             { key: 'testCases', data: testCases, icon: '📝', title: '测试用例' },
             { key: 'posts', data: posts, icon: '💬', title: '论坛帖子' },
-            { key: 'comments', data: comments, icon: '💭', title: '评论' }
+            { key: 'comments', data: comments, icon: '💭', title: '评论' },
+            { key: 'agents', data: agents, icon: '🤖', title: 'AI智能体' },
+            { key: 'aiTools', data: aiTools, icon: '🔧', title: 'AI技能与工具' },
+            { key: 'memories', data: memories, icon: '🧠', title: 'AI记忆' }
         ].filter(c => c.data && c.data.items && c.data.items.length > 0);
         
         if (categories.length === 0) {
@@ -562,6 +581,30 @@ const CommandPalette = {
                     <span>${item.author}</span>
                     <span class="meta-separator">·</span>
                     <span>${this.formatTime(item.createdAt)}</span>
+                `;
+            case 'agents':
+                return `
+                    <span>${item.category || item.agentType || ''}</span>
+                    ${item.description ? '<span class="meta-separator">·</span>' : ''}
+                    ${item.description ? `<span>${this.escapeHtml(item.description.substring(0, 50))}</span>` : ''}
+                    <span class="meta-separator">·</span>
+                    <span>${item.isEnabled ? '已启用' : '已禁用'}</span>
+                `;
+            case 'aiTools':
+                return `
+                    <span>${item.language || ''}</span>
+                    ${item.description ? '<span class="meta-separator">·</span>' : ''}
+                    ${item.description ? `<span>${this.escapeHtml(item.description.substring(0, 50))}</span>` : ''}
+                    <span class="meta-separator">·</span>
+                    <span>${item.isPublic ? '公开' : '私有'}</span>
+                `;
+            case 'memories':
+                return `
+                    <span>${item.agentName || ''}</span>
+                    <span class="meta-separator">·</span>
+                    <span>${item.memoryType || ''}</span>
+                    <span class="meta-separator">·</span>
+                    <span>${item.level || ''}</span>
                 `;
             default:
                 return '';
@@ -756,6 +799,41 @@ const CommandPalette = {
                 break;
             case 'comment':
                 window.open(`/post-detail.html?id=${postId}&comment=${id}`, '_blank');
+                break;
+            case 'agent':
+                Router.navigateTo('settings');
+                setTimeout(() => {
+                    const agentTab = document.querySelector('[data-tab="ai-agents"]') || document.querySelector('[data-settings-tab="ai-agents"]');
+                    if (agentTab) agentTab.click();
+                    setTimeout(() => {
+                        const agentEl = document.querySelector(`[data-agent-id="${id}"]`) || document.querySelector(`[data-agent-code="${id}"]`);
+                        if (agentEl) {
+                            agentEl.click();
+                            agentEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                    }, 500);
+                }, 800);
+                break;
+            case 'aitool':
+                Router.navigateTo('settings');
+                setTimeout(() => {
+                    const toolTab = document.querySelector('[data-tab="ai-tools"]') || document.querySelector('[data-settings-tab="ai-tools"]');
+                    if (toolTab) toolTab.click();
+                    setTimeout(() => {
+                        const toolEl = document.querySelector(`[data-tool-id="${id}"]`) || document.querySelector(`[data-tool-name="${id}"]`);
+                        if (toolEl) {
+                            toolEl.click();
+                            toolEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                    }, 500);
+                }, 800);
+                break;
+            case 'memory':
+                Router.navigateTo('settings');
+                setTimeout(() => {
+                    const memoryTab = document.querySelector('[data-tab="ai-memories"]') || document.querySelector('[data-settings-tab="ai-memories"]');
+                    if (memoryTab) memoryTab.click();
+                }, 800);
                 break;
         }
     },

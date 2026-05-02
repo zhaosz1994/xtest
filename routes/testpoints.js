@@ -410,25 +410,43 @@ router.delete('/level1/delete/:id', authenticateToken, requireAdmin, async (req,
   const { id } = req.params;
 
   try {
-    // 开始事务
     const connection = await pool.getConnection();
     await connection.beginTransaction();
 
     try {
-      // 删除关联的测试用例
-      await connection.execute('DELETE FROM test_cases WHERE level1_id = ?', [id]);
+      const [caseIds] = await connection.execute(
+        'SELECT id FROM test_cases WHERE level1_id = ?',
+        [id]
+      );
+
+      if (caseIds.length > 0) {
+        const batchSize = 1000;
+        const ids = caseIds.map(c => c.id);
+        for (let i = 0; i < ids.length; i += batchSize) {
+          const batch = ids.slice(i, i + batchSize);
+          const placeholders = batch.map(() => '?').join(',');
+          await connection.execute(
+            `DELETE FROM test_case_projects WHERE test_case_id IN (${placeholders})`,
+            batch
+          );
+        }
+
+        for (let i = 0; i < ids.length; i += batchSize) {
+          const batch = ids.slice(i, i + batchSize);
+          const placeholders = batch.map(() => '?').join(',');
+          await connection.execute(
+            `UPDATE test_cases SET is_deleted = 1, deleted_at = NOW() WHERE id IN (${placeholders})`,
+            batch
+          );
+        }
+      }
       
-      // 删除关联的二级测试点
       await connection.execute('DELETE FROM level2_points WHERE level1_id = ?', [id]);
-      
-      // 删除一级测试点
       await connection.execute('DELETE FROM level1_points WHERE id = ?', [id]);
       
-      // 提交事务
       await connection.commit();
-      res.json({ success: true, message: '一级测试点删除成功' });
+      res.json({ success: true, message: '一级测试点删除成功，关联用例已软删除' });
     } catch (error) {
-      // 回滚事务
       await connection.rollback();
       throw error;
     } finally {

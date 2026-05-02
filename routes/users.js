@@ -8,6 +8,7 @@ const { getUserAIConfig, getUserAITimeoutConfig, getAITimeoutDefaults } = requir
 const { authenticateToken, requireAdmin } = require('../middleware');
 const { logActivity } = require('./history');
 const logger = require('../services/logger');
+const tokenBlacklist = require('../services/tokenBlacklist');
 require('dotenv').config();
 
 // 登录
@@ -95,6 +96,34 @@ router.post('/refresh-token', authenticateToken, async (req, res) => {
   } catch (error) {
     logger.error('Token刷新错误:', { error: error.message });
     res.status(500).json({ success: false, message: 'Token刷新失败' });
+  }
+});
+
+router.post('/logout', authenticateToken, async (req, res) => {
+  try {
+    const token = req.token;
+    const userId = req.user.id;
+
+    if (token) {
+      await tokenBlacklist.add(token, userId, 'logout');
+    }
+
+    await logActivity(
+      userId,
+      req.user.username,
+      req.user.role,
+      '用户登出',
+      `用户 ${req.user.username} 登出系统`,
+      'user',
+      userId,
+      req.ip || req.connection.remoteAddress,
+      req.get('User-Agent')
+    );
+
+    res.json({ success: true, message: '登出成功' });
+  } catch (error) {
+    logger.error('登出错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -449,12 +478,12 @@ router.delete('/delete/:id', authenticateToken, requireAdmin, async (req, res) =
       return res.status(400).json({ success: false, message: '系统管理员账户不允许删除' });
     }
     
-    await pool.execute('DELETE FROM users WHERE id = ?', [id]);
+    await pool.execute('UPDATE users SET status = ? WHERE id = ?', ['disabled', id]);
 
     // 记录操作日志
-    await logActivity(currentUser.id, currentUser.username, currentUser.role, '删除用户', `管理员 ${currentUser.username} 删除了用户 ${users[0].username}`, 'user', parseInt(id), ipAddress, userAgent);
+    await logActivity(currentUser.id, currentUser.username, currentUser.role, '禁用用户', `管理员 ${currentUser.username} 禁用了用户 ${users[0].username}`, 'user', parseInt(id), ipAddress, userAgent);
 
-    res.json({ success: true, message: '用户删除成功' });
+    res.json({ success: true, message: '用户已禁用' });
   } catch (error) {
     logger.error('删除用户错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
@@ -477,11 +506,12 @@ router.post('/update', authenticateToken, requireAdmin, async (req, res) => {
     let updateQuery = 'UPDATE users SET role = ?, email = ? WHERE id = ?';
     const updateParams = [role, email, userId];
     
-    // 如果提供了密码，则更新密码
     if (password && password !== '********') {
       const hashedPassword = await bcrypt.hash(password, 10);
       updateQuery = 'UPDATE users SET role = ?, email = ?, password = ? WHERE id = ?';
       updateParams.splice(2, 0, hashedPassword);
+
+      await tokenBlacklist.blacklistAllUserTokens(userId, 'admin_password_reset');
     }
     
     await pool.execute(updateQuery, updateParams);
@@ -498,15 +528,15 @@ router.post('/delete', authenticateToken, requireAdmin, async (req, res) => {
 
   try {
     if (username && username.toLowerCase() === 'admin') {
-      return res.status(400).json({ success: false, message: '系统管理员账户不允许删除' });
+      return res.status(400).json({ success: false, message: '系统管理员账户不允许禁用' });
     }
 
-    const [result] = await pool.execute('DELETE FROM users WHERE username = ?', [username]);
+    const [result] = await pool.execute('UPDATE users SET status = ? WHERE username = ?', ['disabled', username]);
     if (result.affectedRows === 0) {
       return res.status(404).json({ success: false, message: '用户不存在' });
     }
     
-    res.json({ success: true, message: '用户删除成功' });
+    res.json({ success: true, message: '用户已禁用' });
   } catch (error) {
     logger.error('删除用户错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
@@ -623,8 +653,12 @@ router.put('/password', authenticateToken, async (req, res) => {
       ipAddress, 
       userAgent
     );
+
+    if (req.token) {
+      await tokenBlacklist.add(req.token, userId, 'password_change');
+    }
     
-    res.json({ success: true, message: '密码修改成功' });
+    res.json({ success: true, message: '密码修改成功，请重新登录' });
   } catch (error) {
     logger.error('修改密码错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });

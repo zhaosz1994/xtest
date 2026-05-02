@@ -416,10 +416,11 @@ app.post('/api/modules/update', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/modules/delete', authenticateToken, async (req, res) => {
+  const connection = await pool.getConnection();
   try {
-    const { id, libraryId } = req.body;
+    const { id, libraryId, force = false } = req.body;
     
-    const [modules] = await pool.execute(
+    const [modules] = await connection.execute(
       'SELECT module_id, name FROM modules WHERE id = ? AND library_id = ?',
       [id, libraryId]
     );
@@ -428,44 +429,137 @@ app.post('/api/modules/delete', authenticateToken, async (req, res) => {
       return res.status(404).json({ success: false, message: '模块不存在' });
     }
 
-    const [level1Points] = await pool.execute(
+    const [level1Points] = await connection.execute(
       'SELECT COUNT(*) as count FROM level1_points WHERE module_id = ?',
       [id]
     );
-    if (level1Points[0].count > 0) {
-      return res.status(400).json({ success: false, message: `该模块下还有 ${level1Points[0].count} 个一级测试点，请先删除或迁移后再删除模块` });
-    }
 
-    const [testCases] = await pool.execute(
+    const [testCases] = await connection.execute(
       'SELECT COUNT(*) as count FROM test_cases WHERE module_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)',
       [id]
     );
-    if (testCases[0].count > 0) {
-      return res.status(400).json({ success: false, message: `该模块下还有 ${testCases[0].count} 个测试用例，请先删除或迁移后再删除模块` });
+
+    if (!force && (level1Points[0].count > 0 || testCases[0].count > 0)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `该模块下还有 ${level1Points[0].count} 个测试点和 ${testCases[0].count} 个测试用例，请先删除或迁移后再删除模块，或使用强制删除`,
+        data: {
+          level1Count: level1Points[0].count,
+          testCaseCount: testCases[0].count
+        }
+      });
     }
-    
-    await pool.execute(
+
+    await connection.beginTransaction();
+
+    if (force) {
+      const [level1Ids] = await connection.execute(
+        'SELECT id FROM level1_points WHERE module_id = ?',
+        [id]
+      );
+
+      if (level1Ids.length > 0) {
+        const ids = level1Ids.map(p => p.id);
+        const batchSize = 1000;
+        for (let i = 0; i < ids.length; i += batchSize) {
+          const batch = ids.slice(i, i + batchSize);
+          const placeholders = batch.map(() => '?').join(',');
+
+          const [caseIds] = await connection.execute(
+            `SELECT id FROM test_cases WHERE level1_id IN (${placeholders})`,
+            batch
+          );
+
+          if (caseIds.length > 0) {
+            const caseIdList = caseIds.map(c => c.id);
+            for (let j = 0; j < caseIdList.length; j += batchSize) {
+              const caseBatch = caseIdList.slice(j, j + batchSize);
+              const casePlaceholders = caseBatch.map(() => '?').join(',');
+              await connection.execute(
+                `DELETE FROM test_case_projects WHERE test_case_id IN (${casePlaceholders})`,
+                caseBatch
+              );
+            }
+
+            for (let j = 0; j < caseIdList.length; j += batchSize) {
+              const caseBatch = caseIdList.slice(j, j + batchSize);
+              const casePlaceholders = caseBatch.map(() => '?').join(',');
+              await connection.execute(
+                `UPDATE test_cases SET is_deleted = 1, deleted_at = NOW() WHERE id IN (${casePlaceholders})`,
+                caseBatch
+              );
+            }
+          }
+
+          for (let j = 0; j < batch.length; j += batchSize) {
+            const l1Batch = batch.slice(j, j + batchSize);
+            const l1Placeholders = l1Batch.map(() => '?').join(',');
+            await connection.execute(
+              `DELETE FROM level1_points WHERE id IN (${l1Placeholders})`,
+              l1Batch
+            );
+          }
+        }
+      } else {
+        const [caseIds] = await connection.execute(
+          'SELECT id FROM test_cases WHERE module_id = ?',
+          [id]
+        );
+        if (caseIds.length > 0) {
+          const caseIdList = caseIds.map(c => c.id);
+          const batchSize = 1000;
+          for (let j = 0; j < caseIdList.length; j += batchSize) {
+            const caseBatch = caseIdList.slice(j, j + batchSize);
+            const casePlaceholders = caseBatch.map(() => '?').join(',');
+            await connection.execute(
+              `DELETE FROM test_case_projects WHERE test_case_id IN (${casePlaceholders})`,
+              caseBatch
+            );
+          }
+          for (let j = 0; j < caseIdList.length; j += batchSize) {
+            const caseBatch = caseIdList.slice(j, j + batchSize);
+            const casePlaceholders = caseBatch.map(() => '?').join(',');
+            await connection.execute(
+              `UPDATE test_cases SET is_deleted = 1, deleted_at = NOW() WHERE id IN (${casePlaceholders})`,
+              caseBatch
+            );
+          }
+        }
+      }
+    }
+
+    await connection.execute(
       'DELETE FROM modules WHERE id = ? AND library_id = ?',
       [id, libraryId]
     );
-    
+
+    await connection.commit();
+
     AuditLogService.logModuleAction({
         userId: req.user.id,
         username: req.user.username,
         userRole: req.user.role,
-        action: 'delete',
+        action: force ? 'force_delete' : 'delete',
         moduleId: modules[0].module_id,
         moduleName: modules[0].name,
         ipAddress: req.ip,
         userAgent: req.get('User-Agent'),
-        beforeData: { id, libraryId, name: modules[0].name }
+        beforeData: { id, libraryId, name: modules[0].name, force, deletedLevel1: level1Points[0].count, deletedCases: testCases[0].count }
     });
     
-    res.json({ success: true, message: '模块删除成功' });
+    res.json({ 
+      success: true, 
+      message: force 
+        ? `模块及关联数据已级联删除（${level1Points[0].count} 个测试点，${testCases[0].count} 个用例已软删除）`
+        : '模块删除成功' 
+    });
   } catch (error) {
+    await connection.rollback();
     logger.error('删除模块错误:', { error: error.message });
     console.error('错误堆栈:', error.stack);
     res.status(500).json({ success: false, message: '服务器错误' });
+  } finally {
+    connection.release();
   }
 });
 
@@ -1000,7 +1094,23 @@ app.get('/api/testpoints/level1/:moduleId', authenticateToken, async (req, res) 
     }
     
     const [points] = await pool.execute(
-      'SELECT * FROM level1_points WHERE module_id = ? ORDER BY order_index ASC, created_at ASC',
+      `SELECT 
+        l1.id, 
+        l1.name, 
+        l1.test_type, 
+        l1.summary,
+        l1.module_id,
+        l1.order_index,
+        l1.created_at, 
+        l1.updated_at,
+        COUNT(DISTINCT tc.id) as test_case_count,
+        COUNT(DISTINCT cer.id) as bug_count
+      FROM level1_points l1
+      LEFT JOIN test_cases tc ON l1.id = tc.level1_id
+      LEFT JOIN case_execution_records cer ON tc.id = cer.case_id AND cer.record_type = 'defect'
+      WHERE l1.module_id = ?
+      GROUP BY l1.id, l1.name, l1.test_type, l1.summary, l1.module_id, l1.order_index, l1.created_at, l1.updated_at
+      ORDER BY l1.order_index ASC, l1.created_at ASC`,
       [numericModuleId]
     );
     
@@ -1013,6 +1123,8 @@ app.get('/api/testpoints/level1/:moduleId', authenticateToken, async (req, res) 
         summary: p.summary,
         module_id: p.module_id,
         order_index: p.order_index,
+        test_case_count: p.test_case_count,
+        bug_count: p.bug_count,
         created_at: p.created_at,
         updated_at: p.updated_at
       }))
@@ -8549,6 +8661,609 @@ app.delete('/api/testplans/:id', authenticateToken, async (req, res) => {
   }
 });
 
+async function tableExists(tableName) {
+  try {
+    const [rows] = await pool.query(
+      "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
+      [tableName]
+    );
+    return rows.length > 0;
+  } catch (error) {
+    logger.error(`检查表 ${tableName} 失败:`, error.message);
+    return false;
+  }
+}
+
+async function columnExists(tableName, columnName) {
+  try {
+    const [rows] = await pool.query(
+      `SELECT COUNT(*) as count 
+       FROM information_schema.columns 
+       WHERE table_schema = DATABASE() 
+         AND table_name = ? 
+         AND column_name = ?`,
+      [tableName, columnName]
+    );
+    return rows[0].count > 0;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function ensureAITablesExist() {
+  console.log('\n🔍 智能检测 AI 相关表结构...\n');
+  
+  let fixedCount = 0;
+  const missingTables = [];
+  const missingColumns = [];
+
+  // 1. 检查并创建缺失的表
+  const aiTables = [
+    {
+      name: 'ai_sub_agents',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_sub_agents\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+        \`agent_code\` VARCHAR(50) NOT NULL COMMENT '系统唯一标识',
+        \`display_name\` VARCHAR(100) NOT NULL COMMENT '中文显示名称',
+        \`description\` VARCHAR(255) DEFAULT NULL COMMENT '代理描述',
+        \`category\` VARCHAR(50) DEFAULT NULL COMMENT '分类: test_generation, test_review, qa_assistant',
+        \`is_system\` TINYINT(1) DEFAULT 0 COMMENT '是否系统内置',
+        \`allow_qa\` TINYINT(1) DEFAULT 1 COMMENT '是否允许QA问答',
+        \`is_enabled\` TINYINT(1) DEFAULT 1 COMMENT '是否启用',
+        \`creator_id\` INT DEFAULT NULL COMMENT '创建者ID',
+        \`visibility\` ENUM('public','private') DEFAULT 'public' COMMENT '可见性',
+        \`memory_enabled\` TINYINT(1) DEFAULT 1 COMMENT '是否启用记忆',
+        \`memory_distill_threshold\` INT DEFAULT 2000 COMMENT '记忆蒸馏阈值(字符数)',
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+        \`updated_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_agent_code_creator\` (\`agent_code\`, \`creator_id\`),
+        KEY \`idx_category\` (\`category\`),
+        KEY \`idx_is_system\` (\`is_system\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_custom_tools',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_custom_tools\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`tool_name\` VARCHAR(100) NOT NULL,
+        \`display_name\` VARCHAR(200) DEFAULT NULL,
+        \`description\` TEXT,
+        \`input_schema\` JSON DEFAULT NULL,
+        \`language\` ENUM('javascript','python') DEFAULT 'javascript',
+        \`code_content\` LONGTEXT,
+        \`is_public\` TINYINT(1) DEFAULT 1,
+        \`is_system\` TINYINT(1) DEFAULT 0,
+        \`is_enabled\` TINYINT(1) DEFAULT 1,
+        \`creator_id\` INT DEFAULT NULL,
+        \`timeout_ms\` INT DEFAULT 10000,
+        \`max_memory_mb\` INT DEFAULT 128,
+        \`allowed_tables\` JSON DEFAULT NULL,
+        \`requires_docker\` TINYINT(1) DEFAULT 0,
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_tool_name\` (\`tool_name\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_sub_agent_memories',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_sub_agent_memories\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`agent_id\` INT NOT NULL,
+        \`library_id\` INT DEFAULT NULL,
+        \`module_id\` INT DEFAULT NULL,
+        \`level\` ENUM('global','library','module') NOT NULL,
+        \`content\` LONGTEXT,
+        \`char_count\` INT DEFAULT 0,
+        \`last_distilled_at\` TIMESTAMP NULL DEFAULT NULL,
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_memory_node\` (\`agent_id\`, \`library_id\`, \`module_id\`),
+        KEY \`idx_agent_level\` (\`agent_id\`, \`level\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_sub_agent_config_files',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_sub_agent_config_files\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`agent_id\` INT NOT NULL,
+        \`file_type\` ENUM('soul','user','tools','rule','checklist','examples','glossary','template','custom') NOT NULL,
+        \`file_name\` VARCHAR(100) NOT NULL,
+        \`content\` LONGTEXT,
+        \`description\` VARCHAR(500) DEFAULT NULL,
+        \`is_required\` TINYINT(1) DEFAULT 0,
+        \`sort_order\` INT DEFAULT 0,
+        \`version\` INT DEFAULT 1,
+        \`created_by\` INT DEFAULT NULL,
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_agent_file_type\` (\`agent_id\`, \`file_type\`),
+        CONSTRAINT \`fk_config_sub_agent\` FOREIGN KEY (\`agent_id\`) REFERENCES \`ai_sub_agents\`(\`id\`) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_review_tasks',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_review_tasks\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`review_task_id\` VARCHAR(50) NOT NULL,
+        \`source_task_id\` VARCHAR(50) DEFAULT NULL,
+        \`submitter_id\` INT DEFAULT NULL,
+        \`agent_id\` INT DEFAULT NULL,
+        \`status\` ENUM('pending','running','completed','failed','cancelled','needs_human') DEFAULT 'pending',
+        \`total_cases\` INT DEFAULT 0,
+        \`reviewed_cases\` INT DEFAULT 0,
+        \`approved_cases\` INT DEFAULT 0,
+        \`rejected_cases\` INT DEFAULT 0,
+        \`modified_cases\` INT DEFAULT 0,
+        \`needs_human_cases\` INT DEFAULT 0,
+        \`reflection_rounds\` INT DEFAULT 0,
+        \`error_message\` TEXT,
+        \`started_at\` TIMESTAMP NULL DEFAULT NULL,
+        \`completed_at\` TIMESTAMP NULL DEFAULT NULL,
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_review_task_id\` (\`review_task_id\`),
+        KEY \`idx_status\` (\`status\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_review_results',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_review_results\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`review_task_id\` VARCHAR(50) NOT NULL,
+        \`temp_case_id\` VARCHAR(50) NOT NULL,
+        \`action\` ENUM('approve','reject','modify','needs_human') NOT NULL,
+        \`ai_comment\` TEXT,
+        \`ai_score\` DECIMAL(3,1) DEFAULT NULL,
+        \`original_content\` JSON DEFAULT NULL,
+        \`suggested_content\` JSON DEFAULT NULL,
+        \`diff_summary\` TEXT,
+        \`diff_detail\` JSON DEFAULT NULL,
+        \`agent_id\` INT DEFAULT NULL,
+        \`reflection_history\` JSON DEFAULT NULL,
+        \`final_rule_passed\` INT DEFAULT NULL,
+        \`failed_rule\` INT DEFAULT NULL,
+        \`confidence_score\` DECIMAL(5,2) DEFAULT NULL,
+        \`user_decision\` ENUM('pending','accepted','rejected','modified_accepted') DEFAULT 'pending',
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_review_case\` (\`review_task_id\`, \`temp_case_id\`),
+        CONSTRAINT \`fk_ai_review_task\` FOREIGN KEY (\`review_task_id\`) REFERENCES \`ai_review_tasks\`(\`review_task_id\`) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_sub_agent_memory_chunks',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_sub_agent_memory_chunks\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`memory_id\` INT NOT NULL,
+        \`chunk_index\` INT NOT NULL,
+        \`chunk_content\` TEXT NOT NULL,
+        \`token_count\` INT DEFAULT 0,
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_memory_chunk\` (\`memory_id\`, \`chunk_index\`),
+        CONSTRAINT \`fk_chunk_memory\` FOREIGN KEY (\`memory_id\`) REFERENCES \`ai_sub_agent_memories\`(\`id\`) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_tool_versions',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_tool_versions\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`tool_id\` INT NOT NULL,
+        \`version\` INT NOT NULL,
+        \`execute_code\` LONGTEXT,
+        \`input_schema\` JSON DEFAULT NULL,
+        \`change_note\` VARCHAR(500) DEFAULT NULL,
+        \`created_by\` INT DEFAULT NULL,
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_tool_version\` (\`tool_id\`, \`version\`),
+        CONSTRAINT \`fk_version_tool\` FOREIGN KEY (\`tool_id\`) REFERENCES \`ai_custom_tools\`(\`id\`) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'module_knowledge_files',
+      sql: `CREATE TABLE IF NOT EXISTS \`module_knowledge_files\` (
+        \`id\` int NOT NULL AUTO_INCREMENT,
+        \`module_id\` int DEFAULT NULL,
+        \`library_id\` int DEFAULT NULL,
+        \`parent_id\` int DEFAULT NULL,
+        \`name\` varchar(255) NOT NULL,
+        \`type\` enum('folder','file') NOT NULL DEFAULT 'folder',
+        \`file_path\` varchar(500) DEFAULT NULL,
+        \`file_size\` bigint DEFAULT NULL,
+        \`file_ext\` varchar(20) DEFAULT NULL,
+        \`parse_status\` enum('pending','parsing','parsed','failed') DEFAULT 'pending',
+        \`chunk_count\` int DEFAULT 0,
+        \`total_tokens\` int DEFAULT 0,
+        \`is_enabled\` tinyint(1) DEFAULT 1,
+        \`sort_order\` int DEFAULT 0,
+        \`created_by\` varchar(50) DEFAULT NULL,
+        \`created_at\` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        \`deleted_at\` timestamp NULL DEFAULT NULL,
+        PRIMARY KEY (\`id\`),
+        KEY \`idx_module_id\` (\`module_id\`),
+        KEY \`idx_library_id\` (\`library_id\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_material_chunks',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_material_chunks\` (
+        \`id\` int NOT NULL AUTO_INCREMENT,
+        \`file_id\` int NOT NULL,
+        \`module_id\` int NOT NULL,
+        \`library_id\` int DEFAULT NULL,
+        \`chunk_index\` int NOT NULL,
+        \`chunk_content\` text NOT NULL,
+        \`token_count\` int DEFAULT 0,
+        \`char_count\` int DEFAULT 0,
+        \`status\` enum('pending','processing','completed','failed') DEFAULT 'pending',
+        \`created_at\` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_file_chunk\` (\`file_id\`, \`chunk_index\`),
+        KEY \`idx_module_id\` (\`module_id\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_case_generation_tasks',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_case_generation_tasks\` (
+        \`id\` int NOT NULL AUTO_INCREMENT,
+        \`task_id\` varchar(50) NOT NULL,
+        \`module_id\` int NOT NULL,
+        \`library_id\` int DEFAULT NULL,
+        \`user_id\` int NOT NULL,
+        \`status\` enum('pending','processing','completed','failed','cancelled') DEFAULT 'pending',
+        \`stage\` enum('init','chunking','mapping','reducing','finished') DEFAULT 'init',
+        \`progress\` int DEFAULT 0,
+        \`progress_message\` varchar(500) DEFAULT NULL,
+        \`total_chunks\` int DEFAULT 0,
+        \`processed_chunks\` int DEFAULT 0,
+        \`total_cases\` int DEFAULT 0,
+        \`config\` json DEFAULT NULL,
+        \`selected_files\` json DEFAULT NULL,
+        \`error_message\` text,
+        \`started_at\` timestamp NULL DEFAULT NULL,
+        \`completed_at\` timestamp NULL DEFAULT NULL,
+        \`expires_at\` timestamp NULL DEFAULT NULL,
+        \`created_at\` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_task_id\` (\`task_id\`),
+        KEY \`idx_module_id\` (\`module_id\`),
+        KEY \`idx_user_id\` (\`user_id\`),
+        KEY \`idx_status\` (\`status\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'temp_test_cases',
+      sql: `CREATE TABLE IF NOT EXISTS \`temp_test_cases\` (
+        \`id\` int NOT NULL AUTO_INCREMENT,
+        \`temp_case_id\` varchar(50) NOT NULL,
+        \`task_id\` varchar(50) NOT NULL,
+        \`module_id\` int NOT NULL,
+        \`name\` varchar(500) NOT NULL,
+        \`priority\` varchar(20) DEFAULT '中',
+        \`type\` varchar(50) DEFAULT '功能测试',
+        \`precondition\` text,
+        \`purpose\` text,
+        \`steps\` text NOT NULL,
+        \`expected\` text NOT NULL,
+        \`key_config\` text,
+        \`remark\` text,
+        \`method\` varchar(50) DEFAULT '手动',
+        \`owner\` varchar(50) DEFAULT NULL,
+        \`duplicate_score\` decimal(5,2) DEFAULT NULL,
+        \`is_duplicate\` tinyint(1) DEFAULT 0,
+        \`user_modified\` tinyint(1) DEFAULT 0,
+        \`status\` enum('pending','approved','rejected','merged') DEFAULT 'pending',
+        \`ai_review_action\` enum('none','approve','reject','modify') DEFAULT 'none',
+        \`ai_review_comment\` text,
+        \`ai_review_score\` decimal(3,1) DEFAULT NULL,
+        \`ai_suggested_content\` json DEFAULT NULL,
+        \`ai_diff_summary\` text,
+        \`ai_review_task_id\` varchar(50) DEFAULT NULL,
+        \`ai_user_decision\` enum('pending','accepted','rejected','modified_accepted') DEFAULT 'pending',
+        \`created_at\` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_temp_case_id\` (\`temp_case_id\`),
+        KEY \`idx_task_id\` (\`task_id\`),
+        KEY \`idx_module_id\` (\`module_id\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_agent_tool_usage_logs',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_agent_tool_usage_logs\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`agent_id\` INT DEFAULT NULL,
+        \`session_id\` VARCHAR(100) DEFAULT NULL,
+        \`tool_name\` VARCHAR(100) NOT NULL,
+        \`input_params\` JSON DEFAULT NULL,
+        \`output_result\` JSON DEFAULT NULL,
+        \`execution_time_ms\` INT DEFAULT NULL,
+        \`success\` TINYINT(1) DEFAULT 1,
+        \`error_message\` TEXT,
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        KEY \`idx_agent_id\` (\`agent_id\`),
+        KEY \`idx_session_id\` (\`session_id\`),
+        KEY \`idx_tool_name\` (\`tool_name\`),
+        KEY \`idx_created_at\` (\`created_at\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_operation_logs',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_operation_logs\` (
+        \`id\` INT AUTO_INCREMENT PRIMARY KEY COMMENT '日志ID',
+        \`user_id\` INT NOT NULL COMMENT '用户ID',
+        \`username\` VARCHAR(100) COMMENT '用户名',
+        \`skill_name\` VARCHAR(100) NOT NULL COMMENT '技能名称',
+        \`skill_id\` INT COMMENT '技能ID',
+        \`operation_type\` VARCHAR(20) NOT NULL COMMENT '操作类型（SELECT）',
+        \`sql_query\` TEXT COMMENT '执行的SQL语句',
+        \`sql_params\` TEXT COMMENT 'SQL参数（JSON格式）',
+        \`tables_accessed\` VARCHAR(500) COMMENT '访问的表（逗号分隔）',
+        \`result_count\` INT DEFAULT 0 COMMENT '返回结果数量',
+        \`execution_time_ms\` INT COMMENT '执行耗时（毫秒）',
+        \`prompt_tokens\` INT DEFAULT 0 COMMENT '提示词token数',
+        \`completion_tokens\` INT DEFAULT 0 COMMENT '完成token数',
+        \`total_tokens\` INT DEFAULT 0 COMMENT '总token数',
+        \`model_name\` VARCHAR(100) COMMENT '使用的AI模型名称',
+        \`status\` VARCHAR(20) NOT NULL DEFAULT 'success' COMMENT '执行状态（success/failed）',
+        \`error_message\` TEXT COMMENT '错误信息',
+        \`ip_address\` VARCHAR(50) COMMENT 'IP地址',
+        \`user_agent\` VARCHAR(500) COMMENT '用户代理',
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+        INDEX \`idx_user_id\` (\`user_id\`),
+        INDEX \`idx_skill_name\` (\`skill_name\`),
+        INDEX \`idx_status\` (\`status\`),
+        INDEX \`idx_created_at\` (\`created_at\`),
+        INDEX \`idx_operation_type\` (\`operation_type\`),
+        INDEX \`idx_ai_logs_total_tokens\` (\`total_tokens\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI操作审计日志表'`
+    }
+  ];
+
+  for (const table of aiTables) {
+    const exists = await tableExists(table.name);
+    if (!exists) {
+      try {
+        await pool.query(table.sql);
+        console.log(`  ✅ 已创建缺失的表: ${table.name}`);
+        missingTables.push(table.name);
+        fixedCount++;
+      } catch (err) {
+        console.log(`  ❌ 创建表 ${table.name} 失败: ${err.message}`);
+      }
+    }
+  }
+
+  // 2. 检查并添加缺失的字段 (ai_sub_agents V2 字段)
+  const aiSubAgentsFields = [
+    { name: 'agent_type', def: "ENUM('generator','reviewer','analyzer','assistant') DEFAULT 'assistant'" },
+    { name: 'avatar', def: "VARCHAR(500) DEFAULT NULL" },
+    { name: 'parent_agent_id', def: "INT DEFAULT NULL" },
+    { name: 'llm_model', def: "VARCHAR(100) DEFAULT NULL" },
+    { name: 'llm_temperature', def: "DECIMAL(3,2) DEFAULT 0.70" },
+    { name: 'llm_max_tokens', def: "INT DEFAULT 4096" },
+    { name: 'max_retries', def: "INT DEFAULT 3" },
+    { name: 'timeout_seconds', def: "INT DEFAULT 300" },
+    { name: 'sort_order', def: "INT DEFAULT 0" },
+    { name: 'version', def: "INT DEFAULT 1" },
+    { name: 'created_by', def: "INT DEFAULT NULL" },
+    { name: 'updated_by', def: "INT DEFAULT NULL" }
+  ];
+
+  const subAgentsTableExists = await tableExists('ai_sub_agents');
+  if (subAgentsTableExists) {
+    for (const field of aiSubAgentsFields) {
+      const exists = await columnExists('ai_sub_agents', field.name);
+      if (!exists) {
+        try {
+          await pool.query(`ALTER TABLE ai_sub_agents ADD COLUMN \`${field.name}\` ${field.def}`);
+          console.log(`  ✅ 已添加字段: ai_sub_agents.${field.name}`);
+          missingColumns.push(`ai_sub_agents.${field.name}`);
+          fixedCount++;
+        } catch (err) {
+          console.log(`  ❌ 添加字段 ai_sub_agents.${field.name} 失败: ${err.message}`);
+        }
+      }
+    }
+  }
+
+  // 3. 检查并添加 ai_sub_agent_memories V2 字段
+  const memoriesV2Fields = [
+    { name: 'memory_type', def: "ENUM('experience','correction','preference','glossary') DEFAULT 'experience'" },
+    { name: 'title', def: "VARCHAR(200) DEFAULT NULL" },
+    { name: 'source', def: "ENUM('user_correction','auto_distill','manual','system') DEFAULT 'auto_distill'" },
+    { name: 'relevance_score', def: "DECIMAL(5,2) DEFAULT 1.00" },
+    { name: 'access_count', def: "INT DEFAULT 0" },
+    { name: 'last_accessed_at', def: "TIMESTAMP NULL DEFAULT NULL" },
+    { name: 'is_active', def: "TINYINT(1) DEFAULT 1" },
+    { name: 'token_count', def: "INT DEFAULT 0" },
+    { name: 'version', def: "INT DEFAULT 1" },
+    { name: 'created_by', def: "INT DEFAULT NULL" }
+  ];
+
+  const memoriesTableExists = await tableExists('ai_sub_agent_memories');
+  if (memoriesTableExists) {
+    for (const field of memoriesV2Fields) {
+      const exists = await columnExists('ai_sub_agent_memories', field.name);
+      if (!exists) {
+        try {
+          await pool.query(`ALTER TABLE ai_sub_agent_memories ADD COLUMN \`${field.name}\` ${field.def}`);
+          console.log(`  ✅ 已添加字段: ai_sub_agent_memories.${field.name}`);
+          missingColumns.push(`ai_sub_agent_memories.${field.name}`);
+          fixedCount++;
+        } catch (err) {
+          console.log(`  ❌ 添加字段 ai_sub_agent_memories.${field.name} 失败: ${err.message}`);
+        }
+      }
+    }
+  }
+
+  // 4. 检查并添加 ai_review_tasks 额外字段
+  const reviewTasksExtraFields = [
+    { name: 'needs_human_cases', def: "INT DEFAULT 0" },
+    { name: 'reflection_rounds', def: "INT DEFAULT 0" }
+  ];
+
+  const reviewTasksTableExists = await tableExists('ai_review_tasks');
+  if (reviewTasksTableExists) {
+    for (const field of reviewTasksExtraFields) {
+      const exists = await columnExists('ai_review_tasks', field.name);
+      if (!exists) {
+        try {
+          await pool.query(`ALTER TABLE ai_review_tasks ADD COLUMN \`${field.name}\` ${field.def}`);
+          console.log(`  ✅ 已添加字段: ai_review_tasks.${field.name}`);
+          missingColumns.push(`ai_review_tasks.${field.name}`);
+          fixedCount++;
+        } catch (err) {
+          console.log(`  ❌ 添加字段 ai_review_tasks.${field.name} 失败: ${err.message}`);
+        }
+      }
+    }
+  }
+
+  // 5. 检查并添加 ai_review_results 额外字段
+  const reviewResultsExtraFields = [
+    { name: 'agent_id', def: "INT DEFAULT NULL" },
+    { name: 'reflection_history', def: "JSON DEFAULT NULL" },
+    { name: 'final_rule_passed', def: "INT DEFAULT NULL" },
+    { name: 'failed_rule', def: "INT DEFAULT NULL" },
+    { name: 'confidence_score', def: "DECIMAL(5,2) DEFAULT NULL" }
+  ];
+
+  const reviewResultsTableExists = await tableExists('ai_review_results');
+  if (reviewResultsTableExists) {
+    for (const field of reviewResultsExtraFields) {
+      const exists = await columnExists('ai_review_results', field.name);
+      if (!exists) {
+        try {
+          await pool.query(`ALTER TABLE ai_review_results ADD COLUMN \`${field.name}\` ${field.def}`);
+          console.log(`  ✅ 已添加字段: ai_review_results.${field.name}`);
+          missingColumns.push(`ai_review_results.${field.name}`);
+          fixedCount++;
+        } catch (err) {
+          console.log(`  ❌ 添加字段 ai_review_results.${field.name} 失败: ${err.message}`);
+        }
+      }
+    }
+  }
+
+  // 6. 检查 users 表的 ai_timeout_config 字段
+  const usersTimeoutExists = await columnExists('users', 'ai_timeout_config');
+  if (!usersTimeoutExists) {
+    try {
+      await pool.query("ALTER TABLE users ADD COLUMN `ai_timeout_config` JSON DEFAULT NULL");
+      console.log(`  ✅ 已添加字段: users.ai_timeout_config`);
+      missingColumns.push('users.ai_timeout_config');
+      fixedCount++;
+    } catch (err) {
+      console.log(`  ❌ 添加字段 users.ai_timeout_config 失败: ${err.message}`);
+    }
+  }
+
+  // 7. 修复失败的迁移: add_ai_analysis_failed_simple (test_reports.ai_analysis_failed)
+  const testReportsTable = await tableExists('test_reports');
+  if (testReportsTable) {
+    const aiAnalysisFailed = await columnExists('test_reports', 'ai_analysis_failed');
+    if (!aiAnalysisFailed) {
+      try {
+        await pool.query("ALTER TABLE test_reports ADD COLUMN `ai_analysis_failed` TINYINT(1) DEFAULT 0 COMMENT 'AI分析是否失败: 0-成功, 1-失败'");
+        console.log(`  ✅ 已添加字段: test_reports.ai_analysis_failed`);
+        missingColumns.push('test_reports.ai_analysis_failed');
+        fixedCount++;
+      } catch (err) {
+        console.log(`  ❌ 添加字段 test_reports.ai_analysis_failed 失败: ${err.message}`);
+      }
+    }
+  }
+
+  // 8. 修复失败的迁移: add_library_id_to_knowledge_files (module_knowledge_files.library_id)
+  const mkfTable = await tableExists('module_knowledge_files');
+  if (mkfTable) {
+    const mkfLibId = await columnExists('module_knowledge_files', 'library_id');
+    if (!mkfLibId) {
+      try {
+        await pool.query("ALTER TABLE module_knowledge_files ADD COLUMN `library_id` int DEFAULT NULL COMMENT '所属用例库ID' AFTER module_id");
+        console.log(`  ✅ 已添加字段: module_knowledge_files.library_id`);
+        missingColumns.push('module_knowledge_files.library_id');
+        fixedCount++;
+        try { await pool.query("CREATE INDEX idx_library_id ON module_knowledge_files(library_id)"); } catch(e) {}
+      } catch (err) {
+        console.log(`  ❌ 添加字段 module_knowledge_files.library_id 失败: ${err.message}`);
+      }
+    }
+
+    const mkfModuleIdNullable = await columnExists('module_knowledge_files', 'module_id');
+    if (mkfModuleIdNullable) {
+      try {
+        const [colInfo] = await pool.query(`SHOW COLUMNS FROM module_knowledge_files WHERE Field = 'module_id' AND Null = 'NO'`);
+        if (colInfo.length > 0) {
+          await pool.query("ALTER TABLE module_knowledge_files MODIFY COLUMN `module_id` int DEFAULT NULL COMMENT '所属模块ID'");
+          console.log(`  ✅ 已修改字段: module_knowledge_files.module_id 允许 NULL`);
+          fixedCount++;
+        }
+      } catch (err) {
+        console.log(`  ❌ 修改字段 module_knowledge_files.module_id 失败: ${err.message}`);
+      }
+    }
+  }
+
+  // 9. 修复失败的迁移: add_project_id_to_temp_cases (temp_test_cases.project_id)
+  const tempCasesTable = await tableExists('temp_test_cases');
+  if (tempCasesTable) {
+    const tempProjectId = await columnExists('temp_test_cases', 'project_id');
+    if (!tempProjectId) {
+      try {
+        await pool.query("ALTER TABLE temp_test_cases ADD COLUMN `project_id` INT DEFAULT NULL COMMENT '关联项目ID' AFTER owner");
+        console.log(`  ✅ 已添加字段: temp_test_cases.project_id`);
+        missingColumns.push('temp_test_cases.project_id');
+        fixedCount++;
+      } catch (err) {
+        console.log(`  ❌ 添加字段 temp_test_cases.project_id 失败: ${err.message}`);
+      }
+    }
+    const tempProjectIds = await columnExists('temp_test_cases', 'project_ids');
+    if (!tempProjectIds) {
+      try {
+        await pool.query("ALTER TABLE temp_test_cases ADD COLUMN `project_ids` JSON DEFAULT NULL COMMENT '关联项目ID列表(JSON数组)' AFTER project_id");
+        console.log(`  ✅ 已添加字段: temp_test_cases.project_ids`);
+        missingColumns.push('temp_test_cases.project_ids');
+        fixedCount++;
+      } catch (err) {
+        console.log(`  ❌ 添加字段 temp_test_cases.project_ids 失败: ${err.message}`);
+      }
+    }
+  }
+
+  // 10. 修复 level1_points 缺少 summary 字段
+  const l1Table = await tableExists('level1_points');
+  if (l1Table) {
+    const l1Summary = await columnExists('level1_points', 'summary');
+    if (!l1Summary) {
+      try {
+        await pool.query("ALTER TABLE level1_points ADD COLUMN `summary` TEXT DEFAULT NULL COMMENT '测试点概述(AI自动生成)' AFTER test_type");
+        console.log(`  ✅ 已添加字段: level1_points.summary`);
+        missingColumns.push('level1_points.summary');
+        fixedCount++;
+      } catch (err) {
+        console.log(`  ❌ 添加字段 level1_points.summary 失败: ${err.message}`);
+      }
+    }
+  }
+
+  // 输出汇总结果
+  if (fixedCount > 0) {
+    console.log(`\n✅ AI表自动修复完成: 创建了 ${missingTables.length} 个表，添加了 ${missingColumns.length} 个字段\n`);
+    logger.info(`AI表自动修复完成`, { createdTables: missingTables.length, addedColumns: missingColumns.length });
+  } else {
+    console.log('\n✅ 所有AI相关表和字段均已就绪\n');
+  }
+}
+
 // 启动服务器
 async function startServer() {
   try {
@@ -8563,18 +9278,43 @@ async function startServer() {
     } catch (migrationError) {
       console.warn('⚠️ 数据库自动迁移失败（不影响启动）:', migrationError.message);
     }
+
+    // 智能检测并自动创建缺失的 AI 相关表
+    try {
+      await ensureAITablesExist();
+    } catch (aiTableError) {
+      console.warn('⚠️ AI表自动检测失败（尝试继续启动）:', aiTableError.message);
+    }
+
+    try {
+      const tokenBlacklist = require('./services/tokenBlacklist');
+      await tokenBlacklist.init();
+    } catch (tblError) {
+      console.warn('⚠️ Token黑名单初始化失败（不影响启动）:', tblError.message);
+    }
     
     // 创建HTTP服务器
     const server = http.createServer(app);
 
     // 配置Socket.io - 添加心跳检测
+    const wsAllowedOrigins = process.env.CORS_ORIGINS
+      ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
+      : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
     const io = socketIO(server, {
       cors: {
-        origin: '*',
-        methods: ['GET', 'POST']
+        origin: function (origin, callback) {
+          if (!origin || wsAllowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+          } else {
+            callback(new Error('Not allowed by CORS'));
+          }
+        },
+        methods: ['GET', 'POST'],
+        credentials: true
       },
-      pingInterval: 25000,  // 每25秒发送一次ping
-      pingTimeout: 60000    // 60秒未响应则断开连接
+      pingInterval: 25000,
+      pingTimeout: 60000
     });
 
     // 设置global.io供service层发送WebSocket通知
@@ -8587,13 +9327,18 @@ async function startServer() {
     io.on('connection', (socket) => {
       console.log('新用户连接:', socket.id);
       
-      // 处理用户登录
-      socket.on('login', (user) => {
+      // 处理用户登录（兼容两种事件名）
+      const handleUserLogin = (user) => {
         onlineUsersManager.addOnlineUser(socket.id, user);
+        if (user.userId) {
+          socket.join(`user_${user.userId}`);
+        }
         console.log(`${user.username} 登录了`);
         io.emit('userConnected', user);
         io.emit('onlineUsers', onlineUsersManager.getAllOnlineUsers());
-      });
+      };
+      socket.on('login', handleUserLogin);
+      socket.on('user:login', handleUserLogin);
       
       // 处理用户登出
       socket.on('logout', () => {
@@ -8627,6 +9372,9 @@ async function startServer() {
       socket.on('disconnect', () => {
         const user = onlineUsersManager.getOnlineUser(socket.id);
         if (user) {
+          if (user.userId) {
+            socket.leave(`user_${user.userId}`);
+          }
           console.log(`${user.username} 断开连接了`);
           onlineUsersManager.removeOnlineUser(socket.id);
           io.emit('userDisconnected', user);

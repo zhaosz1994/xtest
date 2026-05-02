@@ -298,8 +298,12 @@ class AutoMigration {
                     const migrationName = file.replace('.sql', '');
                     
                     if (executedMigrations.includes(migrationName)) {
-                        logger.info(`跳过已执行的迁移: ${migrationName}`);
-                        continue;
+                        const needsRerun = await this.checkMigrationNeedsRerun(migrationName);
+                        if (!needsRerun) {
+                            logger.info(`跳过已执行的迁移: ${migrationName}`);
+                            continue;
+                        }
+                        logger.info(`迁移 ${migrationName} 已记录但表缺失，重新执行...`);
                     }
                     
                     const filePath = path.join(this.migrationsDir, file);
@@ -336,6 +340,36 @@ class AutoMigration {
     }
 
     /**
+     * 检查迁移是否需要重新执行
+     * 如果迁移已记录但关键表不存在，则需要重新执行
+     */
+    async checkMigrationNeedsRerun(migrationName) {
+        const migrationTableChecks = {
+            'add_ai_sub_agent_platform': ['ai_sub_agents', 'ai_custom_tools', 'ai_sub_agent_memories', 'ai_review_tasks', 'ai_review_results'],
+            'add_ai_sub_agent_platform_v2': ['ai_sub_agent_memory_chunks', 'ai_tool_versions'],
+            'ai_generation_system': ['module_knowledge_files', 'ai_material_chunks', 'ai_case_generation_tasks', 'temp_test_cases'],
+            'add_library_id_to_knowledge_files': ['module_knowledge_files'],
+            'add_ai_agent_tool_usage_logs': ['ai_agent_tool_usage_logs'],
+            'add_ai_operation_logs': ['ai_operation_logs']
+        };
+
+        const tablesToCheck = migrationTableChecks[migrationName];
+        if (!tablesToCheck || tablesToCheck.length === 0) {
+            return false;
+        }
+
+        for (const tableName of tablesToCheck) {
+            const exists = await this.checkTableExists(tableName);
+            if (!exists) {
+                logger.info(`表 ${tableName} 不存在，迁移 ${migrationName} 需要重新执行`);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * JS 数据迁移钩子
      * 处理纯 SQL 无法胜任的复杂逻辑（如 JSON 解析、条件迁移等）
      * 每个迁移通过 schema_migrations 表做幂等保护，只执行一次
@@ -344,6 +378,7 @@ class AutoMigration {
         const dataMigrations = [
             { name: 'migrate_ai_skills_to_custom_tools', fn: () => this.migrateAISkillsToCustomTools() },
             { name: 'seed_ai_sub_agents_and_memories', fn: () => this.seedAISubAgentsAndMemories() },
+            { name: 'add_ai_task_notification_types', fn: () => this.addAITaskNotificationTypes() },
         ];
 
         for (const migration of dataMigrations) {
@@ -714,6 +749,25 @@ class AutoMigration {
         } catch (error) {
             logger.error('获取迁移状态失败', { error: error.message });
             throw error;
+        }
+    }
+
+    async addAITaskNotificationTypes() {
+        try {
+            const emailTypesExists = await this.checkTableExists('email_types');
+            if (!emailTypesExists) {
+                return { success: true, detail: 'email_types 表不存在，跳过' };
+            }
+
+            await pool.query(`
+                INSERT IGNORE INTO email_types (type_code, type_name, category, description, is_required, default_email_enabled, default_in_app_enabled, template_subject, template_path, supports_in_app, role_restriction, sort_order) VALUES
+                ('ai_key_config_complete', 'AI关键配置生成完成', 'business', 'AI异步生成关键配置完成时通知用户', FALSE, FALSE, TRUE, '【xTest】AI关键配置生成完成 - {caseName}', 'ai_key_config_complete', TRUE, NULL, 230),
+                ('ai_overview_complete', 'AI概述生成完成', 'business', 'AI异步生成一级测试点概述完成时通知用户', FALSE, FALSE, TRUE, '【xTest】AI概述生成完成 - {pointName}', 'ai_overview_complete', TRUE, NULL, 231)
+            `);
+
+            return { success: true, detail: 'AI任务通知类型添加成功' };
+        } catch (error) {
+            return { success: false, error: error.message };
         }
     }
 }

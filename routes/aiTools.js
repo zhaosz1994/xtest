@@ -15,7 +15,7 @@ router.get('/list', authenticateToken, async (req, res) => {
   try {
     const { language, is_public, search } = req.query;
     const userId = req.user.id;
-    const admin = isAdmin(req);
+    const admin = isAdmin(req.user);
 
     let sql = 'SELECT * FROM ai_custom_tools WHERE 1=1';
     const params = [];
@@ -59,7 +59,7 @@ router.get('/detail/:toolName', authenticateToken, async (req, res) => {
   try {
     const { toolName } = req.params;
     const userId = req.user.id;
-    const admin = isAdmin(req);
+    const admin = isAdmin(req.user);
 
     const [rows] = await pool.execute(
       'SELECT * FROM ai_custom_tools WHERE tool_name = ?',
@@ -105,7 +105,7 @@ router.post('/create', authenticateToken, async (req, res) => {
     } = req.body;
 
     const userId = req.user.id;
-    const admin = isAdmin(req);
+    const admin = isAdmin(req.user);
 
     // 校验必填字段
     if (!tool_name || !tool_name.trim()) {
@@ -126,7 +126,7 @@ router.post('/create', authenticateToken, async (req, res) => {
       return res.json({ success: false, message: '工具名称已存在' });
     }
 
-    const is_system = admin ? 0 : 0;
+    const is_system = admin && req.body.is_system ? 1 : 0;
 
     const [result] = await pool.execute(
       `INSERT INTO ai_custom_tools
@@ -164,7 +164,7 @@ router.put('/update/:toolName', authenticateToken, async (req, res) => {
   try {
     const { toolName } = req.params;
     const userId = req.user.id;
-    const admin = isAdmin(req);
+    const admin = isAdmin(req.user);
 
     // 查找工具
     const [rows] = await pool.execute(
@@ -250,7 +250,7 @@ router.delete('/:toolName', authenticateToken, async (req, res) => {
   try {
     const { toolName } = req.params;
     const userId = req.user.id;
-    const admin = isAdmin(req);
+    const admin = isAdmin(req.user);
 
     // 查找工具
     const [rows] = await pool.execute(
@@ -295,7 +295,7 @@ router.post('/test-run/:toolName', authenticateToken, async (req, res) => {
     const { toolName } = req.params;
     const { params: runParams } = req.body;
     const userId = req.user.id;
-    const admin = isAdmin(req);
+    const admin = isAdmin(req.user);
 
     // 查找工具
     const [rows] = await pool.execute(

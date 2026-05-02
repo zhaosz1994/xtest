@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
-const { authenticateToken } = require('../middleware');
+const { authenticateToken, isAdmin } = require('../middleware');
 const reportService = require('../services/reportService');
 const { getUserAIConfig, getUserAITimeoutConfig } = require('../services/aiService');
 const { logActivity } = require('./history');
@@ -92,12 +92,16 @@ router.get('/list', authenticateToken, async (req, res) => {
   }
 });
 
-// 创建测试报告
+// 创建测试报告（管理员或创建者本人）
 router.post('/create', authenticateToken, async (req, res) => {
   const { name, creator, project, iteration, testPlan, type, summary, startDate, endDate } = req.body;
   const currentUser = req.user;
   const ipAddress = req.ip || req.connection.remoteAddress;
   const userAgent = req.get('User-Agent');
+
+  if (!name || !name.trim()) {
+    return res.status(400).json({ success: false, message: '报告名称不能为空' });
+  }
   
   try {
     // 查找测试计划ID
@@ -125,7 +129,7 @@ router.post('/create', authenticateToken, async (req, res) => {
   }
 });
 
-// 更新测试报告
+// 更新测试报告（管理员或创建者）
 router.put('/update/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   const { name, creator, project, iteration, testPlan, type, summary, startDate, endDate } = req.body;
@@ -134,6 +138,15 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
   const userAgent = req.get('User-Agent');
   
   try {
+    const [existing] = await pool.execute('SELECT creator_id, creator FROM test_reports WHERE id = ?', [id]);
+    if (existing.length === 0) {
+      return res.status(404).json({ success: false, message: '报告不存在' });
+    }
+    const isCreator = existing[0].creator_id === currentUser.id || existing[0].creator === currentUser.username;
+    if (!isAdmin(currentUser) && !isCreator) {
+      return res.status(403).json({ success: false, message: '您没有权限修改此报告' });
+    }
+    
     // 查找测试计划ID
     let testPlanId = null;
     if (testPlan) {
@@ -159,7 +172,7 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// 删除测试报告
+// 删除测试报告（管理员或创建者）
 router.delete('/delete/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   const currentUser = req.user;
@@ -167,10 +180,13 @@ router.delete('/delete/:id', authenticateToken, async (req, res) => {
   const userAgent = req.get('User-Agent');
   
   try {
-    // 获取测试报告信息
-    const [reports] = await pool.execute('SELECT name FROM test_reports WHERE id = ?', [id]);
+    const [reports] = await pool.execute('SELECT name, creator_id, creator FROM test_reports WHERE id = ?', [id]);
     if (reports.length === 0) {
       return res.status(404).json({ success: false, message: '测试报告不存在' });
+    }
+    const isCreator = reports[0].creator_id === currentUser.id || reports[0].creator === currentUser.username;
+    if (!isAdmin(currentUser) && !isCreator) {
+      return res.status(403).json({ success: false, message: '您没有权限删除此报告' });
     }
     
     await pool.execute('DELETE FROM test_reports WHERE id = ?', [id]);
@@ -1327,32 +1343,27 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     const connection = await pool.getConnection();
     
     try {
-      // 获取报告信息
       const [reports] = await connection.execute(
         'SELECT * FROM test_reports WHERE id = ?',
         [reportId]
       );
       
       if (reports.length === 0) {
-        connection.release();
         return res.status(404).json({ success: false, message: '报告不存在' });
       }
       
       const report = reports[0];
       
-      // 权限检查：管理员或创建者可以删除
-      const isAdmin = userRole === '管理员' || userRole === 'admin';
+      const isAdminUser = isAdmin(currentUser);
       const isCreator = parseInt(report.creator_id, 10) === parseInt(userId, 10) || report.creator === req.user.username;
       
-      if (!isAdmin && !isCreator) {
-        connection.release();
+      if (!isAdminUser && !isCreator) {
         return res.status(403).json({ 
           success: false, 
           message: '您没有权限删除此报告，只有管理员或创建者可以删除' 
         });
       }
       
-      // 删除报告文件
       if (report.summary) {
         const fs = require('fs');
         const path = require('path');
@@ -1366,10 +1377,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
         }
       }
       
-      // 删除数据库记录
       await connection.execute('DELETE FROM test_reports WHERE id = ?', [reportId]);
-      
-      connection.release();
       
       res.json({ success: true, message: '报告删除成功' });
       

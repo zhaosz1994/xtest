@@ -1082,7 +1082,7 @@ function escapeHtml(text) {
     if (text == null) return '';
     const div = document.createElement('div');
     div.textContent = String(text);
-    return div.innerHTML;
+    return div.innerHTML.replace(/'/g, '&#039;').replace(/"/g, '&quot;');
 }
 
 function aiReviewFormatDateTime(dateStr) {

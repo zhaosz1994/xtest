@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const logger = require('./services/logger');
+const tokenBlacklist = require('./services/tokenBlacklist');
 
 const ADMIN_ROLES = ['管理员', 'admin', 'Administrator'];
 
@@ -12,8 +13,7 @@ function isOwner(user, resourceUserId) {
     return user && user.id === parseInt(resourceUserId);
 }
 
-// JWT认证中间件
-const authenticateToken = (req, res, next) => {
+const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
@@ -21,11 +21,22 @@ const authenticateToken = (req, res, next) => {
     return res.status(401).json({ message: '访问令牌缺失' });
   }
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+  jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
     if (err) {
       return res.status(403).json({ message: '访问令牌无效' });
     }
+
+    try {
+      const blacklisted = await tokenBlacklist.isBlacklisted(token);
+      if (blacklisted) {
+        return res.status(403).json({ message: '访问令牌已失效，请重新登录' });
+      }
+    } catch (checkErr) {
+      logger.error('Token黑名单检查异常，放行请求', { error: checkErr.message });
+    }
+
     req.user = user;
+    req.token = token;
     next();
   });
 };
@@ -65,7 +76,7 @@ const requireAdminOrOwner = (resourceUserIdField = 'userId') => {
 
 // 检查用户是否可以修改自己的资料
 const canModifyProfile = (req, res, next) => {
-  const targetUserId = parseInt(req.params.id || req.body.id);
+  const targetUserId = parseInt(req.params.id);
   
   if (isAdmin(req.user)) {
     return next();
@@ -84,7 +95,7 @@ const canModifyProfile = (req, res, next) => {
 // 检查 AI 模型所有权
 const canModifyAIModel = async (req, res, next) => {
   const pool = require('./db');
-  const modelId = req.params.id || req.body.id;
+  const modelId = req.params.id;
   
   if (isAdmin(req.user)) {
     return next();

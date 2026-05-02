@@ -43,7 +43,7 @@ function klEscapeHtml(str) {
     if (str == null) return '';
     const div = document.createElement('div');
     div.textContent = String(str);
-    return div.innerHTML;
+    return div.innerHTML.replace(/'/g, '&#039;').replace(/"/g, '&quot;');
 }
 
 function klFormatDateTime(dateStr) {
@@ -189,7 +189,13 @@ function klCloseModal(id) {
     document.getElementById(id).classList.remove('open');
 }
 
+let klUploading = false;
+
 function closeKLModals() {
+    const uploadModal = document.getElementById('uploadModal');
+    if (uploadModal && uploadModal.classList.contains('open')) {
+        return;
+    }
     document.getElementById('overlay').classList.remove('show');
     document.querySelectorAll('#knowledge-section .kl-modal').forEach(el => el.classList.remove('open'));
     closeDetailPanel();
@@ -720,6 +726,7 @@ async function downloadFile(fileId) {
         const res = await fetch(KL_API_BASE + `/api/knowledge/download/${fileId}`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
+        if (res.status === 401) { showKLLoginPrompt(); return; }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
         const contentDisposition = res.headers.get('content-disposition');
@@ -755,6 +762,7 @@ async function downloadFolder(folderId) {
         const res = await fetch(KL_API_BASE + `/api/knowledge/download-folder/${klCurrentModuleId}/${folderId}`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
+        if (res.status === 401) { showKLLoginPrompt(); return; }
         if (!res.ok) {
             if (res.status === 404) {
                 klNotify('文件夹为空或不存在', 'warning');
@@ -792,6 +800,7 @@ async function downloadModule(moduleId) {
         const res = await fetch(KL_API_BASE + `/api/knowledge/download-module/${moduleId}`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
+        if (res.status === 401) { showKLLoginPrompt(); return; }
         if (!res.ok) {
             if (res.status === 404) {
                 klNotify('模块为空或不存在', 'warning');
@@ -832,13 +841,21 @@ async function batchDownload() {
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ fileIds: Array.from(klSelectedFiles) })
         });
+        if (res.status === 401) { showKLLoginPrompt(); return; }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
         const blob = await res.blob();
+        const contentDisposition = res.headers.get('content-disposition');
+        let filename = `knowledge_files_${Date.now()}.zip`;
+        if (contentDisposition) {
+            const match = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+            if (match) filename = match[1].replace(/['"]/g, '');
+            try { filename = decodeURIComponent(filename); } catch (e) {}
+        }
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `knowledge_files_${Date.now()}.zip`;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -898,11 +915,24 @@ function renderPreviewContent(data) {
     const container = document.getElementById('previewContent');
 
     if (data.type === 'image') {
-        const safeSrc = klEscapeHtml(data.content || '').replace(/^javascript:/i, '');
-        container.innerHTML = `<img src="${safeSrc}" alt="preview" style="max-width:100%;max-height:70vh;">`;
+        const safeSrc = String(data.content || '').replace(/^javascript:/i, '');
+        container.innerHTML = '';
+        const img = document.createElement('img');
+        img.src = safeSrc;
+        img.alt = 'preview';
+        img.style.maxWidth = '100%';
+        img.style.maxHeight = '70vh';
+        img.onerror = () => { container.innerHTML = '<div class="kl-preview-unsupported"><div class="icon">⚠️</div><p>图片加载失败</p></div>'; };
+        container.appendChild(img);
     } else if (data.type === 'pdf') {
-        const safeUrl = klEscapeHtml(data.url || '').replace(/^javascript:/i, '');
-        container.innerHTML = `<iframe src="${safeUrl}" style="width:100%;height:70vh;border:none;"></iframe>`;
+        const safeUrl = String(data.url || '').replace(/^javascript:/i, '');
+        container.innerHTML = '';
+        const iframe = document.createElement('iframe');
+        iframe.src = safeUrl;
+        iframe.style.width = '100%';
+        iframe.style.height = '70vh';
+        iframe.style.border = 'none';
+        container.appendChild(iframe);
     } else if (data.type === 'markdown') {
         if (typeof marked !== 'undefined' && marked.parse) {
             const rawHtml = marked.parse(data.content || '');
@@ -1200,16 +1230,9 @@ function initUploadZone() {
     const zone = document.getElementById('uploadZone');
     const fileInput = document.getElementById('fileInput');
     
-    console.log('[Knowledge Library] Initializing upload zone:', { zone: !!zone, fileInput: !!fileInput });
-    
-    if (!zone || !fileInput) {
-        console.error('[Knowledge Library] Upload zone or file input not found!');
-        return;
-    }
+    if (!zone || !fileInput) return;
 
     zone.addEventListener('click', () => {
-        console.log('[Knowledge Library] Upload zone clicked');
-        klNotify('请选择要上传的文件', 'info');
         fileInput.click();
     });
 
@@ -1225,41 +1248,53 @@ function initUploadZone() {
     zone.addEventListener('drop', (e) => {
         e.preventDefault();
         zone.classList.remove('dragover');
-        console.log('[Knowledge Library] Files dropped:', e.dataTransfer.files.length);
         if (e.dataTransfer.files.length > 0) {
-            showFilePreview(e.dataTransfer.files);
+            addFilesToPreview(e.dataTransfer.files);
         }
     });
 
     fileInput.addEventListener('change', function() {
-        console.log('[Knowledge Library] File input changed:', this.files.length, 'files');
         if (this.files.length > 0) {
-            showFilePreview(this.files);
+            addFilesToPreview(this.files);
             this.value = '';
         }
     });
-    
-    console.log('[Knowledge Library] Upload zone initialized successfully');
 }
 
-function showFilePreview(files) {
-    console.log('[Knowledge Library] showFilePreview called with', files.length, 'files');
-    
-    const progressContainer = document.getElementById('uploadProgress');
-    if (!progressContainer) {
-        console.error('[Knowledge Library] uploadProgress container not found!');
-        return;
+function addFilesToPreview(files) {
+    const newFiles = Array.from(files);
+    const existingNames = new Set(klPendingUploadFiles.map(f => f.name));
+    let duplicateCount = 0;
+    newFiles.forEach(f => {
+        if (existingNames.has(f.name)) {
+            duplicateCount++;
+        } else {
+            klPendingUploadFiles.push(f);
+            existingNames.add(f.name);
+        }
+    });
+    if (duplicateCount > 0) {
+        klNotify(`已跳过 ${duplicateCount} 个同名文件`, 'warning');
     }
-    
-    klPendingUploadFiles = Array.from(files);
+    renderFilePreview();
+}
+
+function renderFilePreview() {
+    const progressContainer = document.getElementById('uploadProgress');
+    if (!progressContainer) return;
     
     progressContainer.innerHTML = '';
     
+    if (klPendingUploadFiles.length === 0) return;
+
     const headerEl = document.createElement('div');
     headerEl.className = 'kl-preview-header';
     headerEl.innerHTML = `
-        <span class="preview-title">待上传文件 (${files.length} 个)</span>
-        <button class="kl-btn kl-btn-sm kl-btn-ghost" id="btnClearPreview">清空</button>
+        <span class="preview-title">待上传文件 (${klPendingUploadFiles.length} 个)</span>
+        <div class="kl-preview-header-actions">
+            <button class="kl-btn kl-btn-sm kl-btn-ghost" id="btnAddFiles">➕ 添加文件</button>
+            <button class="kl-btn kl-btn-sm kl-btn-ghost" id="btnClearPreview">清空</button>
+        </div>
     `;
     progressContainer.appendChild(headerEl);
     
@@ -1287,41 +1322,36 @@ function showFilePreview(files) {
     `;
     progressContainer.appendChild(actionsEl);
     
-    console.log('[Knowledge Library] actionsEl appended, btnStartUpload:', !!document.getElementById('btnStartUpload'));
+    document.getElementById('btnAddFiles').addEventListener('click', () => {
+        document.getElementById('fileInput').click();
+    });
+
+    document.getElementById('btnClearPreview').addEventListener('click', () => {
+        klPendingUploadFiles = [];
+        klUploading = false;
+        progressContainer.innerHTML = '';
+    });
     
-    const btnClearPreview = document.getElementById('btnClearPreview');
-    if (btnClearPreview) {
-        btnClearPreview.addEventListener('click', () => {
-            klPendingUploadFiles = [];
-            progressContainer.innerHTML = '';
-        });
-    }
-    
-    const startUploadBtn = document.getElementById('btnStartUpload');
-    console.log('[Knowledge Library] startUploadBtn:', startUploadBtn);
-    if (startUploadBtn) {
-        startUploadBtn.addEventListener('click', () => {
-            console.log('[Knowledge Library] btnStartUpload clicked');
-            console.log('[Knowledge Library] klPendingUploadFiles:', klPendingUploadFiles.length);
-            if (klPendingUploadFiles.length > 0) {
-                handleFileUpload(klPendingUploadFiles);
-            } else {
-                klNotify('没有待上传的文件', 'warning');
-            }
-        });
-    } else {
-        console.error('[Knowledge Library] btnStartUpload not found!');
-    }
+    document.getElementById('btnStartUpload').addEventListener('click', function() {
+        if (klPendingUploadFiles.length > 0) {
+            this.disabled = true;
+            this.textContent = '上传中...';
+            this.style.opacity = '0.6';
+            this.style.cursor = 'not-allowed';
+            klHandleFileUpload(klPendingUploadFiles).catch(function(err) {
+                console.error('[Knowledge Library] Upload error:', err);
+                klUploading = false;
+            });
+        } else {
+            klNotify('没有待上传的文件', 'warning');
+        }
+    });
     
     listEl.querySelectorAll('.remove-file-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             const index = parseInt(e.target.dataset.index);
             klPendingUploadFiles.splice(index, 1);
-            if (klPendingUploadFiles.length > 0) {
-                showFilePreview(klPendingUploadFiles);
-            } else {
-                progressContainer.innerHTML = '';
-            }
+            renderFilePreview();
         });
     });
 }
@@ -1334,29 +1364,73 @@ function formatFileSize(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-async function handleFileUpload(files) {
-    console.log('[Knowledge Library] handleFileUpload called with', files.length, 'files');
+async function klHandleFileUpload(files) {
+    if (!files || files.length === 0) {
+        klNotify('没有可上传的文件', 'warning');
+        klUploading = false;
+        return;
+    }
 
     const moduleSelect = document.getElementById('uploadModuleSelect');
     const moduleIdValue = moduleSelect ? moduleSelect.value : null;
     const moduleId = moduleIdValue ? parseInt(moduleIdValue) : null;
-    console.log('[Knowledge Library] moduleSelect element:', !!moduleSelect);
-    console.log('[Knowledge Library] moduleIdValue:', moduleIdValue, 'typeof:', typeof moduleIdValue);
-    console.log('[Knowledge Library] moduleId (parsed):', moduleId, 'isNaN:', isNaN(moduleId));
 
-    if ((!moduleId || isNaN(moduleId)) && !klCurrentLibraryId) {
-        klNotify('请先选择目标模块或用例库', 'warning');
+    let uploadLibraryId = klCurrentLibraryId;
+    if (!uploadLibraryId && moduleId && moduleSelect) {
+        const selectedOpt = moduleSelect.options[moduleSelect.selectedIndex];
+        if (selectedOpt) {
+            const optGroup = selectedOpt.parentElement;
+            if (optGroup && optGroup.tagName === 'OPTGROUP') {
+                const libName = optGroup.label;
+                const lib = klLibraries.find(l => l.name === libName);
+                if (lib) {
+                    uploadLibraryId = lib.id;
+                }
+            }
+        }
+    }
+
+    if (!uploadLibraryId && (!moduleId || isNaN(moduleId))) {
+        for (const lib of klLibraries) {
+            const modules = klModulesMap[lib.id] || [];
+            const hasMatchingModule = modules.some(m => m.id === moduleId);
+            if (hasMatchingModule) {
+                uploadLibraryId = lib.id;
+                break;
+            }
+        }
+    }
+
+    if ((!moduleId || isNaN(moduleId)) && !uploadLibraryId) {
+        klNotify('请先选择目标模块', 'warning');
+        if (moduleSelect) {
+            moduleSelect.style.borderColor = '#ef4444';
+            moduleSelect.focus();
+            setTimeout(() => { moduleSelect.style.borderColor = ''; }, 3000);
+        }
+        
+        const progressContainer = document.getElementById('uploadProgress');
+        if (progressContainer) {
+            const errorEl = document.createElement('div');
+            errorEl.className = 'kl-upload-error-message';
+            errorEl.style.cssText = 'color:#ef4444;padding:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;margin-top:8px;';
+            errorEl.innerHTML = '<strong>⚠️ 上传失败</strong><br>请先在上方选择目标模块后再点击上传';
+            progressContainer.appendChild(errorEl);
+        }
+        klUploading = false;
         return;
     }
 
     const progressContainer = document.getElementById('uploadProgress');
     if (!progressContainer) {
-        console.error('[Knowledge Library] uploadProgress container not found in handleFileUpload!');
         klNotify('上传失败：界面元素未找到', 'error');
+        klUploading = false;
         return;
     }
     
     progressContainer.innerHTML = '';
+    
+    klUploading = true;
     
     const headerEl = document.createElement('div');
     headerEl.className = 'kl-preview-header';
@@ -1383,13 +1457,14 @@ async function handleFileUpload(files) {
 
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('moduleId', moduleId);
+        if (moduleId && !isNaN(moduleId)) {
+            formData.append('moduleId', moduleId);
+        }
         if (klCurrentParentId) {
             formData.append('parentId', klCurrentParentId);
         }
-        // 传递 libraryId 以支持用例库级别的文件上传
-        if (klCurrentLibraryId) {
-            formData.append('libraryId', klCurrentLibraryId);
+        if (uploadLibraryId) {
+            formData.append('libraryId', uploadLibraryId);
         }
 
         const progressBar = itemEl.querySelector('.upload-progress-bar');
@@ -1398,37 +1473,73 @@ async function handleFileUpload(files) {
         try {
             const token = localStorage.getItem('authToken') || localStorage.getItem('token');
             
+            if (!token) {
+                throw new Error('未登录，请重新登录后再试');
+            }
+            
             progressBar.style.width = '30%';
             statusEl.textContent = '上传中...';
             
-            const res = await fetch(KL_API_BASE + '/api/knowledge/upload', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` },
-                body: formData
-            });
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000);
             
-            if (!res.ok) {
-                throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-            }
-            
-            const result = await res.json();
-
-            if (result.success) {
-                progressBar.style.width = '100%';
-                statusEl.textContent = '✓ 成功';
-                statusEl.className = 'upload-status success';
-                successCount++;
+            try {
+                const res = await fetch(KL_API_BASE + '/api/knowledge/upload', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    body: formData,
+                    signal: controller.signal
+                });
                 
-                if (result.data && result.data.hasConflict) {
-                    statusEl.textContent = '⚠ 同名文件';
-                    statusEl.className = 'upload-status warning';
-                    klNotify(`文件 "${file.name}" 已存在同名文件`, 'warning');
+                clearTimeout(timeoutId);
+                
+                if (res.status === 401) {
+                    throw new Error('登录已过期，请重新登录后再试');
                 }
-            } else {
-                throw new Error(result.message || '上传失败');
+                
+                if (res.status === 413) {
+                    throw new Error('文件太大，超过服务器限制');
+                }
+                
+                if (!res.ok) {
+                    const errorText = await res.text();
+                    let errorMsg = `HTTP ${res.status}`;
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        errorMsg = errorJson.message || errorMsg;
+                    } catch (e) {
+                        errorMsg = errorText.substring(0, 200) || errorMsg;
+                    }
+                    throw new Error(errorMsg);
+                }
+                
+                const result = await res.json();
+
+                if (result.success) {
+                    progressBar.style.width = '100%';
+                    statusEl.textContent = '✓ 成功';
+                    statusEl.className = 'upload-status success';
+                    successCount++;
+                    
+                    if (result.data && result.data.hasConflict) {
+                        statusEl.textContent = '⚠ 同名文件';
+                        statusEl.className = 'upload-status warning';
+                        klNotify(`文件 "${file.name}" 已存在同名文件`, 'warning');
+                    }
+                } else {
+                    throw new Error(result.message || '上传失败');
+                }
+            } catch (fetchError) {
+                clearTimeout(timeoutId);
+                if (fetchError.name === 'AbortError') {
+                    throw new Error('上传超时（30秒），请检查网络连接或服务器状态');
+                }
+                if (fetchError.name === 'TypeError' && fetchError.message.includes('Failed to fetch')) {
+                    throw new Error('网络连接失败，请检查服务器是否正常运行');
+                }
+                throw fetchError;
             }
         } catch (e) {
-            console.error('[Knowledge Library] Upload error:', e);
             progressBar.style.width = '100%';
             progressBar.style.background = '#ef4444';
             statusEl.textContent = '✗ 失败';
@@ -1437,6 +1548,7 @@ async function handleFileUpload(files) {
             failCount++;
             
             itemEl.title = `上传失败: ${e.message}`;
+            console.error('[Knowledge Library] Upload error:', e);
         }
     }
 
@@ -1448,10 +1560,33 @@ async function handleFileUpload(files) {
     }
 
     klPendingUploadFiles = [];
+    klUploading = false;
+
+    const summaryEl = document.createElement('div');
+    summaryEl.className = 'kl-upload-summary';
+    const summaryType = failCount > 0 ? (successCount > 0 ? 'partial' : 'error') : 'success';
+    const summaryIcon = summaryType === 'success' ? '✅' : summaryType === 'partial' ? '⚠️' : '❌';
+    const summaryBg = summaryType === 'success' ? '#f0fdf4' : summaryType === 'partial' ? '#fffbeb' : '#fef2f2';
+    const summaryBorder = summaryType === 'success' ? '#bbf7d0' : summaryType === 'partial' ? '#fde68a' : '#fecaca';
+    const summaryColor = summaryType === 'success' ? '#166534' : summaryType === 'partial' ? '#92400e' : '#991b1b';
+    summaryEl.style.cssText = `margin-top:12px;padding:12px 16px;background:${summaryBg};border:1px solid ${summaryBorder};border-radius:8px;color:${summaryColor};`;
+    summaryEl.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+            <span>${summaryIcon} 上传完成：${successCount} 个成功${failCount > 0 ? `，${failCount} 个失败` : ''}</span>
+            <button class="kl-btn kl-btn-sm kl-btn-primary" id="btnUploadDone">完成</button>
+        </div>
+    `;
+    progressContainer.appendChild(summaryEl);
+
+    document.getElementById('btnUploadDone').addEventListener('click', () => {
+        klCloseModal('uploadModal');
+    });
 
     if (klCurrentModuleId === moduleId) {
         setTimeout(() => loadModuleFiles(), 500);
     } else if (klCurrentFolderId) {
+        setTimeout(() => loadLibraryFolderFiles(), 500);
+    } else if (uploadLibraryId || klCurrentLibraryId) {
         setTimeout(() => loadLibraryFolderFiles(), 500);
     }
     refreshTreeCounts();
@@ -1960,6 +2095,8 @@ function initKLEventListeners() {
         const section = document.getElementById('knowledge-section');
         if (!section || section.style.display === 'none') return;
         if (e.key === 'Escape') {
+            const uploadModal = document.getElementById('uploadModal');
+            if (uploadModal && uploadModal.classList.contains('open')) return;
             closeKLModals();
             hideContextMenu();
         }

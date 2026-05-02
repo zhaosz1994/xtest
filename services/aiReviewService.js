@@ -5,7 +5,7 @@ const diffGenerator = require('./diffGenerator');
 const memoryEngine = require('./memoryEngine');
 const llmResponseParser = require('./llmResponseParser');
 const logger = require('./logger');
-const { default: PQueue } = require('p-queue');
+const PQueue = require('p-queue');
 
 const MAX_CONCURRENT = 3;
 const ORPHAN_THRESHOLD_MINUTES = 30;

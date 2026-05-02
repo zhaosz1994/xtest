@@ -103,7 +103,17 @@ router.post('/folder', authenticateToken, async (req, res) => {
   }
 });
 
-router.post('/upload', authenticateToken, upload.single('file'), async (req, res) => {
+router.post('/upload', authenticateToken, (req, res, next) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ success: false, message: '文件大小超过20MB限制' });
+      }
+      return res.status(400).json({ success: false, message: err.message || '文件上传失败' });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     const { moduleId, parentId, conflictAction, libraryId } = req.body;
     if (!req.file) {
@@ -144,7 +154,17 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
   }
 });
 
-router.post('/upload-batch', authenticateToken, upload.array('files', 10), async (req, res) => {
+router.post('/upload-batch', authenticateToken, (req, res, next) => {
+  upload.array('files', 10)(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ success: false, message: '文件大小超过20MB限制' });
+      }
+      return res.status(400).json({ success: false, message: err.message || '文件上传失败' });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     const { moduleId, parentId, libraryId } = req.body;
     if (!req.files || req.files.length === 0) {

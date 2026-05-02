@@ -332,6 +332,8 @@
                 else if (msg.type === 'comment') icon = '✏️';
                 else if (msg.type === 'like') icon = '❤️';
                 else if (msg.type === 'system') icon = '📢';
+                else if (msg.type === 'ai_key_config_complete') icon = '🤖';
+                else if (msg.type === 'ai_overview_complete') icon = '🤖';
                 
                 const isUnread = !msg.is_read;
                 
@@ -388,7 +390,7 @@
             
             // 标记为已读
             try {
-                await fetch(`/api/notifications/${msgId}/read`, {
+                await fetch(`/api/notifications/mark-read/${msgId}`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`
@@ -401,6 +403,8 @@
             // 跳转到相关页面
             if (targetId && (type === 'mention' || type === 'comment' || type === 'like')) {
                 window.location.href = `/post-detail.html?id=${targetId}`;
+            } else if (type === 'ai_key_config_complete' || type === 'ai_overview_complete') {
+                window.location.href = '/#/test-cases';
             }
         }
         

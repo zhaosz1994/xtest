@@ -29,6 +29,7 @@ class DatabaseMigrator {
     this.registerUserAITimeoutConfigMigration();
     this.registerAISubAgentPlatformV2Migration();
     this.registerKnowledgeLibraryIdMigration();
+    this.registerCaseGenerationAgentIdMigration();
     
     logger.info('[数据库迁移] 开始检查...');
     console.log('\n🔄 数据库自动迁移检查...\n');
@@ -547,6 +548,34 @@ class DatabaseMigrator {
         return { status: 'fixed', message: `知识库 library_id 支持已修复 ${fixedCount} 个结构问题` };
       } else {
         return { status: 'ok', message: '无需修复' };
+      }
+    });
+  }
+
+  registerCaseGenerationAgentIdMigration() {
+    this.registerMigration('case_generation_agent_id', async () => {
+      console.log('  检查 ai_case_generation_tasks agent_id 字段支持...');
+
+      const tableExists = await this.tableExists('ai_case_generation_tasks');
+      if (!tableExists) {
+        console.log('    ⚠️ ai_case_generation_tasks 表不存在，跳过迁移');
+        return { status: 'ok', message: 'ai_case_generation_tasks 表尚未创建，跳过' };
+      }
+
+      const agentIdExists = await this.columnExists('ai_case_generation_tasks', 'agent_id');
+      if (agentIdExists) {
+        console.log('    ✅ ai_case_generation_tasks.agent_id 存在');
+        return { status: 'ok', message: 'agent_id 字段已存在' };
+      }
+
+      console.log('    ⚠️ 缺失字段: ai_case_generation_tasks.agent_id, 正在添加...');
+      const added = await this.addColumnSafe('ai_case_generation_tasks', 'agent_id', "int DEFAULT NULL COMMENT '使用的代理ID' AFTER skill_id");
+      if (added === true) {
+        console.log('    ✅ 已添加: ai_case_generation_tasks.agent_id');
+        await this.createIndexSafe('ai_case_generation_tasks', 'idx_agent_id', 'agent_id');
+        return { status: 'fixed', message: '已添加 agent_id 字段' };
+      } else {
+        return { status: 'error', message: '无法添加字段: ai_case_generation_tasks.agent_id' };
       }
     });
   }

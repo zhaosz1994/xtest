@@ -431,18 +431,25 @@ async function submitPost() {
     }
 }
 
+let _saveDraftSaving = false;
 function saveDraft(showToast = false) {
-    const title = document.getElementById('post-title').value.trim();
-    const content = PostCreate.vditor ? PostCreate.vditor.getValue() : '';
-    
-    localStorage.setItem('forum-post-draft', JSON.stringify({
-        title, content, tags: PostCreate.selectedTags, attachments: PostCreate.attachments, savedAt: new Date().toISOString()
-    }));
-    
-    PostCreate.lastDraftSave = new Date();
-    
-    if (showToast) {
-        showToast('草稿已保存', 'success');
+    if (_saveDraftSaving) return;
+    _saveDraftSaving = true;
+    try {
+        const title = document.getElementById('post-title').value.trim();
+        const content = PostCreate.vditor ? PostCreate.vditor.getValue() : '';
+        
+        localStorage.setItem('forum-post-draft', JSON.stringify({
+            title, content, tags: PostCreate.selectedTags, attachments: PostCreate.attachments, savedAt: new Date().toISOString()
+        }));
+        
+        PostCreate.lastDraftSave = new Date();
+        
+        if (showToast) {
+            showToast('草稿已保存', 'success');
+        }
+    } finally {
+        _saveDraftSaving = false;
     }
 }
 
@@ -490,5 +497,5 @@ function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML.replace(/'/g, '&#039;');
+    return div.innerHTML.replace(/'/g, '&#039;').replace(/"/g, '&quot;');
 }

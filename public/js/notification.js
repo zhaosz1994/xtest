@@ -199,11 +199,27 @@ const NotificationManager = {
             icon = '❤️';
             actionText = '赞了您的帖子';
             link = `/post-detail.html?id=${notif.target_id}`;
+        } else if (notif.type === 'ai_key_config_complete') {
+            icon = '🤖';
+            actionText = notif.title || 'AI关键配置生成完成';
+            link = '#';
+        } else if (notif.type === 'ai_overview_complete') {
+            icon = '🤖';
+            actionText = notif.title || 'AI概述生成完成';
+            link = '#';
+        } else if (notif.type === 'system') {
+            icon = '📢';
+            actionText = notif.title || '系统通知';
+            link = '#';
         }
         
         const isReadClass = notif.is_read ? 'read' : 'unread';
         const date = formatDateTime(notif.created_at);
         const content = notif.content || notif.content_preview || '';
+        const isAINotif = notif.type === 'ai_key_config_complete' || notif.type === 'ai_overview_complete' || notif.type === 'system';
+        const titleHtml = isAINotif
+            ? `<span style="color: #333;">${this.escapeHtml(actionText)}</span>`
+            : `<strong>${this.escapeHtml(notif.sender_name || '某人')}</strong> ${actionText}`;
         
         return `
             <a href="${link}" class="notification-item ${isReadClass}" data-id="${notif.id}" style="display: block; padding: 12px 16px; border-bottom: 1px solid #f0f0f0; text-decoration: none; color: inherit;">
@@ -211,7 +227,7 @@ const NotificationManager = {
                     <div style="font-size: 18px;">${icon}</div>
                     <div style="flex: 1; min-width: 0;">
                         <div style="font-size: 13px; color: #333; margin-bottom: 4px;">
-                            <strong>${this.escapeHtml(notif.sender_name || '某人')}</strong> ${actionText}
+                            ${titleHtml}
                         </div>
                         ${content ? `<div style="font-size: 12px; color: #666; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">"${this.escapeHtml(content)}"</div>` : ''}
                         <div style="font-size: 11px; color: #999; margin-top: 6px;">${date}</div>

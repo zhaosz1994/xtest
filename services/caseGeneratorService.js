@@ -81,7 +81,7 @@ class CaseGeneratorService {
 
     const config = task.config ? (typeof task.config === 'string' ? JSON.parse(task.config) : task.config) : {};
 
-    const skillPrompt = await this.loadSkillPrompt(task.skill_id);
+    const agentPrompt = await this.loadAgentPrompt(task.agent_id);
 
     for (const chunk of chunks) {
       await this.apiQueue.add(async () => {
@@ -92,7 +92,7 @@ class CaseGeneratorService {
             WHERE id = ?
           `, [chunk.id]);
 
-          const cases = await this.generateCasesFromChunk(chunk, task, config, skillPrompt);
+          const cases = await this.generateCasesFromChunk(chunk, task, config, agentPrompt);
 
           if (cases.length > 0) {
             await this.saveTempCases(taskId, task.module_id, chunk.id, cases, task.library_id);
@@ -136,29 +136,28 @@ class CaseGeneratorService {
     }
   }
 
-  async loadSkillPrompt(skillId) {
-    if (!skillId) return null;
+  async loadAgentPrompt(agentId) {
+    if (!agentId) return null;
 
-    const [skills] = await pool.execute(`
-      SELECT definition FROM ai_skills WHERE id = ? AND is_enabled = 1
-    `, [skillId]);
+    const [configFiles] = await pool.execute(`
+      SELECT file_type, content FROM ai_sub_agent_config_files WHERE agent_id = ? ORDER BY sort_order ASC
+    `, [agentId]);
 
-    if (skills.length === 0) return null;
+    if (configFiles.length === 0) return null;
 
-    try {
-      const definition = typeof skills[0].definition === 'string' 
-        ? JSON.parse(skills[0].definition) 
-        : skills[0].definition;
-      return definition.prompts || null;
-    } catch {
-      return null;
-    }
+    const soulFile = configFiles.find(f => f.file_type === 'soul');
+    const userFile = configFiles.find(f => f.file_type === 'user');
+
+    return {
+      system: soulFile?.content || null,
+      userTemplate: userFile?.content || null
+    };
   }
 
-  async generateCasesFromChunk(chunk, task, config, skillPrompt) {
-    const systemPrompt = skillPrompt?.system || this.getDefaultSystemPrompt();
-    const userPrompt = skillPrompt?.userTemplate 
-      ? this.applyTemplate(skillPrompt.userTemplate, chunk, task, config)
+  async generateCasesFromChunk(chunk, task, config, agentPrompt) {
+    const systemPrompt = agentPrompt?.system || this.getDefaultSystemPrompt();
+    const userPrompt = agentPrompt?.userTemplate 
+      ? this.applyTemplate(agentPrompt.userTemplate, chunk, task, config)
       : this.buildPrompt(chunk, task, config);
 
     const aiConfig = await this.getAIConfig(task.user_id);
@@ -360,13 +359,13 @@ ${chunk.chunk_content}
 
     const [result] = await pool.execute(`
       INSERT INTO ai_case_generation_tasks 
-        (task_id, module_id, library_id, user_id, config, selected_files, skill_id,
+        (task_id, module_id, library_id, user_id, config, selected_files, agent_id,
          expires_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY))
     `, [taskId, moduleId, options.libraryId || null, userId,
         JSON.stringify(config),
         JSON.stringify(options.selectedFiles || []),
-        options.skillId || null]);
+        options.agentId || null]);
 
     return { taskId, id: result.insertId };
   }

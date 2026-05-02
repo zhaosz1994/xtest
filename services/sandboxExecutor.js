@@ -4,6 +4,15 @@ const { validateSQL, extractTablesFromSQL } = require('./sqlSecurityValidator');
 const { createSecureExecutor, getUserProjects } = require('./dataIsolationMiddleware');
 const logger = require('./logger');
 
+const SAFE_GLOBALS_WHITELIST = [
+    'console', 'Date', 'Math', 'JSON', 'Object', 'Array', 'String',
+    'Number', 'Boolean', 'Error', 'TypeError', 'RangeError', 'Promise',
+    'Map', 'Set', 'RegExp', 'parseInt', 'parseFloat', 'isNaN', 'isFinite',
+    'encodeURIComponent', 'decodeURIComponent', 'undefined', 'NaN', 'Infinity',
+    'Symbol', 'ArrayBuffer', 'DataView', 'Float32Array', 'Float64Array',
+    'Int8Array', 'Int16Array', 'Int32Array', 'Uint8Array', 'Uint16Array', 'Uint32Array'
+];
+
 const DANGEROUS_PATTERNS = [
     /require\s*\(/i,
     /import\s+/i,
@@ -15,8 +24,13 @@ const DANGEROUS_PATTERNS = [
     /fs\s*\.\s*(read|write|unlink|mkdir|rmdir|rm)/i,
     /__dirname/i,
     /__filename/i,
-    /prototype\s*\[\s*['"]constructor['"]\s*\]/i,
-    /constructor\s*\(/i
+    /constructor\s*\[/i,
+    /constructor\s*\(/i,
+    /\[\s*['"]constructor['"]\s*\]/i,
+    /__proto__/i,
+    /prototype\s*\[/i,
+    /\.constructor\b/i,
+    /this\s*\.\s*constructor/i
 ];
 
 class SandboxExecutor {
@@ -112,7 +126,6 @@ class SandboxExecutor {
                                 throw new Error(`SQL验证失败: ${validation.errors.join('; ')}`);
                             }
 
-                            // 如果工具指定了允许的表，检查SQL访问的表是否在允许范围内
                             if (allowedTables && Array.isArray(allowedTables) && allowedTables.length > 0) {
                                 const accessedTables = extractTablesFromSQL(sql);
                                 for (const table of accessedTables) {
@@ -148,7 +161,10 @@ class SandboxExecutor {
                 }
             };
 
-            // 3. 包装代码为async函数，注入params
+            Object.defineProperty(sandbox, 'global', { get: () => { throw new Error('访问 global 被禁止'); } });
+            Object.defineProperty(sandbox, 'GLOBAL', { get: () => { throw new Error('访问 GLOBAL 被禁止'); } });
+            Object.defineProperty(sandbox, 'root', { get: () => { throw new Error('访问 root 被禁止'); } });
+
             const wrappedCode = `
                 (async function(params) {
                     ${code}
@@ -160,7 +176,8 @@ class SandboxExecutor {
             });
 
             const vmContext = vm.createContext(sandbox);
-            const asyncFn = script.runInContext(vmContext, { timeout: 5000 });
+            vmContext.constructor = undefined;
+            const asyncFn = script.runInContext(vmContext, { timeout: 5000, microtaskMode: 'afterEvaluate' });
 
             // 4. 执行并设置超时
             const result = await Promise.race([
@@ -245,16 +262,19 @@ class SandboxExecutor {
                 };
             }
 
-            // Docker可用时，通过Docker执行Python
-            const { exec } = require('child_process');
             const util = require('util');
-            const execAsync = util.promisify(exec);
+            const execFileAsync = util.promisify(execFile);
 
             const paramsJson = JSON.stringify(params || {});
-            const escapedCode = code.replace(/'/g, "'\\''");
-            const dockerCommand = `docker run --rm --network none --memory="128m" --cpus="0.5" --pids-limit 50 python:3.11-slim python -c '${escapedCode}' --params '${paramsJson}'`;
+            const dockerArgs = [
+                'run', '--rm', '--network', 'none',
+                '--memory=128m', '--cpus=0.5', '--pids-limit=50',
+                'python:3.11-slim',
+                'python', '-c', code,
+                '--params', paramsJson
+            ];
 
-            const { stdout, stderr } = await execAsync(dockerCommand, {
+            const { stdout, stderr } = await execFileAsync('docker', dockerArgs, {
                 timeout: context.timeoutMs || 10000,
                 maxBuffer: 1024 * 1024
             });

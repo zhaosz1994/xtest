@@ -3,7 +3,7 @@ function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML.replace(/'/g, '&#039;').replace(/"/g, '&quot;');
 }
 
 // ==================== 日志级别控制系统 ====================
@@ -978,7 +978,7 @@ const CommandPalette = {
             {
                 id: 'global-search',
                 title: '全局搜索',
-                description: '搜索测试计划、用例、帖子、评论',
+                description: '搜索测试计划、用例、帖子、智能体、工具、记忆',
                 icon: '🔍',
                 shortcut: ['/'],
                 action: () => this.switchToSearchMode()
@@ -1062,6 +1062,22 @@ const CommandPalette = {
                 icon: '🤖',
                 shortcut: ['A', 'I'],
                 action: () => { this.close(); openAIAssistant(); }
+            },
+            {
+                id: 'ai-generation',
+                title: 'AI生成',
+                description: 'AI用例生成',
+                icon: '✨',
+                shortcut: ['G', 'A'],
+                action: () => { this.close(); Router.navigateTo('ai-generation'); }
+            },
+            {
+                id: 'knowledge',
+                title: '知识库',
+                description: '管理知识库文件',
+                icon: '📚',
+                shortcut: ['G', 'K'],
+                action: () => { this.close(); Router.navigateTo('knowledge'); }
             },
             {
                 id: 'forum',
@@ -1217,7 +1233,7 @@ const CommandPalette = {
         this.mode = 'search';
         this.selectedIndex = 0;
         this.selectedCategory = 0;
-        this.input.placeholder = '搜索测试计划、用例、帖子、评论...';
+        this.input.placeholder = '搜索测试计划、用例、帖子、智能体、工具、记忆...';
         this.input.value = '';
         this.modeIndicator.textContent = '搜索';
         this.modeIndicator.classList.add('active');
@@ -1415,13 +1431,16 @@ const CommandPalette = {
     },
 
     renderSearchResults(keyword) {
-        const { testPlans, testCases, posts, comments } = this.searchResults;
+        const { testPlans, testCases, posts, comments, agents, aiTools, memories } = this.searchResults;
         
         const categories = [
             { key: 'testPlans', data: testPlans, icon: '📋', title: '测试计划' },
             { key: 'testCases', data: testCases, icon: '📝', title: '测试用例' },
             { key: 'posts', data: posts, icon: '💬', title: '论坛帖子' },
-            { key: 'comments', data: comments, icon: '💭', title: '评论' }
+            { key: 'comments', data: comments, icon: '💭', title: '评论' },
+            { key: 'agents', data: agents, icon: '🤖', title: 'AI智能体' },
+            { key: 'aiTools', data: aiTools, icon: '🔧', title: 'AI技能与工具' },
+            { key: 'memories', data: memories, icon: '🧠', title: 'AI记忆' }
         ].filter(c => c.data && c.data.items && c.data.items.length > 0);
         
         if (categories.length === 0) {
@@ -1509,6 +1528,30 @@ const CommandPalette = {
                     <span>${item.author}</span>
                     <span class="meta-separator">·</span>
                     <span>${this.formatTime(item.createdAt)}</span>
+                `;
+            case 'agents':
+                return `
+                    <span>${item.category || item.agentType || ''}</span>
+                    ${item.description ? '<span class="meta-separator">·</span>' : ''}
+                    ${item.description ? `<span>${this.escapeHtml(item.description.substring(0, 50))}</span>` : ''}
+                    <span class="meta-separator">·</span>
+                    <span>${item.isEnabled ? '已启用' : '已禁用'}</span>
+                `;
+            case 'aiTools':
+                return `
+                    <span>${item.language || ''}</span>
+                    ${item.description ? '<span class="meta-separator">·</span>' : ''}
+                    ${item.description ? `<span>${this.escapeHtml(item.description.substring(0, 50))}</span>` : ''}
+                    <span class="meta-separator">·</span>
+                    <span>${item.isPublic ? '公开' : '私有'}</span>
+                `;
+            case 'memories':
+                return `
+                    <span>${item.agentName || ''}</span>
+                    <span class="meta-separator">·</span>
+                    <span>${item.memoryType || ''}</span>
+                    <span class="meta-separator">·</span>
+                    <span>${item.level || ''}</span>
                 `;
             default:
                 return '';
@@ -1703,6 +1746,41 @@ const CommandPalette = {
                 break;
             case 'comment':
                 window.open(`/post-detail.html?id=${postId}&comment=${id}`, '_blank');
+                break;
+            case 'agent':
+                Router.navigateTo('settings');
+                setTimeout(() => {
+                    const agentTab = document.querySelector('[data-tab="ai-agents"]') || document.querySelector('[data-settings-tab="ai-agents"]');
+                    if (agentTab) agentTab.click();
+                    setTimeout(() => {
+                        const agentEl = document.querySelector(`[data-agent-id="${id}"]`) || document.querySelector(`[data-agent-code="${id}"]`);
+                        if (agentEl) {
+                            agentEl.click();
+                            agentEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                    }, 500);
+                }, 800);
+                break;
+            case 'aitool':
+                Router.navigateTo('settings');
+                setTimeout(() => {
+                    const toolTab = document.querySelector('[data-tab="ai-tools"]') || document.querySelector('[data-settings-tab="ai-tools"]');
+                    if (toolTab) toolTab.click();
+                    setTimeout(() => {
+                        const toolEl = document.querySelector(`[data-tool-id="${id}"]`) || document.querySelector(`[data-tool-name="${id}"]`);
+                        if (toolEl) {
+                            toolEl.click();
+                            toolEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                    }, 500);
+                }, 800);
+                break;
+            case 'memory':
+                Router.navigateTo('settings');
+                setTimeout(() => {
+                    const memoryTab = document.querySelector('[data-tab="ai-memories"]') || document.querySelector('[data-settings-tab="ai-memories"]');
+                    if (memoryTab) memoryTab.click();
+                }, 800);
                 break;
         }
     },
@@ -2637,7 +2715,10 @@ function initWebSocket() {
             console.log('WebSocket连接成功');
             // 如果用户已登录，发送登录事件
             if (currentUser && currentUser.username) {
-                socket.emit('login', currentUser);
+                socket.emit('login', {
+                    ...currentUser,
+                    userId: currentUser.id
+                });
             }
         });
 
@@ -2656,7 +2737,10 @@ function initWebSocket() {
             console.log('WebSocket重连成功，尝试次数:', attemptNumber);
             // 如果用户已登录，重新发送登录事件
             if (currentUser && currentUser.username) {
-                socket.emit('login', currentUser);
+                socket.emit('login', {
+                    ...currentUser,
+                    userId: currentUser.id
+                });
             }
         });
 
@@ -2701,6 +2785,12 @@ function initWebSocket() {
             // 这里可以添加更新模块的逻辑
             // 重新加载模块数据，确保显示最新的模块列表
             initModuleData();
+        });
+
+        // 监听AI异步任务完成
+        socket.on('ai_task_complete', (data) => {
+            console.log('AI异步任务完成:', data);
+            handleAITaskComplete(data);
         });
     } catch (error) {
         logger.error('WebSocket初始化失败:', error);
@@ -4381,22 +4471,6 @@ function getPriorityText(priority) {
 }
 
 // 格式化日期时间
-function formatDateTime(dateStr) {
-    if (!dateStr) return '-';
-    try {
-        const date = new Date(dateStr);
-        if (isNaN(date.getTime())) return dateStr;
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const hours = String(date.getHours()).padStart(2, '0');
-        const minutes = String(date.getMinutes()).padStart(2, '0');
-        return `${year}/${month}/${day} ${hours}:${minutes}`;
-    } catch (e) {
-        return dateStr;
-    }
-}
-
 // 获取当前日期时间（格式：YYYY-MM-DD HH:MM:SS，北京时间）
 function getCurrentDateTime() {
     const now = new Date();
@@ -5378,7 +5452,7 @@ function updateModuleDisplay() {
             `;
 
         // 添加点击事件
-        li.addEventListener('click', function () {
+        li.addEventListener('click', function (e) {
             // 移除其他项的活跃状态
             caseNavList.querySelectorAll('.case-nav-item').forEach(item => {
                 item.classList.remove('active');
@@ -5548,6 +5622,7 @@ function initModuleActionButtons() {
             right: 16px;
             opacity: 1;
             transition: opacity 0.2s ease;
+            pointer-events: none;
         }
         
         .module-action-btn {
@@ -5557,6 +5632,7 @@ function initModuleActionButtons() {
             cursor: pointer;
             padding: 4px 8px;
             border-radius: 4px;
+            pointer-events: auto;
         }
         
         .module-action-btn:hover {
@@ -6062,12 +6138,13 @@ async function loadAllLevel1Points() {
             fetchedPoints = pointsData;
         } else if (pointsData && pointsData.testpoints) {
             fetchedPoints = pointsData.testpoints;
+        } else if (pointsData && pointsData.success && pointsData.points) {
+            fetchedPoints = pointsData.points;
         } else if (pointsData && pointsData.success && pointsData.data) {
             fetchedPoints = pointsData.data;
         } else if (pointsData && pointsData.success && pointsData.level1Points) {
             fetchedPoints = pointsData.level1Points;
         } else {
-            // 加载失败时使用空数据
             console.log('API调用失败，使用空数据');
             fetchedPoints = [];
         }
@@ -6116,7 +6193,6 @@ async function loadLevel1Points(moduleId) {
         // 重置展开状态和缓存
         level1ExpandedItems = new Set();
         level1TestCasesCache = {};
-        console.log('[一级测试点] 已重置展开状态和缓存');
 
         if (!moduleId) {
             // 当moduleId为null时，加载所有一级测试用例
@@ -6148,6 +6224,9 @@ async function loadLevel1Points(moduleId) {
         } else if (pointsData && pointsData.testpoints) {
             fetchedPoints = pointsData.testpoints;
             console.log('[一级测试点] 使用 testpoints 字段，长度:', fetchedPoints.length);
+        } else if (pointsData && pointsData.success && pointsData.points) {
+            fetchedPoints = pointsData.points;
+            console.log('[一级测试点] 使用 points 字段，长度:', fetchedPoints.length);
         } else if (pointsData && pointsData.success && pointsData.data) {
             fetchedPoints = pointsData.data;
             console.log('[一级测试点] 使用 data 字段，长度:', fetchedPoints.length);
@@ -6155,7 +6234,6 @@ async function loadLevel1Points(moduleId) {
             fetchedPoints = pointsData.level1Points;
             console.log('[一级测试点] 使用 level1Points 字段，长度:', fetchedPoints.length);
         } else {
-            // 加载失败时使用空数据
             console.log('[一级测试点] API调用失败，使用空数据');
             fetchedPoints = [];
         }
@@ -7897,22 +7975,6 @@ async function deleteTestCaseFromDrawer() {
     } catch (error) {
         console.error('删除测试用例失败:', error);
         showToast(error.message, 'error');
-    }
-}
-
-function formatDateTime(dateStr) {
-    if (!dateStr) return '-';
-    try {
-        const date = new Date(dateStr);
-        if (isNaN(date.getTime())) return dateStr;
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const hours = String(date.getHours()).padStart(2, '0');
-        const minutes = String(date.getMinutes()).padStart(2, '0');
-        return `${year}/${month}/${day} ${hours}:${minutes}`;
-    } catch (e) {
-        return dateStr;
     }
 }
 
@@ -15194,9 +15256,8 @@ async function regenerateReportWithAI(reportId) {
     }
 
     try {
-        showLoading('正在重新生成AI分析...');
+        showSuccessMessage('正在重新生成AI分析，请稍候...');
         
-        // 获取报告详情
         const reportData = await apiRequest(`/reports/detail/${reportId}`);
         if (!reportData.success || !reportData.report) {
             showToast('获取报告信息失败', 'error');
@@ -15211,7 +15272,6 @@ async function regenerateReportWithAI(reportId) {
             return;
         }
 
-        // 重新生成报告（启用AI分析）
         const result = await apiRequest(`/reports/generate/${testPlanId}`, {
             method: 'POST',
             headers: {
@@ -15222,11 +15282,9 @@ async function regenerateReportWithAI(reportId) {
 
         if (result.success) {
             showToast('AI分析重新生成成功', 'success');
-            // 刷新报告详情
             if (typeof loadReportDrawerData === 'function') {
                 loadReportDrawerData(reportId);
             }
-            // 刷新报告列表
             if (typeof loadReportsData === 'function') {
                 loadReportsData();
             }
@@ -15236,8 +15294,6 @@ async function regenerateReportWithAI(reportId) {
     } catch (error) {
         logger.error('重新生成AI分析错误:', error);
         showToast('重新生成失败: ' + error.message, 'error');
-    } finally {
-        hideLoading();
     }
 }
 
@@ -23216,15 +23272,12 @@ async function generateLevel1PointSummary() {
         return;
     }
 
-    // 如果已有概述内容，弹窗让用户选择处理方式
     const existingSummary = summaryTextarea.value.trim();
+    let appendMode = false;
     if (existingSummary) {
         const choice = await showSummaryChoiceDialog(existingSummary);
         if (choice === 'cancel') return;
-        // choice: 'replace' | 'append' | 'cancel'
-        summaryTextarea._aiAppendMode = (choice === 'append');
-    } else {
-        summaryTextarea._aiAppendMode = false;
+        appendMode = (choice === 'append');
     }
 
     try {
@@ -23233,38 +23286,30 @@ async function generateLevel1PointSummary() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite;">
                 <circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="32"></circle>
             </svg>
-            生成中...
+            提交中...
         `;
 
-        showLoading('AI正在生成概述...');
-
-        const response = await apiRequest('/ai-generation/generate-overview', {
+        const response = await apiRequest('/ai-generation/generate-overview-async', {
             method: 'POST',
-            body: JSON.stringify({ level1PointId: pointId })
+            body: JSON.stringify({ level1PointId: pointId, appendMode })
         });
 
-        if (response.success && response.data && response.data.overview) {
-            const newOverview = response.data.overview;
-            if (summaryTextarea._aiAppendMode && existingSummary) {
-                summaryTextarea.value = existingSummary + '\n' + newOverview;
-            } else {
-                summaryTextarea.value = newOverview;
-            }
-            // 触发输入事件以更新字数统计
-            summaryTextarea.dispatchEvent(new Event('input'));
-            showSuccessMessage('AI概述生成成功');
-
-            // 即时更新列表中对应测试点的概述显示
-            updateLevel1SummaryInList(parseInt(pointId), summaryTextarea.value);
+        if (response.success) {
+            window._pendingAIOverview = {
+                textarea: summaryTextarea,
+                existingSummary,
+                appendMode,
+                pointId: parseInt(pointId)
+            };
+            showSuccessMessage('AI概述生成任务已提交后台运行，完成后将在消息中心通知您');
         } else {
             showErrorMessage(response.message || 'AI生成概述失败');
         }
 
     } catch (error) {
-        console.error('生成概述失败:', error);
-        showErrorMessage('生成概述失败: ' + error.message);
+        console.error('提交概述生成任务失败:', error);
+        showErrorMessage('提交概述生成任务失败: ' + error.message);
     } finally {
-        hideLoading();
         generateBtn.disabled = false;
         generateBtn.innerHTML = `
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -23408,7 +23453,6 @@ function showSummaryChoiceDialog(existingSummary) {
 
 // AI生成关键配置
 async function generateKeyConfig() {
-    // 检测当前是在哪个表单中（右侧滑屉或详情模态框）
     const isDrawer = document.getElementById('drawer-testcase-key-config') !== null;
     const isModal = document.getElementById('detail-case-key-config') !== null;
 
@@ -23416,7 +23460,6 @@ async function generateKeyConfig() {
     let precondition, purpose, steps, expected, caseName;
 
     if (isDrawer) {
-        // 右侧滑屉表单
         keyConfigTextarea = document.getElementById('drawer-testcase-key-config');
         generateBtn = document.getElementById('ai-generate-key-config-btn');
         precondition = document.getElementById('drawer-testcase-precondition')?.value || '';
@@ -23425,7 +23468,6 @@ async function generateKeyConfig() {
         expected = document.getElementById('drawer-testcase-expected')?.value || '';
         caseName = document.getElementById('drawer-testcase-name')?.value || '';
     } else if (isModal) {
-        // 详情模态框表单
         keyConfigTextarea = document.getElementById('detail-case-key-config');
         generateBtn = document.getElementById('ai-generate-key-config-btn');
         precondition = document.getElementById('detail-case-precondition')?.value || '';
@@ -23438,14 +23480,12 @@ async function generateKeyConfig() {
         return;
     }
 
-    // 如果已有内容，弹窗让用户选择处理方式
     const existingConfig = keyConfigTextarea.value.trim();
+    let appendMode = false;
     if (existingConfig) {
         const choice = await showKeyConfigChoiceDialog(existingConfig);
         if (choice === 'cancel') return;
-        keyConfigTextarea._aiAppendMode = (choice === 'append');
-    } else {
-        keyConfigTextarea._aiAppendMode = false;
+        appendMode = (choice === 'append');
     }
 
     try {
@@ -23454,40 +23494,37 @@ async function generateKeyConfig() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite;">
                 <circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="32"></circle>
             </svg>
-            生成中...
+            提交中...
         `;
 
-        showLoading('AI正在生成关键配置...');
-
-        const response = await apiRequest('/ai-generation/generate-key-config', {
+        const response = await apiRequest('/ai-generation/generate-key-config-async', {
             method: 'POST',
             body: JSON.stringify({
                 caseName,
                 precondition,
                 purpose,
                 steps,
-                expected
+                expected,
+                appendMode
             })
         });
 
-        if (response.success && response.data && response.data.keyConfig) {
-            const newConfig = response.data.keyConfig;
-            if (keyConfigTextarea._aiAppendMode && existingConfig) {
-                keyConfigTextarea.value = existingConfig + '\n' + newConfig;
-            } else {
-                keyConfigTextarea.value = newConfig;
-            }
-            keyConfigTextarea.dispatchEvent(new Event('input'));
-            showSuccessMessage('AI关键配置生成成功');
+        if (response.success) {
+            window._pendingAIKeyConfig = {
+                textarea: keyConfigTextarea,
+                existingConfig,
+                appendMode,
+                caseName
+            };
+            showSuccessMessage('AI关键配置生成任务已提交后台运行，完成后将在消息中心通知您');
         } else {
             showErrorMessage(response.message || 'AI生成关键配置失败');
         }
 
     } catch (error) {
-        console.error('生成关键配置失败:', error);
-        showErrorMessage('生成关键配置失败: ' + error.message);
+        console.error('提交关键配置生成任务失败:', error);
+        showErrorMessage('提交关键配置生成任务失败: ' + error.message);
     } finally {
-        hideLoading();
         generateBtn.disabled = false;
         generateBtn.innerHTML = `
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -23495,6 +23532,60 @@ async function generateKeyConfig() {
             </svg>
             AI生成
         `;
+    }
+}
+
+// 处理AI异步任务完成通知
+function handleAITaskComplete(data) {
+    if (!data || !data.success) {
+        if (data && data.title) {
+            showErrorMessage(data.title);
+        }
+        if (typeof NotificationManager !== 'undefined' && NotificationManager.fetchUnreadCount) {
+            NotificationManager.fetchUnreadCount();
+        }
+        return;
+    }
+
+    if (data.taskType === 'key_config') {
+        const pending = window._pendingAIKeyConfig;
+        if (pending && pending.textarea && document.body.contains(pending.textarea) && pending.caseName === data.caseName) {
+            const newConfig = data.result;
+            if (data.appendMode && pending.existingConfig) {
+                pending.textarea.value = pending.existingConfig + '\n' + newConfig;
+            } else {
+                pending.textarea.value = newConfig;
+            }
+            pending.textarea.dispatchEvent(new Event('input'));
+            showSuccessMessage('AI关键配置生成完成，已自动填入');
+            delete window._pendingAIKeyConfig;
+        } else {
+            showSuccessMessage('AI关键配置生成完成，请在消息中心查看结果');
+            delete window._pendingAIKeyConfig;
+        }
+    } else if (data.taskType === 'overview') {
+        const pending = window._pendingAIOverview;
+        if (pending && pending.textarea && document.body.contains(pending.textarea) && pending.pointId === data.level1PointId) {
+            const newOverview = data.result;
+            if (data.appendMode && pending.existingSummary) {
+                pending.textarea.value = pending.existingSummary + '\n' + newOverview;
+            } else {
+                pending.textarea.value = newOverview;
+            }
+            pending.textarea.dispatchEvent(new Event('input'));
+            if (typeof updateLevel1SummaryInList === 'function') {
+                updateLevel1SummaryInList(pending.pointId, pending.textarea.value);
+            }
+            showSuccessMessage('AI概述生成完成，已自动填入');
+            delete window._pendingAIOverview;
+        } else {
+            showSuccessMessage('AI概述生成完成，请查看消息中心');
+            delete window._pendingAIOverview;
+        }
+    }
+
+    if (typeof NotificationManager !== 'undefined' && NotificationManager.fetchUnreadCount) {
+        NotificationManager.fetchUnreadCount();
     }
 }
 
@@ -24531,6 +24622,9 @@ async function uploadTemplate() {
 
         const response = await fetch('/api/templates/upload', {
             method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            },
             body: formData
         });
 
@@ -25794,7 +25888,7 @@ function addChatMessage(role, content, isReport = false) {
                 <div class="ai-report-header">
                     <span class="ai-report-icon">📊</span>
                     <span class="ai-report-title">测试报告</span>
-                    <button class="ai-report-download-btn" onclick="downloadReport(this)">
+                    <button class="ai-report-download-btn" onclick="downloadAiChatReport(this)">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"></path>
                         </svg>
@@ -25819,8 +25913,8 @@ function addChatMessage(role, content, isReport = false) {
     return messageDiv;
 }
 
-// 下载报告
-function downloadReport(btn) {
+// 下载AI聊天报告
+function downloadAiChatReport(btn) {
     const reportContent = btn.closest('.ai-report-container').querySelector('.ai-report-content');
     if (!reportContent) return;
 
@@ -31178,6 +31272,9 @@ async function handleExcelFileSelect(event) {
         
         const response = await fetch('/api/excel/import/parse-headers', {
             method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            },
             body: formData
         });
         
@@ -31880,9 +31977,7 @@ document.addEventListener('DOMContentLoaded', function() {
             
             const files = e.dataTransfer.files;
             if (files.length > 0) {
-                const fileInput = document.getElementById('excel-file-input');
-                fileInput.files = files;
-                handleExcelFileSelect({ target: fileInput });
+                handleExcelFileSelect({ target: { files: files } });
             }
         });
     }
@@ -34652,7 +34747,9 @@ async function handleScriptFileUpload(file) {
     try {
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('testCaseId', currentEditingTestCaseId);
+        if (currentEditingTestCaseId) {
+            formData.append('testCaseId', currentEditingTestCaseId);
+        }
         
         const response = await fetch(`${API_BASE_URL}/testcases/scripts/upload`, {
             method: 'POST',

@@ -11,9 +11,10 @@ const reviewService = require('../services/reviewService');
 const errorResp = (res, status, message) => res.status(status).json({ success: false, message });
 
 router.post('/batch-create', authenticateToken, async (req, res) => {
-    const connection = await pool.getConnection();
+    let connection;
 
     try {
+        connection = await pool.getConnection();
         const { moduleId, level1Id, libraryId, cases } = req.body;
         const currentUser = req.user;
         const ipAddress = req.ip || req.connection.remoteAddress;
@@ -353,14 +354,15 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
         console.error('错误堆栈:', error.stack);
         errorResp(res, 500, '批量创建失败: ' + error.message);
     } finally {
-        connection.release();
+        if (connection) connection.release();
     }
 });
 
 router.post('/:id/submit-review', authenticateToken, async (req, res) => {
-    const connection = await pool.getConnection();
-    
+    let connection;
+
     try {
+        connection = await pool.getConnection();
         const { id } = req.params;
         const { reviewer_id, reviewer_ids, comment } = req.body;
         const currentUser = req.user;
@@ -503,14 +505,15 @@ router.post('/:id/submit-review', authenticateToken, async (req, res) => {
         logger.error('提交评审失败:', { error: error.message });
         errorResp(res, 500, '提交评审失败: ' + error.message);
     } finally {
-        connection.release();
+        if (connection) connection.release();
     }
 });
 
 router.post('/:id/review', authenticateToken, async (req, res) => {
-    const connection = await pool.getConnection();
-    
+    let connection;
+
     try {
+        connection = await pool.getConnection();
         const { id } = req.params;
         const { action, comment, suggestion } = req.body;
         const currentUser = req.user;
@@ -726,7 +729,7 @@ router.post('/:id/review', authenticateToken, async (req, res) => {
         logger.error('执行评审失败:', { error: error.message });
         errorResp(res, 500, '评审失败: ' + error.message);
     } finally {
-        connection.release();
+        if (connection) connection.release();
     }
 });
 
@@ -912,9 +915,10 @@ router.get('/:id/review-progress', authenticateToken, async (req, res) => {
 });
 
 router.post('/batch-submit-review', authenticateToken, async (req, res) => {
-    const connection = await pool.getConnection();
-    
+    let connection;
+
     try {
+        connection = await pool.getConnection();
         await connection.beginTransaction();
         
         const { case_ids, reviewer_ids, comment } = req.body;
@@ -1096,14 +1100,15 @@ router.post('/batch-submit-review', authenticateToken, async (req, res) => {
         logger.error('批量提交评审错误:', { error: error.message });
         errorResp(res, 500, '批量提交评审失败: ' + error.message);
     } finally {
-        connection.release();
+        if (connection) connection.release();
     }
 });
 
 router.post('/batch-review', authenticateToken, async (req, res) => {
-    const connection = await pool.getConnection();
-    
+    let connection;
+
     try {
+        connection = await pool.getConnection();
         await connection.beginTransaction();
         
         const { case_ids, action, comment } = req.body;
@@ -1292,7 +1297,7 @@ router.post('/batch-review', authenticateToken, async (req, res) => {
         logger.error('批量评审错误:', { error: error.message });
         errorResp(res, 500, '批量评审失败: ' + error.message);
     } finally {
-        connection.release();
+        if (connection) connection.release();
     }
 });
 
@@ -1340,9 +1345,10 @@ router.get('/pending-submit', authenticateToken, async (req, res) => {
 });
 
 router.post('/batch-update', authenticateToken, async (req, res) => {
-    const connection = await pool.getConnection();
+    let connection;
 
     try {
+        connection = await pool.getConnection();
         const { moduleId, level1Id, libraryId, updatedCases, newCases } = req.body;
         const currentUser = req.user;
         const ipAddress = req.ip || req.connection.remoteAddress;
@@ -1638,17 +1644,17 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
 
                     if (caseData.environments) {
                         const envNames = typeof caseData.environments === 'string' ? caseData.environments.split(',').map(e=>e.trim()).filter(Boolean) : [];
-                        envNames.forEach(n => { if (envMap.has(n)) connection.execute('INSERT IGNORE INTO test_case_environments (test_case_id, environment_id) VALUES (?, ?)', [dbId, envMap.get(n)]); });
+                        for (const n of envNames) { if (envMap.has(n)) await connection.execute('INSERT IGNORE INTO test_case_environments (test_case_id, environment_id) VALUES (?, ?)', [dbId, envMap.get(n)]); }
                     }
 
                     if (caseData.sources) {
                         const sNames = typeof caseData.sources === 'string' ? caseData.sources.split(',').map(s=>s.trim()).filter(Boolean) : [];
-                        sNames.forEach(n => { if (sourceMap.has(n)) connection.execute('INSERT IGNORE INTO test_case_sources (test_case_id, source_id) VALUES (?, ?)', [dbId, sourceMap.get(n)]); });
+                        for (const n of sNames) { if (sourceMap.has(n)) await connection.execute('INSERT IGNORE INTO test_case_sources (test_case_id, source_id) VALUES (?, ?)', [dbId, sourceMap.get(n)]); }
                     }
 
                     if (caseData.methods) {
                         const mNames = typeof caseData.methods === 'string' ? caseData.methods.split(',').map(m=>m.trim()).filter(Boolean) : [];
-                        mNames.forEach(n => { if (methodMap.has(n)) connection.execute('INSERT IGNORE INTO test_case_methods (test_case_id, method_id) VALUES (?, ?)', [dbId, methodMap.get(n)]); });
+                        for (const n of mNames) { if (methodMap.has(n)) await connection.execute('INSERT IGNORE INTO test_case_methods (test_case_id, method_id) VALUES (?, ?)', [dbId, methodMap.get(n)]); }
                     }
 
                     if (caseData.projects) {
@@ -1658,16 +1664,16 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
                         } else if (Array.isArray(caseData.projects)) {
                             projs = caseData.projects;
                         }
-                        projs.forEach(assoc => {
+                        for (const assoc of projs) {
                             const projectId = parseInt(assoc.project_id || assoc.id);
                             if (!isNaN(projectId)) {
                                 const projectOwner = assoc.owner || caseData.owner || currentUser.username;
-                                connection.execute(
+                                await connection.execute(
                                     `INSERT INTO test_case_projects (test_case_id, project_id, owner, progress_id, status_id, remark) VALUES (?, ?, ?, ?, ?, ?)`,
                                     [dbId, projectId, projectOwner, parseInt(assoc.progressId || assoc.progress_id) || null, parseInt(assoc.statusId || assoc.status_id) || null, assoc.remark || '']
                                 );
                             }
-                        });
+                        }
                     }
 
                     createdCaseIds.push({
@@ -1702,7 +1708,7 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
         logger.error('批量更新错误:', { error: error.message });
         errorResp(res, 500, '批量更新失败: ' + error.message);
     } finally {
-        connection.release();
+        if (connection) connection.release();
     }
 });
 
@@ -1861,9 +1867,10 @@ router.get('/:id', authenticateToken, async (req, res) => {
 });
 
 router.put('/:id', authenticateToken, async (req, res) => {
-    const connection = await pool.getConnection();
-    
+    let connection;
+
     try {
+        connection = await pool.getConnection();
         const { id } = req.params;
         const {
             name,
@@ -1949,17 +1956,18 @@ router.put('/:id', authenticateToken, async (req, res) => {
         logger.error('更新测试用例失败:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     } finally {
-        connection.release();
+        if (connection) connection.release();
     }
 });
 
 router.delete('/:id', authenticateToken, async (req, res) => {
-    const connection = await pool.getConnection();
-    
+    let connection;
+
     try {
+        connection = await pool.getConnection();
         const { id } = req.params;
         const currentUser = req.user;
-        
+
         await connection.beginTransaction();
         
         const [existing] = await connection.execute(
@@ -2001,7 +2009,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
         logger.error('删除测试用例失败:', { error: error.message });
         res.status(500).json({ success: false, message: '服务器错误' });
     } finally {
-        connection.release();
+        if (connection) connection.release();
     }
 });
 

@@ -5,6 +5,17 @@ const { authenticateToken, requireAdmin, isAdmin } = require('../middleware');
 const aiReviewService = require('../services/aiReviewService');
 const logger = require('../services/logger');
 
+function safeJsonParse(str) {
+  if (!str) return null;
+  if (typeof str !== 'string') return str;
+  try {
+    return JSON.parse(str);
+  } catch (e) {
+    logger.warn('JSON解析失败，返回原始字符串', { snippet: str.substring(0, 100) });
+    return str;
+  }
+}
+
 /**
  * 检查用户是否有权限访问评审任务（提交人、评审人或管理员）
  * @param {Object} task - 评审任务记录
@@ -218,15 +229,15 @@ router.get('/results/:reviewTaskId', authenticateToken, async (req, res) => {
         action: r.action,
         aiComment: r.ai_comment,
         aiScore: r.ai_score,
-        originalContent: typeof r.original_content === 'string' ? JSON.parse(r.original_content) : r.original_content,
-        suggestedContent: typeof r.suggested_content === 'string' ? JSON.parse(r.suggested_content) : r.suggested_content,
+        originalContent: safeJsonParse(r.original_content),
+        suggestedContent: safeJsonParse(r.suggested_content),
         diffSummary: r.diff_summary,
-        diffDetail: typeof r.diff_detail === 'string' ? JSON.parse(r.diff_detail) : r.diff_detail,
-        toolCallsLog: r.tool_calls_log ? (typeof r.tool_calls_log === 'string' ? JSON.parse(r.tool_calls_log) : r.tool_calls_log) : null,
+        diffDetail: safeJsonParse(r.diff_detail),
+        toolCallsLog: r.tool_calls_log ? safeJsonParse(r.tool_calls_log) : null,
         memoryContribution: r.memory_contribution,
         userDecision: r.user_decision,
         userComment: r.user_comment,
-        userModifiedContent: r.user_modified_content ? (typeof r.user_modified_content === 'string' ? JSON.parse(r.user_modified_content) : r.user_modified_content) : null,
+        userModifiedContent: r.user_modified_content ? safeJsonParse(r.user_modified_content) : null,
         decidedAt: r.decided_at,
         decidedBy: r.decided_by,
         createdAt: r.created_at,

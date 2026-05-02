@@ -144,7 +144,9 @@ function getTemplateRenderers() {
         task_assigned: (d) => renderTaskAssigned(d),
         task_deadline: (d) => renderTaskDeadline(d),
         ai_review_complete: (d) => renderAIReviewComplete(d),
-        ai_review_result: (d) => renderAIReviewResult(d)
+        ai_review_result: (d) => renderAIReviewResult(d),
+        ai_key_config_complete: (d) => renderAIKeyConfigComplete(d),
+        ai_overview_complete: (d) => renderAIOverviewComplete(d)
     };
 }
 
@@ -284,6 +286,18 @@ function renderAIReviewResult(d) {
     const diffHtml = d.diffSummary ? `<div style="background:#f8f9fa;padding:10px;border-radius:4px;margin:10px 0;font-size:13px;"><strong>修改摘要：</strong>${d.diffSummary}</div>` : '';
     const memoryNote = d.memoryContribution ? `<p style="color:#6366f1;font-size:13px;">💾 ${d.memoryContribution}</p>` : '';
     return `${base.header}<p>尊敬的 <strong>${d.reviewerName || ''}</strong>，您好！</p><p>AI评审智能体 <strong>${d.agentName || ''}</strong> 已完成对以下用例的评审：</p>${infoBox(`<h3 style="margin:0 0 10px;color:#4338ca;">${d.caseName || ''}</h3><p style="margin:5px 0;"><strong>AI评审动作：</strong><span style="color:${actionColor};font-weight:bold;">${actionLabel}</span></p><p style="margin:5px 0;"><strong>AI评分：</strong>${d.aiScore || '-'}/10</p>${d.aiComment ? `<p style="margin:5px 0;"><strong>AI意见：</strong>${d.aiComment}</p>` : ''}`)}${diffHtml}${memoryNote}${d.reviewLink ? actionButton('查看详情并决策', d.reviewLink, '#6366f1') : ''}${base.footer}`;
+}
+
+function renderAIKeyConfigComplete(d) {
+    const base = emailBase('🤖 AI关键配置生成完成', '#6366f1');
+    const resultPreview = d.result ? `<div style="background:#f8f9fa;padding:12px;border-radius:6px;margin:15px 0;font-size:13px;white-space:pre-wrap;max-height:200px;overflow-y:auto;">${d.result.substring(0, 500)}${d.result.length > 500 ? '...' : ''}</div>` : '';
+    return `${base.header}<p>尊敬的 <strong>${d.userName || ''}</strong>，您好！</p><p>AI关键配置生成任务已完成：</p>${infoBox(`<h3 style="margin:0 0 10px;color:#4338ca;">${d.caseName || '未命名用例'}</h3><p style="margin:5px 0;"><strong>生成状态：</strong><span style="color:#16a34a;font-weight:bold;">✅ 成功</span></p>`)}${resultPreview}<p>请在消息中心查看完整结果，或返回用例编辑页面查看已自动填入的配置。</p>${base.footer}`;
+}
+
+function renderAIOverviewComplete(d) {
+    const base = emailBase('🤖 AI概述生成完成', '#6366f1');
+    const resultPreview = d.result ? `<div style="background:#f8f9fa;padding:12px;border-radius:6px;margin:15px 0;font-size:13px;white-space:pre-wrap;max-height:200px;overflow-y:auto;">${d.result.substring(0, 500)}${d.result.length > 500 ? '...' : ''}</div>` : '';
+    return `${base.header}<p>尊敬的 <strong>${d.userName || ''}</strong>，您好！</p><p>AI概述生成任务已完成：</p>${infoBox(`<h3 style="margin:0 0 10px;color:#4338ca;">${d.pointName || '未命名测试点'}</h3><p style="margin:5px 0;"><strong>生成状态：</strong><span style="color:#16a34a;font-weight:bold;">✅ 成功</span></p>`)}${resultPreview}<p>请在消息中心查看完整结果，或返回测试点编辑页面查看已自动填入的概述。</p>${base.footer}`;
 }
 
 async function sendToSingleUser(emailType, userId, data, options = {}) {
