@@ -1,5 +1,6 @@
 const pool = require('../db');
 const emailNotificationService = require('./emailNotificationService');
+const logger = require('./logger');
 
 function extractMentions(text) {
     if (!text) return [];
@@ -54,10 +55,10 @@ async function processMentions(content, senderId, targetId, sourceUrl, sourceTyp
                     sourceUrl: sourceUrl
                 },
                 options: { skipInApp: true }
-            }).catch(e => console.error('发送@提醒邮件失败', e));
+            }).catch(e => logger.error('发送@提醒邮件失败', { error: e.message }));
         }
     } catch (error) {
-        console.error('处理 @ 提及过程出错:', error);
+        logger.error('处理 @ 提及过程出错', { error: error.message });
     }
 }
 
@@ -99,10 +100,10 @@ async function notifyInteraction(targetUserId, senderId, interactionType, target
                 sourceUrl: sourceUrl
             },
             options: { skipInApp: true }
-        }).catch(e => console.error('发送互动提醒邮件失败', e));
+        }).catch(e => logger.error('发送互动提醒邮件失败', { error: e.message }));
 
     } catch (error) {
-        console.error('处理互动通知过程出错:', error);
+        logger.error('处理互动通知过程出错', { error: error.message });
     }
 }
 

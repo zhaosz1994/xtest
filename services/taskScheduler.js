@@ -1,6 +1,7 @@
 const pool = require('../db');
 const { default: PQueue } = require('p-queue');
 const cron = require('node-cron');
+const logger = require('./logger');
 
 class TaskScheduler {
   constructor() {
@@ -22,7 +23,7 @@ class TaskScheduler {
       this.cleanupExpiredTempCases();
     });
 
-    console.log('AI用例生成任务调度器已启动');
+    logger.info('AI用例生成任务调度器已启动');
   }
 
   async recoverInterruptedTasks() {
@@ -35,10 +36,10 @@ class TaskScheduler {
       `);
 
       if (result.affectedRows > 0) {
-        console.log(`已恢复 ${result.affectedRows} 个中断的任务`);
+        logger.info('已恢复中断的任务', { count: result.affectedRows });
       }
     } catch (error) {
-      console.error('恢复中断任务失败:', error.message);
+      logger.error('恢复中断任务失败', { error: error.message });
     }
   }
 
@@ -81,14 +82,14 @@ class TaskScheduler {
 
     } catch (error) {
       await connection.rollback();
-      console.error('任务轮询失败:', error.message);
+      logger.error('任务轮询失败', { error: error.message });
     } finally {
       connection.release();
     }
   }
 
   async processTask(taskId) {
-    console.log(`开始处理任务: ${taskId}`);
+    logger.info('开始处理任务', { taskId });
     const caseGeneratorService = require('./caseGeneratorService');
     const dedupService = require('./dedupService');
     const level1PointService = require('./level1PointService');
@@ -130,13 +131,13 @@ class TaskScheduler {
       try {
         await emailNotificationService.sendAIGenerationCompletionNotification(taskId);
       } catch (emailError) {
-        console.error('发送邮件通知失败:', emailError.message);
+        logger.error('发送邮件通知失败', { error: emailError.message });
       }
 
-      console.log(`任务完成: ${taskId}`);
+      logger.info('任务完成', { taskId });
 
     } catch (error) {
-      console.error(`任务失败: ${taskId}`, error.message);
+      logger.error('任务失败', { taskId, error: error.message });
 
       await pool.execute(`
         UPDATE ai_case_generation_tasks 
@@ -164,10 +165,10 @@ class TaskScheduler {
       `);
 
       if (result.affectedRows > 0) {
-        console.log(`清理了 ${result.affectedRows} 条过期临时用例`);
+        logger.info('清理了过期临时用例', { count: result.affectedRows });
       }
     } catch (error) {
-      console.error('清理过期临时用例失败:', error.message);
+      logger.error('清理过期临时用例失败', { error: error.message });
     }
   }
 }

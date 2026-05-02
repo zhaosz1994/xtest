@@ -69,7 +69,6 @@ const ModuleLoader = {
 
     updateProgress() {
         // AI 模块加载进度 — 仅打印日志，不覆盖页面上的 loading 状态
-        console.log(`[ModuleLoader] 模块加载进度: ${this.loadedCount}/${this.totalCount}`);
     },
 
     handleRequiredModuleError(moduleName) {
@@ -83,7 +82,6 @@ const ModuleLoader = {
     initializeModules() {
         // 核心模块（Router, ThemeService, CommandPalette 等）已在 script.js 中初始化
         // 这里只负责 AI 扩展模块的初始化通知
-        console.log('[ModuleLoader] AI 扩展模块加载完成:', this.getLoadedModules().join(', '));
         this.emit('modulesLoaded');
     },
 

@@ -311,13 +311,13 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
                 );
                 projectRelationsResult.affectedRows = result.affectedRows || 0;
             } catch (err) {
-                console.error('[批量创建] 项目关联插入失败:', err.message);
+                logger.error('[批量创建] 项目关联插入失败:', { error: err.message });
             }
 
             const insertedCount = safeProjectRelations.length;
             if (projectRelationsResult.affectedRows > insertedCount) {
                 projectRelationsResult.duplicateCount = projectRelationsResult.affectedRows - insertedCount;
-                console.log(`[批量创建] 项目关联: 新增 ${insertedCount}, 更新 ${projectRelationsResult.duplicateCount}`);
+                logger.debug('[批量创建] 项目关联:', { insertedCount, duplicateCount: projectRelationsResult.duplicateCount });
             }
         }
 
@@ -335,7 +335,7 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
         );
 
         await connection.commit();
-        console.log(`[批量创建] 成功创建 ${createdCases.length} 个测试用例`);
+        logger.info('[批量创建] 成功创建测试用例', { count: createdCases.length });
 
         if (level1Id) {
             generateSummaryForLevel1(level1Id, currentUser.id, currentUser.username)
@@ -351,7 +351,7 @@ router.post('/batch-create', authenticateToken, async (req, res) => {
     } catch (error) {
         await connection.rollback();
         logger.error('批量创建测试用例错误:', { error: error.message });
-        console.error('错误堆栈:', error.stack);
+
         errorResp(res, 500, '批量创建失败: ' + error.message);
     } finally {
         if (connection) connection.release();
@@ -1536,7 +1536,7 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
         
         if (Array.isArray(newCases) && newCases.length > 0) {
             const validNewCases = newCases.filter(c => c.name && c.name.trim() !== '');
-            console.log('有效newCases数量:', validNewCases.length);
+
             
             if (validNewCases.length > 0) {
                 // 预加载关联数据映射表
@@ -1594,14 +1594,7 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
                     const caseData = validNewCases[i];
                     const caseId = caseIds[i];
                     
-                    console.log('创建新用例:', {
-                        name: caseData.name,
-                        level1_id: caseData.level1_id,
-                        level1Id: caseData.level1Id,
-                        moduleId: moduleId,
-                        requestLevel1Id: level1Id,
-                        caseId: caseId
-                    });
+
 
                     const [result] = await connection.execute(
                         `INSERT INTO test_cases (

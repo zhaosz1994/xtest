@@ -1480,12 +1480,6 @@
             });
         }
         
-        document.getElementById('sql-modal-overlay').addEventListener('click', (e) => {
-            if (e.target.id === 'sql-modal-overlay') {
-                closeSqlModal();
-            }
-        });
-
         function updateAgentToolOverviewCards(overview) {
             const agent = overview.agent || {};
             const tool = overview.tool || {};

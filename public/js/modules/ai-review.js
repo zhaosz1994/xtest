@@ -23,7 +23,6 @@ let aiReviewSearchKeyword = '';
 function initAIReview() {
     if (aiReviewInitialized) return;
     aiReviewInitialized = true;
-    console.log('[AI Review] Initializing...');
     initAIReviewEventListeners();
     loadAISubAgents();
 }

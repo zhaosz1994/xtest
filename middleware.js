@@ -178,6 +178,30 @@ const canModifyAISkill = async (req, res, next) => {
   }
 };
 
+const fixFilenameEncoding = (req, res, next) => {
+  const fixName = (name) => {
+    try {
+      const fixed = Buffer.from(name, 'latin1').toString('utf-8');
+      if (fixed !== name && !/\ufffd/.test(fixed)) {
+        return fixed;
+      }
+    } catch (e) {}
+    return name;
+  };
+
+  if (req.file && req.file.originalname) {
+    req.file.originalname = fixName(req.file.originalname);
+  }
+  if (req.files && Array.isArray(req.files)) {
+    for (const file of req.files) {
+      if (file.originalname) {
+        file.originalname = fixName(file.originalname);
+      }
+    }
+  }
+  next();
+};
+
 module.exports = {
   authenticateToken,
   requireAdmin,
@@ -187,5 +211,6 @@ module.exports = {
   canModifyAISkill,
   isAdmin,
   isOwner,
-  ADMIN_ROLES
+  ADMIN_ROLES,
+  fixFilenameEncoding
 };

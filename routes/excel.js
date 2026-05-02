@@ -6,6 +6,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const logger = require('../services/logger');
+const { fixFilenameEncoding } = require('../middleware');
 
 // 配置multer用于Excel文件上传
 const storage = multer.diskStorage({
@@ -56,7 +57,7 @@ const imageUpload = multer({
 });
 
 // 图片上传API
-router.post('/upload-image', imageUpload.single('image'), (req, res) => {
+router.post('/upload-image', imageUpload.single('image'), fixFilenameEncoding, (req, res) => {
   try {
     if (!req.file) {
       return res.json({ success: false, message: '请选择图片文件' });
@@ -177,7 +178,7 @@ router.get('/export', async (req, res) => {
     const shouldIncludeLevel1 = includeLevel1 !== 'false';
     const shouldIncludeCases = includeCases !== 'false';
     
-    console.log('[导出] 解析后的开关:', { shouldIncludeLevel1, shouldIncludeCases });
+
     
     // 如果不需要导出用例，只导出模块结构
     if (!shouldIncludeCases) {
@@ -192,16 +193,16 @@ router.get('/export', async (req, res) => {
       params.push(libraryId);
     }
     if (moduleIds) {
-      console.log('[导出] 解析moduleIds:', moduleIds);
+
       const ids = moduleIds.split(',').map(id => parseInt(id)).filter(id => !isNaN(id));
-      console.log('[导出] 解析后的ids:', ids);
+
       if (ids.length > 0) {
         const placeholders = ids.map(() => '?').join(',');
         whereClause += ` AND tc.module_id IN (${placeholders})`;
         params.push(...ids);
-        console.log('[导出] 添加模块过滤条件, ids:', ids);
+
       } else {
-        console.warn('[导出] moduleIds参数存在但解析失败:', moduleIds);
+        logger.warn('[导出] moduleIds参数存在但解析失败:', { moduleIds });
         return res.json({ success: false, message: '模块ID参数格式错误' });
       }
     }
@@ -214,8 +215,8 @@ router.get('/export', async (req, res) => {
       params.push(status);
     }
     
-    console.log('[导出] 最终whereClause:', whereClause);
-    console.log('[导出] 最终params:', params);
+
+
     
     // 查询测试用例及其关联数据
     const [cases] = await pool.execute(`
@@ -381,7 +382,7 @@ router.get('/export', async (req, res) => {
  * POST /api/excel/import/parse-headers
  * 解析Excel表头
  */
-router.post('/import/parse-headers', upload.single('file'), async (req, res) => {
+router.post('/import/parse-headers', upload.single('file'), fixFilenameEncoding, async (req, res) => {
   try {
     if (!req.file) {
       return res.json({ success: false, message: '请上传文件' });

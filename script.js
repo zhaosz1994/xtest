@@ -118,7 +118,6 @@ const TestCaseEditState = {
                 timestamp: Date.now()
             };
             sessionStorage.setItem(this.STORAGE_KEY, JSON.stringify(stateToSave));
-            console.log('编辑状态已保存到sessionStorage:', stateToSave);
         } catch (error) {
             logger.error('保存编辑状态失败:', error);
         }
@@ -138,7 +137,6 @@ const TestCaseEditState = {
             const savedState = sessionStorage.getItem(this.STORAGE_KEY);
             if (savedState) {
                 const state = JSON.parse(savedState);
-                console.log('从sessionStorage加载编辑状态:', state);
                 return state;
             }
         } catch (error) {
@@ -150,7 +148,6 @@ const TestCaseEditState = {
     clear() {
         try {
             sessionStorage.removeItem(this.STORAGE_KEY);
-            console.log('编辑状态已清除');
         } catch (error) {
             logger.error('清除编辑状态失败:', error);
         }
@@ -324,8 +321,6 @@ const Router = {
         const routeName = this.getCurrentRoute();
         const route = this.routes[routeName];
 
-        console.log('[Router] 路由变化:', routeName, route);
-        console.log('[Router] 是否已认证:', this.isAuthenticated());
 
         if (!route) {
             logger.warn('[Router] 未知路由，跳转到默认页面');
@@ -334,13 +329,11 @@ const Router = {
         }
 
         if (route.requiresAuth && !this.isAuthenticated()) {
-            console.log('[Router] 需要登录，跳转到登录页');
             this.navigateTo('login');
             return;
         }
 
         if (route.requiresAdmin && !this.isAdmin()) {
-            console.log('[Router] 需要管理员权限');
             showErrorMessage('只有管理员才能访问此页面');
             this.navigateTo(this.defaultRoute);
             return;
@@ -348,19 +341,16 @@ const Router = {
 
         if (!route.requiresAuth && this.isAuthenticated()) {
             if (routeName === 'login' || routeName === 'register') {
-                console.log('[Router] 已登录，跳转到首页');
                 this.navigateTo(this.defaultRoute);
                 return;
             }
         }
 
         if (route.external && route.url) {
-            console.log('[Router] 外部链接，跳转到:', route.url);
             window.location.href = route.url;
             return;
         }
 
-        console.log('[Router] 显示页面:', route.section);
         this.showSection(route.section, route.title);
 
         document.title = route.title + ' - xTest';
@@ -393,7 +383,6 @@ const Router = {
             const urlLibraryId = parseInt(libraryIdMatch[1]);
             const library = caseLibraries.find(lib => lib.id == urlLibraryId);
             if (library) {
-                console.log('[Router.showSection] 从URL恢复用例库详情:', library.name, 'ID:', urlLibraryId);
                 currentCaseLibraryId = urlLibraryId;
 
                 // 更新当前用例库名称显示
@@ -475,7 +464,6 @@ const Router = {
     },
 
     showLoginSection() {
-        console.log('[Router] 显示登录页面');
         
         document.querySelectorAll('section').forEach(section => {
             section.style.display = 'none';
@@ -489,7 +477,6 @@ const Router = {
         const loginSection = document.getElementById('login-section');
         if (loginSection) {
             loginSection.style.display = 'flex';
-            console.log('[Router] 显示login-section');
         } else {
             logger.error('[Router] 未找到login-section元素');
         }
@@ -546,7 +533,6 @@ const apiCache = {
         if (this.timestamps.hasOwnProperty(key)) {
             delete this.timestamps[key];
         }
-        console.log(`[缓存清除] ${key}`);
     },
 
     deleteByPrefix(prefix) {
@@ -559,7 +545,6 @@ const apiCache = {
             }
         });
         if (count > 0) {
-            console.log(`[缓存批量清除] 前缀 "${prefix}" 匹配 ${count} 条缓存`);
         }
     },
 
@@ -714,10 +699,8 @@ const dashboardDataCache = {
 
         if (changeType === 'any') {
             this.clear();
-            console.log('[缓存失效] 数据已变更，清除所有缓存');
         } else if (keyMapping[changeType]) {
             this.invalidateKey(keyMapping[changeType]);
-            console.log(`[缓存失效] ${changeType} 数据已变更，清除对应缓存`);
         }
     }
 };
@@ -873,7 +856,6 @@ function initSearchEvents() {
     const testCaseSearchInput = document.getElementById('testcase-search-input');
     if (testCaseSearchInput) {
         const debouncedTestCaseSearch = debounce((value) => {
-            console.log('🔍 触发[测试用例]搜索，关键字:', value);
             testCaseSearchKeyword = value.trim();
             currentTestCasePage = 1; // 重置页码
             // 重新加载测试用例列表
@@ -2257,7 +2239,6 @@ function showSuccessMessage(message) {
             }, 300);
         }, 2000);
     } else {
-        console.log('成功:', message);
     }
 }
 
@@ -2275,7 +2256,6 @@ function showToast(message, type = 'info') {
             showErrorMessage(message);
             break;
         default:
-            console.log('提示:', message);
             showSuccessMessage(message);
     }
 }
@@ -2384,7 +2364,6 @@ async function refreshToken() {
             localStorage.setItem('authToken', authToken);
             localStorage.setItem('currentUser', JSON.stringify(currentUser));
             
-            console.log('[Token刷新] Token已自动刷新');
             return true;
         }
         
@@ -2403,11 +2382,9 @@ async function apiRequest(endpoint, options = {}) {
     if (method === 'GET' && useCache) {
         const cached = apiCache.get(endpoint);
         if (cached) {
-            console.log(`[缓存命中] ${endpoint}`);
             return cached;
         }
     } else if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
-        console.log(`[API请求] ${method} ${endpoint}`);
     }
 
     const url = `${API_BASE_URL}${endpoint}`;
@@ -2431,14 +2408,12 @@ async function apiRequest(endpoint, options = {}) {
         if (!response.ok) {
             // 如果是403错误且不是刷新token的请求，尝试刷新token
             if (response.status === 403 && !skipRetry && authToken) {
-                console.log('[API请求] Token可能已过期，尝试刷新...');
                 
                 const refreshed = await refreshToken();
                 
                 if (refreshed) {
                     // 使用新token重试请求
                     headers['Authorization'] = `Bearer ${authToken}`;
-                    console.log('[API请求] 使用新token重试请求');
                     
                     const retryResponse = await fetch(url, {
                         ...options,
@@ -2457,7 +2432,6 @@ async function apiRequest(endpoint, options = {}) {
                     }
                 } else {
                     // Token刷新失败，清除登录状态并跳转到登录页
-                    console.log('[API请求] Token刷新失败，需要重新登录');
                     authToken = null;
                     currentUser = null;
                     localStorage.removeItem('authToken');
@@ -2712,7 +2686,6 @@ function initWebSocket() {
 
         // 连接成功
         socket.on('connect', () => {
-            console.log('WebSocket连接成功');
             // 如果用户已登录，发送登录事件
             if (currentUser && currentUser.username) {
                 socket.emit('login', {
@@ -2720,11 +2693,11 @@ function initWebSocket() {
                     userId: currentUser.id
                 });
             }
+            initReviewSocketListeners();
         });
 
         // 连接失败
         socket.on('disconnect', () => {
-            console.log('WebSocket连接断开');
         });
 
         // 连接错误
@@ -2734,7 +2707,6 @@ function initWebSocket() {
 
         // 重连成功
         socket.on('reconnect', (attemptNumber) => {
-            console.log('WebSocket重连成功，尝试次数:', attemptNumber);
             // 如果用户已登录，重新发送登录事件
             if (currentUser && currentUser.username) {
                 socket.emit('login', {
@@ -2751,13 +2723,11 @@ function initWebSocket() {
 
         // 监听用户登录
         socket.on('userConnected', (user) => {
-            console.log(`${user.username} 登录了`);
             updateOnlineUsersDisplay();
         });
 
         // 监听用户登出
         socket.on('userDisconnected', (user) => {
-            console.log(`${user.username} 登出了`);
             updateOnlineUsersDisplay();
         });
 
@@ -2775,13 +2745,11 @@ function initWebSocket() {
 
         // 监听测试点更新
         socket.on('testPointUpdated', (data) => {
-            console.log('测试点更新:', data);
             // 这里可以添加更新测试点的逻辑
         });
 
         // 监听模块更新
         socket.on('moduleUpdated', (data) => {
-            console.log('模块更新:', data);
             // 这里可以添加更新模块的逻辑
             // 重新加载模块数据，确保显示最新的模块列表
             initModuleData();
@@ -2789,7 +2757,6 @@ function initWebSocket() {
 
         // 监听AI异步任务完成
         socket.on('ai_task_complete', (data) => {
-            console.log('AI异步任务完成:', data);
             handleAITaskComplete(data);
         });
     } catch (error) {
@@ -2801,7 +2768,6 @@ function initWebSocket() {
 // 更新在线用户显示
 function updateOnlineUsersDisplay() {
     // 这里可以添加更新在线用户显示的逻辑
-    console.log('在线用户:', onlineUsers.map(user => user.username));
 }
 
 // 测试计划数据
@@ -3377,8 +3343,6 @@ async function editTestPlan(planId) {
 
                 window.parentSelectedCounts = computeParentSelectedCounts(plan.cases);
 
-                console.log('编辑模式: 已加载用例ID数量:', window.selectedCases.size);
-                console.log('编辑模式: 父节点选中计数:', window.parentSelectedCounts);
             } else {
                 window.selectedCases = new Set();
                 window.selectedCasesHierarchy = {
@@ -3870,7 +3834,6 @@ function renderTestCasesTable() {
     const tableBody = document.getElementById('testplan-cases-body');
     
     if (!tableBody) {
-        console.log('[renderTestCasesTable] 当前页面不包含表格元素，跳过渲染');
         return;
     }
 
@@ -4015,7 +3978,6 @@ async function loadTestCases() {
         if (document.getElementById('cases-table-body')) {
             renderCasesTable();
         } else {
-            console.log('cases-table-body not found, skipping render');
         }
     } catch (error) {
         logger.error('加载用例错误:', error);
@@ -4080,7 +4042,6 @@ async function loadTestCases() {
 function renderCasesTable(filteredCases = null) {
     const tableBody = document.getElementById('cases-table-body');
     if (!tableBody) {
-        console.log('cases-table-body not found, skipping render');
         return;
     }
 
@@ -4143,7 +4104,6 @@ function renderProjectsList() {
     const reportsPanel = document.getElementById('reports-panel');
 
     if (!tableBody) {
-        console.log('projects-table-body元素不存在，跳过渲染');
         return;
     }
 
@@ -4174,7 +4134,6 @@ function renderProjectsList() {
 }
 // 选择项目并显示相关报告
 function selectProject(projectName) {
-    console.log('selectProject called with:', projectName);
     // 更新选中项目名称
     const selectedProjectNameElement = document.getElementById('selected-project-name');
     if (selectedProjectNameElement) {
@@ -4183,22 +4142,18 @@ function selectProject(projectName) {
 
     // 筛选该项目的报告
     const projectReports = testReports.filter(report => report.project === projectName);
-    console.log('Project reports found:', projectReports.length);
 
     // 显示右侧面板
     const reportsPanel = document.getElementById('reports-panel');
     if (reportsPanel) {
         reportsPanel.style.display = 'block';
-        console.log('Reports panel displayed');
     }
 
     // 渲染报告表格（带分页）
-    console.log('Calling renderProjectReports');
     renderProjectReports(projectReports, 1, 50);
 }
 // 渲染项目报告表格（支持分页）
 function renderProjectReports(reports, page = 1, pageSize = 50) {
-    console.log('renderProjectReports called with:', reports.length, 'reports');
     const tableBody = document.getElementById('project-reports-body');
     const reportsPanel = document.getElementById('reports-panel');
 
@@ -4245,7 +4200,6 @@ function renderProjectReports(reports, page = 1, pageSize = 50) {
     }
 
     // 渲染分页控件
-    console.log('Calling renderPagination');
     renderPagination('reports-pagination', page, totalPages, (newPage) => {
         renderProjectReports(reports, newPage, pageSize);
     });
@@ -4285,18 +4239,14 @@ function getStatusText(status) {
 
 // 渲染分页控件
 function renderPagination(containerId, currentPage, totalPages, pageChangeCallback, totalItems = 0) {
-    console.log('renderPagination called with:', containerId, currentPage, totalPages, totalItems);
     const container = document.getElementById(containerId);
     if (!container) {
-        console.log('Container not found, creating one');
         const parent = document.getElementById('project-reports-table');
         if (parent) {
-            console.log('Parent found:', parent.id);
             const paginationDiv = document.createElement('div');
             paginationDiv.id = containerId;
             paginationDiv.className = 'pagination-container';
             parent.parentNode.insertBefore(paginationDiv, parent.nextSibling);
-            console.log('Pagination container created');
         } else {
             logger.error('Parent element not found for pagination');
         }
@@ -4609,7 +4559,6 @@ async function initModuleSelection() {
         }
 
         // 这里可以添加模块选择UI的初始化逻辑
-        console.log('可用模块:', availableModules);
 
     } catch (error) {
         logger.error('初始化模块选择错误:', error);
@@ -4839,7 +4788,6 @@ async function submitNewModuleForm() {
             })
         });
 
-        console.log('添加模块:', moduleName, createData);
 
         if (createData.success) {
             closeAddModuleModal();
@@ -4870,11 +4818,6 @@ async function submitCloneModuleForm() {
         const sourceModuleId = document.getElementById('clone-source-module').value;
         const sourceLibraryId = document.getElementById('clone-source-library').value;
 
-        console.log('[克隆模块] 表单数据:', {
-            newModuleName,
-            sourceModuleId,
-            sourceLibraryId
-        });
 
         if (!newModuleName) {
             showErrorMessage('请输入新模块名称');
@@ -4896,14 +4839,6 @@ async function submitCloneModuleForm() {
         const clearProjects = document.getElementById('clone-clear-projects').checked;
         const clearExecutionRecords = document.getElementById('clone-clear-records').checked;
 
-        console.log('[克隆模块] 复选框状态:', {
-            includeLevel1Points,
-            includeTestCases,
-            clearTestStatus,
-            clearOwner,
-            clearProjects,
-            clearExecutionRecords
-        });
 
         // 如果勾选了测试用例但没有勾选一级测试点，提示用户
         if (includeTestCases && !includeLevel1Points) {
@@ -4931,14 +4866,12 @@ async function submitCloneModuleForm() {
             clearExecutionRecords
         };
 
-        console.log('[克隆模块] 请求参数:', requestBody);
 
         const result = await apiRequest('/modules/clone', {
             method: 'POST',
             body: JSON.stringify(requestBody)
         });
 
-        console.log('[克隆模块] API返回结果:', result);
 
         hideLoading();
 
@@ -4989,8 +4922,6 @@ async function loadModulesForReordering() {
         // 清空现有选项
         reorderList.innerHTML = '';
 
-        console.log('=== 加载模块数据用于重排序 ===');
-        console.log('当前用例库ID:', currentCaseLibraryId);
 
         // 使用apiRequest调用模块列表API
         const modulesData = await apiRequest('/modules/list', {
@@ -5002,18 +4933,14 @@ async function loadModulesForReordering() {
             })
         });
 
-        console.log('模块数据响应:', modulesData);
 
         let modules = [];
         if (modulesData && modulesData.success && modulesData.modules) {
             modules = modulesData.modules;
-            console.log('从API获取到的模块:', modules);
         } else {
-            console.log('API返回数据格式不正确或没有模块数据');
         }
 
         // 渲染模块
-        console.log('准备渲染模块:', modules.length, '个');
         modules.forEach((module, index) => {
             const li = document.createElement('li');
             li.className = 'reorder-item';
@@ -5029,10 +4956,8 @@ async function loadModulesForReordering() {
             li.addEventListener('drop', handleDrop);
 
             reorderList.appendChild(li);
-            console.log('已渲染模块:', module.name);
         });
 
-        console.log('渲染完成，列表子元素数量:', reorderList.children.length);
 
         if (modules.length === 0) {
             reorderList.innerHTML = '<li class="reorder-empty">暂无模块数据</li>';
@@ -5093,7 +5018,6 @@ async function submitReorderModulesForm() {
             return item.dataset.moduleId;
         });
 
-        console.log('调整后的模块顺序:', reorderedModules);
 
         // API调用逻辑
         const updateData = await apiRequest('/modules/reorder', {
@@ -5104,7 +5028,6 @@ async function submitReorderModulesForm() {
             })
         });
 
-        console.log('调整模块顺序结果:', updateData);
 
         if (updateData.success) {
             // 关闭模态框
@@ -5224,21 +5147,18 @@ function initModuleSearch() {
 function initDataEventListeners() {
     // 监听测试用例变更事件 - 刷新模块树统计
     DataEventManager.on(DataEvents.TEST_CASE_CHANGED, async (data) => {
-        console.log('[事件] 测试用例变更:', data);
         // 刷新模块树统计数字
         await initModuleData();
     });
 
     // 监听一级测试点变更事件 - 刷新模块树统计
     DataEventManager.on(DataEvents.LEVEL1_POINT_CHANGED, async (data) => {
-        console.log('[事件] 一级测试点变更:', data);
         // 刷新模块树统计数字
         await initModuleData();
     });
 
     // 监听执行记录变更事件 - 刷新测试用例列表
     DataEventManager.on(DataEvents.EXECUTION_RECORD_CHANGED, async (data) => {
-        console.log('[事件] 执行记录变更:', data);
         // 刷新测试用例列表
         if (selectedLevel1PointId) {
             const testCases = await getLevel2TestPoints(selectedLevel1PointId);
@@ -5248,7 +5168,6 @@ function initDataEventListeners() {
 
     // 监听仪表盘刷新事件
     DataEventManager.on(DataEvents.DASHBOARD_REFRESH, async (data) => {
-        console.log('[事件] 仪表盘刷新:', data);
         // 刷新仪表盘数据
         if (typeof loadDashboardData === 'function') {
             await loadDashboardData();
@@ -5257,7 +5176,6 @@ function initDataEventListeners() {
 
     // 监听模块变更事件 - 刷新模块树和仪表盘
     DataEventManager.on(DataEvents.MODULE_CHANGED, async (data) => {
-        console.log('[事件] 模块变更:', data);
         // 刷新模块树
         await initModuleData();
         // 同时触发仪表盘刷新
@@ -6119,7 +6037,6 @@ async function loadAllLevel1Points() {
         // 重置展开状态和缓存
         level1ExpandedItems = new Set();
         level1TestCasesCache = {};
-        console.log('[一级测试点] 已重置展开状态和缓存');
 
         selectedModuleId = null;
         currentLevel1Page = 1;
@@ -6145,7 +6062,6 @@ async function loadAllLevel1Points() {
         } else if (pointsData && pointsData.success && pointsData.level1Points) {
             fetchedPoints = pointsData.level1Points;
         } else {
-            console.log('API调用失败，使用空数据');
             fetchedPoints = [];
         }
 
@@ -6163,7 +6079,6 @@ async function loadAllLevel1Points() {
 
             // 保存到localStorage
             localStorage.setItem('level1Points', JSON.stringify(level1PointsWithModule));
-            console.log('一级测试点数据已保存到本地缓存');
 
             // 保存当前用例库ID
             localStorage.setItem('currentCaseLibraryId', JSON.stringify(currentCaseLibraryId));
@@ -6209,38 +6124,28 @@ async function loadLevel1Points(moduleId) {
             url += `?keyword=${encodeURIComponent(level1SearchKeyword)}`;
         }
 
-        console.log('[一级测试点] 请求URL:', url);
 
         // API调用逻辑 - 禁用缓存以获取最新数据
         const pointsData = await apiRequest(url, { useCache: false });
 
-        console.log('[一级测试点] API返回数据:', pointsData);
-        console.log('[一级测试点] 数据类型:', typeof pointsData);
 
         let fetchedPoints = [];
         if (Array.isArray(pointsData)) {
             fetchedPoints = pointsData;
-            console.log('[一级测试点] 数据是数组，长度:', fetchedPoints.length);
         } else if (pointsData && pointsData.testpoints) {
             fetchedPoints = pointsData.testpoints;
-            console.log('[一级测试点] 使用 testpoints 字段，长度:', fetchedPoints.length);
         } else if (pointsData && pointsData.success && pointsData.points) {
             fetchedPoints = pointsData.points;
-            console.log('[一级测试点] 使用 points 字段，长度:', fetchedPoints.length);
         } else if (pointsData && pointsData.success && pointsData.data) {
             fetchedPoints = pointsData.data;
-            console.log('[一级测试点] 使用 data 字段，长度:', fetchedPoints.length);
         } else if (pointsData && pointsData.success && pointsData.level1Points) {
             fetchedPoints = pointsData.level1Points;
-            console.log('[一级测试点] 使用 level1Points 字段，长度:', fetchedPoints.length);
         } else {
-            console.log('[一级测试点] API调用失败，使用空数据');
             fetchedPoints = [];
         }
 
         // 保存到全局变量
         level1Points = fetchedPoints;
-        console.log('[一级测试点] 已保存到全局变量，长度:', level1Points.length);
 
         // 将数据保存到本地缓存
         try {
@@ -6253,7 +6158,6 @@ async function loadLevel1Points(moduleId) {
 
             // 保存到localStorage
             localStorage.setItem('level1Points', JSON.stringify(level1PointsWithModule));
-            console.log('一级测试点数据已保存到本地缓存');
 
             // 保存当前用例库ID
             localStorage.setItem('currentCaseLibraryId', JSON.stringify(currentCaseLibraryId));
@@ -6283,14 +6187,12 @@ function updateLevel1PointsDisplay() {
         return;
     }
 
-    console.log('[一级测试点] 开始更新显示，总数据量:', level1Points.length);
 
     const totalPages = Math.ceil(level1Points.length / level1PointsPerPage);
     const startIndex = (currentLevel1Page - 1) * level1PointsPerPage;
     const endIndex = startIndex + level1PointsPerPage;
     const currentPagePoints = level1Points.slice(startIndex, endIndex);
 
-    console.log('[一级测试点] 当前页数据量:', currentPagePoints.length, '总页数:', totalPages);
 
     const headerHtml = `
         <div class="level1-list-header">
@@ -6394,12 +6296,13 @@ function updateLevel1PointsDisplay() {
 
 let level1ExpandedItems = new Set();
 let level1TestCasesCache = {};
+let level1ExpandLock = false;
 
 function initLevel1ExpandEvents() {
     document.querySelectorAll('.level1-expand-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            const pointId = btn.dataset.pointId;
+            const pointId = String(btn.dataset.pointId);
             toggleLevel1Expand(pointId);
         });
     });
@@ -6407,7 +6310,7 @@ function initLevel1ExpandEvents() {
     document.querySelectorAll('.level1-list-item').forEach(item => {
         item.addEventListener('click', (e) => {
             if (!e.target.closest('.level1-action-btn') && !e.target.closest('.level1-expand-btn')) {
-                const pointId = item.dataset.pointId;
+                const pointId = String(item.dataset.pointId);
                 toggleLevel1Expand(pointId);
             }
         });
@@ -6415,6 +6318,7 @@ function initLevel1ExpandEvents() {
 }
 
 async function toggleLevel1Expand(pointId) {
+    pointId = String(pointId);
     const item = document.querySelector(`.level1-list-item[data-point-id="${pointId}"]`);
     const container = document.querySelector(`.level1-test-cases-container[data-point-id="${pointId}"]`);
     
@@ -6543,10 +6447,18 @@ function renderLevel1TestCases(level1Id, testCases) {
 }
 
 function toggleExpandAllLevel1() {
-    const btn = document.getElementById('expand-all-level1-btn');
-    const allExpanded = level1ExpandedItems.size === level1Points.length && level1Points.length > 0;
+    if (level1ExpandLock) return;
     
-    if (allExpanded) {
+    const btn = document.getElementById('expand-all-level1-btn');
+    const visiblePointIds = [];
+    document.querySelectorAll('.level1-list-item[data-point-id]').forEach(item => {
+        visiblePointIds.push(String(item.dataset.pointId));
+    });
+    
+    const allVisibleExpanded = visiblePointIds.length > 0 && 
+        visiblePointIds.every(id => level1ExpandedItems.has(id));
+    
+    if (allVisibleExpanded) {
         level1ExpandedItems.clear();
         document.querySelectorAll('.level1-list-item').forEach(item => {
             item.classList.remove('expanded');
@@ -6556,12 +6468,17 @@ function toggleExpandAllLevel1() {
         });
         btn.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
     } else {
-        level1Points.forEach((point, index) => {
-            if (!level1ExpandedItems.has(point.id)) {
-                toggleLevel1Expand(point.id);
+        level1ExpandLock = true;
+        const promises = [];
+        visiblePointIds.forEach(pointId => {
+            if (!level1ExpandedItems.has(pointId)) {
+                promises.push(toggleLevel1Expand(pointId));
             }
         });
         btn.style.background = 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)';
+        Promise.all(promises).finally(() => {
+            level1ExpandLock = false;
+        });
     }
 }
 
@@ -6569,8 +6486,14 @@ function updateExpandAllLevel1Button() {
     const btn = document.getElementById('expand-all-level1-btn');
     if (!btn) return;
     
-    const allExpanded = level1ExpandedItems.size === level1Points.length && level1Points.length > 0;
-    btn.style.background = allExpanded ? 
+    const visiblePointIds = [];
+    document.querySelectorAll('.level1-list-item[data-point-id]').forEach(item => {
+        visiblePointIds.push(String(item.dataset.pointId));
+    });
+    
+    const allVisibleExpanded = visiblePointIds.length > 0 && 
+        visiblePointIds.every(id => level1ExpandedItems.has(id));
+    btn.style.background = allVisibleExpanded ? 
         'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' : 
         'linear-gradient(135deg, #10b981 0%, #059669 100%)';
 }
@@ -6897,8 +6820,6 @@ function openImagePreview(imageUrl) {
         e.stopPropagation();
         modal.remove();
     });
-
-    modal.querySelector('.image-preview-overlay').addEventListener('click', () => modal.remove());
 
     modal.addEventListener('wheel', (e) => {
         e.preventDefault();
@@ -7926,8 +7847,8 @@ async function saveTestCaseFromDrawer() {
             
             if (currentEditingTestCase && currentEditingTestCase.level1_id) {
                 delete level1TestCasesCache[currentEditingTestCase.level1_id];
-                if (level1ExpandedItems.has(currentEditingTestCase.level1_id)) {
-                    await loadLevel1TestCases(currentEditingTestCase.level1_id);
+                if (level1ExpandedItems.has(String(currentEditingTestCase.level1_id))) {
+                    await loadLevel1TestCases(String(currentEditingTestCase.level1_id));
                 }
             }
             
@@ -8285,7 +8206,6 @@ function resetFloatingPanelPosition() {
 // 刷新测试用例列表（搜索时调用）
 async function refreshTestCasesList() {
     if (!selectedLevel1PointId) {
-        console.log('没有选中的一级测试点，无法刷新');
         return;
     }
 
@@ -8325,7 +8245,6 @@ async function refreshTestCasesList() {
 async function getLevel2TestPoints(level1Id) {
     try {
         // 验证必要的ID
-        console.log('getLevel2TestPoints called with:', { level1Id, currentLibraryId, currentModuleId });
 
         let moduleId = currentModuleId;
         let libraryId = currentLibraryId;
@@ -8337,23 +8256,17 @@ async function getLevel2TestPoints(level1Id) {
 
         // 如果缺少moduleId，尝试从本地缓存中获取对应测试点的模块ID
         if (!moduleId && level1Id) {
-            console.log('尝试从本地缓存获取测试点的模块ID，level1Id:', level1Id);
 
             // 打印当前level1Points数组的内容，检查数据结构
-            console.log('当前level1Points数组长度:', level1Points.length);
             if (level1Points.length > 0) {
-                console.log('第一个测试点数据:', level1Points[0]);
             }
 
             try {
                 // 从本地缓存获取一级测试点数据
                 const cachedPointsJson = localStorage.getItem('level1Points');
-                console.log('本地缓存中的level1Points:', cachedPointsJson);
                 const cachedPoints = JSON.parse(cachedPointsJson || '[]');
 
-                console.log('解析后的本地缓存数据长度:', cachedPoints.length);
                 if (cachedPoints.length > 0) {
-                    console.log('本地缓存中第一个测试点数据:', cachedPoints[0]);
                 }
 
                 // 查找测试点，处理ID类型不匹配的情况
@@ -8362,10 +8275,8 @@ async function getLevel2TestPoints(level1Id) {
                 );
 
                 if (targetPoint) {
-                    console.log('找到的测试点数据:', targetPoint);
                     if (targetPoint.module_id) {
                         moduleId = targetPoint.module_id;
-                        console.log('从本地缓存获取到模块ID:', moduleId);
                     } else {
                         logger.error('测试点数据中没有module_id字段:', targetPoint);
                     }
@@ -8376,18 +8287,14 @@ async function getLevel2TestPoints(level1Id) {
                     );
 
                     if (currentPoint) {
-                        console.log('从当前数据数组找到的测试点:', currentPoint);
                         if (currentPoint.module_id) {
                             moduleId = currentPoint.module_id;
-                            console.log('从当前数据数组获取到模块ID:', moduleId);
                         } else {
                             logger.error('当前数据数组中的测试点没有module_id字段:', currentPoint);
                         }
                     } else {
                         // 尝试遍历查找，打印更多信息
-                        console.log('遍历所有当前测试点查找:', level1Id);
                         level1Points.forEach((point, index) => {
-                            console.log(`测试点${index}: id=${point.id}, type=${typeof point.id}, level1Id=${level1Id}, type=${typeof level1Id}, match=${String(point.id) === String(level1Id)}`);
                         });
 
                         logger.error('无法获取测试点的模块ID，测试点不在缓存或当前数据中');
@@ -8413,17 +8320,13 @@ async function getLevel2TestPoints(level1Id) {
 
         const pointsData = await apiRequest(url, { useCache: false });
 
-        console.log('API返回的测试用例数据:', pointsData);
 
         if (pointsData && pointsData.success && pointsData.testCases) {
-            console.log('获取到匹配的测试用例:', pointsData.testCases);
             return pointsData.testCases;
         } else if (Array.isArray(pointsData)) {
-            console.log('获取到匹配的测试用例数组:', pointsData);
             return pointsData;
         } else {
             // 加载失败时使用空数据
-            console.log('API调用失败，使用空数据');
             return [];
         }
     } catch (error) {
@@ -8809,7 +8712,6 @@ async function openTestCaseDetailModal(testCase) {
         selectedLevel1PointId = testCase.level1_id || testCase.level1Id || null;
         currentCaseLibraryId = testCase.library_id || testCase.libraryId || null;
 
-        console.log('开始加载下拉框选项...');
         
         // 先加载下拉框选项，再填充表单数据
         // 加载优先级
@@ -8830,7 +8732,6 @@ async function openTestCaseDetailModal(testCase) {
         const sourcesStr = Array.isArray(testCase.sources) ? testCase.sources.join(',') : (testCase.test_source || '');
         await loadSourcesForDetail(sourcesStr);
 
-        console.log('下拉框选项加载完成，开始填充表单数据...');
         
         // 填充表单数据（在下拉框加载完成后）
         document.getElementById('detail-case-name').value = testCase.name || '';
@@ -8848,7 +8749,6 @@ async function openTestCaseDetailModal(testCase) {
         document.getElementById('detail-case-created-at').value = formatDateTime(testCase.createdAt || testCase.created_at || '');
         document.getElementById('detail-case-updated-at').value = formatDateTime(testCase.updatedAt || testCase.updated_at || '');
         
-        console.log('表单数据填充完成');
         
         // 鷻加更详细的调试日志
         const nameInput = document.getElementById('detail-case-name');
@@ -8857,18 +8757,9 @@ async function openTestCaseDetailModal(testCase) {
         const preconditionInput = document.getElementById('detail-case-precondition');
         const purposeInput = document.getElementById('detail-case-purpose');
         
-        console.log('=== 表单元素值检查 ===');
-        console.log('name元素:', nameInput, '值:', nameInput ? nameInput.value : 'null');
-        console.log('priority元素:', priorityInput, '值:', priorityInput ? priorityInput.value : 'null');
-        console.log('type元素:', typeInput, '值:', typeInput ? typeInput.value : 'null');
-        console.log('precondition元素:', preconditionInput, '值:', preconditionInput ? preconditionInput.value : 'null');
-        console.log('purpose元素:', purposeInput, '值:', purposeInput ? purposeInput.value : 'null');
         
         // 检查标签页是否正确显示
         const basicTab = document.getElementById('tab-basic');
-        console.log('基本信息标签页:', basicTab);
-        console.log('标签页display:', basicTab ? basicTab.style.display : 'null');
-        console.log('标签页class:', basicTab ? basicTab.className : 'null');
 
         // 初始化标签页
         initCaseDetailTabs();
@@ -8889,18 +8780,9 @@ async function openTestCaseDetailModal(testCase) {
         const modal = document.getElementById('test-case-detail-modal');
         modal.style.display = 'block';
         
-        console.log('=== 模态框打开完成 ===');
-        console.log('模态框元素:', modal);
-        console.log('模态框display:', modal.style.display);
-        console.log('模态框可见性:', window.getComputedStyle(modal).display);
-        console.log('模态框宽度:', window.getComputedStyle(modal).width);
-        console.log('模态框高度:', window.getComputedStyle(modal).height);
         
         // 检查基本信息标签页的可见性
         const basicTabContent = document.getElementById('tab-basic');
-        console.log('基本信息标签页display:', window.getComputedStyle(basicTabContent).display);
-        console.log('基本信息标签页可见性:', window.getComputedStyle(basicTabContent).visibility);
-        console.log('基本信息标签页opacity:', window.getComputedStyle(basicTabContent).opacity);
 
         TestCaseEditState.setupAutoSave(testCase);
         
@@ -9381,12 +9263,9 @@ async function loadTestTypesForDetail(selectedType) {
 // 获取测试用例关联的项目详情
 async function getTestCaseProjectDetails(testCaseId) {
     try {
-        console.log('getTestCaseProjectDetails 被调用，testCaseId:', testCaseId);
         const endpoint = `/testcases/${testCaseId}/projects`;
-        console.log('调用API端点:', endpoint);
 
         const data = await apiRequest(endpoint, { useCache: false });
-        console.log('getTestCaseProjectDetails API返回:', JSON.stringify(data, null, 2));
 
         let projects = [];
 
@@ -9415,7 +9294,6 @@ async function getTestCaseProjectDetails(testCaseId) {
             projects = data.data;
         }
 
-        console.log('解析后的关联项目:', JSON.stringify(projects, null, 2));
         return projects;
     } catch (error) {
         logger.error('获取测试用例项目详情失败:', error);
@@ -9426,15 +9304,12 @@ async function getTestCaseProjectDetails(testCaseId) {
 
 async function loadTestCaseProjects(testCaseId) {
     try {
-        console.log('[loadTestCaseProjects] 开始加载，testCaseId:', testCaseId);
         const container = document.getElementById('detail-case-projects-list');
 
         if (!container) {
-            console.log('[loadTestCaseProjects] 关联项目容器不存在，跳过加载');
             return;
         }
 
-        console.log('[loadTestCaseProjects] 找到容器，开始加载数据...');
 
         container.innerHTML = `
             <div class="pa-loading">
@@ -9449,16 +9324,12 @@ async function loadTestCaseProjects(testCaseId) {
 
         try {
             associatedProjects = await getTestCaseProjectDetails(testCaseId);
-            console.log('[loadTestCaseProjects] 获取到的关联项目:', associatedProjects);
-            console.log('[loadTestCaseProjects] 关联项目数量:', associatedProjects ? associatedProjects.length : 0);
         } catch (error) {
             logger.error('[loadTestCaseProjects] 获取关联项目详情错误:', error);
         }
 
-        console.log('[loadTestCaseProjects] 检查条件: associatedProjects=', associatedProjects, 'length=', associatedProjects ? associatedProjects.length : 'null');
 
         if (!associatedProjects || associatedProjects.length === 0) {
-            console.log('[loadTestCaseProjects] 条件为真，显示"暂无关联项目"');
             container.innerHTML = `
                 <div class="empty-state">
                     <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -9471,7 +9342,6 @@ async function loadTestCaseProjects(testCaseId) {
             return;
         }
 
-        console.log('[loadTestCaseProjects] 条件为假，开始渲染项目列表...');
 
         let projectsHtml = '';
         associatedProjects.forEach(project => {
@@ -9531,7 +9401,6 @@ async function loadTestCaseProjects(testCaseId) {
 // 全选项目（注释掉，因为已经移除了复选框）
 function selectAllProjects() {
     try {
-        console.log('全选项目功能已禁用，因为已移除复选框');
         /*
         const container = document.getElementById('detail-case-projects-container');
         if (container) {
@@ -9549,7 +9418,6 @@ function selectAllProjects() {
 // 取消全选项目（注释掉，因为已经移除了复选框）
 function deselectAllProjects() {
     try {
-        console.log('取消全选项目功能已禁用，因为已移除复选框');
         /*
         const container = document.getElementById('detail-case-projects-container');
         if (container) {
@@ -9578,7 +9446,6 @@ function closeTestCaseDetailModal() {
     const caseIdInput = document.getElementById('detail-case-id');
     if (caseIdInput) {
         caseIdInput.value = '';
-        console.log('已清空detail-case-id输入框的值');
     }
 
     TestCaseEditState.clear();
@@ -10171,13 +10038,6 @@ function previewImageFullscreen(src) {
     
     document.body.appendChild(modal);
     
-    // 点击背景关闭
-    modal.addEventListener('click', function(e) {
-        if (e.target === modal) {
-            modal.remove();
-        }
-    });
-    
     // ESC 键关闭
     const handleEsc = function(e) {
         if (e.key === 'Escape') {
@@ -10247,7 +10107,6 @@ function previewImageFullscreen(src) {
 
 // 编辑执行记录
 async function editExecutionRecord(recordId) {
-    console.log('editExecutionRecord called:', recordId);
     
     // 从当前加载的记录中找到要编辑的记录
     const record = window.currentExecutionRecords ? window.currentExecutionRecords.find(r => r.id === recordId) : null;
@@ -10334,7 +10193,6 @@ async function editExecutionRecord(recordId) {
     `;
     
     document.body.appendChild(modal);
-    console.log('Edit modal created and appended');
     
     // 初始化编辑图片
     window.editRecordImages = (record.images || []).map(img => ({...img, status: 'done'}));
@@ -10599,13 +10457,6 @@ async function viewExecutionRecordDetail(event, recordId) {
     `;
     
     document.body.appendChild(modal);
-    
-    // 点击模态框背景关闭
-    modal.addEventListener('click', function(e) {
-        if (e.target === modal) {
-            closeRecordDetailModal();
-        }
-    });
 }
 
 // 关闭执行记录详情模态框
@@ -10672,7 +10523,6 @@ async function saveTestCaseDetail() {
             }
         }
 
-        console.log('saveTestCaseDetail被调用，testCaseId:', testCaseId, 'isNewCase:', isNewCase);
 
         // 获取 libraryId 和 moduleId（优先从 currentEditingTestCase 获取）
         let libraryId = currentCaseLibraryId;
@@ -10681,7 +10531,6 @@ async function saveTestCaseDetail() {
         if ((!libraryId || !moduleId) && window.currentEditingTestCase) {
             libraryId = libraryId || window.currentEditingTestCase.library_id || window.currentEditingTestCase.libraryId;
             moduleId = moduleId || window.currentEditingTestCase.module_id || window.currentEditingTestCase.moduleId;
-            console.log('从 currentEditingTestCase 获取 ID:', { libraryId, moduleId });
         }
 
         // 获取选中的测试阶段（从TagSelector组件获取）
@@ -10699,7 +10548,6 @@ async function saveTestCaseDetail() {
         // 获取选中的项目及其关联数据
         // 对于编辑用例详情页面，关联项目通过编辑按钮单独处理，这里不需要处理
         // 关联项目的保存逻辑已经在saveProjectAssociations函数中实现
-        console.log('编辑用例详情页面的关联项目通过编辑按钮单独处理，这里不直接处理页面上的关联项目信息');
 
         // 获取表单数据
         const formData = {
@@ -10741,14 +10589,12 @@ async function saveTestCaseDetail() {
 
         if (isNewCase) {
             // 新建用例，调用/cases/create端点
-            console.log('新建测试用例，调用/cases/create端点');
             saveData = await apiRequest('/cases/create', {
                 method: 'POST',
                 body: JSON.stringify(formData)
             });
         } else {
             // 编辑用例，调用/cases/update端点
-            console.log('编辑测试用例，调用/cases/update端点');
             saveData = await apiRequest('/cases/update', {
                 method: 'POST',
                 body: JSON.stringify(formData)
@@ -10772,7 +10618,6 @@ async function saveTestCaseDetail() {
                 if (uiLibraryId) {
                     libraryId = uiLibraryId;
                 }
-                console.log('从UI重新获取到的ID:', { libraryId, moduleId });
             }
         }
 
@@ -10806,24 +10651,17 @@ async function saveTestCaseDetail() {
             if (isNewCase && saveData.testCaseId) {
                 // 新建用例，使用返回的testCaseId
                 finalTestCaseId = saveData.testCaseId;
-                console.log('新建测试用例成功，返回的测试用例ID:', finalTestCaseId);
             }
 
             // 无论是新建用例还是编辑用例，都检查本地存储中的临时关联项目数据
-            console.log('检查本地存储中的临时关联项目数据...');
             const tempAssociations = sessionStorage.getItem('tempProjectAssociations');
-            console.log('从本地存储读取到的临时关联项目数据:', tempAssociations);
             if (tempAssociations) {
                 try {
                     const associations = JSON.parse(tempAssociations);
-                    console.log('解析后的临时关联项目数据:', associations);
 
                     if (associations.length > 0) {
                         // 调用API更新测试用例关联项目
                         try {
-                            console.log('准备保存临时关联项目到数据库，测试用例ID:', finalTestCaseId);
-                            console.log('API路径:', `/testcases/${finalTestCaseId}/projects`);
-                            console.log('API请求数据:', { associations });
 
                             // 调用API保存关联项目
                             const updateResponse = await apiRequest(`/testcases/${finalTestCaseId}/projects`, {
@@ -10831,12 +10669,9 @@ async function saveTestCaseDetail() {
                                 body: JSON.stringify({ associations })
                             });
 
-                            console.log('API响应:', updateResponse);
                             if (updateResponse.success) {
-                                console.log('临时关联项目保存成功');
                                 // 清除本地存储中的临时数据
                                 localStorage.removeItem('tempProjectAssociations');
-                                console.log('已清除本地存储中的临时关联项目数据');
                             } else {
                                 logger.error('临时关联项目保存失败:', updateResponse.message);
                                 showErrorMessage('关联项目保存失败: ' + updateResponse.message);
@@ -10846,17 +10681,13 @@ async function saveTestCaseDetail() {
                             showErrorMessage('关联项目保存失败: ' + error.message);
                         }
                     } else {
-                        console.log('解析后的临时关联项目数据为空数组，不需要保存');
                         localStorage.removeItem('tempProjectAssociations');
-                        console.log('已清除本地存储中的空临时关联项目数据');
                     }
                 } catch (parseError) {
                     logger.error('解析本地存储中的临时关联项目数据失败:', parseError);
                     localStorage.removeItem('tempProjectAssociations');
-                    console.log('已清除本地存储中的无效临时关联项目数据');
                 }
             } else {
-                console.log('本地存储中没有临时关联项目数据');
             }
 
             showSuccessMessage('测试用例保存成功');
@@ -10993,7 +10824,6 @@ function initLevel1PointModalResizer(type) {
     const resizer = document.getElementById(resizerId);
     const modalHeader = modalContent?.querySelector('.modal-header');
     
-    console.log('初始化调整大小功能:', { type, contentId, resizerId, modalContent: !!modalContent, resizer: !!resizer });
     
     if (!modalContent || !resizer) {
         console.warn('找不到模态框或调整手柄元素');
@@ -11001,7 +10831,6 @@ function initLevel1PointModalResizer(type) {
     }
     
     if (modalContent.dataset.resizerInitialized === 'true') {
-        console.log('调整大小功能已初始化，跳过');
         return;
     }
     modalContent.dataset.resizerInitialized = 'true';
@@ -11176,7 +11005,6 @@ async function submitAddLevel1PointForm() {
         // 检查登录状态
         if (!authToken) {
             // 尝试自动登录
-            console.log('未登录，尝试自动登录...');
             try {
                 const loginData = await apiRequest('/users/login', {
                     method: 'POST',
@@ -11186,12 +11014,10 @@ async function submitAddLevel1PointForm() {
                     })
                 });
 
-                console.log('自动登录结果:', loginData);
 
                 if (loginData.token) {
                     currentUser = loginData.user || { username: 'admin', role: '管理员' };
                     authToken = loginData.token;
-                    console.log('自动登录成功');
                 } else if (loginData.success === false && loginData.message) {
                     logger.error('自动登录失败:', loginData.message);
                 }
@@ -11207,8 +11033,6 @@ async function submitAddLevel1PointForm() {
             module_id: selectedModuleId
         };
 
-        console.log('准备添加一级测试点:', requestData);
-        console.log('登录状态:', authToken ? '已登录' : '未登录');
 
         // API调用逻辑 - 使用正确的端点
         let createData = null;
@@ -11218,20 +11042,17 @@ async function submitAddLevel1PointForm() {
                 body: JSON.stringify(requestData)
             });
 
-            console.log('API调用结果:', createData);
         } catch (error) {
             logger.error('API调用失败:', error);
         }
 
         // 检查API调用结果
         if (createData && (createData.message === '一级测试点添加成功' || createData.success)) {
-            console.log('[一级测试点] 添加成功，准备刷新列表');
 
             // 关闭模态框
             closeAddLevel1PointModal();
 
             // 重新加载一级测试点数据
-            console.log('[一级测试点] 调用 loadLevel1Points，moduleId:', selectedModuleId);
             await loadLevel1Points(selectedModuleId);
 
             // 发布事件：一级测试点变更
@@ -11260,7 +11081,6 @@ async function submitAddLevel1PointForm() {
                 }
             } else if (createData && createData.message === '访问令牌缺失' || createData.message === '访问令牌无效') {
                 // 令牌无效，尝试重新登录
-                console.log('令牌无效，尝试重新登录...');
                 try {
                     const loginData = await apiRequest('/users/login', {
                         method: 'POST',
@@ -11273,7 +11093,6 @@ async function submitAddLevel1PointForm() {
                     if (loginData.token) {
                         currentUser = loginData.user || { username: 'admin', role: '管理员' };
                         authToken = loginData.token;
-                        console.log('重新登录成功');
 
                         // 再次尝试添加测试点
                         const retryData = await apiRequest('/testpoints/level1/add', {
@@ -11298,7 +11117,6 @@ async function submitAddLevel1PointForm() {
                 }
 
                 // 尝试本地添加
-                console.log('API调用失败，尝试本地添加一级测试点');
 
                 // 创建新的测试点对象
                 const newPoint = {
@@ -11323,7 +11141,6 @@ async function submitAddLevel1PointForm() {
                 showSuccessMessage('一级测试点添加成功（本地）');
             } else {
                 // 其他错误，尝试本地添加
-                console.log('API调用失败，尝试本地添加一级测试点');
 
                 // 创建新的测试点对象
                 const newPoint = {
@@ -11411,28 +11228,24 @@ function editReportTemplate(templateId) {
 
 // 搜索测试用例
 function searchTestCases() {
-    console.log('搜索测试用例');
     // 这里可以实现搜索测试用例的功能
     showErrorMessage('搜索测试用例功能即将上线，敬请期待！');
 }
 
 // 搜索测试计划
 function searchTestPlans() {
-    console.log('搜索测试计划');
     // 这里可以实现搜索测试计划的功能
     showErrorMessage('搜索测试计划功能即将上线，敬请期待！');
 }
 
 // 搜索测试报告
 function searchTestReports() {
-    console.log('搜索测试报告');
     // 这里可以实现搜索测试报告的功能
     showErrorMessage('搜索测试报告功能即将上线，敬请期待！');
 }
 
 // 分析测试数据
 function analyzeTestData() {
-    console.log('分析测试数据');
     // 这里可以实现分析测试数据的功能
     showErrorMessage('分析测试数据功能即将上线，敬请期待！');
 }
@@ -11594,13 +11407,11 @@ async function submitUserForm() {
             body: JSON.stringify(formData)
         });
 
-        console.log(isEdit ? '编辑用户API响应:' : '创建用户API响应:', responseData);
 
         // 处理不同的返回格式
         const successMessage = isEdit ? '用户更新成功' : '用户添加成功';
         if (responseData.message === successMessage || responseData.success) {
             // 重新加载用户列表
-            console.log(isEdit ? '用户编辑成功，重新加载用户列表' : '用户创建成功，重新加载用户列表');
             await loadUsers();
 
             // 关闭模态框
@@ -11617,7 +11428,6 @@ async function submitUserForm() {
             // 对于编辑用户，如果错误信息是关于用户名已存在，我们可以忽略，因为用户名是不可修改的
             if (isEdit && responseData.message && responseData.message.includes('用户名已存在')) {
                 // 忽略用户名已存在错误，继续处理
-                console.log('忽略用户名已存在错误，继续处理编辑操作');
                 await loadUsers();
                 closeUserModal();
                 document.getElementById('add-user-form').reset();
@@ -11647,7 +11457,6 @@ let currentSearchTerm = '';
 // 加载用户列表
 async function loadUsers(searchTerm = '', page = 1) {
     try {
-        console.log('开始加载用户列表');
 
         currentSearchTerm = searchTerm;
         usersCurrentPage = page;
@@ -11657,10 +11466,8 @@ async function loadUsers(searchTerm = '', page = 1) {
             apiUrl += `&search=${encodeURIComponent(searchTerm)}`;
         }
 
-        console.log('调用API:', apiUrl);
         const usersData = await apiRequest(apiUrl, { useCache: false });
 
-        console.log('API响应:', usersData);
 
         if (Array.isArray(usersData)) {
             mockUsers = usersData;
@@ -11671,7 +11478,6 @@ async function loadUsers(searchTerm = '', page = 1) {
             usersTotal = usersData.pagination?.total || usersData.users.length;
             usersTotalPages = usersData.pagination?.totalPages || 1;
         } else if (usersData.message) {
-            console.log('后端返回错误信息:', usersData.message);
             mockUsers = [];
             usersTotal = 0;
             usersTotalPages = 0;
@@ -11684,7 +11490,6 @@ async function loadUsers(searchTerm = '', page = 1) {
         updateUsersConfig();
         updateUsersPagination();
 
-        console.log('用户列表加载完成');
     } catch (error) {
         logger.error('加载用户列表失败:', error);
         mockUsers = [];
@@ -11727,7 +11532,6 @@ function goToUsersPage(direction) {
 function updateUsersConfig() {
     const usersBody = document.getElementById('users-config-body');
     if (usersBody) {
-        console.log('更新用户管理页面表格');
 
         if (mockUsers && mockUsers.length > 0) {
             usersBody.innerHTML = mockUsers.map(user => {
@@ -11865,7 +11669,6 @@ async function searchUsers() {
 // 加载最近登录人员
 async function loadRecentLogins() {
     try {
-        console.log('加载最近登录人员');
 
         // 调用API获取真实的最近活动数据
         const historyData = await apiRequest('/history/list');
@@ -12230,7 +12033,7 @@ async function openBatchViewSelectModal() {
         modal.className = 'modal';
         modal.style.cssText = 'display: none; z-index: 99999;';
         modal.innerHTML = `
-            <div class="modal-overlay" onclick="closeBatchViewSelectModal()"></div>
+            <div class="modal-overlay"></div>
             <div class="modal-content" style="max-width: 480px; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.15);">
                 <div class="modal-header" style="padding: 20px 24px; border-bottom: 1px solid #f0f0f0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
                     <div style="display: flex; align-items: center; gap: 10px;">
@@ -12364,11 +12167,9 @@ async function onBatchViewLibraryChange() {
                     method: 'POST',
                     body: JSON.stringify({ libraryId })
                 });
-                console.log('批量查看-加载模块列表结果:', result);
                 if (result.success && result.modules) {
                     moduleSelect.innerHTML = '<option value="">请选择模块</option>';
                     result.modules.forEach(mod => {
-                        console.log('添加模块选项:', mod);
                         const option = document.createElement('option');
                         option.value = mod.id;
                         option.textContent = mod.name;
@@ -12459,7 +12260,6 @@ function confirmBatchViewSelection() {
     let moduleName = selectedOption ? (selectedOption.dataset.name || selectedOption.textContent || selectedOption.text || '') : '';
     const level1Name = level1Id ? level1Select.options[level1Select.selectedIndex].text : '';
     
-    console.log('确认批量查看选择:', { libraryId, moduleId, level1Id, libraryName, moduleName, level1Name });
     
     let url = `/batch-view-cases.html?moduleId=${moduleId}&libraryId=${libraryId}&moduleName=${encodeURIComponent(moduleName)}&libraryName=${encodeURIComponent(libraryName)}&returnUrl=${encodeURIComponent(window.location.href)}`;
     
@@ -12484,7 +12284,7 @@ async function openBatchCreateSelectModal() {
         modal.className = 'modal';
         modal.style.cssText = 'display: none; z-index: 99999;';
         modal.innerHTML = `
-            <div class="modal-overlay" onclick="closeBatchCreateSelectModal()"></div>
+            <div class="modal-overlay"></div>
             <div class="modal-content" style="max-width: 480px; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.15);">
                 <div class="modal-header" style="padding: 20px 24px; border-bottom: 1px solid #f0f0f0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
                     <div style="display: flex; align-items: center; gap: 10px;">
@@ -12746,7 +12546,7 @@ async function openAddTestCaseSelectModal() {
         modal.className = 'modal';
         modal.style.cssText = 'display: none; z-index: 99999;';
         modal.innerHTML = `
-            <div class="modal-overlay" onclick="closeAddCaseSelectModal()"></div>
+            <div class="modal-overlay"></div>
             <div class="modal-content" style="max-width: 480px; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.15);">
                 <div class="modal-header" style="padding: 20px 24px; border-bottom: 1px solid #f0f0f0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
                     <div style="display: flex; align-items: center; gap: 10px;">
@@ -13043,7 +12843,6 @@ async function openAddTestCaseModal() {
             return;
         }
 
-        console.log('[新建用例] 已选择模块ID:', selectedModuleId);
 
         // 重置步骤
         currentAddCaseStep = 1;
@@ -13129,7 +12928,6 @@ async function openAddTestCaseModal() {
 
         // 如果有选中的模块，确保测试用例能关联到该模块
         if (selectedModuleId) {
-            console.log('打开测试用例创建模态框，关联到模块:', selectedModuleId);
         }
 
         // 更新关联项目摘要
@@ -13179,7 +12977,6 @@ function updateAddCaseStepUI() {
 
     // 如果切换到步骤3（关联项目），更新关联项目摘要
     if (currentAddCaseStep === 3) {
-        console.log('[关联项目] 切换到步骤3，更新关联项目摘要');
         updateNewCaseProjectsSummary();
     }
 }
@@ -13251,11 +13048,8 @@ function updateNewCaseProjectsSummary() {
 
     // 从localStorage获取临时关联项目
     const tempAssociations = JSON.parse(localStorage.getItem('tempProjectAssociations') || '[]');
-    console.log('[关联项目] 从localStorage读取到的数据:', tempAssociations);
-    console.log('[关联项目] 关联项目数量:', tempAssociations.length);
 
     if (tempAssociations.length === 0) {
-        console.log('[关联项目] 没有关联项目，显示空状态');
         summaryContainer.innerHTML = `
             <div class="ac-projects-empty">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -13266,7 +13060,6 @@ function updateNewCaseProjectsSummary() {
             </div>
         `;
     } else {
-        console.log('[关联项目] 有关联项目，显示列表');
         summaryContainer.innerHTML = `
             <div class="ac-projects-table">
                 <table class="projects-summary-table">
@@ -13281,7 +13074,6 @@ function updateNewCaseProjectsSummary() {
                     </thead>
                     <tbody>
                         ${tempAssociations.map(assoc => {
-            console.log('[关联项目] 渲染关联项目:', assoc);
             const statusClass = assoc.status_id == 1 ? 'status-pending' : assoc.status_id == 3 ? 'status-completed' : 'status-active';
             const statusText = assoc.status_id == 1 ? '待开始' : assoc.status_id == 3 ? '已完成' : '进行中';
             return `
@@ -13325,20 +13117,16 @@ async function loadTestTypesForTestCase() {
         `;
 
         // 调用API加载测试类型
-        console.log('开始调用API获取测试类型列表...');
         try {
             const testTypesData = await apiRequest('/test-types/list');
-            console.log('API返回结果:', testTypesData);
 
             if (testTypesData && testTypesData.success && Array.isArray(testTypesData.testTypes)) {
                 // 清空现有选项
                 testTypeSelect.innerHTML = '';
 
-                console.log('获取到测试类型数量:', testTypesData.testTypes.length);
 
                 // 添加测试类型选项
                 testTypesData.testTypes.forEach(type => {
-                    console.log('添加测试类型:', type);
                     const option = document.createElement('option');
                     option.value = type.name; // 使用名称作为value，与test_cases表的type字段兼容
                     option.textContent = type.name;
@@ -13536,7 +13324,6 @@ async function loadModulesForTestCase() {
 async function loadTestProgresses() {
     try {
         const response = await apiRequest('/test-progresses/list', { useCache: false });
-        console.log('loadTestProgresses API返回:', response);
         // 处理多种可能的数据结构
         let testProgresses = [];
         if (response.success && response.data && response.data.success) {
@@ -13559,7 +13346,6 @@ async function loadTestProgresses() {
             testProgresses = response.data;
         }
 
-        console.log('解析后的testProgresses:', testProgresses);
         return testProgresses;
     } catch (error) {
         logger.error('加载测试进度列表错误:', error);
@@ -13569,7 +13355,6 @@ async function loadTestProgresses() {
             { id: 2, progress_id: 2, name: '未开始' },
             { id: 3, progress_id: 3, name: '测试中' }
         ];
-        console.log('使用默认测试进度数据:', defaultProgresses);
         return defaultProgresses;
     }
 }
@@ -13578,7 +13363,6 @@ async function loadTestProgresses() {
 async function loadTestStatuses() {
     try {
         const response = await apiRequest('/test-statuses/list', { useCache: false });
-        console.log('loadTestStatuses API返回:', response);
         // 处理多种可能的数据结构
         let testStatuses = [];
         if (response.success && response.data && response.data.success) {
@@ -13601,7 +13385,6 @@ async function loadTestStatuses() {
             testStatuses = response.data;
         }
 
-        console.log('解析后的testStatuses:', testStatuses);
         return testStatuses;
     } catch (error) {
         logger.error('加载测试状态列表错误:', error);
@@ -13611,7 +13394,6 @@ async function loadTestStatuses() {
             { id: 2, status_id: 2, name: 'FAIL' },
             { id: 3, status_id: 3, name: 'BLOCK' }
         ];
-        console.log('使用默认测试状态数据:', defaultStatuses);
         return defaultStatuses;
     }
 }
@@ -13623,7 +13405,6 @@ async function loadProjectsForAssociation() {
 
         if (!container) {
             // 容器不存在，显示普通日志，不显示错误信息
-            console.log('关联项目容器不存在，跳过加载');
             return;
         }
 
@@ -13715,31 +13496,25 @@ async function loadProjectsForAssociation() {
 function editProjectAssociations() {
     try {
         // 调试信息：函数被调用
-        console.log('editProjectAssociations 函数被调用');
 
         // 获取当前编辑的测试用例ID
         const caseIdInput = document.getElementById('detail-case-id');
 
         // 调试信息：输出caseIdInput元素
-        console.log('caseIdInput 元素:', caseIdInput);
 
         // 调试信息：输出caseIdInput的值
         if (caseIdInput) {
-            console.log('caseIdInput.value:', caseIdInput.value);
         } else {
-            console.log('caseIdInput 为 null/undefined');
         }
 
         // 如果找不到元素或者值为空，设置为'new'表示新建操作
         if (caseIdInput && caseIdInput.value) {
             currentEditingTestCaseId = caseIdInput.value;
         } else {
-            console.log('未找到测试用例ID，按新建操作处理');
             currentEditingTestCaseId = 'new';
         }
 
         // 调试信息：输出最终的currentEditingTestCaseId
-        console.log('最终的 currentEditingTestCaseId:', currentEditingTestCaseId);
 
         // 显示模态框
         const modal = document.getElementById('edit-project-associations-modal');
@@ -13770,7 +13545,6 @@ let currentEditingTestCaseId = null;
 // 打开编辑用例项目关联模态框
 function openEditTestCaseProjectAssociationsModal() {
     try {
-        console.log('openEditTestCaseProjectAssociationsModal 函数被调用');
 
         let caseId = null;
         const caseIdInput = document.getElementById('detail-case-id');
@@ -13787,11 +13561,9 @@ function openEditTestCaseProjectAssociationsModal() {
         if (caseId) {
             currentEditingTestCaseId = caseId;
         } else {
-            console.log('未找到测试用例ID，按新建操作处理');
             currentEditingTestCaseId = 'new';
         }
 
-        console.log('最终的 currentEditingTestCaseId:', currentEditingTestCaseId);
 
         // 打开模态框
         const modal = document.getElementById('edit-project-associations-modal');
@@ -14166,14 +13938,12 @@ async function saveProjectAssociations() {
 
         // 获取所有选中的行
         const selectedRows = tbody.querySelectorAll('.pa-table-row.selected');
-        console.log('选中的项目行数量:', selectedRows.length);
 
         const associations = [];
 
         // 遍历所有选中的行，收集关联数据
         selectedRows.forEach((row, index) => {
             const projectId = parseInt(row.dataset.projectId);
-            console.log(`项目行${index}的projectId:`, projectId);
 
             if (!isNaN(projectId)) {
                 // 获取其他关联数据
@@ -14194,12 +13964,10 @@ async function saveProjectAssociations() {
                     remark: remarkInput ? remarkInput.value : ''
                 };
 
-                console.log('收集到关联项目:', association);
                 associations.push(association);
             }
         });
 
-        console.log('最终收集到的关联项目:', associations);
 
         // 检查是否有window.currentEditingTestCase对象
         let isNewCase = true;
@@ -14214,11 +13982,9 @@ async function saveProjectAssociations() {
             testCaseId = currentEditingTestCaseId;
         }
 
-        console.log('保存关联项目，isNewCase:', isNewCase, 'testCaseId:', testCaseId);
 
         if (!isNewCase && testCaseId) {
             // 编辑现有用例，直接保存到数据库
-            console.log('编辑用例关联项目，保存到数据库');
             showLoading('保存关联项目...');
 
             const result = await apiRequest('/cases/projects/update', {
@@ -14232,9 +13998,7 @@ async function saveProjectAssociations() {
             if (result.success) {
                 showSuccessMessage('关联项目保存成功');
                 apiCache.delete(`/testcases/${testCaseId}/projects`);
-                console.log('已清除关联项目缓存');
                 localStorage.removeItem('tempProjectAssociations');
-                console.log('已清除本地存储中的临时关联项目数据');
                 closeEditProjectAssociationsModal();
                 loadTestCaseProjects(testCaseId);
                 if (document.getElementById('testcase-edit-drawer')?.classList.contains('open')) {
@@ -14247,14 +14011,10 @@ async function saveProjectAssociations() {
             hideLoading();
         } else {
             // 新建用例，保存到本地存储
-            console.log('[关联项目] 新建用例关联项目，保存到本地存储');
-            console.log('[关联项目] 保存的关联数据:', associations);
             localStorage.setItem('tempProjectAssociations', JSON.stringify(associations));
-            console.log('[关联项目] 已保存到localStorage，验证:', localStorage.getItem('tempProjectAssociations'));
             // 关闭模态框
             closeEditProjectAssociationsModal();
             // 更新新建用例页面的项目摘要
-            console.log('[关联项目] 准备调用 updateNewCaseProjectsSummary');
             updateNewCaseProjectsSummary();
             showSuccessMessage('关联项目已保存到本地，待测试用例保存时一并提交');
         }
@@ -14267,7 +14027,6 @@ async function saveProjectAssociations() {
 // 全选新建测试用例的项目（注释掉，因为已经移除了复选框）
 function selectAllNewCaseProjects() {
     try {
-        console.log('全选新建测试用例项目功能已禁用，因为已移除复选框');
         /*
         const container = document.getElementById('new-case-projects-container');
         if (container) {
@@ -14285,7 +14044,6 @@ function selectAllNewCaseProjects() {
 // 取消全选新建测试用例的项目（注释掉，因为已经移除了复选框）
 function deselectAllNewCaseProjects() {
     try {
-        console.log('取消全选新建测试用例项目功能已禁用，因为已移除复选框');
         /*
         const container = document.getElementById('new-case-projects-container');
         if (container) {
@@ -14327,7 +14085,6 @@ function closeTestCaseModal() {
     // 重置模态框位置
     resetAddCaseModalPosition();
 
-    console.log('[新建用例] 模态框已关闭，状态已重置');
 }
 
 // 初始化新建测试用例模态框的拖拽调整宽度功能
@@ -14462,19 +14219,15 @@ function resetAddCaseModalPosition() {
 // 提交测试用例表单
 async function submitTestCaseForm() {
     try {
-        console.log('=== 开始提交测试用例表单 ===');
         showLoading('创建测试用例中...');
 
         // 生成测试用例编号
         const caseId = generateTestCaseId();
-        console.log('Generated caseId:', caseId);
 
         // 从localStorage获取临时关联项目
         const tempAssociations = JSON.parse(localStorage.getItem('tempProjectAssociations') || '[]');
-        console.log('Temp associations from localStorage:', tempAssociations);
 
         // 获取表单数据
-        console.log('Getting form data...');
         const caseName = document.getElementById('case-name');
         const casePriority = document.getElementById('case-priority');
         const caseType = document.getElementById('case-type');
@@ -14491,12 +14244,6 @@ async function submitTestCaseForm() {
         const selectedMethods = TagSelector.getValues('case-methods-selector').map(id => parseInt(id));
         const selectedSources = TagSelector.getValues('case-sources-selector').map(id => parseInt(id));
 
-        console.log('Selected values:', {
-            phases: selectedPhases,
-            environments: selectedEnvironments,
-            methods: selectedMethods,
-            sources: selectedSources
-        });
 
         // 提取项目ID数组，兼容现有API
         const projectIds = tempAssociations.map(assoc => assoc.project_id);
@@ -14525,17 +14272,6 @@ async function submitTestCaseForm() {
             sources: selectedSources
         };
 
-        console.log('Form data:', formData);
-        console.log('[新建用例] 验证字段:', {
-            moduleId: formData.moduleId,
-            moduleIdType: typeof formData.moduleId,
-            selectedEnvironments: selectedEnvironments,
-            selectedEnvironmentsLength: selectedEnvironments.length,
-            selectedMethods: selectedMethods,
-            selectedMethodsLength: selectedMethods.length,
-            selectedModuleId: selectedModuleId,
-            selectedLevel1PointId: selectedLevel1PointId
-        });
 
         // 验证必填字段
         if (!formData.name) {
@@ -14559,17 +14295,14 @@ async function submitTestCaseForm() {
         }
 
         // 调用API创建测试用例
-        console.log('Calling API to create test case...');
 
         const createData = await apiRequest('/cases/create', {
             method: 'POST',
             body: JSON.stringify(formData)
         });
 
-        console.log('API response:', createData);
 
         if (createData.success) {
-            console.log('测试用例创建成功');
 
             // 清除本地存储中的临时关联项目数据（已在创建时一并保存）
             localStorage.removeItem('tempProjectAssociations');
@@ -14579,7 +14312,6 @@ async function submitTestCaseForm() {
 
             // 刷新一级测试点列表（更新测试用例数量统计）
             if (selectedModuleId) {
-                console.log('[新建用例] 刷新一级测试点列表');
                 await loadLevel1Points(selectedModuleId);
             }
 
@@ -14607,7 +14339,6 @@ async function submitTestCaseForm() {
         showErrorMessage('创建测试用例失败: ' + error.message);
     } finally {
         hideLoading();
-        console.log('=== 测试用例表单提交完成 ===');
     }
 }
 
@@ -14735,7 +14466,6 @@ async function loadReportDrawerData(reportId) {
                         `;
                     }
                 } catch (e) {
-                    console.log('获取统计数据失败:', e);
                 }
             }
 
@@ -14749,7 +14479,6 @@ async function loadReportDrawerData(reportId) {
                     }
                 }
             } catch (e) {
-                console.log('获取Markdown内容失败:', e);
             }
 
             let summaryHtml = '';
@@ -14784,7 +14513,6 @@ async function loadReportDrawerData(reportId) {
                     try {
                         renderedSummary = marked.parse(summaryContent);
                     } catch (e) {
-                        console.log('Markdown渲染失败:', e);
                     }
                 }
                 
@@ -14926,7 +14654,6 @@ async function loadReportDetail(reportId) {
                 extractSummaryFromMarkdown();
             }
         } catch (e) {
-            console.log('未找到Markdown内容');
         }
 
         // 使用新的统计API获取数据（支持所有维度的报告）
@@ -14942,7 +14669,6 @@ async function loadReportDetail(reportId) {
                 renderDefectsTable(statsData.failedCases || []);
             }
         } catch (e) {
-            console.log('未找到详细统计数据:', e);
             initReportCharts(null);
         }
     } catch (error) {
@@ -15010,7 +14736,6 @@ function extractSummaryFromMarkdown() {
                 try {
                     summaryDisplay.innerHTML = marked.parse(summaryContent);
                 } catch (e) {
-                    console.log('Markdown渲染失败:', e);
                     summaryDisplay.innerHTML = `<pre>${escapeHtml(summaryContent)}</pre>`;
                 }
             } else {
@@ -15027,7 +14752,6 @@ function updateDashboardCards(statistics) {
     const failCountEl = document.getElementById('report-fail-count');
     
     if (!totalCasesEl && !passRateEl && !notRunEl && !failCountEl) {
-        console.log('[updateDashboardCards] 当前页面不包含报告卡片元素，跳过更新');
         return;
     }
     
@@ -15094,7 +14818,6 @@ function renderMarkdownContent() {
 }
 
 async function generateReportFromTestPlan(testPlanId) {
-    console.log(`[生成报告] 开始生成测试报告，testPlanId: ${testPlanId}`);
     
     try {
         showLoading('正在提交报告生成任务...');
@@ -15121,7 +14844,6 @@ async function generateReportFromTestPlan(testPlanId) {
         }
 
         const jobId = asyncResult.jobId;
-        console.log(`[生成报告] 任务已提交，jobId: ${jobId}`);
 
         let progress = 0;
         let message = '任务已提交';
@@ -15553,7 +15275,6 @@ function openBugDetail(bugId) {
 
 // 添加用例库
 function addCaseLibrary() {
-    console.log('添加用例库');
     // 打开新建用例库模态框
     const modal = document.getElementById('add-case-library-modal');
     if (modal) {
@@ -15571,14 +15292,11 @@ async function loadCaseLibraries() {
     try {
         showLoading('加载用例库列表中...');
 
-        console.log('加载用例库列表');
 
         const librariesData = await apiRequest('/libraries/list', { useCache: false });
 
-        console.log('从API获取的用例库数据:', librariesData);
 
         if (librariesData.success && librariesData.libraries) {
-            console.log('成功加载用例库数量:', librariesData.libraries.length);
             caseLibraries = librariesData.libraries;
         } else {
             logger.warn('API加载失败，使用空数据');
@@ -15597,7 +15315,6 @@ async function loadCaseLibraries() {
 
 // 渲染用例库列表
 function renderCaseLibrariesTable() {
-    console.log('渲染用例库列表:', caseLibraries);
     const tableBody = document.getElementById('case-library-body');
 
     if (!tableBody) {
@@ -15629,7 +15346,6 @@ function renderCaseLibrariesTable() {
     }
 
     tableBody.innerHTML = caseLibraries.map(library => {
-        console.log('渲染用例库:', library);
         const moduleCount = library.moduleCount || library.module_count || 0;
 
         // 获取当前用户信息，判断是否为管理员
@@ -15847,12 +15563,6 @@ function showEditLibraryModal(libraryId, libraryName) {
         modal.remove();
     });
 
-    modal.addEventListener('click', function(e) {
-        if (e.target === modal) {
-            modal.remove();
-        }
-    });
-
     saveBtn.addEventListener('click', async function() {
         const newName = nameInput.value.trim();
         
@@ -15909,14 +15619,11 @@ function showEditLibraryModal(libraryId, libraryName) {
 
 // 删除用例库 - 高危操作，需要二次确认
 async function deleteLibrary(libraryId, libraryName) {
-    console.log('deleteLibrary 被调用:', { libraryId, libraryName });
 
     // 获取当前用户信息
     const user = getCurrentUserFull();
-    console.log('当前用户:', user);
 
     const isAdmin = user && (user.role === '管理员' || user.role === 'admin');
-    console.log('是否管理员:', isAdmin);
 
     if (!isAdmin) {
         showErrorMessage('权限不足：仅管理员可以删除用例库');
@@ -16055,7 +15762,6 @@ async function verifyCaseLibraryPersistence() {
     try {
         showLoading('验证数据库持久化中...');
 
-        console.log('开始验证用例库持久化...');
 
         // 清空本地缓存
         caseLibraries = [];
@@ -16063,10 +15769,8 @@ async function verifyCaseLibraryPersistence() {
         // 重新从数据库加载
         await loadCaseLibraries();
 
-        console.log('验证完成，当前用例库数量:', caseLibraries.length);
 
         if (caseLibraries.length > 0) {
-            console.log('持久化的用例库:', caseLibraries);
 
             // 更新计数显示
             const countElement = document.querySelector('.case-library-count');
@@ -16328,7 +16032,6 @@ function loadConfigPanelData(panelId) {
 
     const loader = dataLoaders[panelId];
     if (loader && typeof loader === 'function') {
-        console.log('加载配置面板数据:', panelId);
         loader();
     } else {
         logger.warn('未找到配置面板加载函数:', panelId);
@@ -17517,19 +17220,15 @@ document.addEventListener('click', function (e) {
 // 加载项目列表
 async function loadProjects() {
     try {
-        console.log('开始加载项目列表');
 
         try {
             // 尝试调用API加载项目列表
-            console.log('调用API: /projects/list');
             const projectsData = await apiRequest('/projects/list', { useCache: false });
 
-            console.log('API响应:', projectsData);
 
             // 处理不同的返回格式
             if (Array.isArray(projectsData)) {
                 // 后端直接返回项目数组
-                console.log('后端直接返回项目数组:', projectsData);
                 // 转换 snake_case 到 camelCase
                 projects = projectsData.map(project => ({
                     ...project,
@@ -17537,7 +17236,6 @@ async function loadProjects() {
                 }));
             } else if (projectsData.success && projectsData.projects) {
                 // 后端返回 { success: true, projects: [...] } 格式
-                console.log('后端返回标准格式:', projectsData.projects);
                 // 转换 snake_case 到 camelCase
                 projects = projectsData.projects.map(project => ({
                     ...project,
@@ -17545,11 +17243,9 @@ async function loadProjects() {
                 }));
             } else if (projectsData.message) {
                 // 后端返回错误信息
-                console.log('后端返回错误信息:', projectsData.message);
                 // 即使返回错误信息，也继续执行（可能是权限问题）
             } else {
                 // 加载失败时使用默认数据
-                console.log('API调用失败，使用默认数据');
                 // 如果没有项目数据，使用默认项目
                 if (projects.length === 0) {
                     projects = [
@@ -17569,22 +17265,18 @@ async function loadProjects() {
         }
 
         // 更新项目管理页面
-        console.log('更新项目管理页面');
         updateProjectsTable();
         // 更新测试报告页面的项目列表
         try {
             renderProjectsList();
         } catch (e) {
-            console.log('renderProjectsList跳过:', e.message);
         }
         // 更新测试计划模态框的项目多选组件
         loadProjectsToMultiSelect();
 
-        console.log('项目列表加载完成');
     } catch (error) {
         logger.error('加载项目列表失败:', error);
         // 加载失败时使用默认数据
-        console.log('捕获到错误，使用默认数据');
         // 如果没有项目数据，使用默认项目
         if (projects.length === 0) {
             projects = [
@@ -17592,13 +17284,11 @@ async function loadProjects() {
             ];
         }
         // 更新项目管理页面
-        console.log('更新项目管理页面');
         updateProjectsTable();
         // 更新测试报告页面的项目列表
         try {
             renderProjectsList();
         } catch (e) {
-            console.log('renderProjectsList跳过:', e.message);
         }
     }
 }
@@ -17607,7 +17297,6 @@ async function loadProjects() {
 function updateProjectsTable() {
     const projectsBody = document.getElementById('projects-config-body');
     if (projectsBody) {
-        console.log('更新项目管理页面表格');
 
         // 使用存储的项目数据
         if (projects && projects.length > 0) {
@@ -17799,7 +17488,6 @@ async function submitProjectForm() {
                 body: JSON.stringify(formData)
             });
 
-            console.log('创建项目API响应:', createData);
 
             // 处理不同的返回格式
             if (createData.message === '项目添加成功' || createData.success) {
@@ -17811,7 +17499,6 @@ async function submitProjectForm() {
                 projects.push(newProject);
 
                 // 重新加载项目列表
-                console.log('项目创建成功，重新加载项目列表');
                 await loadProjects();
 
                 // 关闭模态框
@@ -17830,7 +17517,6 @@ async function submitProjectForm() {
                 if (createData.message && (createData.message.includes('JSON') || createData.message.includes('DOCTYPE') || createData.message.includes('HTML') || createData.message.includes('token'))) {
                     logger.error('API返回非JSON响应，使用模拟数据:', createData.message);
                     // 模拟成功创建项目
-                    console.log('模拟项目创建成功，重新加载项目列表');
 
                     // 添加新项目到存储
                     const newProject = {
@@ -17870,7 +17556,6 @@ async function submitProjectForm() {
             projects.push(newProject);
 
             // 重新加载项目列表
-            console.log('模拟项目创建成功，重新加载项目列表');
             await loadProjects();
 
             // 关闭模态框
@@ -17943,7 +17628,6 @@ function updateEnvironmentTable(environments) {
 
 // 添加环境
 function addEnvironment() {
-    console.log('添加环境');
     const modal = document.getElementById('add-environment-modal');
     modal.style.display = 'block';
     // 重置表单和编辑状态
@@ -17953,7 +17637,6 @@ function addEnvironment() {
 
 // 添加测试方式
 function addTestMethod() {
-    console.log('添加测试方式');
     const modal = document.getElementById('add-test-method-modal');
     modal.style.display = 'block';
     // 重置表单和编辑状态
@@ -18318,7 +18001,6 @@ function loadProjectsToMultiSelect() {
     // 清空现有选项
     optionsContainer.innerHTML = '';
 
-    console.log('加载项目数据到多选组件:', projects);
 
     // 加载项目数据
     if (projects && projects.length > 0) {
@@ -18544,12 +18226,10 @@ async function login() {
 
             localStorage.setItem('authToken', authToken);
             localStorage.setItem('currentUser', JSON.stringify(currentUser));
-            console.log('[登录] Token已保存到localStorage');
 
             document.documentElement.classList.add('authenticated');
 
             localStorage.setItem('rememberedUsername', username);
-            console.log('[登录] 已记住用户名:', username);
 
             // 发送WebSocket登录事件
             if (socket && socket.connected) {
@@ -18596,19 +18276,15 @@ async function login() {
             }
 
             // 控制配置中心导航链接的显示
-            console.log('登录成功后，currentUser完整信息:', currentUser);
 
             // 查找所有导航链接，确认选择器是否正确
             const allNavLinks = document.querySelectorAll('.nav-left a.nav-item');
-            console.log('所有导航链接:', allNavLinks);
 
             const settingsLink = document.querySelector('.nav-left a[href="#/settings"]');
-            console.log('找到的配置中心链接元素:', settingsLink);
 
             if (settingsLink) {
                 // 所有登录用户都可以看到配置中心链接
                 settingsLink.style.display = 'block';
-                console.log('登录成功，显示配置中心链接');
             } else {
                 logger.error('未找到配置中心链接元素');
             }
@@ -18627,7 +18303,6 @@ async function login() {
             // 如果当前在配置中心页面，刷新配置数据
             const currentRoute = Router.getCurrentRoute();
             if (currentRoute === 'settings') {
-                console.log('[登录] 当前在配置中心，刷新数据');
                 applyMenuVisibilityByRole();
                 loadUsers();
                 loadProjects();
@@ -18697,7 +18372,6 @@ async function register() {
 
 // 登出功能
 function logout() {
-    console.log('[登出] 开始执行登出操作');
     
     if (socket && socket.connected && currentUser) {
         socket.emit('logout');
@@ -18712,8 +18386,6 @@ function logout() {
     localStorage.removeItem('currentUser');
     
     aiModelsCache = [];
-    console.log('[登出] 已清除localStorage和缓存数据');
-    console.log('[登出] currentUser:', currentUser, 'authToken:', authToken, 'aiModelsCache:', aiModelsCache);
 
     document.documentElement.classList.remove('authenticated');
 
@@ -18725,14 +18397,11 @@ function logout() {
     const settingsLink = document.querySelector('.nav-left a[href="#/settings"]');
     if (settingsLink) {
         settingsLink.style.display = 'none';
-        console.log('登出后，隐藏配置中心链接');
     }
 
     addHistoryRecord('登出', `用户 ${username} 登出系统`);
     
-    console.log('[登出] 准备导航到登录页面');
     Router.navigateTo('login');
-    console.log('[登出] 导航命令已执行，当前hash:', window.location.hash);
 }
 
 // 添加历史记录
@@ -18844,7 +18513,6 @@ function updateLastRefreshTime() {
 
 async function refreshDashboardData() {
     dashboardDataCache.clear();
-    console.log('[缓存清除] 用户手动刷新，清除所有缓存');
 
     const refreshBtn = document.querySelector('.btn-refresh-data');
     if (refreshBtn) {
@@ -19731,7 +19399,6 @@ function renderProgressBar(value, type = 'progress') {
 // 应用仪表板筛选器
 async function applyDashboardFilters() {
     const filters = getCurrentFilters();
-    console.log('应用筛选器:', filters);
     await updateStats();
 }
 
@@ -19755,7 +19422,6 @@ function resetDashboardFilters() {
 
 // 导出项目数据
 async function exportProjectData() {
-    console.log('导出项目数据');
     
     try {
         const filters = getCurrentFilters();
@@ -19787,7 +19453,6 @@ async function exportProjectData() {
 
 // 导出负责人数据
 async function exportOwnerData() {
-    console.log('导出负责人数据');
     
     try {
         const data = await apiRequest('/dashboard/owner-analysis');
@@ -20004,7 +19669,6 @@ function showSection(sectionId) {
         const urlLibraryId = parseInt(libraryIdMatch[1]);
         const library = caseLibraries.find(lib => lib.id == urlLibraryId);
         if (library) {
-            console.log('[showSection] 从URL恢复用例库详情:', library.name, 'ID:', urlLibraryId);
             currentCaseLibraryId = urlLibraryId;
 
             // 更新当前用例库名称显示
@@ -20093,7 +19757,6 @@ document.addEventListener('DOMContentLoaded', async function () {
         try {
             authToken = savedToken;
             currentUser = JSON.parse(savedUser);
-            console.log('[页面加载] 已从localStorage恢复登录状态:', currentUser.username);
 
             const userInfoElement = document.getElementById('user-info');
             if (userInfoElement) {
@@ -20147,7 +19810,6 @@ document.addEventListener('DOMContentLoaded', async function () {
         const usernameInput = document.getElementById('username');
         if (usernameInput) {
             usernameInput.value = rememberedUsername;
-            console.log('[登录] 已自动填充记住的用户名:', rememberedUsername);
         }
     }
 
@@ -20157,7 +19819,6 @@ document.addEventListener('DOMContentLoaded', async function () {
     // 恢复测试用例编辑状态
     const savedEditState = TestCaseEditState.load();
     if (savedEditState && savedEditState.testCase) {
-        console.log('检测到未保存的编辑状态，准备恢复...');
         
         setTimeout(async () => {
             try {
@@ -20195,19 +19856,15 @@ document.addEventListener('DOMContentLoaded', async function () {
     }
 
     // 根据当前用户角色控制配置中心导航链接的显示
-    console.log('页面加载时，currentUser:', currentUser);
 
     const settingsLink = document.querySelector('.nav-left a[href="#/settings"]');
-    console.log('页面加载时找到的配置中心链接:', settingsLink);
 
     if (settingsLink) {
         // 所有登录用户都可以看到配置中心链接
         if (currentUser) {
             settingsLink.style.display = 'block';
-            console.log('用户已登录，显示配置中心链接');
         } else {
             settingsLink.style.display = 'none';
-            console.log('用户未登录，隐藏配置中心链接');
         }
     }
 
@@ -20233,7 +19890,6 @@ document.addEventListener('DOMContentLoaded', async function () {
             const searchTerm = this.value.trim();
             if (searchTerm) {
                 // 这里可以实现全局搜索功能
-                console.log('全局搜索:', searchTerm);
                 // 可以根据当前页面进行相应的搜索
                 const currentSection = document.querySelector('section[style*="display: block"]');
                 if (currentSection) {
@@ -20254,7 +19910,6 @@ document.addEventListener('DOMContentLoaded', async function () {
     if (loginForm) {
         loginForm.addEventListener('submit', function (e) {
             e.preventDefault();
-            console.log('Login form submitted');
             login();
         });
     }
@@ -20264,7 +19919,6 @@ document.addEventListener('DOMContentLoaded', async function () {
     if (registerForm) {
         registerForm.addEventListener('submit', function (e) {
             e.preventDefault();
-            console.log('Register form submitted');
             register();
         });
     }
@@ -20276,7 +19930,6 @@ document.addEventListener('DOMContentLoaded', async function () {
             const href = e.target.getAttribute('href');
             // 从 href="#/dashboard" 格式中提取路由名称
             const routeName = href.replace(/^#\/?/, '');
-            console.log('[Navigation] 点击导航链接:', routeName);
 
             // 使用路由系统导航
             Router.navigateTo(routeName);
@@ -20352,7 +20005,6 @@ document.addEventListener('DOMContentLoaded', async function () {
     document.addEventListener('click', function (e) {
         if (e.target.id === 'add-case-button') {
             e.stopPropagation();
-            console.log('点击了添加用例按钮');
             addTestCase();
         }
     });
@@ -20361,7 +20013,6 @@ document.addEventListener('DOMContentLoaded', async function () {
     document.addEventListener('click', function (e) {
         if (e.target.id === 'add-case-library-btn') {
             e.stopPropagation();
-            console.log('点击了添加用例库按钮');
             addCaseLibrary();
         }
     });
@@ -20428,10 +20079,8 @@ document.addEventListener('DOMContentLoaded', async function () {
 
             if (library) {
                 let caseLibraryName = library.name;
-                console.log('点击用例库:', caseLibraryName);
 
                 currentCaseLibraryId = library.id;
-                console.log('设置当前用例库ID:', currentCaseLibraryId);
 
                 // 更新URL hash，保存当前用例库ID，以便刷新后能恢复
                 // 通过设置hash触发Router处理页面切换，避免重复调用showSection
@@ -20445,26 +20094,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (e.target.id === 'current-case-library' || e.target.closest('.case-library-breadcrumb')) {
             e.preventDefault();
             e.stopPropagation();
-            console.log('点击当前用例库名称，触发下拉菜单');
             toggleCaseLibraryDropdown();
-        }
-    });
-
-    // 点击模态框外部关闭
-    window.addEventListener('click', function (e) {
-        const testPlanModal = document.getElementById('add-testplan-modal');
-        if (e.target === testPlanModal) {
-            closeTestPlanModal();
-        }
-
-        const testReportModal = document.getElementById('add-testreport-modal');
-        if (e.target === testReportModal) {
-            closeTestReportModal();
-        }
-
-        const caseLibraryModal = document.getElementById('add-case-library-modal');
-        if (e.target === caseLibraryModal) {
-            closeCaseLibraryModal();
         }
     });
 
@@ -20493,7 +20123,6 @@ document.addEventListener('DOMContentLoaded', async function () {
 
 // 初始化测试管理页面数据
 function initDashboardData() {
-    console.log('初始化测试管理页面数据（优化版：减少重复请求）');
 
     dashboardDataCache.clear();
 
@@ -20663,7 +20292,6 @@ function addFilterChangeEvents() {
     [libraryFilter, projectFilter, ownerFilter].forEach(filter => {
         if (filter) {
             filter.addEventListener('change', () => {
-                console.log('筛选器变化，重新加载数据（无防抖）');
                 loadDashboardStats();
                 renderAllCharts();
             });
@@ -20673,7 +20301,6 @@ function addFilterChangeEvents() {
 
 function addFilterChangeEventsDebounced() {
     const debouncedReload = debounce(() => {
-        console.log('筛选器变化（防抖后），重新加载数据');
         dashboardDataCache.clear();
         loadDashboardDataUnified();
     }, 300);
@@ -20698,7 +20325,6 @@ async function loadDashboardStats() {
         const testreportCountEl = document.getElementById('testreport-count');
         
         if (!testcaseCountEl && !testplanCountEl && !testreportCountEl) {
-            console.log('[loadDashboardStats] 当前页面不包含统计元素，跳过加载');
             return;
         }
 
@@ -21164,7 +20790,6 @@ function initCaseFilters() {
             if (e.key === 'Enter') {
                 e.preventDefault();
                 // 这里可以添加用例库搜索的逻辑
-                console.log('用例库搜索:', this.value);
             }
         });
 
@@ -21849,7 +21474,6 @@ async function loadTestTypes() {
 
 // 添加测试类型
 function addTestType() {
-    console.log('添加测试类型');
     const modal = document.getElementById('add-test-type-modal');
     modal.style.display = 'block';
     // 重置表单和编辑状态
@@ -22029,7 +21653,6 @@ async function loadTestSoftwares() {
 
 // 添加测试软件
 function addTestSoftware() {
-    console.log('添加测试软件');
     const modal = document.getElementById('add-test-software-modal');
     modal.style.display = 'block';
     // 重置表单和编辑状态
@@ -22209,7 +21832,6 @@ async function loadTestPhases() {
 
 // 添加测试阶段
 function addTestPhase() {
-    console.log('添加测试阶段');
     const modal = document.getElementById('add-test-phase-modal');
     modal.style.display = 'block';
     // 重置表单和编辑状态
@@ -22389,7 +22011,6 @@ async function loadTestProgressConfigs() {
 
 // 添加测试进度
 function addTestProgress() {
-    console.log('添加测试进度');
     const modal = document.getElementById('add-test-progress-modal');
     modal.style.display = 'block';
     // 重置表单和编辑状态
@@ -22563,7 +22184,6 @@ async function loadTestStatusConfigs() {
 
 // 添加测试状态
 function addTestStatus() {
-    console.log('添加测试状态');
     const modal = document.getElementById('add-test-status-modal');
     modal.style.display = 'block';
     // 重置表单和编辑状态
@@ -22737,7 +22357,6 @@ async function loadPriorities() {
 
 // 添加优先级
 function addPriority() {
-    console.log('添加优先级');
     const modal = document.getElementById('add-priority-modal');
     modal.style.display = 'block';
     document.getElementById('add-priority-form').reset();
@@ -22886,23 +22505,16 @@ async function loadLevel1PointsForSorting() {
     try {
         showLoading('加载一级测试点数据中...');
 
-        console.log('=== 加载一级测试点数据用于排序 ===');
-        console.log('window.currentModule:', window.currentModule);
-        console.log('selectedModuleId:', typeof selectedModuleId !== 'undefined' ? selectedModuleId : '未定义');
 
         if (typeof selectedModuleId !== 'undefined' && selectedModuleId) {
             currentModuleId = selectedModuleId;
-            console.log('使用selectedModuleId:', currentModuleId);
         } else if (window.currentModule && window.currentModule.id) {
             currentModuleId = window.currentModule.id;
-            console.log('使用window.currentModule.id:', currentModuleId);
         }
 
         const apiUrl = `/testpoints/level1/${currentModuleId}`;
-        console.log('调用API:', apiUrl);
 
         const response = await apiRequest(apiUrl, { useCache: false });  // 删除后必须跳过缓存
-        console.log('API响应:', response);
 
         const sortableContainer = document.getElementById('level1-points-sortable');
         const countElement = document.getElementById('level1-sort-count');
@@ -22916,7 +22528,6 @@ async function loadLevel1PointsForSorting() {
 
         if (response.success) {
             const level1Points = response.level1Points || [];
-            console.log('解析到的一级测试点:', level1Points);
 
             if (countElement) {
                 countElement.textContent = level1Points.length;
@@ -23177,7 +22788,6 @@ async function saveLevel1PointsOrder() {
 
 // 编辑一级测试点
 async function editLevel1Point(pointId) {
-    console.log('编辑一级测试点:', pointId);
     closeEditLevel1PointsModal();
     await openEditLevel1PointModal(pointId);
 }
@@ -23445,9 +23055,6 @@ function showSummaryChoiceDialog(existingSummary) {
         dialog.querySelector('#ai-summary-cancel').onclick = () => { cleanup(); resolve('cancel'); };
         dialog.querySelector('#ai-summary-append').onclick = () => { cleanup(); resolve('append'); };
         dialog.querySelector('#ai-summary-replace').onclick = () => { cleanup(); resolve('replace'); };
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) { cleanup(); resolve('cancel'); }
-        });
     });
 }
 
@@ -23687,9 +23294,6 @@ function showKeyConfigChoiceDialog(existingConfig) {
         dialog.querySelector('#ai-kc-cancel').onclick = () => { cleanup(); resolve('cancel'); };
         dialog.querySelector('#ai-kc-append').onclick = () => { cleanup(); resolve('append'); };
         dialog.querySelector('#ai-kc-replace').onclick = () => { cleanup(); resolve('replace'); };
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) { cleanup(); resolve('cancel'); }
-        });
     });
 }
 
@@ -23722,9 +23326,6 @@ async function submitEditLevel1PointForm() {
             closeEditLevel1PointModal();
             // 同时刷新：排序弹窗列表 + 主页面一级测试点列表
             await loadLevel1PointsForSorting();
-            console.log('[编辑一级测试点] currentModuleId:', currentModuleId);
-            console.log('[编辑一级测试点] selectedModuleId:', typeof selectedModuleId !== 'undefined' ? selectedModuleId : '未定义');
-            console.log('[编辑一级测试点] window.currentModule:', window.currentModule);
             
             let moduleIdToRefresh = currentModuleId;
             if (!moduleIdToRefresh && typeof selectedModuleId !== 'undefined' && selectedModuleId) {
@@ -23734,7 +23335,6 @@ async function submitEditLevel1PointForm() {
                 moduleIdToRefresh = window.currentModule.id;
             }
             
-            console.log('[编辑一级测试点] 最终使用的 moduleId:', moduleIdToRefresh);
             
             if (moduleIdToRefresh) {
                 await loadLevel1Points(moduleIdToRefresh);
@@ -23876,9 +23476,6 @@ async function viewLevel1PointDetail(pointId) {
                 btn.addEventListener('click', () => {
                     detailModal.remove();
                 });
-            });
-            detailModal.querySelector('.modal-overlay').addEventListener('click', () => {
-                detailModal.remove();
             });
         } else {
             showErrorMessage('获取测试点详情失败');
@@ -24024,9 +23621,6 @@ async function showBugListModal(pointId) {
                 btn.addEventListener('click', () => {
                     bugModal.remove();
                 });
-            });
-            bugModal.querySelector('.modal-overlay').addEventListener('click', () => {
-                bugModal.remove();
             });
         } else {
             showErrorMessage('获取缺陷列表失败');
@@ -25444,7 +25038,6 @@ async function preloadAIModels() {
         const response = await apiRequest('/ai-models/list');
         if (response.success && response.models) {
             aiModelsCache = response.models;
-            console.log('[AI模型] 预加载成功，共', response.models.length, '个模型');
         }
     } catch (error) {
         logger.error('[AI模型] 预加载失败:', error);
@@ -26224,13 +25817,6 @@ async function loadFilterOptions() {
             renderSelectOptions('filter-type', data.types, '全部类型');
             renderSelectOptions('filter-status', data.statuses, '全部状态');
 
-            console.log('筛选器配置加载成功:', {
-                libraries: data.libraries?.length || 0,
-                priorities: data.priorities?.length || 0,
-                methods: data.methods?.length || 0,
-                types: data.types?.length || 0,
-                statuses: data.statuses?.length || 0
-            });
         }
     } catch (error) {
         logger.error('加载筛选器配置失败:', error);
@@ -26319,9 +25905,6 @@ async function autoExpandSelectedPaths() {
     const modulesToExpand = Array.from(window.selectedCasesHierarchy.modules || []);
     const level1PointsToExpand = Array.from(window.selectedCasesHierarchy.level1Points || []);
 
-    console.log('自动展开路径 - 用例库:', librariesToExpand);
-    console.log('自动展开路径 - 模块:', modulesToExpand);
-    console.log('自动展开路径 - 一级测试点:', level1PointsToExpand);
 
     // 展开用例库节点（一级）
     for (const libraryId of librariesToExpand) {
@@ -26368,7 +25951,6 @@ async function autoExpandSelectedPaths() {
     // 最后更新所有节点的勾选状态
     updateTreeCheckboxStates();
 
-    console.log('自动展开路径完成');
 }
 
 // 更新一级节点（用例库）的勾选状态
@@ -26848,7 +26430,6 @@ function bindAssetsTreeEvents() {
     // 使用事件委托：只在根容器绑定change事件
     treeContainer.addEventListener('change', handleTreeCheckboxChangeEvent);
 
-    console.log('资产树事件绑定完成（事件委托模式）');
 }
 
 // 事件委托处理函数
@@ -27486,12 +27067,10 @@ function updateCaseCount() {
 
 // 更新资源树的勾选状态（编辑测试计划时使用）
 function updateTreeCheckboxStates() {
-    console.log('updateTreeCheckboxStates 被调用, window.selectedCases.size:', window.selectedCases.size);
 
     // 获取所有四级用例节点
     const level4Nodes = document.querySelectorAll('#test-assets-tree .tree-node[data-level="4"]');
 
-    console.log('找到四级节点数量:', level4Nodes.length);
 
     level4Nodes.forEach(node => {
         let caseId = node.dataset.id;
@@ -27512,7 +27091,6 @@ function updateTreeCheckboxStates() {
                 node.classList.remove('partial');
             }
 
-            console.log(`四级节点勾选状态: caseId=${caseId}, isSelected=${isSelected}`);
         }
     });
 
@@ -27625,7 +27203,6 @@ let filterDebounceTimer = null;
 async function filterAssetsTree() {
     // 如果是编辑模式，不执行筛选（避免清空已选中的用例）
     if (window.currentEditingPlanId) {
-        console.log('编辑模式：跳过筛选，保留已选中用例');
         return;
     }
 
@@ -27646,7 +27223,6 @@ async function filterAssetsTree() {
 async function applyTraditionalFilter() {
     // 如果是编辑模式，不执行筛选（避免清空已选中的用例）
     if (window.currentEditingPlanId) {
-        console.log('编辑模式：跳过筛选，保留已选中用例');
         return;
     }
 
@@ -27895,7 +27471,6 @@ function showAIResultSummary(result) {
     }
 
     if (parts.length > 0) {
-        console.log('AI解析结果:', parts.join(' | '));
     }
 }
 
@@ -28074,7 +27649,6 @@ async function submitAdvancedTestPlan() {
         // 否则发送用例 ID 数组
         if (hasFilters && caseCount > MAX_CASES_TO_SEND) {
             // 只发送筛选条件，后端会根据筛选条件查询
-            console.log(`用例数量 ${caseCount} 超过限制 ${MAX_CASES_TO_SEND}，只发送筛选条件`);
         } else {
             // 发送用例 ID 数组
             requestBody.selectedCases = Array.from(window.selectedCases);
@@ -28894,7 +28468,6 @@ async function loadDrawerData() {
         const savedToken = localStorage.getItem('authToken');
         if (savedToken) {
             authToken = savedToken;
-            console.log('[loadDrawerData] 已从 localStorage 恢复 token');
         } else {
             logger.error('[loadDrawerData] 无法获取 token，请先登录');
             showToast('请先登录', 'error');
@@ -28914,7 +28487,6 @@ async function loadDrawerData() {
     }
     
     try {
-        console.log('[loadDrawerData] 开始加载数据...');
         
         // 并行加载所有数据以提高速度
         const [projectsRes, testPlansRes, modulesRes, librariesRes] = await Promise.all([
@@ -28941,14 +28513,12 @@ async function loadDrawerData() {
 
         if (librariesRes.success) {
             window.drawerLibraries = librariesRes.libraries || [];
-            console.log('[loadDrawerData] 用例库加载成功:', window.drawerLibraries.length, '个');
         } else {
             logger.error('[loadDrawerData] 用例库加载失败:', librariesRes.message);
         }
         
         // 标记数据已加载
         window.drawerDataLoaded = true;
-        console.log('[loadDrawerData] 数据加载完成');
         return true;
     } catch (error) {
         logger.error('加载抽屉数据失败:', error);
@@ -29202,7 +28772,6 @@ async function loadModulesByLibrary(libraryId) {
     moduleSelect.disabled = false;
 
     try {
-        console.log('[loadModulesByLibrary] 开始加载模块, libraryId:', libraryId);
         
         // 通过API获取用例库关联的模块
         const result = await apiRequest('/modules/search', {
@@ -29210,7 +28779,6 @@ async function loadModulesByLibrary(libraryId) {
             body: JSON.stringify({ libraryId: libraryId })
         });
 
-        console.log('[loadModulesByLibrary] API 返回结果:', result);
 
         if (!result) {
             moduleSelect.innerHTML = '<option value="">API 返回空结果</option>';
@@ -29225,7 +28793,6 @@ async function loadModulesByLibrary(libraryId) {
                     <option value="">请选择模块</option>
                     ${result.modules.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
                 `;
-                console.log('[loadModulesByLibrary] 加载了', result.modules.length, '个模块');
             }
         } else {
             moduleSelect.innerHTML = `<option value="">${result.message || '暂无模块'}</option>`;
@@ -29577,7 +29144,6 @@ function startTaskPolling(taskId, jobId) {
                 const status = result.status || 'processing';
                 const progress = result.progress || 0;
                 
-                console.log(`[任务轮询] taskId: ${taskId}, jobId: ${jobId}, status: ${status}, progress: ${progress}, reportId: ${result.reportId}`);
                 
                 updateAsyncTask(taskId, {
                     progress: progress,
@@ -29949,19 +29515,15 @@ async function deleteReport(reportId) {
 
     try {
         showLoading('删除中...');
-        console.log('开始删除报告, ID:', reportId);
         const result = await apiRequest(`/reports/${reportId}`, {
             method: 'DELETE'
         });
 
-        console.log('删除结果:', result);
 
         if (result.success) {
             showSuccessMessage('报告删除成功');
             dashboardDataCache.invalidateOnDataChange('report');
-            console.log('开始重新加载报告列表...');
             await loadReportsData();
-            console.log('报告列表重新加载完成');
             // 同时更新Dashboard统计
             if (typeof loadDashboardStats === 'function') {
                 loadDashboardStats();
@@ -30360,7 +29922,6 @@ async function loadDrawerCases(planId) {
 
     if (!casesList) return;
 
-    console.log('loadDrawerCases called with planId:', planId, 'type:', typeof planId);
 
     casesList.innerHTML = `
         <div style="padding: 40px; text-align: center; color: var(--color-text-secondary, #6b7280);">
@@ -30372,7 +29933,6 @@ async function loadDrawerCases(planId) {
     try {
         const result = await apiRequest(`/testplans/${planId}/cases?pageSize=10000`);
 
-        console.log('loadDrawerCases API result:', result.success, 'cases count:', result.cases?.length);
 
         if (result.success && result.cases) {
             drawerCasesData = result.cases;
@@ -30384,18 +29944,14 @@ async function loadDrawerCases(planId) {
             caseCount.textContent = drawerCasesData.length;
         }
 
-        console.log('loadDrawerCases drawerCasesData first item:', drawerCasesData[0]);
         renderDrawerCasesList(drawerCasesData, planId);
 
         const plan = testPlans.find(p => p.id === planId);
-        console.log('loadDrawerCases found plan:', plan ? 'yes' : 'no', 'plan id:', plan?.id);
         if (plan) {
             recalculatePlanStats(plan, drawerCasesData);
-            console.log('loadDrawerCases stats calculated:', { passedCases: plan.passedCases, failedCases: plan.failedCases, blockedCases: plan.blockedCases, pendingCases: plan.pendingCases });
             renderDrawerProgress(plan);
             updateDrawerActionButtons(plan);
         } else {
-            console.log('loadDrawerCases testPlans:', testPlans.map(p => p.id));
         }
 
     } catch (error) {
@@ -30577,7 +30133,6 @@ function getStatusText(status) {
 
 // 显示用例状态编辑器
 async function showCaseStatusEditor(caseId, planId, currentStatus, caseName) {
-    console.log('showCaseStatusEditor called:', { caseId, planId, currentStatus, caseName });
     
     const existingModal = document.getElementById('case-status-modal');
     if (existingModal) {
@@ -30605,7 +30160,6 @@ async function showCaseStatusEditor(caseId, planId, currentStatus, caseName) {
             }));
         }
     } catch (e) {
-        console.log('获取状态列表失败，使用默认值:', e);
     }
 
     const modal = document.createElement('div');
@@ -30646,7 +30200,6 @@ async function showCaseStatusEditor(caseId, planId, currentStatus, caseName) {
     `;
 
     document.body.appendChild(modal);
-    console.log('Modal created and appended:', modal);
     
     // 确保模态框可见
     setTimeout(() => {
@@ -30701,8 +30254,6 @@ async function saveCaseStatus(caseId, planId) {
     const newStatus = statusSelect.value;
     const errorMessage = errorMessageField ? errorMessageField.value : '';
 
-    console.log('saveCaseStatus - newStatus:', newStatus);
-    console.log('saveCaseStatus - sending to backend:', { status: newStatus, error_message: errorMessage });
 
     try {
         showLoading('保存中...');
@@ -30722,7 +30273,6 @@ async function saveCaseStatus(caseId, planId) {
             const numericCaseId = parseInt(caseId);
             const numericPlanId = parseInt(planId);
 
-            console.log('saveCaseStatusDebug', { currentDrawerPlanId, numericPlanId, numericCaseId, drawerCasesDataLength: drawerCasesData.length });
 
             if (currentDrawerPlanId !== numericPlanId) {
                 logger.warn('抽屉已切换到其他计划，跳过UI更新');
@@ -30730,17 +30280,14 @@ async function saveCaseStatus(caseId, planId) {
             }
 
             const caseItem = drawerCasesData.find(c => c.id === numericCaseId || c.caseId === numericCaseId);
-            console.log('caseItem found:', caseItem ? 'yes' : 'no', 'id type:', typeof caseItem?.id, 'caseId type:', typeof caseItem?.caseId);
             if (caseItem) {
                 caseItem.status = newStatus;
             } else {
-                console.log('drawerCasesData ids:', drawerCasesData.map(c => c.id));
             }
 
             renderDrawerCasesList(drawerCasesData, numericPlanId);
 
             const plan = testPlans.find(p => p.id === numericPlanId);
-            console.log('plan found:', plan ? 'yes' : 'no');
             if (plan) {
                 if (result.stats) {
                     plan.totalCases = result.stats.totalCases || 0;
@@ -31101,12 +30648,10 @@ function showImportDetailTab(tab) {
 
 // 关闭导入弹窗
 function closeImportExcelModal() {
-    console.log('closeImportExcelModal called');
     
     const modal = document.getElementById('import-excel-modal');
     if (modal) {
         modal.style.display = 'none';
-        console.log('modal hidden');
     }
     
     // 异步清理，不阻塞关闭
@@ -31126,7 +30671,6 @@ function closeImportExcelModal() {
         loadLevel1Points(currentModuleId).catch(e => logger.warn('刷新一级测试点失败:', e));
     }
     
-    console.log('closeImportExcelModal done');
 }
 
 // 重置导入表单
@@ -31813,7 +31357,6 @@ function closeExportOptionsModal() {
 
 // 加载导出模块列表
 async function loadExportModulesList() {
-    console.log('[导出模块列表] 开始加载, currentCaseLibraryId:', currentCaseLibraryId);
     
     try {
         const result = await apiRequest('/modules/list', {
@@ -31821,7 +31364,6 @@ async function loadExportModulesList() {
             body: JSON.stringify({ libraryId: currentCaseLibraryId, pageSize: 1000 })
         });
         
-        console.log('[导出模块列表] API返回结果:', result);
         
         if (result.success) {
             const listEl = document.getElementById('export-modules-list');
@@ -31833,7 +31375,6 @@ async function loadExportModulesList() {
             listEl.innerHTML = '';
             
             const modules = result.modules || [];
-            console.log('[导出模块列表] 模块数量:', modules.length);
             
             if (modules.length === 0) {
                 listEl.innerHTML = '<div style="text-align: center; color: #6b7280; padding: 20px;">当前用例库暂无模块</div>';
@@ -32430,7 +31971,6 @@ async function loadReviewHistory(caseId) {
         const response = await apiRequest(`/testcases/${caseId}/review-history`);
         
         if (currentReviewCaseId !== caseId) {
-            console.log('loadReviewHistory: caseId已变更，忽略此响应');
             return;
         }
         
@@ -32527,7 +32067,6 @@ function updateReviewStatus(data) {
 
 // 渲染评审历史 - 紧凑表格样式
 function renderReviewHistory(records) {
-    console.log('🔍 当前准备渲染的评审历史数量:', records ? records.length : 0, records);
     const container = document.getElementById('review-history-timeline');
 
     if (!container) {
@@ -32680,14 +32219,17 @@ function toggleReviewHistory(btn) {
 }
 
 function initReviewSocketListeners() {
-    // 复用全局socket变量，避免创建重复连接
     if (!socket) {
         logger.warn('WebSocket未初始化，等待连接...');
         return;
     }
 
+    if (socket._reviewListenersAttached) {
+        return;
+    }
+    socket._reviewListenersAttached = true;
+
     socket.on('review:submitted', (data) => {
-        console.log('收到评审提交通知:', data);
         if (data.reviewerId === currentUser.id) {
             showSuccessMessage(`${data.submitterName} 提交了一个测试用例待您评审`);
         }
@@ -32695,14 +32237,12 @@ function initReviewSocketListeners() {
     });
 
     socket.on('review:completed', (data) => {
-        console.log('收到评审完成通知:', data);
         showSuccessMessage(`${data.reviewerName} ${data.action === 'approve' ? '通过了' : '驳回了'}您的用例评审`);
         updatePendingReviewCount();
     });
 }
 
 function updatePendingReviewCount() {
-    console.log('更新待评审数量');
     const summaryCard = document.querySelector('.workspace-summary-card .pending-reviews');
     if (!summaryCard) return;
 
@@ -32715,8 +32255,6 @@ function updatePendingReviewCount() {
     countSpan.style.color = '#fa8c16';
 }
 
-initReviewSocketListeners();
-
 // ==================== 我的工作台功能 ====================
 
 let workspaceData = {
@@ -32728,7 +32266,6 @@ let workspaceData = {
 };
 
 async function initWorkspace() {
-    console.log('[Workspace] 初始化工作台');
     
     updateWorkspaceDate();
     updateWorkspaceUsername();
@@ -32775,7 +32312,6 @@ function switchWorkspaceTab(tabName) {
 }
 
 async function loadWorkspaceData() {
-    console.log('[Workspace] 开始加载工作台数据...');
     try {
         await Promise.all([
             loadWorkspaceSummary(),
@@ -32785,7 +32321,6 @@ async function loadWorkspaceData() {
             loadRecentActivities()
         ]);
         updateWorkspaceBadges();
-        console.log('[Workspace] 工作台数据加载完成');
     } catch (error) {
         logger.error('[Workspace] 加载数据失败:', error);
     }
@@ -33164,7 +32699,6 @@ function handleUrlAction() {
                 viewAllPendingReviews();
             } else {
                 // 未登录，不做任何操作，用户会看到登录页面
-                console.log('[URL Action] 用户未登录，等待登录后再执行操作');
             }
         }, 1000);
     } else if (action === 'review_case' && caseId) {
@@ -33177,7 +32711,6 @@ function handleUrlAction() {
                 // 已登录，打开用例详情页面
                 openTestCaseDetailModal({ id: parseInt(caseId) });
             } else {
-                console.log('[URL Action] 用户未登录，等待登录后再执行操作');
             }
         }, 1000);
     } else if (action === 'view_case' && caseId) {
@@ -33189,7 +32722,6 @@ function handleUrlAction() {
             if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
                 openTestCaseDetailModal({ id: parseInt(caseId) });
             } else {
-                console.log('[URL Action] 用户未登录，等待登录后再执行操作');
             }
         }, 1000);
     } else if (action === 'testcases') {
@@ -33247,7 +32779,6 @@ function handleUrlAction() {
         }, 1000);
     } else if (returnUrl) {
         // 处理returnUrl参数（用于登录后跳转）
-        console.log('[URL Action] 检测到returnUrl:', returnUrl);
     }
 }
 
@@ -33295,7 +32826,6 @@ function closeAllPendingReviewsModal() {
 }
 
 async function loadAllPendingReviews(showLoadingOverlay = false) {
-    console.log('[loadAllPendingReviews] 开始加载, showLoadingOverlay:', showLoadingOverlay);
     
     try {
         if (showLoadingOverlay) {
@@ -33308,11 +32838,9 @@ async function loadAllPendingReviews(showLoadingOverlay = false) {
             keyword: allPendingReviewsSearchKeyword
         });
         
-        console.log('[loadAllPendingReviews] 请求参数:', params.toString());
         
         const response = await apiRequest(`/testcases/review/pending?${params.toString()}`, { useCache: false });
         
-        console.log('[loadAllPendingReviews] API响应:', response);
         
         if (showLoadingOverlay) {
             hideLoading();
@@ -33322,7 +32850,6 @@ async function loadAllPendingReviews(showLoadingOverlay = false) {
             allPendingReviewsData = response.data.cases || [];
             allPendingReviewsTotal = response.data.pagination?.total || 0;
             
-            console.log('[loadAllPendingReviews] 数据更新完成, 数量:', allPendingReviewsData.length, ', 总数:', allPendingReviewsTotal);
             
             if (allPendingReviewsData.length === 0 && allPendingReviewsCurrentPage > 1 && allPendingReviewsTotal > 0) {
                 allPendingReviewsCurrentPage = 1;
@@ -33349,7 +32876,6 @@ function renderAllPendingReviewsList() {
     const countElement = document.getElementById('all-pending-reviews-count');
     const batchActionsDiv = document.getElementById('all-pending-reviews-batch-actions');
     
-    console.log('[renderAllPendingReviewsList] 开始渲染, container存在:', !!container, '数据数量:', allPendingReviewsData.length);
     
     if (!container) {
         logger.error('[renderAllPendingReviewsList] container不存在!');
@@ -33761,7 +33287,6 @@ async function quickApproveReview() {
     const caseId = currentEditingTestCaseId;
     const comment = document.getElementById('quick-review-comment').value;
     
-    console.log('[快速评审] 开始通过评审, caseId:', caseId);
     
     try {
         const response = await apiRequest(`/testcases/${caseId}/review`, {
@@ -33772,7 +33297,6 @@ async function quickApproveReview() {
             })
         });
         
-        console.log('[快速评审] API响应:', response);
         
         if (response.success) {
             showSuccessMessage(response.message || '评审通过');
@@ -33780,7 +33304,6 @@ async function quickApproveReview() {
             selectedAllPendingReviews.delete(caseId);
             selectedReviewCaseIds = selectedReviewCaseIds.filter(id => id !== caseId);
             
-            console.log('[快速评审] 清除workspace缓存并刷新数据...');
             apiCache.deleteByPrefix('/workspace');
             apiCache.deleteByPrefix('/testcases/review/pending');
             
@@ -33791,9 +33314,7 @@ async function quickApproveReview() {
             
             // 阻塞刷新当前页面的待评审列表
             if (typeof loadAllPendingReviews === 'function') {
-                console.log('[快速评审] 调用 loadAllPendingReviews...');
                 await loadAllPendingReviews();
-                console.log('[快速评审] 所有待评审用例刷新完成');
             } else {
                 logger.error('[快速评审] loadAllPendingReviews 函数不存在!');
             }
@@ -33810,7 +33331,6 @@ async function quickRejectReview() {
     const caseId = currentEditingTestCaseId;
     const comment = document.getElementById('quick-review-comment').value;
     
-    console.log('[快速评审] 开始驳回评审, caseId:', caseId);
     
     if (!comment || comment.trim().length < 1) {
         showErrorMessage('驳回原因不能为空');
@@ -33826,7 +33346,6 @@ async function quickRejectReview() {
             })
         });
         
-        console.log('[快速评审] API响应:', response);
         
         if (response.success) {
             showSuccessMessage(response.message || '已驳回');
@@ -33834,7 +33353,6 @@ async function quickRejectReview() {
             selectedAllPendingReviews.delete(caseId);
             selectedReviewCaseIds = selectedReviewCaseIds.filter(id => id !== caseId);
             
-            console.log('[快速评审] 清除workspace缓存并刷新数据...');
             apiCache.deleteByPrefix('/workspace');
             apiCache.deleteByPrefix('/testcases/review/pending');
             
@@ -33845,9 +33363,7 @@ async function quickRejectReview() {
             
             // 阻塞刷新当前页面的待评审列表
             if (typeof loadAllPendingReviews === 'function') {
-                console.log('[快速评审] 调用 loadAllPendingReviews...');
                 await loadAllPendingReviews();
-                console.log('[快速评审] 所有待评审用例刷新完成');
             }
         } else {
             showErrorMessage(response.message || '评审失败');
@@ -33959,7 +33475,6 @@ function clearReviewSelection() {
 }
 
 async function batchSubmitReview() {
-    console.log('[批量提交评审] 开始执行，已选用例:', selectedCaseIds);
     
     if (selectedCaseIds.length === 0) {
         showErrorMessage('请选择要提交评审的用例');
@@ -33971,13 +33486,10 @@ async function batchSubmitReview() {
         return;
     }
     
-    console.log('[批量提交评审] 准备打开对话框...');
     await openBatchSubmitReviewModal(selectedCaseIds);
-    console.log('[批量提交评审] openBatchSubmitReviewModal 执行完成');
 }
 
 async function openBatchSubmitReviewModal(caseIds) {
-    console.log('[批量提交评审] 打开对话框，已选择用例:', caseIds);
     
     const existingModal = document.getElementById('batch-submit-review-modal');
     if (existingModal) {
@@ -33988,9 +33500,7 @@ async function openBatchSubmitReviewModal(caseIds) {
     selectedReviewerNames = [];
 
     try {
-        console.log('[批量提交评审] 正在获取用户列表...');
         const usersResult = await apiRequest('/users/list');
-        console.log('[批量提交评审] 用户列表结果:', usersResult);
         
         let users = [];
         if (usersResult.success && usersResult.users) {
@@ -34000,7 +33510,6 @@ async function openBatchSubmitReviewModal(caseIds) {
             });
         }
         
-        console.log('[批量提交评审] 用户数量:', users.length);
 
         const modal = document.createElement('div');
         modal.className = 'modal-overlay';
@@ -34079,7 +33588,6 @@ async function openBatchSubmitReviewModal(caseIds) {
         `;
         
         document.body.appendChild(modal);
-        console.log('[批量提交评审] 对话框已添加到页面');
         
         const commentTextarea = document.getElementById('batch-review-comment');
         const commentCount = document.getElementById('batch-comment-count');

@@ -1,5 +1,6 @@
 const pool = require('../db');
 const crypto = require('crypto');
+const logger = require('./logger');
 
 class DedupService {
   constructor() {
@@ -196,7 +197,7 @@ class DedupService {
         return embedding;
       }
     } catch (error) {
-      console.error('生成embedding失败:', error.message);
+      logger.error('生成embedding失败', { error: error.message });
     }
 
     return null;
@@ -228,7 +229,7 @@ class DedupService {
 
       return response.data?.data?.[0]?.embedding || null;
     } catch (error) {
-      console.error('调用embedding API失败:', error.message);
+      logger.error('调用embedding API失败', { error: error.message });
       return null;
     }
   }

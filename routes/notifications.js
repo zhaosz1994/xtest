@@ -34,7 +34,7 @@ router.get('/unread', authenticateToken, async (req, res) => {
 router.get('/list', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    console.log('[通知API] 获取通知列表, 用户ID:', userId);
+
     
     const { page = 1, pageSize = 20 } = req.query;
     const offset = (page - 1) * pageSize;
@@ -64,7 +64,7 @@ router.get('/list', authenticateToken, async (req, res) => {
       LIMIT ${limitValue} OFFSET ${offsetValue}
     `, [userId]);
     
-    console.log('[通知API] 查询到通知数量:', notifications.length);
+
     
     const [countResult] = await pool.execute(
       'SELECT COUNT(*) as total FROM notifications WHERE user_id = ?',

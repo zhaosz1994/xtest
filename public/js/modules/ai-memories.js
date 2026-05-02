@@ -55,7 +55,6 @@ function aimemInjectStyles() {
 function initAIMemoriesConfig() {
     if (aiMemoriesInitialized) return;
     aiMemoriesInitialized = true;
-    console.log('[AI Memories] Initializing...');
 
     aimemInjectStyles();
 

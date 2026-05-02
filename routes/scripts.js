@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
-const { authenticateToken } = require('../middleware');
+const { authenticateToken, fixFilenameEncoding } = require('../middleware');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -257,7 +257,7 @@ router.delete('/testcases/scripts/:scriptId', authenticateToken, async (req, res
     }
 });
 
-router.post('/testcases/scripts/upload', authenticateToken, upload.single('file'), async (req, res) => {
+router.post('/testcases/scripts/upload', authenticateToken, upload.single('file'), fixFilenameEncoding, async (req, res) => {
     try {
         if (!req.file) {
             return res.json({ success: false, message: '请选择要上传的文件' });
@@ -309,7 +309,7 @@ router.get('/testcases/scripts/download/:scriptId', authenticateToken, async (re
         
         res.download(script.file_path, downloadName, (err) => {
             if (err) {
-                console.error('文件下载失败:', err);
+                logger.error('文件下载失败:', { error: err.message });
             }
         });
         

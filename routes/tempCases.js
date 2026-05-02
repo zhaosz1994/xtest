@@ -4,6 +4,7 @@ const { authenticateToken } = require('../middleware');
 const batchEditService = require('../services/batchEditService');
 const reviewService = require('../services/reviewService');
 const pool = require('../db');
+const logger = require('../services/logger');
 
 async function checkTaskAccess(taskId, userId, userRole) {
   const [tasks] = await pool.execute(`
@@ -129,7 +130,7 @@ router.get('/list/:taskId', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('[tempCases] /list error:', error);
+    logger.error('[tempCases] /list error:', { error: error.message });
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -310,7 +311,7 @@ router.post('/batch-merge', authenticateToken, async (req, res) => {
       return res.status(400).json({ success: false, message: '请选择要合并的用例' });
     }
 
-    console.log('[batch-merge] 开始合并:', { tempCaseIds, taskId, libraryId, user: req.user.username });
+    logger.debug('[batch-merge] 开始合并:', { tempCaseIds, taskId, libraryId, user: req.user.username });
 
     const result = await reviewService.batchMerge(tempCaseIds, {
       taskId,
@@ -320,10 +321,10 @@ router.post('/batch-merge', authenticateToken, async (req, res) => {
       creator: creator || req.user.username
     });
 
-    console.log('[batch-merge] 合并完成:', result);
+    logger.info('[batch-merge] 合并完成:', { result });
     res.json({ success: true, data: result });
   } catch (error) {
-    console.error('[batch-merge] 合并失败:', error);
+    logger.error('[batch-merge] 合并失败:', { error: error.message });
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -333,7 +334,7 @@ router.post('/submit-review/:taskId', authenticateToken, async (req, res) => {
     const { taskId } = req.params;
     const { reviewerIds, deadline, tempCaseIds, libraryId } = req.body;
 
-    console.log('[submit-review] 请求参数:', { taskId, reviewerIds, deadline, tempCaseIds: tempCaseIds?.length, libraryId });
+
 
     if (!reviewerIds || reviewerIds.length === 0) {
       return res.status(400).json({ success: false, message: '请选择评审人' });
@@ -347,7 +348,7 @@ router.post('/submit-review/:taskId', authenticateToken, async (req, res) => {
     }
 
     const effectiveTaskId = taskId === 'batch' ? (req.body.taskId || null) : taskId;
-    console.log('[submit-review] effectiveTaskId:', effectiveTaskId);
+
 
     if (libraryId && effectiveTaskId) {
       await pool.execute(`
@@ -356,10 +357,10 @@ router.post('/submit-review/:taskId', authenticateToken, async (req, res) => {
     }
 
     const result = await reviewService.submitForReview(effectiveTaskId, reviewerIds, deadline, tempCaseIds);
-    console.log('[submit-review] 提交成功:', result);
+    logger.info('[submit-review] 提交成功:', { result });
     res.json({ success: true, data: result });
   } catch (error) {
-    console.error('[submit-review] 提交失败:', error);
+    logger.error('[submit-review] 提交失败:', { error: error.message });
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -501,7 +502,7 @@ router.get('/all-active', authenticateToken, async (req, res) => {
       data: { cases, total, page: currentPage, pageSize: currentPageSize, stats }
     });
   } catch (error) {
-    console.error('[tempCases] /all-active error:', error);
+    logger.error('[tempCases] /all-active error:', { error: error.message });
     res.status(500).json({ success: false, message: error.message });
   }
 });

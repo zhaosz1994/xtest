@@ -74,7 +74,7 @@ const cors_config = {
         if (!origin || allowedOrigins.indexOf(origin) !== -1) {
             callback(null, true);
         } else {
-            console.warn(`[CORS] 拒绝来自 ${origin} 的请求`);
+            logger.warn(`[CORS] 拒绝来自 ${origin} 的请求`);
             callback(new Error('不允许的来源'));
         }
     },
@@ -264,7 +264,7 @@ app.post('/testpoints/level1/all', authenticateToken, async (req, res) => {
 // 直接在server.js中实现模块路由
 app.post('/api/modules/list', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到模块列表请求:', req.body);
+    logger.debug('接收到模块列表请求:', req.body);
     const { libraryId, page = 1, pageSize = 32 } = req.body;
     const offset = (page - 1) * pageSize;
     
@@ -293,12 +293,9 @@ app.post('/api/modules/list', authenticateToken, async (req, res) => {
       LIMIT ${parseInt(pageSize)} OFFSET ${parseInt(offset)}
     `;
     
-    console.log('执行SQL查询:', query);
-    console.log('查询参数:', params);
     
     const [modules] = await pool.query(query, params);
     
-    console.log('查询结果:', modules);
     
     res.json({ 
       success: true,
@@ -313,24 +310,21 @@ app.post('/api/modules/list', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     logger.error('获取模块列表错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 app.post('/api/modules/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建模块请求:', req.body);
+    logger.debug('接收到创建模块请求:', req.body);
     const { name, libraryId, parentId } = req.body;
     
     // 验证模块名唯一性
     if (libraryId) {
-      console.log('验证模块名唯一性:', { libraryId, name });
       const [existingModules] = await pool.execute(
         'SELECT COUNT(*) as count FROM modules WHERE library_id = ? AND name = ?',
         [libraryId, name]
       );
-      console.log('唯一性检查结果:', existingModules[0]);
       
       if (existingModules[0].count > 0) {
         logger.info('模块名已存在，拒绝创建');
@@ -353,7 +347,6 @@ app.post('/api/modules/create', authenticateToken, async (req, res) => {
       }
     }
     
-    console.log('插入新模块:', { name, libraryId, moduleId, orderIndex, parentId, createdBy: req.user.username });
     
     await pool.execute(
       'INSERT INTO modules (module_id, name, library_id, order_index, parent_id, created_by) VALUES (?, ?, ?, ?, ?, ?)',
@@ -375,24 +368,21 @@ app.post('/api/modules/create', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '模块添加成功' });
   } catch (error) {
     logger.error('添加模块错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 app.post('/api/modules/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新模块请求:', req.body);
+    logger.debug('接收到更新模块请求:', req.body);
     const { id, name, libraryId } = req.body;
     
     // 验证模块名唯一性
     if (libraryId) {
-      console.log('验证模块名唯一性:', { libraryId, name, id });
       const [existingModules] = await pool.execute(
         'SELECT COUNT(*) as count FROM modules WHERE library_id = ? AND name = ? AND id != ?',
         [libraryId, name, id]
       );
-      console.log('唯一性检查结果:', existingModules[0]);
       
       if (existingModules[0].count > 0) {
         logger.info('模块名已存在，拒绝更新');
@@ -400,7 +390,6 @@ app.post('/api/modules/update', authenticateToken, async (req, res) => {
       }
     }
     
-    console.log('更新模块:', { id, name });
     
     await pool.execute(
       'UPDATE modules SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
@@ -410,7 +399,6 @@ app.post('/api/modules/update', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '模块更新成功', data: { id, name } });
   } catch (error) {
     logger.error('更新模块错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误' });
   }
 });
@@ -556,7 +544,6 @@ app.post('/api/modules/delete', authenticateToken, async (req, res) => {
   } catch (error) {
     await connection.rollback();
     logger.error('删除模块错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.status(500).json({ success: false, message: '服务器错误' });
   } finally {
     connection.release();
@@ -565,7 +552,7 @@ app.post('/api/modules/delete', authenticateToken, async (req, res) => {
 
 app.post('/api/modules/search', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到模块搜索请求:', req.body);
+    logger.debug('接收到模块搜索请求:', req.body);
     const { libraryId, searchTerm, page = 1, pageSize = 32 } = req.body;
     const offset = (page - 1) * pageSize;
     
@@ -600,12 +587,9 @@ app.post('/api/modules/search', authenticateToken, async (req, res) => {
       LIMIT ${parseInt(pageSize)} OFFSET ${parseInt(offset)}
     `;
     
-    console.log('执行SQL查询:', query);
-    console.log('查询参数:', params);
     
     const [modules] = await pool.query(query, params);
     
-    console.log('查询结果:', modules);
     
     res.json({ 
       success: true,
@@ -619,14 +603,13 @@ app.post('/api/modules/search', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     logger.error('搜索模块错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误' });
   }
 });
 
 app.post('/api/modules/reorder', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到模块重排序请求:', req.body);
+    logger.debug('接收到模块重排序请求:', req.body);
     const { modules, libraryId } = req.body;
     
     if (!Array.isArray(modules) || !libraryId) {
@@ -656,14 +639,13 @@ app.post('/api/modules/reorder', authenticateToken, async (req, res) => {
     }
   } catch (error) {
     logger.error('调整模块顺序错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误' });
   }
 });
 
 app.post('/api/modules/batchCreate', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到批量创建模块请求:', req.body);
+    logger.debug('接收到批量创建模块请求:', req.body);
     const { modules } = req.body;
     
     if (!Array.isArray(modules)) {
@@ -681,7 +663,6 @@ app.post('/api/modules/batchCreate', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '批量创建模块成功' });
   } catch (error) {
     logger.error('批量创建模块错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误' });
   }
 });
@@ -763,7 +744,7 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
     );
     const newModuleDbId = moduleResult.insertId;
     
-    console.log(`[克隆] 创建新模块: ${newModuleName}, ID: ${newModuleDbId}`);
+    logger.info(`[克隆] 创建新模块: ${newModuleName}, ID: ${newModuleDbId}`);
     
     // ID映射表：old_id -> new_id
     const level1IdMap = new Map();
@@ -787,7 +768,7 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
         clonedLevel1Count++;
       }
       
-      console.log(`[克隆] 克隆了 ${clonedLevel1Count} 个一级测试点`);
+      logger.info(`[克隆] 克隆了 ${clonedLevel1Count} 个一级测试点`);
     }
     
     // 4. 克隆测试用例
@@ -855,7 +836,7 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
         clonedCaseCount++;
       }
       
-      console.log(`[克隆] 克隆了 ${clonedCaseCount} 个测试用例`);
+      logger.info(`[克隆] 克隆了 ${clonedCaseCount} 个测试用例`);
       
       // 5. 克隆测试用例的关联环境
       if (testCaseIdMap.size > 0) {
@@ -1038,7 +1019,7 @@ app.get('/api/modules/by-library/:libraryId', authenticateToken, async (req, res
 // 添加一级测试点
 app.post('/api/testpoints/level1/add', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到添加一级测试点请求:', req.body);
+    logger.debug('接收到添加一级测试点请求:', req.body);
     const { name, test_type, module_id } = req.body;
     
     if (!name || !module_id) {
@@ -1063,7 +1044,7 @@ app.post('/api/testpoints/level1/add', authenticateToken, async (req, res) => {
       [numericModuleId, name, test_type || '功能测试', nextOrder]
     );
     
-    console.log('一级测试点添加成功，ID:', result.insertId);
+    logger.info('一级测试点添加成功，ID:', result.insertId);
     
     res.json({ 
       success: true, 
@@ -1078,7 +1059,6 @@ app.post('/api/testpoints/level1/add', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     logger.error('添加一级测试点错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -1150,7 +1130,7 @@ app.get('/api/test', (req, res) => {
 // 测试用例管理路由
 app.post('/api/cases/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建测试用例请求:', req.body);
+    logger.debug('接收到创建测试用例请求:', req.body);
     const { 
       caseId, 
       name, 
@@ -1183,27 +1163,6 @@ app.post('/api/cases/create', authenticateToken, async (req, res) => {
       phases = [];
     }
     
-    // 验证数据类型
-    console.log('Data types:', {
-      caseId: typeof caseId,
-      name: typeof name,
-      priority: typeof priority,
-      type: typeof type,
-      precondition: typeof precondition,
-      purpose: typeof purpose,
-      steps: typeof steps,
-      expected: typeof expected,
-      creator: typeof creator,
-      libraryId: typeof libraryId,
-      moduleId: typeof moduleId,
-      level1Id: typeof level1Id,
-      projects: typeof projects,
-      environments: typeof environments,
-      methods: typeof methods,
-      testTypes: typeof testTypes,
-      testStatuses: typeof testStatuses
-    });
-    
     // 确保所有参数都有默认值，避免undefined
     const safeCaseId = caseId || 'CASE_' + Date.now();
     const safePriority = priority || 'medium';
@@ -1225,23 +1184,6 @@ app.post('/api/cases/create', authenticateToken, async (req, res) => {
     if (isNaN(numericModuleId)) {
       return res.json({ success: false, message: '模块ID无效，请选择正确的模块' });
     }
-    
-    console.log('Safe values:', {
-      caseId: safeCaseId,
-      priority: safePriority,
-      type: safeType,
-      precondition: safePrecondition,
-      purpose: safePurpose,
-      steps: safeSteps,
-      expected: safeExpected,
-      creator: safeCreator
-    });
-    
-    console.log('Converted values:', {
-      moduleId: numericModuleId,
-      level1Id: numericLevel1Id,
-      libraryId: numericLibraryId
-    });
     
     // 开始事务
     const connection = await pool.getConnection();
@@ -1285,7 +1227,7 @@ app.post('/api/cases/create', authenticateToken, async (req, res) => {
       );
       
       const testCaseId = result.insertId;
-      console.log('测试用例创建成功，ID:', testCaseId);
+      logger.info('测试用例创建成功，ID:', testCaseId);
       
       // 处理项目关联
       if (projects && projects.length > 0) {
@@ -1432,14 +1374,13 @@ app.post('/api/cases/create', authenticateToken, async (req, res) => {
     
   } catch (error) {
     logger.error('创建测试用例错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 app.post('/api/cases/list', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到测试用例列表请求:', req.body);
+    logger.debug('接收到测试用例列表请求:', req.body);
     const { libraryId, moduleId, level1Id, page = 1, pageSize = 32 } = req.body;
     const offset = (page - 1) * pageSize;
     
@@ -1490,8 +1431,6 @@ app.post('/api/cases/list', authenticateToken, async (req, res) => {
     query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
     params.push(numericPageSize, numericOffset);
     
-    console.log('执行SQL查询:', query);
-    console.log('查询参数:', params);
     
     // 确保所有参数都是原始类型的数字
     const safeParams = params.map(param => {
@@ -1504,7 +1443,6 @@ app.post('/api/cases/list', authenticateToken, async (req, res) => {
       }
     });
     
-    console.log('安全参数:', safeParams);
     
     // 使用query方法代替execute方法，可能对参数类型的处理更宽松
     const [testCases] = await pool.query(query, safeParams);
@@ -1610,7 +1548,6 @@ app.post('/api/cases/list', authenticateToken, async (req, res) => {
       });
     }
     
-    console.log('查询结果:', testCases);
     
     res.json({ 
       success: true,
@@ -1657,7 +1594,6 @@ app.post('/api/cases/list', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     logger.error('获取测试用例列表错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -1665,7 +1601,7 @@ app.post('/api/cases/list', authenticateToken, async (req, res) => {
 // 更新测试用例
 app.post('/api/cases/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新测试用例请求:', req.body);
+    logger.debug('接收到更新测试用例请求:', req.body);
     const { 
       id, 
       caseId, 
@@ -1727,7 +1663,7 @@ app.post('/api/cases/update', authenticateToken, async (req, res) => {
         [caseId, name, priority, type, precondition, purpose, steps, expected, creator, numericLibraryId, numericModuleId, numericLevel1Id, req.body.key_config || '', remark, numericId]
       );
       
-      console.log('测试用例更新成功，影响行数:', result.affectedRows);
+      logger.info('测试用例更新成功，影响行数:', result.affectedRows);
       
       // 只有当明确传递了projects或projectAssociations参数时才更新项目关联
       // 这样可以避免在保存测试用例时意外删除已有的关联项目
@@ -1894,7 +1830,6 @@ app.post('/api/cases/update', authenticateToken, async (req, res) => {
     }
   } catch (error) {
     logger.error('更新测试用例错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -1902,7 +1837,7 @@ app.post('/api/cases/update', authenticateToken, async (req, res) => {
 // 单独更新测试用例的项目关联
 app.post('/api/cases/projects/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新测试用例项目关联请求:', req.body);
+    logger.debug('接收到更新测试用例项目关联请求:', req.body);
     const { testCaseId, projectAssociations } = req.body;
     
     if (!testCaseId) {
@@ -1926,7 +1861,7 @@ app.post('/api/cases/projects/update', authenticateToken, async (req, res) => {
       }
       
       numericTestCaseId = testCases[0].id;
-      console.log(`根据case_id "${testCaseId}" 找到数字ID: ${numericTestCaseId}`);
+      logger.info(`根据case_id "${testCaseId}" 找到数字ID: ${numericTestCaseId}`);
     }
     
     const connection = await pool.getConnection();
@@ -1959,7 +1894,7 @@ app.post('/api/cases/projects/update', authenticateToken, async (req, res) => {
             ]
           );
         }
-        console.log('项目关联更新成功，数量:', projectAssociations.length);
+        logger.info('项目关联更新成功，数量:', projectAssociations.length);
       }
       
       await connection.commit();
@@ -1972,7 +1907,6 @@ app.post('/api/cases/projects/update', authenticateToken, async (req, res) => {
     }
   } catch (error) {
     logger.error('更新项目关联错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2152,7 +2086,7 @@ app.get('/api/test/data', async (req, res) => {
 // 创建环境
 app.post('/api/environments/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建环境请求:', req.body);
+    logger.debug('接收到创建环境请求:', req.body);
     const { name, description, creator } = req.body;
     
     // 验证必填字段
@@ -2173,7 +2107,6 @@ app.post('/api/environments/create', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '环境创建成功', envId });
   } catch (error) {
     logger.error('创建环境错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2193,7 +2126,6 @@ app.get('/api/environments/list', async (req, res) => {
     res.json({ success: true, environments });
   } catch (error) {
     logger.error('获取环境列表错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2202,7 +2134,7 @@ app.get('/api/environments/list', async (req, res) => {
 app.get('/api/environments/get', async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到获取单个环境请求:', { id });
+    logger.debug('接收到获取单个环境请求:', { id });
     
     // 查询单个环境
     const [environments] = await pool.execute(
@@ -2219,7 +2151,6 @@ app.get('/api/environments/get', async (req, res) => {
     res.json({ success: true, environment: environments[0] });
   } catch (error) {
     logger.error('获取单个环境错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2227,7 +2158,7 @@ app.get('/api/environments/get', async (req, res) => {
 // 更新环境
 app.post('/api/environments/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新环境请求:', req.body);
+    logger.debug('接收到更新环境请求:', req.body);
     const { id, name, description } = req.body;
     
     // 验证必填字段
@@ -2246,7 +2177,6 @@ app.post('/api/environments/update', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '环境更新成功' });
   } catch (error) {
     logger.error('更新环境错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2255,7 +2185,7 @@ app.post('/api/environments/update', authenticateToken, async (req, res) => {
 app.delete('/api/environments/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到删除环境请求:', { id });
+    logger.debug('接收到删除环境请求:', { id });
     
     // 验证必填字段
     if (!id) {
@@ -2271,7 +2201,6 @@ app.delete('/api/environments/delete', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '环境删除成功' });
   } catch (error) {
     logger.error('删除环境错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2281,7 +2210,7 @@ app.delete('/api/environments/delete', authenticateToken, async (req, res) => {
 // 创建测试点来源
 app.post('/api/test-sources/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建测试点来源请求:', req.body);
+    logger.debug('接收到创建测试点来源请求:', req.body);
     const { name, description, creator } = req.body;
     
     if (!name || !creator) {
@@ -2338,7 +2267,7 @@ app.get('/api/test-sources/get', async (req, res) => {
 // 更新测试点来源
 app.post('/api/test-sources/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新测试点来源请求:', req.body);
+    logger.debug('接收到更新测试点来源请求:', req.body);
     const { id, name, description } = req.body;
     
     if (!id || !name) {
@@ -2361,7 +2290,7 @@ app.post('/api/test-sources/update', authenticateToken, async (req, res) => {
 app.delete('/api/test-sources/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到删除测试点来源请求:', { id });
+    logger.debug('接收到删除测试点来源请求:', { id });
     
     if (!id) {
       return res.json({ success: false, message: '测试点来源ID不能为空' });
@@ -2381,7 +2310,7 @@ app.delete('/api/test-sources/delete', authenticateToken, async (req, res) => {
 // 创建测试类型
 app.post('/api/test-types/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建测试类型请求:', req.body);
+    logger.debug('接收到创建测试类型请求:', req.body);
     const { name, description, creator } = req.body;
     
     // 验证必填字段
@@ -2402,7 +2331,6 @@ app.post('/api/test-types/create', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '测试类型创建成功', typeId });
   } catch (error) {
     logger.error('创建测试类型错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2422,7 +2350,6 @@ app.get('/api/test-types/list', async (req, res) => {
     res.json({ success: true, testTypes });
   } catch (error) {
     logger.error('获取测试类型列表错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2431,7 +2358,7 @@ app.get('/api/test-types/list', async (req, res) => {
 app.get('/api/test-types/get', async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到获取单个测试类型请求:', { id });
+    logger.debug('接收到获取单个测试类型请求:', { id });
     
     // 查询单个测试类型
     const [testTypes] = await pool.execute(
@@ -2448,7 +2375,6 @@ app.get('/api/test-types/get', async (req, res) => {
     res.json({ success: true, testType: testTypes[0] });
   } catch (error) {
     logger.error('获取单个测试类型错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2456,7 +2382,7 @@ app.get('/api/test-types/get', async (req, res) => {
 // 更新测试类型
 app.post('/api/test-types/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新测试类型请求:', req.body);
+    logger.debug('接收到更新测试类型请求:', req.body);
     const { id, name, description } = req.body;
     
     // 验证必填字段
@@ -2475,7 +2401,6 @@ app.post('/api/test-types/update', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '测试类型更新成功' });
   } catch (error) {
     logger.error('更新测试类型错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2484,7 +2409,7 @@ app.post('/api/test-types/update', authenticateToken, async (req, res) => {
 app.delete('/api/test-types/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到删除测试类型请求:', { id });
+    logger.debug('接收到删除测试类型请求:', { id });
     
     // 验证必填字段
     if (!id) {
@@ -2500,7 +2425,6 @@ app.delete('/api/test-types/delete', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '测试类型删除成功' });
   } catch (error) {
     logger.error('删除测试类型错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2510,7 +2434,7 @@ app.delete('/api/test-types/delete', authenticateToken, async (req, res) => {
 // 创建测试软件
 app.post('/api/test-softwares/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建测试软件请求:', req.body);
+    logger.debug('接收到创建测试软件请求:', req.body);
     const { name, description, creator } = req.body;
     
     // 验证必填字段
@@ -2531,7 +2455,6 @@ app.post('/api/test-softwares/create', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '测试软件创建成功', softwareId });
   } catch (error) {
     logger.error('创建测试软件错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2600,7 +2523,7 @@ app.post('/api/test-softwares/update', authenticateToken, async (req, res) => {
 app.delete('/api/test-softwares/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到删除测试软件请求:', { id });
+    logger.debug('接收到删除测试软件请求:', { id });
     
     if (!id) {
       return res.json({ success: false, message: '测试软件ID不能为空' });
@@ -2623,7 +2546,7 @@ app.delete('/api/test-softwares/delete', authenticateToken, async (req, res) => 
 // 创建测试阶段
 app.post('/api/test-phases/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建测试阶段请求:', req.body);
+    logger.debug('接收到创建测试阶段请求:', req.body);
     const { name, description, creator } = req.body;
     
     // 验证必填字段
@@ -2644,7 +2567,6 @@ app.post('/api/test-phases/create', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '测试阶段创建成功', phaseId });
   } catch (error) {
     logger.error('创建测试阶段错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2664,7 +2586,6 @@ app.get('/api/test-phases/list', async (req, res) => {
     res.json({ success: true, testPhases });
   } catch (error) {
     logger.error('获取测试阶段列表错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2673,7 +2594,7 @@ app.get('/api/test-phases/list', async (req, res) => {
 app.get('/api/test-phases/get', async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到获取单个测试阶段请求:', { id });
+    logger.debug('接收到获取单个测试阶段请求:', { id });
     
     // 查询单个测试阶段
     const [testPhases] = await pool.execute(
@@ -2690,7 +2611,6 @@ app.get('/api/test-phases/get', async (req, res) => {
     res.json({ success: true, testPhase: testPhases[0] });
   } catch (error) {
     logger.error('获取单个测试阶段错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2698,7 +2618,7 @@ app.get('/api/test-phases/get', async (req, res) => {
 // 更新测试阶段
 app.post('/api/test-phases/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新测试阶段请求:', req.body);
+    logger.debug('接收到更新测试阶段请求:', req.body);
     const { id, name, description } = req.body;
     
     // 验证必填字段
@@ -2717,7 +2637,6 @@ app.post('/api/test-phases/update', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '测试阶段更新成功' });
   } catch (error) {
     logger.error('更新测试阶段错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2726,7 +2645,7 @@ app.post('/api/test-phases/update', authenticateToken, async (req, res) => {
 app.delete('/api/test-phases/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到删除测试阶段请求:', { id });
+    logger.debug('接收到删除测试阶段请求:', { id });
     
     // 验证必填字段
     if (!id) {
@@ -2742,7 +2661,6 @@ app.delete('/api/test-phases/delete', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '测试阶段删除成功' });
   } catch (error) {
     logger.error('删除测试阶段错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2752,7 +2670,7 @@ app.delete('/api/test-phases/delete', authenticateToken, async (req, res) => {
 // 创建测试进度
 app.post('/api/test-progresses/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建测试进度请求:', req.body);
+    logger.debug('接收到创建测试进度请求:', req.body);
     const { name, description, creator } = req.body;
     
     // 验证必填字段
@@ -2773,7 +2691,6 @@ app.post('/api/test-progresses/create', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '测试进度创建成功', progressId });
   } catch (error) {
     logger.error('创建测试进度错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2793,7 +2710,6 @@ app.get('/api/test-progresses/list', async (req, res) => {
     res.json({ success: true, testProgresses });
   } catch (error) {
     logger.error('获取测试进度列表错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2827,7 +2743,7 @@ app.get('/api/ai-config/get', authenticateToken, async (req, res) => {
 // 保存AI配置
 app.post('/api/ai-config/save', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    console.log('接收到保存AI配置请求:', req.body);
+    logger.debug('接收到保存AI配置请求:', req.body);
     
     const { enabled, defaultModelId, username } = req.body;
     
@@ -2858,10 +2774,9 @@ app.get('/api/ai-models/list', authenticateToken, async (req, res) => {
     const currentUserId = req.user.id;
     const currentUsername = req.user.username;
     
-    console.log('接收到获取AI模型列表请求, 用户:', currentUsername, 'ID:', currentUserId);
+    logger.debug('接收到获取AI模型列表请求, 用户:', currentUsername, 'ID:', currentUserId);
     
     const isAdminUser = currentUsername === 'admin';
-    console.log('是否admin用户:', isAdminUser);
     
     let query, params;
     if (isAdminUser) {
@@ -2871,7 +2786,6 @@ app.get('/api/ai-models/list', authenticateToken, async (req, res) => {
                ORDER BY is_default DESC, created_at ASC`;
       params = [];
     } else {
-      console.log('非admin用户，只查询自己的模型，user_id:', currentUserId);
       query = `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, created_by, created_at, updated_at 
                FROM ai_models 
                WHERE user_id = ?
@@ -2880,7 +2794,6 @@ app.get('/api/ai-models/list', authenticateToken, async (req, res) => {
     }
     
     const [models] = await pool.execute(query, params);
-    console.log('查询到的模型数量:', models.length, '模型IDs:', models.map(m => m.model_id));
     
     res.json({ 
       success: true, 
@@ -2904,7 +2817,7 @@ app.get('/api/ai-models/list', authenticateToken, async (req, res) => {
 app.get('/api/ai-models/get', authenticateToken, async (req, res) => {
   try {
     const { modelId } = req.query;
-    console.log('接收到获取单个AI模型请求:', { modelId });
+    logger.debug('接收到获取单个AI模型请求:', { modelId });
     const currentUserId = req.user.id;
     const currentUsername = req.user.username;
     
@@ -2944,7 +2857,7 @@ app.get('/api/ai-models/get', authenticateToken, async (req, res) => {
 // 添加AI模型（支持 RBAC）
 app.post('/api/ai-models/add', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到添加AI模型请求:', req.body);
+    logger.debug('接收到添加AI模型请求:', req.body);
     
     const { modelId, name, provider, apiKey, endpoint, modelName, isDefault, isEnabled, description } = req.body;
     const currentUserId = req.user.id;
@@ -2981,7 +2894,7 @@ app.post('/api/ai-models/add', authenticateToken, async (req, res) => {
 // 更新AI模型（支持 RBAC）
 app.post('/api/ai-models/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新AI模型请求:', req.body);
+    logger.debug('接收到更新AI模型请求:', req.body);
     
     const { modelId, name, provider, apiKey, endpoint, modelName, isDefault, isEnabled, description } = req.body;
     const currentUserId = req.user.id;
@@ -3023,7 +2936,7 @@ app.post('/api/ai-models/update', authenticateToken, async (req, res) => {
 // 删除AI模型（支持 RBAC）
 app.post('/api/ai-models/delete', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到删除AI模型请求:', req.body);
+    logger.debug('接收到删除AI模型请求:', req.body);
     
     const { modelId } = req.body;
     const currentUserId = req.user.id;
@@ -3057,7 +2970,7 @@ app.post('/api/ai-models/delete', authenticateToken, async (req, res) => {
 app.post('/api/ai-models/set-default', authenticateToken, requireAdmin, async (req, res) => {
   const conn = await pool.getConnection();
   try {
-    console.log('接收到设置默认AI模型请求:', req.body);
+    logger.debug('接收到设置默认AI模型请求:', req.body);
     
     const { modelId } = req.body;
     
@@ -3105,7 +3018,7 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
       return res.json({ success: false, message: 'AI模型未配置API密钥，请先在配置中心配置' });
     }
     
-    console.log('AI数据分析使用模型:', aiModel.name, '(' + aiModel.model_id + ')');
+    logger.info('AI数据分析使用模型:', aiModel.name, '(' + aiModel.model_id + ')');
     
     // AI 数据分析 System Prompt
     const systemPrompt = `# Role (角色定位)
@@ -3178,7 +3091,7 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
     let dynamicTools = [];
     try {
       dynamicTools = await getEnabledSkillsAsTools(currentUserId);
-      console.log(`加载了 ${dynamicTools.length} 个动态AI技能`);
+      logger.info(`加载了 ${dynamicTools.length} 个动态AI技能`);
     } catch (error) {
       logger.error('加载动态技能失败:', { error: error.message });
     }
@@ -3220,7 +3133,7 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
     
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('AI模型调用失败:', errorText);
+      logger.error('AI模型调用失败:', { error: errorText });
       return res.json({ success: false, message: 'AI模型调用失败: ' + response.status });
     }
     
@@ -3228,7 +3141,6 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
     const assistantMessage = aiResult.choices?.[0]?.message;
     
     // 打印完整的AI响应结构（用于调试）
-    console.log('AI API完整响应:', JSON.stringify(aiResult, null, 2));
     
     // 提取token使用量
     const tokenUsage = {
@@ -3237,13 +3149,11 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
       totalTokens: aiResult.usage?.total_tokens || 0
     };
     
-    console.log('Token使用量:', tokenUsage);
     
     // 检查是否需要调用工具
     const toolCalls = assistantMessage?.tool_calls;
     
     if (toolCalls && toolCalls.length > 0) {
-      console.log('AI 请求调用工具:', toolCalls.map(tc => tc.function.name).join(', '));
       
       // 处理所有工具调用
       const toolResults = [];
@@ -3256,7 +3166,6 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
         if (toolName === 'query_database') {
           const sql = args.sql_query;
           
-          console.log('AI 生成的 SQL:', sql);
           
           // 安全校验：只允许 SELECT
           const normalizedSql = sql.trim().toUpperCase();
@@ -3286,7 +3195,6 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
             const [rows] = await pool.execute(sql);
             const executionTimeMs = Date.now() - startTime;
             
-            console.log('查询结果行数:', rows.length);
             
             // 记录AI操作日志
             const aiAuditLogger = require('./services/aiAuditLogger');
@@ -3313,7 +3221,7 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
               content: JSON.stringify(rows)
             });
           } catch (dbError) {
-            console.error('数据库查询错误:', dbError.message);
+            logger.error('数据库查询错误:', { error: dbError.message });
             
             // 记录失败的AI操作日志
             const aiAuditLogger = require('./services/aiAuditLogger');
@@ -3343,7 +3251,6 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
           }
         } else {
           // 处理动态技能
-          console.log(`执行动态技能: ${toolName}`);
           
           try {
             const { executeSkillCode } = require('./routes/aiSkills');
@@ -3429,9 +3336,8 @@ ${result.instructions}
               });
             }
             
-            console.log(`技能 ${toolName} 执行完成`);
           } catch (skillError) {
-            console.error(`执行技能 ${toolName} 错误:`, skillError);
+            logger.error(`执行技能 ${toolName} 错误:`, { error: skillError.message });
             toolResults.push({
               tool_call_id: toolCall.id,
               content: JSON.stringify({ error: '技能执行错误: ' + skillError.message })
@@ -3491,7 +3397,6 @@ ${result.instructions}
       
       while (iteration < maxIterations) {
         iteration++;
-        console.log(`\n=== 第 ${iteration} 轮对话 ===`);
         
         const loopResponse = await fetch(aiModel.endpoint, {
           method: 'POST',
@@ -3511,7 +3416,7 @@ ${result.instructions}
         
         if (!loopResponse.ok) {
           const errorText = await loopResponse.text();
-          console.error('AI 调用失败:', errorText);
+          logger.error('AI 调用失败:', { error: errorText });
           return res.json({ success: false, message: 'AI处理结果失败: ' + loopResponse.status });
         }
         
@@ -3533,7 +3438,6 @@ ${result.instructions}
           break;
         }
         
-        console.log(`AI 请求调用 ${loopToolCalls.length} 个工具:`, loopToolCalls.map(tc => tc.function.name).join(', '));
         
         // 将助手消息添加到对话历史
         currentMessages.push(loopAssistantMessage);
@@ -3548,7 +3452,6 @@ ${result.instructions}
           
           if (toolName === 'query_database') {
             const sql = args.sql_query;
-            console.log('执行 SQL:', sql);
             
             // 安全校验
             const normalizedSql = sql.trim().toUpperCase();
@@ -3563,24 +3466,21 @@ ${result.instructions}
               } else {
                 try {
                   const [rows] = await pool.execute(sql);
-                  console.log('查询结果行数:', rows.length);
                   toolResult = rows;
                 } catch (dbError) {
-                  console.error('数据库查询错误:', dbError.message);
+                  logger.error('数据库查询错误:', { error: dbError.message });
                   toolResult = { error: '数据库查询错误: ' + dbError.message };
                 }
               }
             }
           } else {
             // 处理动态技能
-            console.log(`执行动态技能: ${toolName}`);
             
             try {
               const { executeSkillCode } = require('./routes/aiSkills');
               toolResult = await executeSkillCode(toolName, args);
-              console.log(`技能 ${toolName} 执行完成`);
             } catch (skillError) {
-              console.error(`执行技能 ${toolName} 错误:`, skillError);
+              logger.error(`执行技能 ${toolName} 错误:`, { error: skillError.message });
               toolResult = { error: '技能执行错误: ' + skillError.message };
             }
           }
@@ -3625,7 +3525,7 @@ ${result.instructions}
 app.get('/api/test-progresses/get', async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到获取单个测试进度请求:', { id });
+    logger.debug('接收到获取单个测试进度请求:', { id });
     
     // 查询单个测试进度
     const [testProgresses] = await pool.execute(
@@ -3642,7 +3542,6 @@ app.get('/api/test-progresses/get', async (req, res) => {
     res.json({ success: true, testProgress: testProgresses[0] });
   } catch (error) {
     logger.error('获取单个测试进度错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3650,7 +3549,7 @@ app.get('/api/test-progresses/get', async (req, res) => {
 // 更新测试进度
 app.post('/api/test-progresses/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新测试进度请求:', req.body);
+    logger.debug('接收到更新测试进度请求:', req.body);
     const { id, name, description } = req.body;
     
     // 验证必填字段
@@ -3669,7 +3568,6 @@ app.post('/api/test-progresses/update', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '测试进度更新成功' });
   } catch (error) {
     logger.error('更新测试进度错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3678,7 +3576,7 @@ app.post('/api/test-progresses/update', authenticateToken, async (req, res) => {
 app.delete('/api/test-progresses/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到删除测试进度请求:', { id });
+    logger.debug('接收到删除测试进度请求:', { id });
     
     // 验证必填字段
     if (!id) {
@@ -3694,7 +3592,6 @@ app.delete('/api/test-progresses/delete', authenticateToken, async (req, res) =>
     res.json({ success: true, message: '测试进度删除成功' });
   } catch (error) {
     logger.error('删除测试进度错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3704,7 +3601,7 @@ app.delete('/api/test-progresses/delete', authenticateToken, async (req, res) =>
 // 创建测试状态
 app.post('/api/test-statuses/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建测试状态请求:', req.body);
+    logger.debug('接收到创建测试状态请求:', req.body);
     const { name, description, creator } = req.body;
     
     // 验证必填字段
@@ -3725,7 +3622,6 @@ app.post('/api/test-statuses/create', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '测试状态创建成功', statusId });
   } catch (error) {
     logger.error('创建测试状态错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3746,7 +3642,6 @@ app.get('/api/test-statuses/list', async (req, res) => {
     res.json({ success: true, testStatuses });
   } catch (error) {
     logger.error('获取测试状态列表错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3832,7 +3727,7 @@ app.delete('/api/hyperlink-configs/:id', authenticateToken, requireAdmin, async 
 app.get('/api/test-statuses/get', async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到获取单个测试状态请求:', { id });
+    logger.debug('接收到获取单个测试状态请求:', { id });
     
     // 查询单个测试状态
     const [testStatuses] = await pool.execute(
@@ -3849,7 +3744,6 @@ app.get('/api/test-statuses/get', async (req, res) => {
     res.json({ success: true, testStatus: testStatuses[0] });
   } catch (error) {
     logger.error('获取单个测试状态错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3857,7 +3751,7 @@ app.get('/api/test-statuses/get', async (req, res) => {
 // 更新测试状态
 app.post('/api/test-statuses/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新测试状态请求:', req.body);
+    logger.debug('接收到更新测试状态请求:', req.body);
     const { id, name, description } = req.body;
     
     // 验证必填字段
@@ -3876,7 +3770,6 @@ app.post('/api/test-statuses/update', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '测试状态更新成功' });
   } catch (error) {
     logger.error('更新测试状态错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3884,7 +3777,7 @@ app.post('/api/test-statuses/update', authenticateToken, async (req, res) => {
 // 删除测试状态
 app.delete('/api/test-statuses/delete', authenticateToken, async (req, res) => {
   const { id } = req.query;
-  console.log('接收到删除测试状态请求:', { id });
+  logger.debug('接收到删除测试状态请求:', { id });
   
   // 验证必填字段
   if (!id) {
@@ -3901,14 +3794,14 @@ app.delete('/api/test-statuses/delete', authenticateToken, async (req, res) => {
       'DELETE FROM test_case_statuses WHERE status_id = ?',
       [id]
     );
-    console.log('删除 test_case_statuses 关联记录:', deleteStatusesResult.affectedRows, '条');
+    logger.info('删除 test_case_statuses 关联记录:', deleteStatusesResult.affectedRows, '条');
     
     // 2. 将 test_case_projects 中的 status_id 设置为 NULL
     const [updateProjectsResult] = await connection.execute(
       'UPDATE test_case_projects SET status_id = NULL WHERE status_id = ?',
       [id]
     );
-    console.log('更新 test_case_projects 关联记录:', updateProjectsResult.affectedRows, '条');
+    logger.info('更新 test_case_projects 关联记录:', updateProjectsResult.affectedRows, '条');
     
     // 3. 删除测试状态记录
     const [deleteResult] = await connection.execute(
@@ -3922,7 +3815,7 @@ app.delete('/api/test-statuses/delete', authenticateToken, async (req, res) => {
     }
     
     await connection.commit();
-    console.log('测试状态删除成功, ID:', id);
+    logger.info('测试状态删除成功, ID:', id);
     
     res.json({ 
       success: true, 
@@ -3934,14 +3827,7 @@ app.delete('/api/test-statuses/delete', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     await connection.rollback();
-    logger.error('删除测试状态错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
-    console.error('错误详情:', {
-      code: error.code,
-      errno: error.errno,
-      sqlState: error.sqlState,
-      sqlMessage: error.sqlMessage
-    });
+    logger.error('删除测试状态错误:', { error: error.message, code: error.code, errno: error.errno, sqlState: error.sqlState, sqlMessage: error.sqlMessage });
     
     // 根据错误类型返回更具体的错误信息
     let errorMessage = '服务器错误';
@@ -3971,7 +3857,7 @@ app.delete('/api/test-statuses/delete', authenticateToken, async (req, res) => {
 // 创建优先级
 app.post('/api/priorities/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建优先级请求:', req.body);
+    logger.debug('接收到创建优先级请求:', req.body);
     const { name, description, creator } = req.body;
     
     if (!name || !creator) {
@@ -4057,7 +3943,7 @@ app.post('/api/priorities/update', authenticateToken, async (req, res) => {
 app.delete('/api/priorities/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到删除优先级请求:', { id });
+    logger.debug('接收到删除优先级请求:', { id });
     
     if (!id) {
       return res.json({ success: false, message: '优先级ID不能为空' });
@@ -4080,7 +3966,7 @@ app.delete('/api/priorities/delete', authenticateToken, async (req, res) => {
 // 创建测试方式
 app.post('/api/test-methods/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建测试方式请求:', req.body);
+    logger.debug('接收到创建测试方式请求:', req.body);
     const { name, description, creator } = req.body;
     
     // 验证必填字段
@@ -4101,7 +3987,6 @@ app.post('/api/test-methods/create', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '测试方式创建成功', methodId });
   } catch (error) {
     logger.error('创建测试方式错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4121,7 +4006,6 @@ app.get('/api/test-methods/list', async (req, res) => {
     res.json({ success: true, testMethods });
   } catch (error) {
     logger.error('获取测试方式列表错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4130,7 +4014,7 @@ app.get('/api/test-methods/list', async (req, res) => {
 app.get('/api/test-methods/get', async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到获取单个测试方式请求:', { id });
+    logger.debug('接收到获取单个测试方式请求:', { id });
     
     // 查询单个测试方式
     const [testMethods] = await pool.execute(
@@ -4147,7 +4031,6 @@ app.get('/api/test-methods/get', async (req, res) => {
     res.json({ success: true, testMethod: testMethods[0] });
   } catch (error) {
     logger.error('获取单个测试方式错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4155,7 +4038,7 @@ app.get('/api/test-methods/get', async (req, res) => {
 // 更新测试方式
 app.post('/api/test-methods/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新测试方式请求:', req.body);
+    logger.debug('接收到更新测试方式请求:', req.body);
     const { id, name, description } = req.body;
     
     // 验证必填字段
@@ -4174,7 +4057,6 @@ app.post('/api/test-methods/update', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '测试方式更新成功' });
   } catch (error) {
     logger.error('更新测试方式错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4183,7 +4065,7 @@ app.post('/api/test-methods/update', authenticateToken, async (req, res) => {
 app.delete('/api/test-methods/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到删除测试方式请求:', { id });
+    logger.debug('接收到删除测试方式请求:', { id });
     
     // 验证必填字段
     if (!id) {
@@ -4199,7 +4081,6 @@ app.delete('/api/test-methods/delete', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '测试方式删除成功' });
   } catch (error) {
     logger.error('删除测试方式错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4209,7 +4090,7 @@ app.get('/api/cases/match/:libraryId/:moduleId/:level1Id', authenticateToken, as
   try {
     const { libraryId, moduleId, level1Id } = req.params;
     const { keyword } = req.query; // 获取搜索关键词
-    console.log('接收到匹配测试用例请求:', { libraryId, moduleId, level1Id, keyword });
+    logger.debug('接收到匹配测试用例请求:', { libraryId, moduleId, level1Id, keyword });
     
     // 构建基础查询
     let query = `
@@ -4232,12 +4113,9 @@ app.get('/api/cases/match/:libraryId/:moduleId/:level1Id', authenticateToken, as
     
     query += ` ORDER BY tc.created_at DESC`;
     
-    console.log('执行SQL查询:', query);
-    console.log('查询参数:', params);
     
     const [testCases] = await pool.execute(query, params);
     
-    console.log('查询结果:', testCases);
     
     // 获取测试用例环境信息
     const testCaseIds = testCases.map(tc => tc.id);
@@ -4332,7 +4210,6 @@ app.get('/api/cases/match/:libraryId/:moduleId/:level1Id', authenticateToken, as
     });
   } catch (error) {
     logger.error('获取匹配测试用例错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4343,7 +4220,7 @@ app.put('/api/testcases/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { name, priority, owner, type, precondition, purpose, steps, expected, test_environment, key_config, remark } = req.body;
     
-    console.log('接收到更新测试用例请求:', { id, name, priority, owner, type, precondition, purpose, steps, expected, test_environment, key_config, remark });
+    logger.debug('接收到更新测试用例请求:', { id, name, priority, owner, type, precondition, purpose, steps, expected, test_environment, key_config, remark });
     
     const updateQuery = `
       UPDATE test_cases 
@@ -4352,12 +4229,9 @@ app.put('/api/testcases/:id', authenticateToken, async (req, res) => {
     `;
     
     const updateParams = [name, priority, owner, type, precondition, purpose, steps, expected, key_config || '', remark || '', id];
-    console.log('执行SQL更新:', updateQuery);
-    console.log('更新参数:', updateParams);
     
     const [updateResult] = await pool.execute(updateQuery, updateParams);
     
-    console.log('更新结果:', updateResult);
     
     if (updateResult.affectedRows === 0) {
       return res.json({ success: false, message: '测试用例不存在' });
@@ -4403,7 +4277,6 @@ app.put('/api/testcases/:id', authenticateToken, async (req, res) => {
     res.json({ success: true, message: '测试用例更新成功' });
   } catch (error) {
     logger.error('更新测试用例错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4418,7 +4291,6 @@ app.get('/api/testtypes/list', async (req, res) => {
     
     const [testTypes] = await pool.execute(query);
     
-    console.log('查询到的测试类型:', testTypes);
     
     res.json({ 
       success: true, 
@@ -4430,7 +4302,6 @@ app.get('/api/testtypes/list', async (req, res) => {
     });
   } catch (error) {
     logger.error('获取测试类型列表错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4439,7 +4310,7 @@ app.get('/api/testtypes/list', async (req, res) => {
 app.get('/api/testcases/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    console.log('接收到获取测试用例详情请求:', { id });
+    logger.debug('接收到获取测试用例详情请求:', { id });
     
     let testCaseId = id;
     if (isNaN(Number(id))) {
@@ -4478,7 +4349,7 @@ app.get('/api/testcases/:id', authenticateToken, async (req, res) => {
 app.get('/api/testcases/:id/projects', authenticateToken, async (req, res) => {
   try {
     let { id } = req.params;
-    console.log('接收到获取测试用例关联项目请求:', { id });
+    logger.debug('接收到获取测试用例关联项目请求:', { id });
     
     // 检查id是否为字符串（如CASE-20260118-8279），如果是则查找对应的整数id
     let testCaseId = id;
@@ -4494,7 +4365,7 @@ app.get('/api/testcases/:id/projects', authenticateToken, async (req, res) => {
       }
       
       testCaseId = testCases[0].id;
-      console.log(`根据case_id ${id} 查找到整数id: ${testCaseId}`);
+      logger.info(`根据case_id ${id} 查找到整数id: ${testCaseId}`);
     } else {
       // 是数字，直接使用
       testCaseId = Number(id);
@@ -4515,12 +4386,10 @@ app.get('/api/testcases/:id/projects', authenticateToken, async (req, res) => {
     
     const [projects] = await pool.execute(query, [testCaseId]);
     
-    console.log('查询到的测试用例关联项目:', projects);
     
     res.json({ success: true, projects: projects });
   } catch (error) {
     logger.error('获取测试用例关联项目错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4534,7 +4403,6 @@ async function initTestCaseProjectsTable() {
     );
     
     const columnNames = columns.map(col => col.Field);
-    console.log('test_case_projects当前字段:', columnNames);
     
     // 定义需要的字段
     const requiredFields = [
@@ -4551,7 +4419,6 @@ async function initTestCaseProjectsTable() {
         await pool.execute(
           `ALTER TABLE test_case_projects ADD COLUMN ${field.name} ${field.type} DEFAULT ${field.default}`
         );
-        console.log(`已添加${field.name}字段到test_case_projects表`);
       }
     }
     
@@ -4575,7 +4442,7 @@ app.put('/api/testcases/:id/projects', authenticateToken, async (req, res) => {
   try {
     let { id } = req.params;
     const { associations, projectIds } = req.body;
-    console.log('接收到更新测试用例关联项目请求:', { id, associations, projectIds });
+    logger.debug('接收到更新测试用例关联项目请求:', { id, associations, projectIds });
     
     const connection = await pool.getConnection();
     await connection.beginTransaction();
@@ -4594,7 +4461,7 @@ app.put('/api/testcases/:id/projects', authenticateToken, async (req, res) => {
         }
         
         testCaseId = testCases[0].id;
-        console.log(`根据case_id ${id} 查找到整数id: ${testCaseId}`);
+        logger.info(`根据case_id ${id} 查找到整数id: ${testCaseId}`);
       } else {
         testCaseId = Number(id);
       }
@@ -4613,13 +4480,11 @@ app.put('/api/testcases/:id/projects', authenticateToken, async (req, res) => {
                 assoc.remark || ''
             ]);
         }
-        console.log('插入了', associations.length, '条关联项目记录');
         } else if (projectIds && Array.isArray(projectIds) && projectIds.length > 0) {
         for (const projectId of projectIds) {
             const insertQuery = 'INSERT INTO test_case_projects (test_case_id, project_id) VALUES (?, ?)';
             await connection.execute(insertQuery, [testCaseId, projectId]);
         }
-        console.log('插入了', projectIds.length, '条关联项目记录（旧格式）');
         } else {
         logger.info('没有关联项目数据需要保存');
         }
@@ -4627,7 +4492,6 @@ app.put('/api/testcases/:id/projects', authenticateToken, async (req, res) => {
       await connection.commit();
       connection.release();
       
-      console.log('测试用例关联项目更新成功:', { id, associations, projectIds });
       res.json({ success: true, message: '测试用例关联项目更新成功' });
     } catch (transactionError) {
       await connection.rollback();
@@ -4636,7 +4500,6 @@ app.put('/api/testcases/:id/projects', authenticateToken, async (req, res) => {
     }
   } catch (error) {
     logger.error('更新测试用例关联项目错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -5291,7 +5154,7 @@ app.get('/api/dashboard/trend/progress', async (req, res) => {
 app.delete('/api/testcases/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    console.log('接收到删除测试用例请求:', { id });
+    logger.debug('接收到删除测试用例请求:', { id });
     
     const connection = await pool.getConnection();
     await connection.beginTransaction();
@@ -5323,7 +5186,6 @@ app.delete('/api/testcases/:id', authenticateToken, async (req, res) => {
       await connection.commit();
       connection.release();
       
-      console.log('测试用例删除成功:', { id });
       res.json({ success: true, message: '测试用例删除成功' });
     } catch (transactionError) {
       await connection.rollback();
@@ -5332,7 +5194,6 @@ app.delete('/api/testcases/:id', authenticateToken, async (req, res) => {
     }
   } catch (error) {
     logger.error('删除测试用例错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -5352,9 +5213,9 @@ async function initDatabase() {
       if (databases.length === 0) {
         // 创建数据库
         await connection.execute(`CREATE DATABASE ${process.env.DB_NAME}`);
-        console.log(`数据库 ${process.env.DB_NAME} 创建成功`);
+        logger.info(`数据库 ${process.env.DB_NAME} 创建成功`);
       } else {
-        console.log(`数据库 ${process.env.DB_NAME} 已存在`);
+        logger.info(`数据库 ${process.env.DB_NAME} 已存在`);
       }
       
       // 不需要执行USE命令，因为已经在连接时指定了数据库名
@@ -5638,7 +5499,7 @@ async function initDatabase() {
         } catch (e) {
           // 忽略字段已存在错误
           if (!e.message.includes('Duplicate column')) {
-            console.log('添加字段警告:', e.message);
+            logger.info('添加字段警告:', e.message);
           }
         }
       }
@@ -5968,7 +5829,7 @@ async function initDatabase() {
           logger.info('test_progresses表status_category字段添加成功');
         }
       } catch (error) {
-        console.log('检查test_progresses表status_category字段:', error.message);
+        logger.warn('检查test_progresses表status_category字段:', error.message);
       }
       
       // 插入默认测试进度数据
@@ -6000,7 +5861,7 @@ async function initDatabase() {
           logger.info('测试进度数据status_category字段已更新');
         }
       } catch (error) {
-        console.log('插入默认测试进度数据错误:', error.message);
+        logger.error('插入默认测试进度数据错误:', error.message);
       }
       
       // 创建测试状态表（test_case_projects 外键依赖）
@@ -6038,7 +5899,7 @@ async function initDatabase() {
           logger.info('test_statuses表is_active字段添加成功');
         }
       } catch (error) {
-        console.log('检查test_statuses表字段:', error.message);
+        logger.warn('检查test_statuses表字段:', error.message);
       }
       
       // 插入默认测试状态数据
@@ -6074,7 +5935,7 @@ async function initDatabase() {
           logger.info('测试状态数据status_category字段已更新');
         }
       } catch (error) {
-        console.log('插入默认测试状态数据错误:', error.message);
+        logger.error('插入默认测试状态数据错误:', error.message);
       }
       
       // 创建测试用例项目关联表（现在可以安全创建，因为外键依赖的表已存在）
@@ -6267,7 +6128,7 @@ async function initDatabase() {
           logger.info('ai_models表user_id字段添加成功');
         }
       } catch (error) {
-        console.log('检查ai_models表user_id字段:', error.message);
+        logger.warn('检查ai_models表user_id字段:', error.message);
       }
       
       // 创建AI技能表（动态技能库）
@@ -6314,7 +6175,7 @@ async function initDatabase() {
           logger.info('ai_skills表updater_id字段添加成功');
         }
       } catch (error) {
-        console.log('检查ai_skills表字段:', error.message);
+        logger.warn('检查ai_skills表字段:', error.message);
       }
       
       // 创建用户技能设置表
@@ -6507,7 +6368,7 @@ async function initDatabase() {
           logger.info('报告模板表添加 updated_by 字段成功');
         }
       } catch (alterError) {
-        console.log('检查/添加 updated_by 字段:', alterError.message);
+        logger.warn('检查/添加 updated_by 字段:', alterError.message);
       }
       
       // 插入默认报告模板示例
@@ -7235,10 +7096,7 @@ async function initDatabase() {
       connection.release();
     }
   } catch (error) {
-    logger.error('数据库初始化失败:', { error: error.message });
-    console.error('错误代码:', error.errno);
-    console.error('SQL状态:', error.sqlState);
-    console.error('错误信息:', error.sqlMessage);
+    logger.error('数据库初始化失败:', { error: error.message, errno: error.errno, sqlState: error.sqlState, sqlMessage: error.sqlMessage });
     logger.warn('服务器将在没有数据库连接的情况下启动...');
     logger.warn('某些功能可能无法正常工作');
   }
@@ -7358,7 +7216,7 @@ app.get('/api/configs/filter_options', async (req, res) => {
       statuses: statuses && statuses.length > 0 ? statuses : mockData.statuses
     };
     
-    console.log('筛选器配置加载成功:', {
+    logger.info('筛选器配置加载成功:', {
       libraries: result.libraries.length,
       priorities: result.priorities.length,
       methods: result.methods.length,
@@ -7397,7 +7255,7 @@ app.post('/api/testplans/ai_parse_filter', authenticateToken, async (req, res) =
       return res.json({ success: false, message: 'AI模型未配置API密钥，请先在配置中心配置' });
     }
     
-    console.log('使用AI模型:', aiModel.name, '(' + aiModel.model_id + ')');
+    logger.info('使用AI模型:', aiModel.name, '(' + aiModel.model_id + ')');
     
     // 构建System Prompt - 注入网络测试领域知识
     const systemPrompt = `你是一个网络交换芯片测试领域的智能筛选助手。你需要解析用户的自然语言描述，提取出结构化的筛选条件。
@@ -7456,7 +7314,7 @@ app.post('/api/testplans/ai_parse_filter', authenticateToken, async (req, res) =
     
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('AI模型调用失败:', errorText);
+      logger.error('AI模型调用失败:', { error: errorText });
       return res.json({ success: false, message: 'AI模型调用失败: ' + response.status });
     }
     
@@ -7474,7 +7332,7 @@ app.post('/api/testplans/ai_parse_filter', authenticateToken, async (req, res) =
         parsedResult = JSON.parse(content);
       }
     } catch (parseError) {
-      console.error('解析AI返回结果失败:', content);
+      logger.error('解析AI返回结果失败:', { content });
       return res.json({ success: false, message: 'AI返回结果解析失败，请重试' });
     }
     
@@ -7489,7 +7347,6 @@ app.post('/api/testplans/ai_parse_filter', authenticateToken, async (req, res) =
       modules: parsedResult.modules || []
     };
     
-    console.log('AI解析结果:', JSON.stringify(result, null, 2));
     res.json({ success: true, data: result });
     
   } catch (error) {
@@ -7901,7 +7758,7 @@ app.post('/api/testplans/create_with_rules', authenticateToken, async (req, res)
       status_id
     } = req.body;
     
-    console.log('创建测试计划请求:', { name, owner, project, stage_id, software_id, selectedCases: selectedCases?.length });
+    logger.debug('创建测试计划请求:', { name, owner, project, stage_id, software_id, selectedCases: selectedCases?.length });
     
     // 1. 创建测试计划主记录
     const [planResult] = await connection.execute(
@@ -7911,7 +7768,7 @@ app.post('/api/testplans/create_with_rules', authenticateToken, async (req, res)
     );
     
     const planId = planResult.insertId;
-    console.log('测试计划创建成功, ID:', planId);
+    logger.info('测试计划创建成功, ID:', planId);
     
     // 2. 保存筛选规则（新的5个维度）
     const filterRules = {
@@ -7976,7 +7833,6 @@ app.post('/api/testplans/create_with_rules', authenticateToken, async (req, res)
       
       const [cases] = await connection.execute(querySql, queryParams);
       caseIdsToInsert = cases.map(c => c.id);
-      console.log(`根据筛选条件查询到 ${caseIdsToInsert.length} 条用例`);
     }
     
     if (caseIdsToInsert && caseIdsToInsert.length > 0) {
@@ -8038,7 +7894,7 @@ app.post('/api/testplans/auto_sync', authenticateToken, async (req, res) => {
       metadata
     } = req.body;
     
-    console.log('接收到自动同步请求:', { plan_id, case_id, case_external_id, status });
+    logger.debug('接收到自动同步请求:', { plan_id, case_id, case_external_id, status });
     
     const normalizeStatus = (status) => {
       if (!status) return null;
@@ -8691,7 +8547,7 @@ async function columnExists(tableName, columnName) {
 }
 
 async function ensureAITablesExist() {
-  console.log('\n🔍 智能检测 AI 相关表结构...\n');
+  logger.info('智能检测 AI 相关表结构...');
   
   let fixedCount = 0;
   const missingTables = [];
@@ -9030,11 +8886,11 @@ async function ensureAITablesExist() {
     if (!exists) {
       try {
         await pool.query(table.sql);
-        console.log(`  ✅ 已创建缺失的表: ${table.name}`);
+        logger.info(`   已创建缺失的表: ${table.name}`);
         missingTables.push(table.name);
         fixedCount++;
       } catch (err) {
-        console.log(`  ❌ 创建表 ${table.name} 失败: ${err.message}`);
+        logger.warn(`   创建表 ${table.name} 失败: ${err.message}`);
       }
     }
   }
@@ -9062,11 +8918,11 @@ async function ensureAITablesExist() {
       if (!exists) {
         try {
           await pool.query(`ALTER TABLE ai_sub_agents ADD COLUMN \`${field.name}\` ${field.def}`);
-          console.log(`  ✅ 已添加字段: ai_sub_agents.${field.name}`);
+          logger.info(`   已添加字段: ai_sub_agents.${field.name}`);
           missingColumns.push(`ai_sub_agents.${field.name}`);
           fixedCount++;
         } catch (err) {
-          console.log(`  ❌ 添加字段 ai_sub_agents.${field.name} 失败: ${err.message}`);
+          logger.warn(`   添加字段 ai_sub_agents.${field.name} 失败: ${err.message}`);
         }
       }
     }
@@ -9093,11 +8949,11 @@ async function ensureAITablesExist() {
       if (!exists) {
         try {
           await pool.query(`ALTER TABLE ai_sub_agent_memories ADD COLUMN \`${field.name}\` ${field.def}`);
-          console.log(`  ✅ 已添加字段: ai_sub_agent_memories.${field.name}`);
+          logger.info(`   已添加字段: ai_sub_agent_memories.${field.name}`);
           missingColumns.push(`ai_sub_agent_memories.${field.name}`);
           fixedCount++;
         } catch (err) {
-          console.log(`  ❌ 添加字段 ai_sub_agent_memories.${field.name} 失败: ${err.message}`);
+          logger.warn(`   添加字段 ai_sub_agent_memories.${field.name} 失败: ${err.message}`);
         }
       }
     }
@@ -9116,11 +8972,11 @@ async function ensureAITablesExist() {
       if (!exists) {
         try {
           await pool.query(`ALTER TABLE ai_review_tasks ADD COLUMN \`${field.name}\` ${field.def}`);
-          console.log(`  ✅ 已添加字段: ai_review_tasks.${field.name}`);
+          logger.info(`   已添加字段: ai_review_tasks.${field.name}`);
           missingColumns.push(`ai_review_tasks.${field.name}`);
           fixedCount++;
         } catch (err) {
-          console.log(`  ❌ 添加字段 ai_review_tasks.${field.name} 失败: ${err.message}`);
+          logger.warn(`   添加字段 ai_review_tasks.${field.name} 失败: ${err.message}`);
         }
       }
     }
@@ -9142,11 +8998,11 @@ async function ensureAITablesExist() {
       if (!exists) {
         try {
           await pool.query(`ALTER TABLE ai_review_results ADD COLUMN \`${field.name}\` ${field.def}`);
-          console.log(`  ✅ 已添加字段: ai_review_results.${field.name}`);
+          logger.info(`   已添加字段: ai_review_results.${field.name}`);
           missingColumns.push(`ai_review_results.${field.name}`);
           fixedCount++;
         } catch (err) {
-          console.log(`  ❌ 添加字段 ai_review_results.${field.name} 失败: ${err.message}`);
+          logger.warn(`   添加字段 ai_review_results.${field.name} 失败: ${err.message}`);
         }
       }
     }
@@ -9157,11 +9013,11 @@ async function ensureAITablesExist() {
   if (!usersTimeoutExists) {
     try {
       await pool.query("ALTER TABLE users ADD COLUMN `ai_timeout_config` JSON DEFAULT NULL");
-      console.log(`  ✅ 已添加字段: users.ai_timeout_config`);
+      logger.info(`   已添加字段: users.ai_timeout_config`);
       missingColumns.push('users.ai_timeout_config');
       fixedCount++;
     } catch (err) {
-      console.log(`  ❌ 添加字段 users.ai_timeout_config 失败: ${err.message}`);
+      logger.warn(`   添加字段 users.ai_timeout_config 失败: ${err.message}`);
     }
   }
 
@@ -9172,11 +9028,11 @@ async function ensureAITablesExist() {
     if (!aiAnalysisFailed) {
       try {
         await pool.query("ALTER TABLE test_reports ADD COLUMN `ai_analysis_failed` TINYINT(1) DEFAULT 0 COMMENT 'AI分析是否失败: 0-成功, 1-失败'");
-        console.log(`  ✅ 已添加字段: test_reports.ai_analysis_failed`);
+        logger.info(`   已添加字段: test_reports.ai_analysis_failed`);
         missingColumns.push('test_reports.ai_analysis_failed');
         fixedCount++;
       } catch (err) {
-        console.log(`  ❌ 添加字段 test_reports.ai_analysis_failed 失败: ${err.message}`);
+        logger.warn(`   添加字段 test_reports.ai_analysis_failed 失败: ${err.message}`);
       }
     }
   }
@@ -9188,12 +9044,12 @@ async function ensureAITablesExist() {
     if (!mkfLibId) {
       try {
         await pool.query("ALTER TABLE module_knowledge_files ADD COLUMN `library_id` int DEFAULT NULL COMMENT '所属用例库ID' AFTER module_id");
-        console.log(`  ✅ 已添加字段: module_knowledge_files.library_id`);
+        logger.info(`   已添加字段: module_knowledge_files.library_id`);
         missingColumns.push('module_knowledge_files.library_id');
         fixedCount++;
         try { await pool.query("CREATE INDEX idx_library_id ON module_knowledge_files(library_id)"); } catch(e) {}
       } catch (err) {
-        console.log(`  ❌ 添加字段 module_knowledge_files.library_id 失败: ${err.message}`);
+        logger.warn(`   添加字段 module_knowledge_files.library_id 失败: ${err.message}`);
       }
     }
 
@@ -9203,11 +9059,11 @@ async function ensureAITablesExist() {
         const [colInfo] = await pool.query(`SHOW COLUMNS FROM module_knowledge_files WHERE Field = 'module_id' AND Null = 'NO'`);
         if (colInfo.length > 0) {
           await pool.query("ALTER TABLE module_knowledge_files MODIFY COLUMN `module_id` int DEFAULT NULL COMMENT '所属模块ID'");
-          console.log(`  ✅ 已修改字段: module_knowledge_files.module_id 允许 NULL`);
+          logger.info(`   已修改字段: module_knowledge_files.module_id 允许 NULL`);
           fixedCount++;
         }
       } catch (err) {
-        console.log(`  ❌ 修改字段 module_knowledge_files.module_id 失败: ${err.message}`);
+        logger.warn(`   修改字段 module_knowledge_files.module_id 失败: ${err.message}`);
       }
     }
   }
@@ -9219,22 +9075,22 @@ async function ensureAITablesExist() {
     if (!tempProjectId) {
       try {
         await pool.query("ALTER TABLE temp_test_cases ADD COLUMN `project_id` INT DEFAULT NULL COMMENT '关联项目ID' AFTER owner");
-        console.log(`  ✅ 已添加字段: temp_test_cases.project_id`);
+        logger.info(`   已添加字段: temp_test_cases.project_id`);
         missingColumns.push('temp_test_cases.project_id');
         fixedCount++;
       } catch (err) {
-        console.log(`  ❌ 添加字段 temp_test_cases.project_id 失败: ${err.message}`);
+        logger.warn(`   添加字段 temp_test_cases.project_id 失败: ${err.message}`);
       }
     }
     const tempProjectIds = await columnExists('temp_test_cases', 'project_ids');
     if (!tempProjectIds) {
       try {
         await pool.query("ALTER TABLE temp_test_cases ADD COLUMN `project_ids` JSON DEFAULT NULL COMMENT '关联项目ID列表(JSON数组)' AFTER project_id");
-        console.log(`  ✅ 已添加字段: temp_test_cases.project_ids`);
+        logger.info(`   已添加字段: temp_test_cases.project_ids`);
         missingColumns.push('temp_test_cases.project_ids');
         fixedCount++;
       } catch (err) {
-        console.log(`  ❌ 添加字段 temp_test_cases.project_ids 失败: ${err.message}`);
+        logger.warn(`   添加字段 temp_test_cases.project_ids 失败: ${err.message}`);
       }
     }
   }
@@ -9246,21 +9102,21 @@ async function ensureAITablesExist() {
     if (!l1Summary) {
       try {
         await pool.query("ALTER TABLE level1_points ADD COLUMN `summary` TEXT DEFAULT NULL COMMENT '测试点概述(AI自动生成)' AFTER test_type");
-        console.log(`  ✅ 已添加字段: level1_points.summary`);
+        logger.info(`   已添加字段: level1_points.summary`);
         missingColumns.push('level1_points.summary');
         fixedCount++;
       } catch (err) {
-        console.log(`  ❌ 添加字段 level1_points.summary 失败: ${err.message}`);
+        logger.warn(`   添加字段 level1_points.summary 失败: ${err.message}`);
       }
     }
   }
 
   // 输出汇总结果
   if (fixedCount > 0) {
-    console.log(`\n✅ AI表自动修复完成: 创建了 ${missingTables.length} 个表，添加了 ${missingColumns.length} 个字段\n`);
+    logger.info(`AI表自动修复完成: 创建了 ${missingTables.length} 个表，添加了 ${missingColumns.length} 个字段`);
     logger.info(`AI表自动修复完成`, { createdTables: missingTables.length, addedColumns: missingColumns.length });
   } else {
-    console.log('\n✅ 所有AI相关表和字段均已就绪\n');
+    logger.info(' 所有AI相关表和字段均已就绪');
   }
 }
 
@@ -9276,21 +9132,21 @@ async function startServer() {
       const databaseMigrator = require('./services/databaseMigrator');
       await databaseMigrator.init();
     } catch (migrationError) {
-      console.warn('⚠️ 数据库自动迁移失败（不影响启动）:', migrationError.message);
+      logger.warn('数据库自动迁移失败（不影响启动）:', { error: migrationError.message });
     }
 
     // 智能检测并自动创建缺失的 AI 相关表
     try {
       await ensureAITablesExist();
     } catch (aiTableError) {
-      console.warn('⚠️ AI表自动检测失败（尝试继续启动）:', aiTableError.message);
+      logger.warn('AI表自动检测失败（尝试继续启动）:', { error: aiTableError.message });
     }
 
     try {
       const tokenBlacklist = require('./services/tokenBlacklist');
       await tokenBlacklist.init();
     } catch (tblError) {
-      console.warn('⚠️ Token黑名单初始化失败（不影响启动）:', tblError.message);
+      logger.warn('Token黑名单初始化失败（不影响启动）:', { error: tblError.message });
     }
     
     // 创建HTTP服务器
@@ -9325,7 +9181,7 @@ async function startServer() {
     
     // 处理Socket.io连接
     io.on('connection', (socket) => {
-      console.log('新用户连接:', socket.id);
+      logger.debug('新用户连接:', socket.id);
       
       // 处理用户登录（兼容两种事件名）
       const handleUserLogin = (user) => {
@@ -9333,7 +9189,7 @@ async function startServer() {
         if (user.userId) {
           socket.join(`user_${user.userId}`);
         }
-        console.log(`${user.username} 登录了`);
+        logger.debug(`${user.username} 登录了`);
         io.emit('userConnected', user);
         io.emit('onlineUsers', onlineUsersManager.getAllOnlineUsers());
       };
@@ -9344,7 +9200,7 @@ async function startServer() {
       socket.on('logout', () => {
         const user = onlineUsersManager.getOnlineUser(socket.id);
         if (user) {
-          console.log(`${user.username} 登出了`);
+          logger.debug(`${user.username} 登出了`);
           onlineUsersManager.removeOnlineUser(socket.id);
           io.emit('userDisconnected', user);
           io.emit('onlineUsers', onlineUsersManager.getAllOnlineUsers());
@@ -9358,13 +9214,13 @@ async function startServer() {
       
       // 处理测试点更新
       socket.on('updateTestPoint', (data) => {
-        console.log('测试点更新:', data);
+        logger.debug('测试点更新:', data);
         io.emit('testPointUpdated', data);
       });
       
       // 处理模块更新
       socket.on('updateModule', (data) => {
-        console.log('模块更新:', data);
+        logger.debug('模块更新:', data);
         io.emit('moduleUpdated', data);
       });
       
@@ -9375,7 +9231,7 @@ async function startServer() {
           if (user.userId) {
             socket.leave(`user_${user.userId}`);
           }
-          console.log(`${user.username} 断开连接了`);
+          logger.debug(`${user.username} 断开连接了`);
           onlineUsersManager.removeOnlineUser(socket.id);
           io.emit('userDisconnected', user);
           io.emit('onlineUsers', onlineUsersManager.getAllOnlineUsers());
@@ -9400,8 +9256,8 @@ async function startServer() {
     
     for (const check of securityChecks) {
       if (!check.value || check.value.length < check.minLength) {
-        console.error(`\n[安全校验失败] ${check.name}: ${check.errorMessage}`);
-        console.error('请检查 .env 文件配置后重启服务\n');
+        logger.fatal(`[安全校验失败] ${check.name}: ${check.errorMessage}`);
+        logger.fatal('请检查 .env 文件配置后重启服务');
         process.exit(1);
       }
     }

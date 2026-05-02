@@ -47,10 +47,10 @@ async function createSafeSandbox(userId, userRole, username, skillName, skillId)
     
     const sandbox = {
         console: {
-            log: (...args) => console.log('[Skill]', ...args),
-            error: (...args) => console.error('[Skill]', ...args),
-            warn: (...args) => console.warn('[Skill]', ...args),
-            info: (...args) => console.info('[Skill]', ...args)
+            log: (...args) => logger.debug('[Skill]', { args }),
+            error: (...args) => logger.error('[Skill]', { args }),
+            warn: (...args) => logger.warn('[Skill]', { args }),
+            info: (...args) => logger.info('[Skill]', { args })
         },
         Date: Date,
         Math: Math,
@@ -545,7 +545,7 @@ async function executeSkillCode(skillName, args, context = {}) {
     return result;
     
   } catch (error) {
-    console.error(`执行技能 "${skillName}" 错误:`, error);
+    logger.error(`执行技能 "${skillName}" 错误:`, { error: error.message });
     return { error: `执行技能失败: ${error.message}` };
   }
 }

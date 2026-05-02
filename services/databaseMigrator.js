@@ -32,7 +32,7 @@ class DatabaseMigrator {
     this.registerCaseGenerationAgentIdMigration();
     
     logger.info('[数据库迁移] 开始检查...');
-    console.log('\n🔄 数据库自动迁移检查...\n');
+    logger.info('数据库自动迁移检查...');
     
     const results = [];
     
@@ -45,11 +45,11 @@ class DatabaseMigrator {
     const errorCount = results.filter(r => r.status === 'error').length;
     
     if (fixedCount > 0) {
-      console.log(`\n✅ 数据库已自动修复 ${fixedCount} 个问题\n`);
+      logger.info('数据库已自动修复问题', { fixedCount });
     } else if (errorCount > 0) {
-      console.log(`\n⚠️ 发现 ${errorCount} 个无法自动修复的问题，请手动处理\n`);
+      logger.warn('发现无法自动修复的问题', { errorCount });
     } else {
-      console.log('✅ 数据库结构正常，无需修复\n');
+      logger.info('数据库结构正常，无需修复');
     }
     
     return results;
@@ -123,7 +123,7 @@ class DatabaseMigrator {
 
   registerAIOperationLogsMigration() {
     this.registerMigration('ai_operation_logs_token_fields', async () => {
-      console.log('  检查 ai_operation_logs 表字段...');
+      logger.info('检查 ai_operation_logs 表字段...');
       
       const fields = [
         { name: 'prompt_tokens', def: 'INT DEFAULT 0 COMMENT \'提示词token数\' AFTER execution_time_ms' },
@@ -139,15 +139,15 @@ class DatabaseMigrator {
         const exists = await this.columnExists('ai_operation_logs', field.name);
         
         if (exists) {
-          console.log(`    ✅ 字段存在: ${field.name}`);
+          logger.info('字段存在', { field: field.name });
         } else {
-          console.log(`    ⚠️ 缺失字段: ${field.name}, 正在添加...`);
+          logger.info('缺失字段，正在添加', { field: field.name });
           allExist = false;
           
           const added = await this.addColumnSafe('ai_operation_logs', field.name, field.def);
           if (added === true) {
             fixedCount++;
-            console.log(`    ✅ 已添加: ${field.name}`);
+            logger.info('已添加字段', { field: field.name });
           } else if (added === false) {
             return { status: 'error', message: `无法添加字段: ${field.name}` };
           }
@@ -185,7 +185,7 @@ class DatabaseMigrator {
 
   registerAISubAgentPlatformV2Migration() {
     this.registerMigration('ai_sub_agent_platform_v2_fields', async () => {
-      console.log('  检查 AI Sub-Agent Platform V2 表结构...');
+      logger.info('检查 AI Sub-Agent Platform V2 表结构...');
 
       let fixedCount = 0;
       let allExist = true;
@@ -208,14 +208,14 @@ class DatabaseMigrator {
       for (const field of aiSubAgentsFields) {
         const exists = await this.columnExists('ai_sub_agents', field.name);
         if (exists) {
-          console.log(`    ✅ ai_sub_agents.${field.name} 存在`);
+          logger.info('字段存在', { table: 'ai_sub_agents', field: field.name });
         } else {
-          console.log(`    ⚠️ 缺失字段: ai_sub_agents.${field.name}, 正在添加...`);
+          logger.info('缺失字段，正在添加', { table: 'ai_sub_agents', field: field.name });
           allExist = false;
           const added = await this.addColumnSafe('ai_sub_agents', field.name, field.def);
           if (added === true) {
             fixedCount++;
-            console.log(`    ✅ 已添加: ai_sub_agents.${field.name}`);
+            logger.info('已添加字段', { table: 'ai_sub_agents', field: field.name });
           } else if (added === false) {
             return { status: 'error', message: `无法添加字段: ai_sub_agents.${field.name}` };
           }
@@ -238,14 +238,14 @@ class DatabaseMigrator {
       for (const field of aiMemoriesFields) {
         const exists = await this.columnExists('ai_sub_agent_memories', field.name);
         if (exists) {
-          console.log(`    ✅ ai_sub_agent_memories.${field.name} 存在`);
+          logger.info('字段存在', { table: 'ai_sub_agent_memories', field: field.name });
         } else {
-          console.log(`    ⚠️ 缺失字段: ai_sub_agent_memories.${field.name}, 正在添加...`);
+          logger.info('缺失字段，正在添加', { table: 'ai_sub_agent_memories', field: field.name });
           allExist = false;
           const added = await this.addColumnSafe('ai_sub_agent_memories', field.name, field.def);
           if (added === true) {
             fixedCount++;
-            console.log(`    ✅ 已添加: ai_sub_agent_memories.${field.name}`);
+            logger.info('已添加字段', { table: 'ai_sub_agent_memories', field: field.name });
           } else if (added === false) {
             return { status: 'error', message: `无法添加字段: ai_sub_agent_memories.${field.name}` };
           }
@@ -263,14 +263,14 @@ class DatabaseMigrator {
       for (const field of aiCustomToolsFields) {
         const exists = await this.columnExists('ai_custom_tools', field.name);
         if (exists) {
-          console.log(`    ✅ ai_custom_tools.${field.name} 存在`);
+          logger.info('字段存在', { table: 'ai_custom_tools', field: field.name });
         } else {
-          console.log(`    ⚠️ 缺失字段: ai_custom_tools.${field.name}, 正在添加...`);
+          logger.info('缺失字段，正在添加', { table: 'ai_custom_tools', field: field.name });
           allExist = false;
           const added = await this.addColumnSafe('ai_custom_tools', field.name, field.def);
           if (added === true) {
             fixedCount++;
-            console.log(`    ✅ 已添加: ai_custom_tools.${field.name}`);
+            logger.info('已添加字段', { table: 'ai_custom_tools', field: field.name });
           } else if (added === false) {
             return { status: 'error', message: `无法添加字段: ai_custom_tools.${field.name}` };
           }
@@ -285,14 +285,14 @@ class DatabaseMigrator {
       for (const field of aiReviewTasksFields) {
         const exists = await this.columnExists('ai_review_tasks', field.name);
         if (exists) {
-          console.log(`    ✅ ai_review_tasks.${field.name} 存在`);
+          logger.info('字段存在', { table: 'ai_review_tasks', field: field.name });
         } else {
-          console.log(`    ⚠️ 缺失字段: ai_review_tasks.${field.name}, 正在添加...`);
+          logger.info('缺失字段，正在添加', { table: 'ai_review_tasks', field: field.name });
           allExist = false;
           const added = await this.addColumnSafe('ai_review_tasks', field.name, field.def);
           if (added === true) {
             fixedCount++;
-            console.log(`    ✅ 已添加: ai_review_tasks.${field.name}`);
+            logger.info('已添加字段', { table: 'ai_review_tasks', field: field.name });
           } else if (added === false) {
             return { status: 'error', message: `无法添加字段: ai_review_tasks.${field.name}` };
           }
@@ -310,14 +310,14 @@ class DatabaseMigrator {
       for (const field of aiReviewResultsFields) {
         const exists = await this.columnExists('ai_review_results', field.name);
         if (exists) {
-          console.log(`    ✅ ai_review_results.${field.name} 存在`);
+          logger.info('字段存在', { table: 'ai_review_results', field: field.name });
         } else {
-          console.log(`    ⚠️ 缺失字段: ai_review_results.${field.name}, 正在添加...`);
+          logger.info('缺失字段，正在添加', { table: 'ai_review_results', field: field.name });
           allExist = false;
           const added = await this.addColumnSafe('ai_review_results', field.name, field.def);
           if (added === true) {
             fixedCount++;
-            console.log(`    ✅ 已添加: ai_review_results.${field.name}`);
+            logger.info('已添加字段', { table: 'ai_review_results', field: field.name });
           } else if (added === false) {
             return { status: 'error', message: `无法添加字段: ai_review_results.${field.name}` };
           }
@@ -326,9 +326,9 @@ class DatabaseMigrator {
 
       const memoryChunksExists = await this.tableExists('ai_sub_agent_memory_chunks');
       if (memoryChunksExists) {
-        console.log('    ✅ ai_sub_agent_memory_chunks 表存在');
+        logger.info('表存在', { table: 'ai_sub_agent_memory_chunks' });
       } else {
-        console.log('    ⚠️ 缺失表: ai_sub_agent_memory_chunks, 正在创建...');
+        logger.info('缺失表，正在创建', { table: 'ai_sub_agent_memory_chunks' });
         allExist = false;
         try {
           await pool.query(`
@@ -346,7 +346,7 @@ class DatabaseMigrator {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI子智能体记忆分块表'
           `);
           fixedCount++;
-          console.log('    ✅ 已创建: ai_sub_agent_memory_chunks');
+          logger.info('已创建表', { table: 'ai_sub_agent_memory_chunks' });
         } catch (error) {
           logger.error('[数据库迁移] 创建 ai_sub_agent_memory_chunks 表失败', error.message);
           return { status: 'error', message: `无法创建表: ai_sub_agent_memory_chunks` };
@@ -355,9 +355,9 @@ class DatabaseMigrator {
 
       const toolVersionsExists = await this.tableExists('ai_tool_versions');
       if (toolVersionsExists) {
-        console.log('    ✅ ai_tool_versions 表存在');
+        logger.info('表存在', { table: 'ai_tool_versions' });
       } else {
-        console.log('    ⚠️ 缺失表: ai_tool_versions, 正在创建...');
+        logger.info('缺失表，正在创建', { table: 'ai_tool_versions' });
         allExist = false;
         try {
           await pool.query(`
@@ -377,7 +377,7 @@ class DatabaseMigrator {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI自定义工具版本表'
           `);
           fixedCount++;
-          console.log('    ✅ 已创建: ai_tool_versions');
+          logger.info('已创建表', { table: 'ai_tool_versions' });
         } catch (error) {
           logger.error('[数据库迁移] 创建 ai_tool_versions 表失败', error.message);
           return { status: 'error', message: `无法创建表: ai_tool_versions` };
@@ -396,20 +396,20 @@ class DatabaseMigrator {
 
   registerUserAITimeoutConfigMigration() {
     this.registerMigration('users_ai_timeout_config_field', async () => {
-      console.log('  检查 users 表 ai_timeout_config 字段...');
+      logger.info('检查 users 表 ai_timeout_config 字段...');
 
       const exists = await this.columnExists('users', 'ai_timeout_config');
 
       if (exists) {
-        console.log('    ✅ 字段存在: ai_timeout_config');
+        logger.info('字段存在', { field: 'ai_timeout_config' });
         return { status: 'ok', message: 'ai_timeout_config 字段已存在' };
       }
 
-      console.log('    ⚠️ 缺失字段: ai_timeout_config, 正在添加...');
+      logger.info('缺失字段，正在添加', { field: 'ai_timeout_config' });
       const added = await this.addColumnSafe('users', 'ai_timeout_config', "JSON DEFAULT NULL COMMENT '用户AI任务超时配置'");
 
       if (added === true) {
-        console.log('    ✅ 已添加: ai_timeout_config');
+        logger.info('已添加字段', { field: 'ai_timeout_config' });
         return { status: 'fixed', message: '已添加 ai_timeout_config 字段' };
       } else if (added === false) {
         return { status: 'error', message: '无法添加字段: ai_timeout_config' };
@@ -421,7 +421,7 @@ class DatabaseMigrator {
 
   registerKnowledgeLibraryIdMigration() {
     this.registerMigration('knowledge_library_id_support', async () => {
-      console.log('  检查知识库 library_id 字段支持...');
+      logger.info('检查知识库 library_id 字段支持...');
 
       let fixedCount = 0;
       let allExist = true;
@@ -429,21 +429,21 @@ class DatabaseMigrator {
       // 检查 module_knowledge_files 表是否存在
       const tableExists = await this.tableExists('module_knowledge_files');
       if (!tableExists) {
-        console.log('    ⚠️ module_knowledge_files 表不存在，跳过迁移');
+        logger.info('module_knowledge_files 表不存在，跳过迁移');
         return { status: 'ok', message: 'module_knowledge_files 表尚未创建，跳过' };
       }
 
       // 1. 给 module_knowledge_files 增加 library_id 字段
       const libIdExists = await this.columnExists('module_knowledge_files', 'library_id');
       if (libIdExists) {
-        console.log('    ✅ module_knowledge_files.library_id 存在');
+        logger.info('字段存在', { table: 'module_knowledge_files', field: 'library_id' });
       } else {
-        console.log('    ⚠️ 缺失字段: module_knowledge_files.library_id, 正在添加...');
+        logger.info('缺失字段，正在添加', { table: 'module_knowledge_files', field: 'library_id' });
         allExist = false;
         const added = await this.addColumnSafe('module_knowledge_files', 'library_id', "int DEFAULT NULL COMMENT '所属用例库ID(用于用例库层级文件夹)' AFTER module_id");
         if (added === true) {
           fixedCount++;
-          console.log('    ✅ 已添加: module_knowledge_files.library_id');
+          logger.info('已添加字段', { table: 'module_knowledge_files', field: 'library_id' });
           // 创建索引
           await this.createIndexSafe('module_knowledge_files', 'idx_library_id', 'library_id');
           // 回填已有数据
@@ -454,9 +454,9 @@ class DatabaseMigrator {
               SET mkf.library_id = m.library_id
               WHERE mkf.library_id IS NULL AND mkf.module_id IS NOT NULL
             `);
-            console.log('    ✅ 已回填 library_id 数据');
+            logger.info('已回填 library_id 数据');
           } catch (e) {
-            console.log('    ⚠️ 回填 library_id 数据失败（可忽略）:', e.message);
+            logger.warn('回填 library_id 数据失败（可忽略）', { error: e.message });
           }
         } else if (added === false) {
           return { status: 'error', message: '无法添加字段: module_knowledge_files.library_id' };
@@ -467,16 +467,16 @@ class DatabaseMigrator {
       try {
         const [columns] = await pool.query("SHOW COLUMNS FROM module_knowledge_files WHERE Field = 'module_id'");
         if (columns.length > 0 && columns[0].Null === 'NO') {
-          console.log('    ⚠️ module_knowledge_files.module_id 不允许 NULL, 正在修改...');
+          logger.info('module_knowledge_files.module_id 不允许 NULL, 正在修改...');
           allExist = false;
           await pool.query("ALTER TABLE module_knowledge_files MODIFY COLUMN module_id int DEFAULT NULL COMMENT '所属模块ID，NULL表示挂在用例库层级'");
           fixedCount++;
-          console.log('    ✅ 已修改: module_knowledge_files.module_id 允许 NULL');
+          logger.info('已修改: module_knowledge_files.module_id 允许 NULL');
         } else {
-          console.log('    ✅ module_knowledge_files.module_id 已允许 NULL');
+          logger.info('module_knowledge_files.module_id 已允许 NULL');
         }
       } catch (e) {
-        console.log('    ⚠️ 修改 module_id 字段失败:', e.message);
+        logger.warn('修改 module_id 字段失败', { error: e.message });
       }
 
       // 3. 检查 ai_material_chunks 表
@@ -485,14 +485,14 @@ class DatabaseMigrator {
         // 给 ai_material_chunks 增加 library_id 字段
         const chunkLibIdExists = await this.columnExists('ai_material_chunks', 'library_id');
         if (chunkLibIdExists) {
-          console.log('    ✅ ai_material_chunks.library_id 存在');
+          logger.info('字段存在', { table: 'ai_material_chunks', field: 'library_id' });
         } else {
-          console.log('    ⚠️ 缺失字段: ai_material_chunks.library_id, 正在添加...');
+          logger.info('缺失字段，正在添加', { table: 'ai_material_chunks', field: 'library_id' });
           allExist = false;
           const added = await this.addColumnSafe('ai_material_chunks', 'library_id', "int DEFAULT NULL COMMENT '所属用例库ID(冗余)' AFTER module_id");
           if (added === true) {
             fixedCount++;
-            console.log('    ✅ 已添加: ai_material_chunks.library_id');
+            logger.info('已添加字段', { table: 'ai_material_chunks', field: 'library_id' });
             await this.createIndexSafe('ai_material_chunks', 'idx_library_id', 'library_id');
             // 回填
             try {
@@ -502,9 +502,9 @@ class DatabaseMigrator {
                 SET ac.library_id = mkf.library_id
                 WHERE ac.library_id IS NULL AND mkf.library_id IS NOT NULL
               `);
-              console.log('    ✅ 已回填 ai_material_chunks.library_id 数据');
+              logger.info('已回填 ai_material_chunks.library_id 数据');
             } catch (e) {
-              console.log('    ⚠️ 回填 ai_material_chunks.library_id 失败（可忽略）:', e.message);
+              logger.warn('回填 ai_material_chunks.library_id 失败（可忽略）', { error: e.message });
             }
           } else if (added === false) {
             return { status: 'error', message: '无法添加字段: ai_material_chunks.library_id' };
@@ -515,7 +515,7 @@ class DatabaseMigrator {
         try {
           const [columns] = await pool.query("SHOW COLUMNS FROM ai_material_chunks WHERE Field = 'module_id'");
           if (columns.length > 0 && columns[0].Null === 'NO') {
-            console.log('    ⚠️ ai_material_chunks.module_id 不允许 NULL, 正在修改...');
+            logger.info('ai_material_chunks.module_id 不允许 NULL, 正在修改...');
             allExist = false;
             // 先删除外键约束
             try {
@@ -525,21 +525,21 @@ class DatabaseMigrator {
             }
             await pool.query("ALTER TABLE ai_material_chunks MODIFY COLUMN module_id int DEFAULT NULL COMMENT '所属模块ID(冗余)，NULL表示用例库层级文件'");
             fixedCount++;
-            console.log('    ✅ 已修改: ai_material_chunks.module_id 允许 NULL');
+            logger.info('已修改: ai_material_chunks.module_id 允许 NULL');
             // 重新添加外键
             try {
               await pool.query("ALTER TABLE ai_material_chunks ADD CONSTRAINT fk_chunk_module FOREIGN KEY (module_id) REFERENCES modules (id) ON DELETE CASCADE");
             } catch (e) {
-              console.log('    ⚠️ 重新添加外键失败（可忽略）:', e.message);
+              logger.warn('重新添加外键失败（可忽略）', { error: e.message });
             }
           } else {
-            console.log('    ✅ ai_material_chunks.module_id 已允许 NULL');
+            logger.info('ai_material_chunks.module_id 已允许 NULL');
           }
         } catch (e) {
-          console.log('    ⚠️ 修改 ai_material_chunks.module_id 失败:', e.message);
+          logger.warn('修改 ai_material_chunks.module_id 失败', { error: e.message });
         }
       } else {
-        console.log('    ⚠️ ai_material_chunks 表不存在，跳过');
+        logger.info('ai_material_chunks 表不存在，跳过');
       }
 
       if (allExist) {
@@ -554,24 +554,24 @@ class DatabaseMigrator {
 
   registerCaseGenerationAgentIdMigration() {
     this.registerMigration('case_generation_agent_id', async () => {
-      console.log('  检查 ai_case_generation_tasks agent_id 字段支持...');
+      logger.info('检查 ai_case_generation_tasks agent_id 字段支持...');
 
       const tableExists = await this.tableExists('ai_case_generation_tasks');
       if (!tableExists) {
-        console.log('    ⚠️ ai_case_generation_tasks 表不存在，跳过迁移');
+        logger.info('ai_case_generation_tasks 表不存在，跳过迁移');
         return { status: 'ok', message: 'ai_case_generation_tasks 表尚未创建，跳过' };
       }
 
       const agentIdExists = await this.columnExists('ai_case_generation_tasks', 'agent_id');
       if (agentIdExists) {
-        console.log('    ✅ ai_case_generation_tasks.agent_id 存在');
+        logger.info('字段存在', { table: 'ai_case_generation_tasks', field: 'agent_id' });
         return { status: 'ok', message: 'agent_id 字段已存在' };
       }
 
-      console.log('    ⚠️ 缺失字段: ai_case_generation_tasks.agent_id, 正在添加...');
+      logger.info('缺失字段，正在添加', { table: 'ai_case_generation_tasks', field: 'agent_id' });
       const added = await this.addColumnSafe('ai_case_generation_tasks', 'agent_id', "int DEFAULT NULL COMMENT '使用的代理ID' AFTER skill_id");
       if (added === true) {
-        console.log('    ✅ 已添加: ai_case_generation_tasks.agent_id');
+        logger.info('已添加字段', { table: 'ai_case_generation_tasks', field: 'agent_id' });
         await this.createIndexSafe('ai_case_generation_tasks', 'idx_agent_id', 'agent_id');
         return { status: 'fixed', message: '已添加 agent_id 字段' };
       } else {

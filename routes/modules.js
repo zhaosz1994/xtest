@@ -46,7 +46,7 @@ router.post('/list', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     logger.error('获取模块列表错误:', { error: error.message });
-    console.error('错误堆栈:', error.stack);
+
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -255,7 +255,7 @@ router.post('/clone', authenticateToken, async (req, res) => {
     );
     const newModuleDbId = moduleResult.insertId;
     
-    console.log(`[克隆] 创建新模块: ${newModuleName}, ID: ${newModuleDbId}`);
+    logger.debug('[克隆] 创建新模块:', { name: newModuleName, id: newModuleDbId });
     
     // ID映射表：old_id -> new_id
     const level1IdMap = new Map();
@@ -280,7 +280,7 @@ router.post('/clone', authenticateToken, async (req, res) => {
         clonedLevel1Count++;
       }
       
-      console.log(`[克隆] 克隆了 ${clonedLevel1Count} 个一级测试点`);
+      logger.info('[克隆] 克隆一级测试点完成', { count: clonedLevel1Count });
     }
     
     // 4. 克隆测试用例
@@ -345,7 +345,7 @@ router.post('/clone', authenticateToken, async (req, res) => {
         clonedCaseCount++;
       }
       
-      console.log(`[克隆] 克隆了 ${clonedCaseCount} 个测试用例`);
+      logger.info('[克隆] 克隆测试用例完成', { count: clonedCaseCount });
       
       // 5. 克隆测试用例的多对多关联数据
       if (caseIdMap.size > 0) {
@@ -457,7 +457,7 @@ router.post('/clone', authenticateToken, async (req, res) => {
               );
             }
           }
-          console.log(`[克隆] 已克隆测试用例项目关联`);
+          logger.debug('[克隆] 已克隆测试用例项目关联');
         }
         
         // 克隆执行记录（如果不清空执行记录）
@@ -479,10 +479,10 @@ router.post('/clone', authenticateToken, async (req, res) => {
               );
             }
           }
-          console.log(`[克隆] 已克隆执行记录`);
+          logger.debug('[克隆] 已克隆执行记录');
         }
         
-        console.log(`[克隆] 已克隆测试用例关联数据`);
+        logger.debug('[克隆] 已克隆测试用例关联数据');
       }
     }
     

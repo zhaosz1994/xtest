@@ -5,6 +5,7 @@ const caseGeneratorService = require('../services/caseGeneratorService');
 const level1PointService = require('../services/level1PointService');
 const taskScheduler = require('../services/taskScheduler');
 const pool = require('../db');
+const logger = require('../services/logger');
 
 router.post('/create', authenticateToken, async (req, res) => {
   try {
@@ -188,14 +189,14 @@ router.post('/generate-overview', authenticateToken, async (req, res) => {
 
         if (agentResult.success && agentResult.result) {
           const overview = agentResult.result.trim();
-          console.log('[generate-overview] 通过 Sub-Agent generate_overview 生成成功');
+          logger.info('[generate-overview] 通过 Sub-Agent generate_overview 生成成功');
           return res.json({ success: true, data: { overview, agent: 'generate_overview' } });
         } else {
-          console.warn('[generate-overview] Sub-Agent 执行失败，回退到直接LLM调用:', agentResult.error);
+          logger.warn('[generate-overview] Sub-Agent 执行失败，回退到直接LLM调用:', { error: agentResult.error });
         }
       }
     } catch (agentErr) {
-      console.warn('[generate-overview] Sub-Agent 调用异常，回退到直接LLM调用:', agentErr.message);
+      logger.warn('[generate-overview] Sub-Agent 调用异常，回退到直接LLM调用:', { error: agentErr.message });
     }
 
     // 回退：直接 LLM 调用
@@ -241,7 +242,7 @@ ${caseInfo}
 
     res.json({ success: true, data: { overview } });
   } catch (error) {
-    console.error('AI生成概述失败:', error.message);
+    logger.error('AI生成概述失败:', { error: error.message });
     res.status(500).json({ success: false, message: 'AI生成概述失败: ' + error.message });
   }
 });
@@ -284,14 +285,14 @@ router.post('/generate-key-config', authenticateToken, async (req, res) => {
 
         if (agentResult.success && agentResult.result) {
           const keyConfig = agentResult.result.trim();
-          console.log('[generate-key-config] 通过 Sub-Agent generate_key_config 生成成功');
+          logger.info('[generate-key-config] 通过 Sub-Agent generate_key_config 生成成功');
           return res.json({ success: true, data: { keyConfig, agent: 'generate_key_config' } });
         } else {
-          console.warn('[generate-key-config] Sub-Agent 执行失败，回退到直接LLM调用:', agentResult.error);
+          logger.warn('[generate-key-config] Sub-Agent 执行失败，回退到直接LLM调用:', { error: agentResult.error });
         }
       }
     } catch (agentErr) {
-      console.warn('[generate-key-config] Sub-Agent 调用异常，回退到直接LLM调用:', agentErr.message);
+      logger.warn('[generate-key-config] Sub-Agent 调用异常，回退到直接LLM调用:', { error: agentErr.message });
     }
 
     // 回退：直接 LLM 调用
@@ -340,7 +341,7 @@ router.post('/generate-key-config', authenticateToken, async (req, res) => {
 
     res.json({ success: true, data: { keyConfig } });
   } catch (error) {
-    console.error('AI生成关键配置失败:', error.message);
+    logger.error('AI生成关键配置失败:', { error: error.message });
     res.status(500).json({ success: false, message: 'AI生成关键配置失败: ' + error.message });
   }
 });
@@ -439,7 +440,7 @@ router.post('/generate-key-config-async', authenticateToken, async (req, res) =>
           success = true;
         }
       } catch (error) {
-        console.error('[async-key-config] AI生成失败:', error.message);
+        logger.error('[async-key-config] AI生成失败:', { error: error.message });
         success = false;
       }
 
@@ -473,11 +474,11 @@ router.post('/generate-key-config-async', authenticateToken, async (req, res) =>
           });
         }
       } catch (notifyError) {
-        console.error('[async-key-config] 通知发送失败:', notifyError.message);
+        logger.error('[async-key-config] 通知发送失败:', { error: notifyError.message });
       }
     });
   } catch (error) {
-    console.error('AI异步生成关键配置失败:', error.message);
+    logger.error('AI异步生成关键配置失败:', { error: error.message });
     res.status(500).json({ success: false, message: 'AI异步生成关键配置失败: ' + error.message });
   }
 });
@@ -593,7 +594,7 @@ ${caseInfo}
           success = true;
         }
       } catch (error) {
-        console.error('[async-overview] AI生成失败:', error.message);
+        logger.error('[async-overview] AI生成失败:', { error: error.message });
         success = false;
       }
 
@@ -629,11 +630,11 @@ ${caseInfo}
           });
         }
       } catch (notifyError) {
-        console.error('[async-overview] 通知发送失败:', notifyError.message);
+        logger.error('[async-overview] 通知发送失败:', { error: notifyError.message });
       }
     });
   } catch (error) {
-    console.error('AI异步生成概述失败:', error.message);
+    logger.error('AI异步生成概述失败:', { error: error.message });
     res.status(500).json({ success: false, message: 'AI异步生成概述失败: ' + error.message });
   }
 });

@@ -1,6 +1,7 @@
 const pool = require('../db');
 const { v4: uuidv4 } = require('uuid');
 const { default: PQueue } = require('p-queue');
+const logger = require('./logger');
 
 class CaseGeneratorService {
   constructor() {
@@ -10,11 +11,11 @@ class CaseGeneratorService {
 
   async executeMapPhase(taskId) {
     if (this.runningTasks.has(taskId)) {
-      console.log(`[executeMapPhase] 任务 ${taskId} 已在运行中，跳过`);
+      logger.debug('executeMapPhase 任务已在运行中，跳过', { taskId });
       return;
     }
     this.runningTasks.add(taskId);
-    console.log(`[executeMapPhase] 开始处理任务 ${taskId}`);
+    logger.debug('executeMapPhase 开始处理任务', { taskId });
 
     try {
     const [tasks] = await pool.execute(`
@@ -27,16 +28,14 @@ class CaseGeneratorService {
     `, [taskId]);
 
     if (tasks.length === 0) {
-      console.log(`[executeMapPhase] 任务 ${taskId} 不存在`);
+      logger.debug('executeMapPhase 任务不存在', { taskId });
       return;
     }
 
     const task = tasks[0];
-    const selectedFiles = typeof task.selected_files === 'string' 
-      ? JSON.parse(task.selected_files || '[]') 
+    const selectedFiles = typeof task.selected_files === 'string'
+      ? JSON.parse(task.selected_files || '[]')
       : (task.selected_files || []);
-    
-    console.log(`[executeMapPhase] 任务 ${taskId} module_id=${task.module_id}, selectedFiles=${JSON.stringify(selectedFiles)}`);
 
     let sql = `
       SELECT c.*, f.name as file_name
@@ -53,13 +52,8 @@ class CaseGeneratorService {
     }
 
     sql += ` ORDER BY c.chunk_index ASC`;
-    
-    console.log(`[executeMapPhase] SQL: ${sql}`);
-    console.log(`[executeMapPhase] Params: ${JSON.stringify(params)}`);
 
     const [chunks] = await pool.execute(sql, params);
-    
-    console.log(`[executeMapPhase] 找到 ${chunks.length} 个 chunks`);
 
     await pool.execute(`
       UPDATE ai_case_generation_tasks 
@@ -68,7 +62,7 @@ class CaseGeneratorService {
     `, [chunks.length, taskId]);
 
     if (chunks.length === 0) {
-      console.log(`[executeMapPhase] 无可用文本块`);
+      logger.info('executeMapPhase 无可用文本块', { taskId });
       await pool.execute(`
         UPDATE ai_case_generation_tasks 
         SET total_cases = 0, progress = 100, progress_message = '无可用文本块'

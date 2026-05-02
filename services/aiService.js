@@ -1,4 +1,5 @@
 const pool = require('../db');
+const logger = require('./logger');
 
 const AI_TIMEOUT_DEFAULTS = {
   generalAITask: 120000,
@@ -39,7 +40,7 @@ async function getUserAITimeoutConfig(userId) {
 
     return result;
   } catch (error) {
-    console.error('获取用户AI超时配置错误:', error);
+    logger.error('获取用户AI超时配置错误', { error: error.message });
     return getAITimeoutDefaults();
   }
 }
@@ -56,14 +57,14 @@ async function getSystemDefaultAIConfig() {
     
     return models[0];
   } catch (error) {
-    console.error('获取系统默认AI配置错误:', error);
+    logger.error('获取系统默认AI配置错误', { error: error.message });
     return null;
   }
 }
 
 async function getUserAIConfig(userId, modelId = null) {
   if (userId === undefined || userId === null) {
-    console.error('getUserAIConfig: userId 不能为空');
+    logger.error('getUserAIConfig: userId 不能为空');
     return await getSystemDefaultAIConfig();
   }
   try {
@@ -85,7 +86,7 @@ async function getUserAIConfig(userId, modelId = null) {
     
     return await getSystemDefaultAIConfig();
   } catch (error) {
-    console.error('获取用户AI配置错误:', error);
+    logger.error('获取用户AI配置错误', { error: error.message });
     return await getSystemDefaultAIConfig();
   }
 }

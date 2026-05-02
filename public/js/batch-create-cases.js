@@ -2249,7 +2249,6 @@
         `;
         document.body.appendChild(modal);
 
-        document.getElementById('bulk-modal-overlay').addEventListener('click', closeBulkDefaultsModal);
         document.getElementById('bulk-cancel-btn').addEventListener('click', closeBulkDefaultsModal);
         document.getElementById('bulk-confirm-btn').addEventListener('click', confirmBulkDefaults);
     }
@@ -2334,7 +2333,6 @@
             });
         }
 
-        if (drawerOverlay) drawerOverlay.addEventListener('click', closeDrawer);
         if (drawerCloseBtn) drawerCloseBtn.addEventListener('click', closeDrawer);
         if (drawerCancelBtn) drawerCancelBtn.addEventListener('click', closeDrawer);
         if (drawerSaveBtn) drawerSaveBtn.addEventListener('click', saveDrawerData);
@@ -2354,12 +2352,6 @@
         if (level1PanelOverlay) {
             level1PanelOverlay.addEventListener('click', () => toggleLevel1Dropdown(false));
         }
-
-        document.querySelectorAll('.modal-overlay').forEach(overlay => {
-            overlay.addEventListener('click', () => {
-                overlay.closest('.modal').style.display = 'none';
-            });
-        });
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
@@ -2553,7 +2545,6 @@
         `;
         document.body.appendChild(modal);
 
-        document.getElementById('location-modal-overlay').addEventListener('click', closeLocationSelectModal);
         document.getElementById('location-modal-close').addEventListener('click', closeLocationSelectModal);
         document.getElementById('location-cancel-btn').addEventListener('click', closeLocationSelectModal);
         document.getElementById('location-confirm-btn').addEventListener('click', confirmLocationSelection);
@@ -3021,7 +3012,6 @@
         document.getElementById('clone-modal-close').addEventListener('click', window.closeCloneCaseModal);
         document.getElementById('clone-cancel-btn').addEventListener('click', window.closeCloneCaseModal);
         document.getElementById('clone-confirm-btn').addEventListener('click', window.confirmCloneCase);
-        document.getElementById('clone-modal-overlay').addEventListener('click', window.closeCloneCaseModal);
 
         window.initCloneModalDrag();
     };

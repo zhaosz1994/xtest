@@ -84,7 +84,6 @@ class Level1PointsList {
         
         document.getElementById('drawer-close-btn').addEventListener('click', () => this.closeDrawer());
         document.getElementById('drawer-cancel-btn').addEventListener('click', () => this.closeDrawer());
-        document.getElementById('drawer-overlay').addEventListener('click', () => this.closeDrawer());
         document.getElementById('drawer-save-btn').addEventListener('click', () => this.saveTestCase());
         document.getElementById('drawer-save-btn-bottom').addEventListener('click', () => this.saveTestCase());
         document.getElementById('drawer-save-continue-btn').addEventListener('click', () => this.saveTestCase(true));

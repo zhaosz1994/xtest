@@ -10,7 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const pool = require('../db');
-const { authenticateToken: authMiddleware, isAdmin: isAdminCheck } = require('../middleware');
+const { authenticateToken: authMiddleware, isAdmin: isAdminCheck, fixFilenameEncoding } = require('../middleware');
 const jwt = require('jsonwebtoken');
 const notificationService = require('../services/notificationService');
 const logger = require('../services/logger');
@@ -216,7 +216,7 @@ router.post('/upload', authenticateToken, (req, res, next) => {
         });
     }
     next();
-}, imageUpload.single('file[]'), (req, res) => {
+}, imageUpload.single('file[]'), fixFilenameEncoding, (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ success: 0, msg: '请选择要上传的图片' });
@@ -251,7 +251,7 @@ router.post('/attachments', authenticateToken, (req, res, next) => {
         });
     }
     next();
-}, attachmentUpload.array('files', 10), async (req, res) => {
+}, attachmentUpload.array('files', 10), fixFilenameEncoding, async (req, res) => {
     try {
         if (!req.files || req.files.length === 0) {
             return res.status(400).json({ success: false, message: '请选择要上传的文件' });

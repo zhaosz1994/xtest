@@ -8,7 +8,6 @@ let aiToolsEditingName = null; // null = create mode, string = edit mode
 function initAIToolsConfig() {
     if (aiToolsInitialized) return;
     aiToolsInitialized = true;
-    console.log('[AI Tools] Initializing...');
 
     const btnCreateTool = document.getElementById('aitools-btn-create') || document.getElementById('create-ai-tool-btn');
     if (btnCreateTool) {
@@ -37,13 +36,6 @@ function initAIToolsConfig() {
     const languageSelect = document.getElementById('aitools-language');
     if (languageSelect) {
         languageSelect.addEventListener('change', updateCodeHint);
-    }
-
-    const modalOverlay = document.getElementById('aitools-modal-overlay');
-    if (modalOverlay) {
-        modalOverlay.addEventListener('click', (e) => {
-            if (e.target === modalOverlay) closeToolModal();
-        });
     }
 
     document.addEventListener('keydown', (e) => {
@@ -947,13 +939,6 @@ function ensureAIToolsModal() {
     const languageSelect = document.getElementById('aitools-language');
     if (languageSelect) {
         languageSelect.addEventListener('change', updateCodeHint);
-    }
-
-    const overlay = document.getElementById('aitools-modal-overlay');
-    if (overlay) {
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) closeToolModal();
-        });
     }
 
     // Tab key support in code editor

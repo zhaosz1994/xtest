@@ -172,7 +172,6 @@ function saCloseAllModals() {
 function initSubAgentsConfig() {
     if (subAgentInitialized) return;
     subAgentInitialized = true;
-    console.log('[Sub-Agents] Initializing...');
 
     // 确保容器和样式已注入
     saEnsureContainer();
@@ -182,12 +181,6 @@ function initSubAgentsConfig() {
     const btnCreate = document.getElementById('saBtnCreateAgent');
     if (btnCreate) {
         btnCreate.addEventListener('click', () => openSubAgentModal(null));
-    }
-
-    // 绑定 overlay 点击关闭
-    const overlay = document.getElementById('saOverlay');
-    if (overlay) {
-        overlay.addEventListener('click', saCloseAllModals);
     }
 
     // 绑定编辑弹窗内的 tab 切换

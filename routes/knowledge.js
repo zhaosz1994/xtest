@@ -4,12 +4,48 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs').promises;
 const rateLimit = require('express-rate-limit');
-const { authenticateToken } = require('../middleware');
+const { authenticateToken, fixFilenameEncoding } = require('../middleware');
 const vfsService = require('../services/vfsService');
 const fileParserService = require('../services/fileParserService');
 const webCrawlerService = require('../services/webCrawlerService');
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
+
+let libreOfficeAvailable = null;
+
+async function checkLibreOffice() {
+  if (libreOfficeAvailable !== null) return libreOfficeAvailable;
+  const { execFile } = require('child_process');
+  const util = require('util');
+  const execFileAsync = util.promisify(execFile);
+  const candidates = process.platform === 'win32'
+    ? ['soffice']
+    : ['libreoffice', 'soffice', '/Applications/LibreOffice.app/Contents/MacOS/soffice'];
+  for (const cmd of candidates) {
+    try {
+      await execFileAsync(cmd, ['--version'], { timeout: 5000 });
+      libreOfficeAvailable = cmd;
+      return cmd;
+    } catch { }
+  }
+  libreOfficeAvailable = false;
+  return false;
+}
+
+async function convertToPdfViaLibreOffice(inputPath) {
+  const sofficeCmd = await checkLibreOffice();
+  if (!sofficeCmd) return null;
+  const libre = require('libreoffice-convert');
+  libre.convertAsync = require('util').promisify(libre.convert);
+  const inputBuffer = await fs.readFile(inputPath);
+  const pdfBuffer = await libre.convertAsync(inputBuffer, '.pdf', undefined);
+  const os = require('os');
+  const tmpDir = path.join(os.tmpdir(), 'xtest-preview');
+  await fs.mkdir(tmpDir, { recursive: true });
+  const pdfPath = path.join(tmpDir, path.basename(inputPath, path.extname(inputPath)) + '-' + Date.now() + '.pdf');
+  await fs.writeFile(pdfPath, pdfBuffer);
+  return pdfPath;
+}
 
 const crawlLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -24,7 +60,7 @@ const upload = multer({
   storage,
   limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowedExts = ['docx', 'doc', 'xlsx', 'xls', 'pdf', 'png', 'jpg', 'jpeg', 'txt', 'md', 'drawio', 'vsdx'];
+    const allowedExts = ['docx', 'doc', 'xlsx', 'xls', 'pdf', 'png', 'jpg', 'jpeg', 'txt', 'md', 'drawio', 'vsdx', 'pptx'];
     const ext = path.extname(file.originalname).slice(1).toLowerCase();
     if (allowedExts.includes(ext)) {
       cb(null, true);
@@ -113,7 +149,7 @@ router.post('/upload', authenticateToken, (req, res, next) => {
     }
     next();
   });
-}, async (req, res) => {
+}, fixFilenameEncoding, async (req, res) => {
   try {
     const { moduleId, parentId, conflictAction, libraryId } = req.body;
     if (!req.file) {
@@ -134,7 +170,7 @@ router.post('/upload', authenticateToken, (req, res, next) => {
         const result = await vfsService.overwriteFile(
           conflict.existingFile.id, req.file, parsedModuleId, parsedParentId, req.user.username, parsedLibraryId
         );
-        return res.json({ success: true, data: result });
+    return res.json({ success: true, data: result });
       } else if (conflictAction === 'coexist') {
         const result = await vfsService.coexistFile(req.file, parsedModuleId, parsedParentId, req.user.username, parsedLibraryId);
         return res.json({ success: true, data: result });
@@ -164,7 +200,7 @@ router.post('/upload-batch', authenticateToken, (req, res, next) => {
     }
     next();
   });
-}, async (req, res) => {
+}, fixFilenameEncoding, async (req, res) => {
   try {
     const { moduleId, parentId, libraryId } = req.body;
     if (!req.files || req.files.length === 0) {
@@ -391,6 +427,29 @@ router.get('/download/:fileId', authenticateToken, async (req, res) => {
   }
 });
 
+router.get('/preview-pdf/:fileId', authenticateToken, async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    const fileInfo = await vfsService.getFileInfo(fileId);
+    if (!fileInfo) return res.status(404).json({ success: false, message: '文件不存在' });
+    const filePath = path.join(UPLOAD_DIR, fileInfo.stored_name);
+    try {
+      await fs.access(filePath);
+    } catch {
+      return res.status(404).json({ success: false, message: '文件不存在' });
+    }
+    const pdfPath = await convertToPdfViaLibreOffice(filePath);
+    if (!pdfPath) return res.status(500).json({ success: false, message: 'PDF转换失败，请确认LibreOffice已安装' });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline');
+    const pdfBuffer = await fs.readFile(pdfPath);
+    res.send(pdfBuffer);
+    try { await fs.unlink(pdfPath); } catch { }
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'PDF预览失败' });
+  }
+});
+
 router.get('/preview/:fileId', authenticateToken, async (req, res) => {
   try {
     const { fileId } = req.params;
@@ -450,34 +509,133 @@ router.get('/preview/:fileId', authenticateToken, async (req, res) => {
       try {
         const mammoth = require('mammoth');
         const buffer = await fs.readFile(filePath);
-        const result = await mammoth.convertToHtml({ buffer });
+        const result = await mammoth.convertToHtml({ buffer }, {
+          convertImage: mammoth.images.imgElement(function(image) {
+            return image.readAsBase64String().then(function(imageBuffer) {
+              return {
+                src: "data:" + image.contentType + ";base64," + imageBuffer
+              };
+            });
+          })
+        });
+        const hasImageWarnings = result.messages.some(m =>
+          /Could not find image file|Image of type.*is unlikely/i.test(m.message)
+        );
+        if (hasImageWarnings) {
+          try {
+            const pdfResult = await convertToPdfViaLibreOffice(filePath);
+            if (pdfResult) {
+              return res.json({
+                success: true,
+                data: {
+                  type: 'pdf',
+                  name: fileInfo.name,
+                  url: `/api/knowledge/preview-pdf/${fileInfo.id}`
+                }
+              });
+            }
+          } catch (loErr) { }
+        }
         return res.json({
           success: true,
           data: {
             type: 'html',
             name: fileInfo.name,
-            content: result.value
+            content: result.value,
+            hasImageWarnings
           }
         });
       } catch (mammothErr) {
+        try {
+          const pdfResult = await convertToPdfViaLibreOffice(filePath);
+          if (pdfResult) {
+            return res.json({
+              success: true,
+              data: {
+                type: 'pdf',
+                name: fileInfo.name,
+                url: `/api/knowledge/preview-pdf/${fileInfo.id}`
+              }
+            });
+          }
+        } catch (loErr) { }
         return res.json({
           success: true,
           data: {
             type: 'html',
             name: fileInfo.name,
-            content: '<p style="color:#64748b;text-align:center;padding:40px;">Word文档预览需要安装mammoth库<br><code>npm install mammoth</code></p>'
+            content: '<p style="color:#64748b;text-align:center;padding:40px;">Word文档预览失败</p>'
           }
         });
       }
     }
 
     if (['xlsx', 'xls'].includes(ext)) {
+      try {
+        const XLSX = require('xlsx');
+        const buffer = await fs.readFile(filePath);
+        const workbook = XLSX.read(buffer, { type: 'buffer' });
+        const sheets = workbook.SheetNames;
+        const sheetsHtml = {};
+        for (const sheetName of sheets) {
+          const sheet = workbook.Sheets[sheetName];
+          sheetsHtml[sheetName] = XLSX.utils.sheet_to_html(sheet, { editable: false });
+        }
+        return res.json({
+          success: true,
+          data: {
+            type: 'excel',
+            name: fileInfo.name,
+            sheets,
+            sheetsHtml,
+            activeSheet: sheets[0] || ''
+          }
+        });
+      } catch (xlsxErr) {
+        return res.json({
+          success: true,
+          data: {
+            type: 'html',
+            name: fileInfo.name,
+            content: '<p style="color:#64748b;text-align:center;padding:40px;">Excel文件预览失败</p>'
+          }
+        });
+      }
+    }
+
+    if (['pptx'].includes(ext)) {
+      try {
+        const { PPTXInHTMLOut } = require('pptx-in-html-out');
+        const buffer = await fs.readFile(filePath);
+        const converter = new PPTXInHTMLOut(buffer);
+        const html = await converter.toHTML();
+        return res.json({
+          success: true,
+          data: {
+            type: 'html',
+            name: fileInfo.name,
+            content: html
+          }
+        });
+      } catch (pptxErr) {
+        return res.json({
+          success: true,
+          data: {
+            type: 'html',
+            name: fileInfo.name,
+            content: '<p style="color:#64748b;text-align:center;padding:40px;">PPT文件预览失败</p>'
+          }
+        });
+      }
+    }
+
+    if (['vsdx', 'drawio'].includes(ext)) {
       return res.json({
         success: true,
         data: {
           type: 'html',
           name: fileInfo.name,
-          content: '<p style="color:#64748b;text-align:center;padding:40px;">Excel文件暂不支持在线预览，请下载后查看</p>'
+          content: '<p style="color:#64748b;text-align:center;padding:40px;">该文件类型暂不支持在线预览<br>请下载后使用对应软件查看</p>'
         }
       });
     }

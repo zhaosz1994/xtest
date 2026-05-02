@@ -1,6 +1,7 @@
 const pool = require('../db');
 const path = require('path');
 const fs = require('fs').promises;
+const logger = require('./logger');
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
 
@@ -35,6 +36,8 @@ class FileParserService {
         content = await this.parseExcel(filePath);
       } else if (ext === 'pdf') {
         content = await this.parsePdf(filePath);
+      } else if (ext === 'pptx') {
+        content = await this.parsePptx(filePath);
       } else if (['txt', 'md'].includes(ext)) {
         content = await fs.readFile(filePath, 'utf-8');
       } else if (['png', 'jpg', 'jpeg'].includes(ext)) {
@@ -115,6 +118,15 @@ class FileParserService {
     const dataBuffer = await fs.readFile(filePath);
     const data = await pdfParse(dataBuffer);
     return data.text;
+  }
+
+  async parsePptx(filePath) {
+    const { PPTXInHTMLOut } = require('pptx-in-html-out');
+    const buffer = await fs.readFile(filePath);
+    const converter = new PPTXInHTMLOut(buffer);
+    const html = await converter.toHTML({ includeStyles: false });
+    const text = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    return text;
   }
 
   chunkContent(content, options = {}) {
@@ -206,10 +218,10 @@ class FileParserService {
       try {
         await this.parseAndChunk(fileId);
       } catch (error) {
-        console.error(`文件解析失败: fileId=${fileId}`, error.message);
+        logger.error('文件解析失败', { fileId, error: error.message });
       }
     }).catch(err => {
-      console.error(`异步解析任务异常: fileId=${fileId}`, err.message);
+      logger.error('异步解析任务异常', { fileId, error: err.message });
     });
   }
 

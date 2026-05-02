@@ -2400,7 +2400,6 @@
         `;
         document.body.appendChild(modal);
 
-        document.getElementById('bulk-modal-overlay').addEventListener('click', closeBulkDefaultsModal);
         document.getElementById('bulk-cancel-btn').addEventListener('click', closeBulkDefaultsModal);
         document.getElementById('bulk-confirm-btn').addEventListener('click', confirmBulkDefaults);
     }
@@ -2469,7 +2468,6 @@
             });
         }
 
-        if (drawerOverlay) drawerOverlay.addEventListener('click', closeDrawer);
         if (drawerCloseBtn) drawerCloseBtn.addEventListener('click', closeDrawer);
         if (drawerCancelBtn) drawerCancelBtn.addEventListener('click', closeDrawer);
         if (drawerSaveBtn) drawerSaveBtn.addEventListener('click', saveDrawerData);
@@ -2484,12 +2482,6 @@
         if (level1PanelOverlay) {
             level1PanelOverlay.addEventListener('click', () => toggleLevel1Dropdown(false));
         }
-
-        document.querySelectorAll('.modal-overlay').forEach(overlay => {
-            overlay.addEventListener('click', () => {
-                overlay.closest('.modal').style.display = 'none';
-            });
-        });
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {

@@ -1,5 +1,6 @@
 const pool = require('../db');
 const { v4: uuidv4 } = require('uuid');
+const logger = require('./logger');
 
 class Level1PointService {
   async getExistingLevel1Points(moduleId) {
@@ -61,7 +62,7 @@ class Level1PointService {
       return tempLevel1Points;
 
     } catch (error) {
-      console.error('生成一级测试点失败:', error.message);
+      logger.error('生成一级测试点失败', { error: error.message });
       return [];
     }
   }
@@ -211,7 +212,7 @@ ${materialContent.slice(0, 6000)}
       }
     }
 
-    console.log(`[assignLevel1ToCases] 为 ${tempCases.length} 个用例分配了一级测试点，共 ${assignedCases.size} 个一级测试点`);
+    logger.info('为用例分配了一级测试点', { caseCount: tempCases.length, level1Count: assignedCases.size });
   }
 
   async assignExistingLevel1ToCases(taskId, level1Id) {

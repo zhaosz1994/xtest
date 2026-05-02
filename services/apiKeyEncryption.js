@@ -1,10 +1,11 @@
 const crypto = require('crypto');
+const logger = require('./logger');
 require('dotenv').config();
 
 const ALGORITHM = 'aes-256-cbc';
 
 if (!process.env.API_KEY_ENCRYPTION_KEY) {
-  console.error('严重错误: 未设置 API_KEY_ENCRYPTION_KEY 环境变量！API密钥加密功能无法安全运行，重启后加密的数据将无法解密。请在 .env 文件中设置 API_KEY_ENCRYPTION_KEY 后重新启动。');
+  logger.error('严重错误: 未设置 API_KEY_ENCRYPTION_KEY 环境变量，API密钥加密功能无法安全运行，重启后加密的数据将无法解密。请在 .env 文件中设置 API_KEY_ENCRYPTION_KEY 后重新启动。');
 }
 
 const ENCRYPTION_KEY = process.env.API_KEY_ENCRYPTION_KEY;
@@ -37,7 +38,7 @@ class APIKeyEncryption {
       
       return iv.toString('hex') + ':' + encrypted;
     } catch (error) {
-      console.error('加密失败:', error.message);
+      logger.error('加密失败', { error: error.message });
       throw new Error('API_key加密失败');
     }
   }
@@ -63,7 +64,7 @@ class APIKeyEncryption {
       
       return decrypted;
     } catch (error) {
-      console.error('解密失败:', error.message);
+      logger.error('解密失败', { error: error.message });
       throw new Error('API_key解密失败');
     }
   }

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
-const { authenticateToken, requireAdmin } = require('../middleware');
+const { authenticateToken, requireAdmin, fixFilenameEncoding } = require('../middleware');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -70,7 +70,7 @@ const recordImageUpload = multer({
 });
 
 // 执行记录图片上传接口
-router.post('/execution-records/upload-image', authenticateToken, recordImageUpload.single('image'), (req, res) => {
+router.post('/execution-records/upload-image', authenticateToken, recordImageUpload.single('image'), fixFilenameEncoding, (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ success: false, message: '请选择图片文件' });

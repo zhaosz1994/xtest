@@ -6,14 +6,10 @@ let klInitialized = false;
 function initKnowledgeLibrary() {
     if (klInitialized) return;
     klInitialized = true;
-    console.log('[Knowledge Library] Initializing...');
     initKLEventListeners();
-    console.log('[Knowledge Library] Event listeners initialized');
     if (checkKLLoginStatus()) {
-        console.log('[Knowledge Library] User logged in, loading libraries...');
         loadKLLibraries();
     } else {
-        console.log('[Knowledge Library] User not logged in');
     }
 }
 
@@ -169,7 +165,7 @@ function formatSize(bytes) {
 }
 
 function getFileIcon(ext) {
-    const icons = { docx: '📄', doc: '📄', xlsx: '📊', xls: '📊', pdf: '📕', png: '🖼️', jpg: '🖼️', jpeg: '🖼️', md: '📝', txt: '📝', drawio: '📐', vsdx: '📐' };
+    const icons = { docx: '📄', doc: '📄', xlsx: '📊', xls: '📊', pdf: '📕', png: '🖼️', jpg: '🖼️', jpeg: '🖼️', md: '📝', txt: '📝', drawio: '📐', vsdx: '📐', pptx: '📽️' };
     return icons[ext] || '📄';
 }
 
@@ -911,7 +907,7 @@ async function previewFile(fileId) {
     }
 }
 
-function renderPreviewContent(data) {
+async function renderPreviewContent(data) {
     const container = document.getElementById('previewContent');
 
     if (data.type === 'image') {
@@ -925,14 +921,28 @@ function renderPreviewContent(data) {
         img.onerror = () => { container.innerHTML = '<div class="kl-preview-unsupported"><div class="icon">⚠️</div><p>图片加载失败</p></div>'; };
         container.appendChild(img);
     } else if (data.type === 'pdf') {
-        const safeUrl = String(data.url || '').replace(/^javascript:/i, '');
-        container.innerHTML = '';
-        const iframe = document.createElement('iframe');
-        iframe.src = safeUrl;
-        iframe.style.width = '100%';
-        iframe.style.height = '70vh';
-        iframe.style.border = 'none';
-        container.appendChild(iframe);
+        const pdfUrl = data.url || '';
+        container.innerHTML = '<div class="kl-loading"><div class="kl-spinner"></div></div>';
+        try {
+            const token = localStorage.getItem('authToken') || localStorage.getItem('token');
+            const resp = await fetch(pdfUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+            if (resp.ok) {
+                const blob = await resp.blob();
+                const blobUrl = URL.createObjectURL(blob);
+                container.innerHTML = '';
+                const iframe = document.createElement('iframe');
+                iframe.src = blobUrl;
+                iframe.style.width = '100%';
+                iframe.style.height = '70vh';
+                iframe.style.border = 'none';
+                container.appendChild(iframe);
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+            } else {
+                container.innerHTML = '<div class="kl-preview-unsupported"><div class="icon">⚠️</div><p>PDF加载失败</p></div>';
+            }
+        } catch (e) {
+            container.innerHTML = '<div class="kl-preview-unsupported"><div class="icon">⚠️</div><p>PDF加载失败</p></div>';
+        }
     } else if (data.type === 'markdown') {
         if (typeof marked !== 'undefined' && marked.parse) {
             const rawHtml = marked.parse(data.content || '');
@@ -942,8 +952,39 @@ function renderPreviewContent(data) {
         }
     } else if (data.type === 'text') {
         container.innerHTML = `<pre>${klEscapeHtml(data.content || '')}</pre>`;
+    } else if (data.type === 'excel') {
+        const sheets = data.sheets || [];
+        const sheetsHtml = data.sheetsHtml || {};
+        const activeSheet = data.activeSheet || sheets[0] || '';
+        let html = '';
+        if (sheets.length > 1) {
+            html += '<div class="kl-excel-tabs">';
+            for (const s of sheets) {
+                html += `<button class="kl-excel-tab${s === activeSheet ? ' active' : ''}" data-sheet="${klEscapeHtml(s)}">${klEscapeHtml(s)}</button>`;
+            }
+            html += '</div>';
+        }
+        html += '<div class="kl-excel-content">';
+        for (const s of sheets) {
+            const display = s === activeSheet ? '' : 'display:none;';
+            const sanitized = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(sheetsHtml[s] || '') : klEscapeHtml(sheetsHtml[s] || '');
+            html += `<div class="kl-excel-sheet" data-sheet="${klEscapeHtml(s)}" style="${display}"><div class="markdown-body">${sanitized}</div></div>`;
+        }
+        html += '</div>';
+        container.innerHTML = html;
+        container.querySelectorAll('.kl-excel-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                container.querySelectorAll('.kl-excel-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                const sheetName = tab.getAttribute('data-sheet');
+                container.querySelectorAll('.kl-excel-sheet').forEach(sh => {
+                    sh.style.display = sh.getAttribute('data-sheet') === sheetName ? '' : 'none';
+                });
+            });
+        });
     } else if (data.type === 'html') {
-        const sanitized = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(data.content || '') : klEscapeHtml(data.content || '');
+        const purifyConfig = { ADD_TAGS: ['img'], ADD_ATTR: ['src'], ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$)|data:image\/)/i };
+        const sanitized = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(data.content || '', purifyConfig) : klEscapeHtml(data.content || '');
         container.innerHTML = `<div class="markdown-body">${sanitized}</div>`;
     } else {
         container.innerHTML = `<div class="kl-preview-unsupported"><div class="icon">📄</div><p>该文件类型暂不支持在线预览</p><p style="font-size:13px;margin-top:8px;">请下载后查看</p></div>`;
@@ -1950,8 +1991,6 @@ function initKLEventListeners() {
         renderFileArea();
         updateBatchBar();
     });
-
-    document.getElementById('overlay').addEventListener('click', closeKLModals);
 
     document.getElementById('btnCloseDetail').addEventListener('click', closeDetailPanel);
     document.getElementById('btnClosePreview').addEventListener('click', () => klCloseModal('previewModal'));

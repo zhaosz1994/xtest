@@ -1,4 +1,5 @@
 const pool = require('../db');
+const logger = require('./logger');
 
 class ReviewService {
   async generateCaseIds(count, libraryId, moduleId, isAI, connection) {
@@ -300,35 +301,33 @@ class ReviewService {
   }
 
   async submitForReview(taskId, reviewerIds, deadline, tempCaseIds) {
-    console.log('[submitForReview] 参数:', { taskId, reviewerIds, deadline, tempCaseIds: tempCaseIds?.length });
+    logger.debug('submitForReview 请求参数', { taskId, reviewerIds, deadline, tempCaseCount: tempCaseIds?.length });
     
     let tempCases;
     if (tempCaseIds && tempCaseIds.length > 0) {
       const placeholders = tempCaseIds.map(() => '?').join(',');
-      console.log('[submitForReview] 使用 tempCaseIds 查询, 数量:', tempCaseIds.length);
+      logger.debug('submitForReview 使用 tempCaseIds 查询', { count: tempCaseIds.length });
       const [rows] = await pool.execute(`
         SELECT temp_case_id FROM temp_test_cases 
         WHERE temp_case_id IN (${placeholders}) AND status = 'approved'
       `, tempCaseIds);
       tempCases = rows;
-      console.log('[submitForReview] 查询到临时用例数量:', tempCases.length);
     } else {
-      console.log('[submitForReview] 使用 taskId 查询:', taskId);
+      logger.debug('submitForReview 使用 taskId 查询', { taskId });
       const [rows] = await pool.execute(`
         SELECT temp_case_id FROM temp_test_cases 
         WHERE task_id = ? AND status = 'approved'
       `, [taskId]);
       tempCases = rows;
-      console.log('[submitForReview] 查询到临时用例数量:', tempCases.length);
     }
 
     if (tempCases.length === 0) {
-      console.log('[submitForReview] 没有找到待提交的用例');
+      logger.info('submitForReview 没有找到待提交的用例');
       return { submitted: 0 };
     }
 
     const primaryReviewerId = reviewerIds && reviewerIds.length > 0 ? reviewerIds[0] : null;
-    console.log('[submitForReview] 主要评审人ID:', primaryReviewerId);
+    logger.debug('submitForReview 主要评审人', { primaryReviewerId });
 
     const connection = await pool.getConnection();
 
@@ -336,7 +335,7 @@ class ReviewService {
       await connection.beginTransaction();
 
       for (const tempCase of tempCases) {
-        console.log('[submitForReview] 更新用例:', tempCase.temp_case_id);
+        logger.debug('submitForReview 更新用例', { tempCaseId: tempCase.temp_case_id });
         await connection.execute(`
           UPDATE temp_test_cases 
           SET review_status = 'pending',
@@ -348,12 +347,12 @@ class ReviewService {
       }
 
       await connection.commit();
-      console.log('[submitForReview] 提交成功，共更新', tempCases.length, '条记录');
+      logger.info('submitForReview 提交成功', { count: tempCases.length });
 
       return { submitted: tempCases.length };
 
     } catch (error) {
-      console.error('[submitForReview] 更新失败:', error);
+      logger.error('submitForReview 更新失败', { error: error.message });
       await connection.rollback();
       throw error;
     } finally {
@@ -366,7 +365,7 @@ class ReviewService {
       return { mergedCount: 0 };
     }
 
-    console.log('[batchMerge] options:', options);
+    logger.debug('batchMerge 参数', { options });
 
     const placeholders = tempCaseIds.map(() => '?').join(',');
 
@@ -374,8 +373,6 @@ class ReviewService {
       SELECT * FROM temp_test_cases 
       WHERE temp_case_id IN (${placeholders}) AND is_duplicate = 0
     `, tempCaseIds);
-
-    console.log('[batchMerge] 查询到临时用例数量:', tempCases.length);
 
     if (tempCases.length === 0) {
       return { mergedCount: 0 };

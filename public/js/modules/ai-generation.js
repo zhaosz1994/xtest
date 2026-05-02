@@ -7,7 +7,6 @@ let aiGenInitialized = false;
 function initAIGeneration() {
     if (aiGenInitialized) return;
     aiGenInitialized = true;
-    console.log('[AI Generation] Initializing...');
     loadModules();
     loadAgents();
 

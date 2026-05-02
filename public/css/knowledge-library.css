@@ -1028,6 +1028,58 @@
 
 .kl-preview-unsupported .icon { font-size: 48px; margin-bottom: 12px; opacity: .5; }
 
+.kl-excel-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--kl-border);
+  padding: 0 12px;
+  background: #f8fafc;
+  flex-shrink: 0;
+}
+
+.kl-excel-tab {
+  padding: 8px 16px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--kl-text-secondary);
+  border-bottom: 2px solid transparent;
+  transition: all .15s;
+}
+
+.kl-excel-tab:hover { color: var(--kl-primary); background: rgba(59,130,246,.05); }
+
+.kl-excel-tab.active {
+  color: var(--kl-primary);
+  border-bottom-color: var(--kl-primary);
+  font-weight: 600;
+}
+
+.kl-excel-content { overflow: auto; flex: 1; }
+
+.kl-excel-content .markdown-body table {
+  border-collapse: collapse;
+  width: auto;
+  min-width: 100%;
+  font-size: 13px;
+}
+
+.kl-excel-content .markdown-body td,
+.kl-excel-content .markdown-body th {
+  border: 1px solid #e2e8f0;
+  padding: 4px 10px;
+  white-space: nowrap;
+  text-align: left;
+  min-width: 60px;
+}
+
+.kl-excel-content .markdown-body th {
+  background: #f1f5f9;
+  font-weight: 600;
+  color: #334155;
+}
+
 .kl-detail-panel {
   position: fixed;
   right: 0;

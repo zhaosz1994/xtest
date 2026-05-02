@@ -1,6 +1,7 @@
 const nodemailer = require('nodemailer');
 const pool = require('../db');
 const crypto = require('crypto');
+const logger = require('./logger');
 
 // 加密密钥（生产环境应从环境变量获取）
 const ENCRYPTION_KEY = process.env.EMAIL_ENCRYPTION_KEY || 'xtest-email-encryption-key-32b';
@@ -27,7 +28,7 @@ function decrypt(text) {
     decrypted += decipher.final('utf8');
     return decrypted;
   } catch (error) {
-    console.error('解密失败:', error);
+    logger.error('解密失败', { error: error.message });
     return text;
   }
 }
@@ -194,7 +195,7 @@ async function sendEmail({ to, subject, html, text, emailType = 'notification', 
     };
     
   } catch (error) {
-    console.error('邮件发送失败:', error);
+    logger.error('邮件发送失败', { error: error.message });
     
     // 记录失败日志
     const recipientEmail = Array.isArray(to) ? to[0] : to;
@@ -204,7 +205,7 @@ async function sendEmail({ to, subject, html, text, emailType = 'notification', 
         await logEmail(config.id, recipientEmail, '', subject, emailType, 'failed', error.message);
       }
     } catch (logError) {
-      console.error('记录邮件日志失败:', logError);
+      logger.error('记录邮件日志失败', { error: logError.message });
     }
     
     return {
