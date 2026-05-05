@@ -1182,12 +1182,15 @@ async function assembleReportByProject(projectId) {
     const project = projects[0];
     
     const [testCases] = await connection.execute(`
-      SELECT tc.*, m.name as module_name
+      SELECT tc.id, tc.case_id, tc.name, tc.priority, tc.type, tc.status, tc.owner, tc.creator, tc.precondition, tc.purpose, tc.steps, tc.expected, tc.key_config, tc.remark, tc.method, tc.level1_id, tc.module_id, tc.library_id, tc.created_at, tc.updated_at, m.name as module_name
       FROM test_cases tc
       LEFT JOIN modules m ON tc.module_id = m.id
       LEFT JOIN test_case_projects tcp ON tc.id = tcp.test_case_id
-      WHERE tcp.project_id = ? AND (tc.is_deleted = 0 OR tc.is_deleted IS NULL)
+      WHERE tcp.project_id = ? AND (tc.is_deleted = 0 OR tc.is_deleted IS NULL) LIMIT 5000
     `, [projectId]);
+    if (testCases.length === 5000) {
+      logger.warn('assembleReportByProject: 查询结果达到LIMIT 5000上限，数据可能被截断', { projectId });
+    }
     
     const stats = reportService.calculateStatistics(testCases);
     
@@ -1238,11 +1241,14 @@ async function assembleReportByModule(moduleId) {
     const module = modules[0];
     
     const [testCases] = await connection.execute(`
-      SELECT tc.*, m.name as module_name
+      SELECT tc.id, tc.case_id, tc.name, tc.priority, tc.type, tc.status, tc.owner, tc.creator, tc.precondition, tc.purpose, tc.steps, tc.expected, tc.key_config, tc.remark, tc.method, tc.level1_id, tc.module_id, tc.library_id, tc.created_at, tc.updated_at, m.name as module_name
       FROM test_cases tc
       LEFT JOIN modules m ON tc.module_id = m.id
-      WHERE tc.module_id = ? AND (tc.is_deleted = 0 OR tc.is_deleted IS NULL)
+      WHERE tc.module_id = ? AND (tc.is_deleted = 0 OR tc.is_deleted IS NULL) LIMIT 5000
     `, [moduleId]);
+    if (testCases.length === 5000) {
+      logger.warn('assembleReportByModule: 查询结果达到LIMIT 5000上限，数据可能被截断', { moduleId });
+    }
     
     const stats = reportService.calculateStatistics(testCases);
     
@@ -1280,11 +1286,14 @@ async function assembleReportByLibrary(libraryId) {
     
     // 直接使用test_cases表中的library_id字段查询
     const [testCases] = await connection.execute(`
-      SELECT tc.*, m.name as module_name
+      SELECT tc.id, tc.case_id, tc.name, tc.priority, tc.type, tc.status, tc.owner, tc.creator, tc.precondition, tc.purpose, tc.steps, tc.expected, tc.key_config, tc.remark, tc.method, tc.level1_id, tc.module_id, tc.library_id, tc.created_at, tc.updated_at, m.name as module_name
       FROM test_cases tc
       LEFT JOIN modules m ON tc.module_id = m.id
-      WHERE tc.library_id = ? AND (tc.is_deleted = 0 OR tc.is_deleted IS NULL)
+      WHERE tc.library_id = ? AND (tc.is_deleted = 0 OR tc.is_deleted IS NULL) LIMIT 5000
     `, [libraryId]);
+    if (testCases.length === 5000) {
+      logger.warn('assembleReportByLibrary: 查询结果达到LIMIT 5000上限，数据可能被截断', { libraryId });
+    }
     
     const stats = reportService.calculateStatistics(testCases);
     
@@ -1365,15 +1374,15 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       }
       
       if (report.summary) {
-        const fs = require('fs');
+        const fsp = require('fs').promises;
         const path = require('path');
         
         if (report.summary.startsWith('/') || report.summary.includes('report-')) {
           const filePath = report.summary;
-          if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
+          try {
+            await fsp.unlink(filePath);
             logger.info(`[报告] 已删除报告文件: ${filePath}`);
-          }
+          } catch (e) {}
         }
       }
       

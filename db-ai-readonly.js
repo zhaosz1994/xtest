@@ -7,8 +7,8 @@ const aiDBConfig = {
   password: process.env.AI_DB_PASSWORD,
   database: process.env.DB_NAME,
   waitForConnections: true,
-  connectionLimit: 200,
-  queueLimit: 1000,
+  connectionLimit: 20,
+  queueLimit: 100,
   enableKeepAlive: true,
   keepAliveInitialDelay: 30000,
   connectTimeout: 30000,
@@ -39,7 +39,7 @@ aiReadOnlyPool.on('error', (error) => {
   logger.error('AI只读连接池错误', { error: error.message });
 });
 
-setInterval(() => {
+const _aiPoolMonitorTimer = setInterval(() => {
   const poolStatus = aiReadOnlyPool._stat;
   if (poolStatus) {
     const activeConnections = poolStatus.active || 0;

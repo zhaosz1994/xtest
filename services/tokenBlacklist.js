@@ -6,6 +6,8 @@ const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 class TokenBlacklist {
   constructor() {
     this._cleanupTimer = null;
+    this._cache = new Map();
+    this._cacheMaxSize = 10000;
   }
 
   async init() {
@@ -45,6 +47,7 @@ class TokenBlacklist {
       );
 
       logger.info('Token已加入黑名单', { userId, reason, expiresAt: expiresAt.toISOString() });
+      this._cache.set(jti, true);
       return true;
     } catch (error) {
       logger.error('添加Token到黑名单失败', { error: error.message, userId });
@@ -59,13 +62,33 @@ class TokenBlacklist {
       if (!decoded) return false;
 
       const jti = decoded.jti || this._generateJti(token);
+      
+      // Check cache first
+      const cached = this._cache.get(jti);
+      if (cached !== undefined) {
+        if (cached === true) return true;
+        // cached === false, check if token has expired (no longer need to check blacklist)
+        if (decoded.exp && decoded.exp * 1000 < Date.now()) {
+          this._cache.delete(jti);
+        }
+        return false;
+      }
 
       const [rows] = await pool.execute(
         'SELECT id FROM token_blacklist WHERE token_jti = ? AND expires_at > NOW()',
         [jti]
       );
 
-      return rows.length > 0;
+      const isBlacklisted = rows.length > 0;
+      
+      // Cache the result with TTL based on token expiry
+      if (this._cache.size >= this._cacheMaxSize) {
+        const firstKey = this._cache.keys().next().value;
+        this._cache.delete(firstKey);
+      }
+      this._cache.set(jti, isBlacklisted);
+      
+      return isBlacklisted;
     } catch (error) {
       logger.error('检查Token黑名单失败', { error: error.message });
       return false;
@@ -106,6 +129,13 @@ class TokenBlacklist {
     } catch (error) {
       logger.error('清理Token黑名单失败', { error: error.message });
     }
+    // Clean expired cache entries
+    for (const [key, value] of this._cache.entries()) {
+      // We can't easily determine expiry from cache key alone, 
+      // but we can clear the whole cache periodically since it's small
+    }
+    // Simple approach: clear cache on cleanup since it will be repopulated
+    this._cache.clear();
   }
 
   _startCleanup() {

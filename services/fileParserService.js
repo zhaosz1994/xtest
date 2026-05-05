@@ -195,13 +195,21 @@ class FileParserService {
         DELETE FROM ai_material_chunks WHERE file_id = ?
       `, [fileId]);
 
-      for (const chunk of chunks) {
-        await connection.execute(`
-          INSERT INTO ai_material_chunks
-            (file_id, module_id, library_id, chunk_index, chunk_content, token_count, char_count)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `, [fileId, moduleId || null, libraryId || null, chunk.chunkIndex, chunk.chunkContent,
-            chunk.tokenCount, chunk.charCount]);
+      if (chunks.length > 0) {
+        const batchSize = 100;
+        for (let i = 0; i < chunks.length; i += batchSize) {
+          const batch = chunks.slice(i, i + batchSize);
+          const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(',');
+          const values = [];
+          for (const chunk of batch) {
+            values.push(fileId, moduleId || null, libraryId || null, chunk.chunkIndex, chunk.chunkContent, chunk.tokenCount, chunk.charCount);
+          }
+          await connection.execute(`
+            INSERT INTO ai_material_chunks
+              (file_id, module_id, library_id, chunk_index, chunk_content, token_count, char_count)
+            VALUES ${placeholders}
+          `, values);
+        }
       }
 
       await connection.commit();

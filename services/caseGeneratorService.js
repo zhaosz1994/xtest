@@ -290,23 +290,29 @@ ${chunk.chunk_content}
     try {
       await connection.beginTransaction();
 
-      for (const c of cases) {
-        const tempCaseId = `TEMP-${uuidv4().slice(0, 16).toUpperCase()}`;
-        await connection.execute(`
-          INSERT INTO temp_test_cases 
-            (temp_case_id, task_id, module_id, chunk_id, name, priority, type,
-             precondition, purpose, steps, expected, key_config, remark)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [tempCaseId, taskId, moduleId, chunkId,
-            c.name || '未命名用例',
-            c.priority || '中',
-            c.type || '功能测试',
-            c.precondition || '',
-            c.purpose || '',
-            c.steps || '',
-            c.expected || '',
-            c.key_config || null,
-            c.remark || null]);
+      const batchSize = 50;
+      for (let i = 0; i < cases.length; i += batchSize) {
+          const batch = cases.slice(i, i + batchSize);
+          const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+          const values = batch.flatMap(c => [
+              `TEMP-${uuidv4().slice(0, 16).toUpperCase()}`,
+              taskId, moduleId, chunkId,
+              c.name || '未命名用例',
+              c.priority || '中',
+              c.type || '功能测试',
+              c.precondition || '',
+              c.purpose || '',
+              c.steps || '',
+              c.expected || '',
+              c.key_config || null,
+              c.remark || null
+          ]);
+          await connection.execute(`
+              INSERT INTO temp_test_cases 
+                  (temp_case_id, task_id, module_id, chunk_id, name, priority, type,
+                   precondition, purpose, steps, expected, key_config, remark)
+              VALUES ${placeholders}
+          `, values);
       }
 
       await connection.commit();

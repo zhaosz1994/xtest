@@ -1,6 +1,32 @@
 const pool = require('../db');
 const logger = require('./logger');
 
+const _aiConfigCache = new Map();
+const AI_CONFIG_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+function _getCacheKey(userId, modelId) {
+    return `${userId}:${modelId || 'default'}`;
+}
+
+function _getCachedConfig(key) {
+    const entry = _aiConfigCache.get(key);
+    if (entry && Date.now() - entry.time < AI_CONFIG_CACHE_TTL) {
+        return entry.config;
+    }
+    if (entry) {
+        _aiConfigCache.delete(key);
+    }
+    return null;
+}
+
+function _setCachedConfig(key, config) {
+    if (_aiConfigCache.size > 1000) {
+        const firstKey = _aiConfigCache.keys().next().value;
+        _aiConfigCache.delete(firstKey);
+    }
+    _aiConfigCache.set(key, { config, time: Date.now() });
+}
+
 const AI_TIMEOUT_DEFAULTS = {
   generalAITask: 120000,
   reportGeneration: 600000
@@ -46,16 +72,17 @@ async function getUserAITimeoutConfig(userId) {
 }
 
 async function getSystemDefaultAIConfig() {
+  const cached = _getCachedConfig('system_default');
+  if (cached !== null) return cached;
+  
   try {
     const [models] = await pool.execute(
       'SELECT * FROM ai_models WHERE is_default = TRUE AND is_enabled = TRUE LIMIT 1'
     );
     
-    if (models.length === 0) {
-      return null;
-    }
-    
-    return models[0];
+    const result = models.length === 0 ? null : models[0];
+    if (result) _setCachedConfig('system_default', result);
+    return result;
   } catch (error) {
     logger.error('获取系统默认AI配置错误', { error: error.message });
     return null;
@@ -67,6 +94,11 @@ async function getUserAIConfig(userId, modelId = null) {
     logger.error('getUserAIConfig: userId 不能为空');
     return await getSystemDefaultAIConfig();
   }
+  
+  const cacheKey = _getCacheKey(userId, modelId);
+  const cached = _getCachedConfig(cacheKey);
+  if (cached !== null) return cached;
+  
   try {
     let query, params;
     
@@ -80,20 +112,33 @@ async function getUserAIConfig(userId, modelId = null) {
     
     const [models] = await pool.execute(query, params);
     
+    let result;
     if (models.length > 0) {
-      return models[0];
+      result = models[0];
+    } else {
+      result = await getSystemDefaultAIConfig();
     }
     
-    return await getSystemDefaultAIConfig();
+    if (result) _setCachedConfig(cacheKey, result);
+    return result;
   } catch (error) {
     logger.error('获取用户AI配置错误', { error: error.message });
     return await getSystemDefaultAIConfig();
   }
 }
 
+function invalidateAIConfigCache(userId, modelId) {
+  if (userId) {
+    _aiConfigCache.delete(_getCacheKey(userId, modelId));
+    _aiConfigCache.delete(_getCacheKey(userId, null));
+  }
+  _aiConfigCache.delete('system_default');
+}
+
 module.exports = {
   getSystemDefaultAIConfig,
   getUserAIConfig,
   getUserAITimeoutConfig,
-  getAITimeoutDefaults
+  getAITimeoutDefaults,
+  invalidateAIConfigCache
 };

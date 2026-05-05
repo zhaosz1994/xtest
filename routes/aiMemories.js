@@ -112,6 +112,21 @@ router.get('/stats/:agentId', authenticateToken, async (req, res) => {
   }
 });
 
+// POST /batch-stats - 批量获取记忆统计信息
+router.post('/batch-stats', authenticateToken, async (req, res) => {
+  try {
+    const { agentIds } = req.body;
+    if (!Array.isArray(agentIds) || agentIds.length === 0) {
+      return res.json({ success: true, data: {} });
+    }
+    const data = await memoryEngine.getBatchMemoryStats(agentIds);
+    res.json({ success: true, data });
+  } catch (err) {
+    logger.error('批量获取记忆统计失败:', err);
+    res.json({ success: false, message: '批量获取记忆统计失败' });
+  }
+});
+
 // POST /reset/:agentId - 重置代理的全部记忆（仅管理员，需确认）
 router.post('/reset/:agentId', authenticateToken, requireAdmin, async (req, res) => {
   try {

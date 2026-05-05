@@ -2468,6 +2468,7 @@
             });
         }
 
+        if (drawerOverlay) drawerOverlay.addEventListener('click', closeDrawer);
         if (drawerCloseBtn) drawerCloseBtn.addEventListener('click', closeDrawer);
         if (drawerCancelBtn) drawerCancelBtn.addEventListener('click', closeDrawer);
         if (drawerSaveBtn) drawerSaveBtn.addEventListener('click', saveDrawerData);

@@ -5,14 +5,13 @@ const { authenticateToken, fixFilenameEncoding } = require('../middleware');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const fsp = require('fs').promises;
 const crypto = require('crypto');
 const logger = require('../services/logger');
 
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads', 'scripts');
 
-if (!fs.existsSync(UPLOAD_DIR)) {
-    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -20,9 +19,7 @@ const storage = multer.diskStorage({
             new Date().getFullYear().toString(),
             String(new Date().getMonth() + 1).padStart(2, '0')
         );
-        if (!fs.existsSync(dateDir)) {
-            fs.mkdirSync(dateDir, { recursive: true });
-        }
+        fs.mkdirSync(dateDir, { recursive: true });
         cb(null, dateDir);
     },
     filename: (req, file, cb) => {
@@ -236,11 +233,9 @@ router.delete('/testcases/scripts/:scriptId', authenticateToken, async (req, res
         
         if (script.file_path) {
             try {
-                if (fs.existsSync(script.file_path)) {
-                    fs.unlinkSync(script.file_path);
-                }
+                await fsp.unlink(script.file_path);
             } catch (e) {
-                logger.warn('删除脚本文件失败:', { error: e.message });
+                // 文件不存在或删除失败，忽略
             }
         }
         
@@ -301,7 +296,9 @@ router.get('/testcases/scripts/download/:scriptId', authenticateToken, async (re
             return res.status(404).json({ success: false, message: '该脚本没有关联文件' });
         }
         
-        if (!fs.existsSync(script.file_path)) {
+        try {
+            await fsp.access(script.file_path);
+        } catch {
             return res.status(404).json({ success: false, message: '文件不存在' });
         }
         

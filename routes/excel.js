@@ -5,6 +5,7 @@ const XLSX = require('xlsx');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const fsp = require('fs').promises;
 const logger = require('../services/logger');
 const { fixFilenameEncoding } = require('../middleware');
 
@@ -12,9 +13,7 @@ const { fixFilenameEncoding } = require('../middleware');
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = path.join(__dirname, '../uploads/temp');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
+    fs.mkdirSync(uploadDir, { recursive: true });
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
@@ -32,9 +31,7 @@ const upload = multer({
 const imageStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = path.join(__dirname, '../uploads/images');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
+    fs.mkdirSync(uploadDir, { recursive: true });
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
@@ -464,7 +461,9 @@ router.post('/import/parse-sheet', async (req, res) => {
       return res.json({ success: false, message: '缺少必要参数' });
     }
     
-    if (!fs.existsSync(filePath)) {
+    try {
+      await fsp.access(filePath);
+    } catch {
       return res.json({ success: false, message: '文件不存在，请重新上传' });
     }
     
@@ -693,7 +692,9 @@ router.post('/import/execute', async (req, res) => {
       return res.json({ success: false, message: '缺少必要参数' });
     }
     
-    if (!fs.existsSync(filePath)) {
+    try {
+      await fsp.access(filePath);
+    } catch {
       return res.json({ success: false, message: '文件不存在，请重新上传' });
     }
     
@@ -1127,12 +1128,12 @@ router.post('/import/execute', async (req, res) => {
  * POST /api/excel/import/cleanup
  * 清理临时文件
  */
-router.post('/import/cleanup', (req, res) => {
+router.post('/import/cleanup', async (req, res) => {
   try {
     const { filePath } = req.body;
     
-    if (filePath && fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
+    if (filePath) {
+      try { await fsp.unlink(filePath); } catch (e) {}
     }
     
     res.json({ success: true });
@@ -1195,14 +1196,12 @@ router.get('/template', (req, res) => {
  * DELETE /api/excel/temp/:filename
  * 清理临时文件
  */
-router.delete('/temp/:filename', (req, res) => {
+router.delete('/temp/:filename', async (req, res) => {
   try {
     const { filename } = req.params;
     const filePath = path.join(__dirname, '../uploads/temp', filename);
     
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
+    try { await fsp.unlink(filePath); } catch (e) {}
     
     res.json({ success: true });
   } catch (error) {

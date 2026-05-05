@@ -5,42 +5,33 @@ const { authenticateToken, requireAdmin, isAdmin } = require('../middleware');
 const logger = require('../services/logger');
 const memoryEngine = require('../services/memoryEngine');
 
-// GET /list - 获取Sub-Agent列表（含Override逻辑）
+// GET /list - 获取Sub-Agent列表（含Override逻辑 + 内联记忆统计）
 router.get('/list', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
     const userIsAdmin = isAdmin(req.user);
     const { category, is_enabled, creator_only } = req.query;
 
-    // 1. 获取所有系统代理（is_system=1）
-    let systemQuery = 'SELECT * FROM ai_sub_agents WHERE is_system = 1';
-    const systemParams = [];
+    const queryParams = [userId];
+    let categoryFilter = '';
+    let enabledFilter = '';
     if (category) {
-      systemQuery += ' AND category = ?';
-      systemParams.push(category);
+      categoryFilter = ' AND category = ?';
+      queryParams.push(category);
     }
     if (is_enabled !== undefined) {
-      systemQuery += ' AND is_enabled = ?';
-      systemParams.push(is_enabled === 'true' ? 1 : 0);
+      enabledFilter = ' AND is_enabled = ?';
+      queryParams.push(is_enabled === 'true' ? 1 : 0);
     }
-    systemQuery += ' ORDER BY created_at ASC';
-    const [systemAgents] = await pool.execute(systemQuery, systemParams);
 
-    // 2. 获取用户的私有覆盖代理（creator_id=userId, is_system=0）
-    let privateQuery = 'SELECT * FROM ai_sub_agents WHERE creator_id = ? AND is_system = 0';
-    const privateParams = [userId];
-    if (category) {
-      privateQuery += ' AND category = ?';
-      privateParams.push(category);
-    }
-    if (is_enabled !== undefined) {
-      privateQuery += ' AND is_enabled = ?';
-      privateParams.push(is_enabled === 'true' ? 1 : 0);
-    }
-    privateQuery += ' ORDER BY created_at ASC';
-    const [privateAgents] = await pool.execute(privateQuery, privateParams);
+    const [allAgents] = await pool.execute(
+      `SELECT * FROM ai_sub_agents WHERE (is_system = 1 OR creator_id = ?)${categoryFilter}${enabledFilter} ORDER BY is_system DESC, created_at ASC`,
+      queryParams
+    );
 
-    // 3. Override逻辑：对于每个agent_code，如果用户有私有覆盖，则显示私有覆盖
+    const systemAgents = allAgents.filter(a => a.is_system === 1);
+    const privateAgents = allAgents.filter(a => a.is_system === 0);
+
     const privateOverrideMap = new Map();
     for (const pa of privateAgents) {
       privateOverrideMap.set(pa.agent_code, pa);
@@ -48,7 +39,6 @@ router.get('/list', authenticateToken, async (req, res) => {
 
     const result = [];
 
-    // 处理系统代理
     for (const sa of systemAgents) {
       const overridden = privateOverrideMap.has(sa.agent_code);
       if (overridden) {
@@ -68,7 +58,6 @@ router.get('/list', authenticateToken, async (req, res) => {
       }
     }
 
-    // 添加剩余的私有代理（agent_code不与系统代理冲突的）
     for (const [agentCode, pa] of privateOverrideMap) {
       result.push({
         ...pa,
@@ -76,40 +65,53 @@ router.get('/list', authenticateToken, async (req, res) => {
       });
     }
 
-    // 非管理员只能看到 public + 自己的 private
     let filtered = userIsAdmin
       ? result
       : result.filter(a => a.visibility === 'public' || a.creator_id === userId);
 
-    // creator_only: 只返回当前用户创建的代理
     if (creator_only === 'true' || creator_only === '1') {
       filtered = filtered.filter(a => a.creator_id === userId);
     }
 
+    const agentIds = filtered.map(a => a.id);
+    const batchMemoryStats = agentIds.length > 0
+      ? await memoryEngine.getBatchMemoryStats(agentIds)
+      : {};
+
     res.json({
       success: true,
-      data: filtered.map(a => ({
-        id: a.id,
-        agentCode: a.agent_code,
-        displayName: a.display_name,
-        description: a.description,
-        category: a.category,
-        isSystem: a.is_system,
-        allowQa: a.allow_qa,
-        isEnabled: a.is_enabled,
-        creatorId: a.creator_id,
-        visibility: a.visibility,
-        memoryEnabled: a.memory_enabled,
-        memoryDistillThreshold: a.memory_distill_threshold,
-        isOverridden: a.is_overridden || false,
-        systemId: a.system_id || null,
-        systemDisplayName: a.system_display_name || null,
-        createdAt: a.created_at,
-        updatedAt: a.updated_at,
-        canEdit: userIsAdmin || a.creator_id === userId,
-        canDelete: userIsAdmin || a.creator_id === userId,
-        canOverride: !userIsAdmin && a.is_system === 1 && !a.is_overridden
-      }))
+      data: filtered.map(a => {
+        const ms = batchMemoryStats[a.id] || { global: { count: 0, totalChars: 0 }, library: { count: 0, totalChars: 0 }, module: { count: 0, totalChars: 0 }, totalChars: 0, lastDistilledAt: null };
+        return {
+          id: a.id,
+          agentCode: a.agent_code,
+          displayName: a.display_name,
+          description: a.description,
+          category: a.category,
+          isSystem: a.is_system,
+          allowQa: a.allow_qa,
+          isEnabled: a.is_enabled,
+          creatorId: a.creator_id,
+          visibility: a.visibility,
+          memoryEnabled: a.memory_enabled,
+          memoryDistillThreshold: a.memory_distill_threshold,
+          isOverridden: a.is_overridden || false,
+          systemId: a.system_id || null,
+          systemDisplayName: a.system_display_name || null,
+          createdAt: a.created_at,
+          updatedAt: a.updated_at,
+          canEdit: userIsAdmin || a.creator_id === userId,
+          canDelete: userIsAdmin || a.creator_id === userId,
+          canOverride: !userIsAdmin && a.is_system === 1 && !a.is_overridden,
+          memoryStats: {
+            global: ms.global,
+            library: ms.library,
+            module: ms.module,
+            totalChars: ms.totalChars,
+            lastDistilledAt: ms.lastDistilledAt
+          }
+        };
+      })
     });
   } catch (error) {
     logger.error('获取Sub-Agent列表失败', { error: error.message });

@@ -18,18 +18,30 @@ class ConnectionPoolMonitor {
       highActiveConnections: 150,
       slowQueryThreshold: 5000
     };
-    
+
+    this._monitorTimer = null;
+    this._reportTimer = null;
     this.startMonitoring();
   }
 
   startMonitoring() {
-    setInterval(() => {
+    this._monitorTimer = setInterval(() => {
       this.collectMetrics();
     }, 30000);
     
-    setInterval(() => {
+    this._reportTimer = setInterval(() => {
       this.generateReport();
     }, 300000);
+    
+    this._monitorTimer.unref();
+    this._reportTimer.unref();
+  }
+  
+  destroy() {
+    if (this._monitorTimer) clearInterval(this._monitorTimer);
+    if (this._reportTimer) clearInterval(this._reportTimer);
+    this._monitorTimer = null;
+    this._reportTimer = null;
   }
 
   collectMetrics() {

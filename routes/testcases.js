@@ -1151,6 +1151,13 @@ router.post('/batch-review', authenticateToken, async (req, res) => {
         const newStatus = action === 'approve' ? 'approved' : 'rejected';
         const actionText = action === 'approve' ? '通过' : '驳回';
         
+        // 批量查询所有用例的评审人状态，避免逐条查询
+        const [allReviewers] = await connection.execute(
+            `SELECT case_id, id, status FROM case_reviewers WHERE case_id IN (${placeholders}) AND reviewer_id = ?`,
+            [...case_ids, currentUser.id]
+        );
+        const reviewerMap = new Map(allReviewers.map(r => [r.case_id, r]));
+        
         for (const caseItem of cases) {
             if (caseItem.review_status !== 'pending') {
                 failCases.push({
@@ -1162,12 +1169,9 @@ router.post('/batch-review', authenticateToken, async (req, res) => {
                 continue;
             }
             
-            const [reviewerRows] = await connection.execute(
-                `SELECT id, status FROM case_reviewers WHERE case_id = ? AND reviewer_id = ?`,
-                [caseItem.id, currentUser.id]
-            );
+            const reviewerRow = reviewerMap.get(caseItem.id);
             
-            if (reviewerRows.length === 0) {
+            if (!reviewerRow) {
                 failCases.push({
                     id: caseItem.id,
                     case_id: caseItem.case_id,
@@ -1177,7 +1181,7 @@ router.post('/batch-review', authenticateToken, async (req, res) => {
                 continue;
             }
             
-            if (reviewerRows[0].status !== 'pending') {
+            if (reviewerRow.status !== 'pending') {
                 failCases.push({
                     id: caseItem.id,
                     case_id: caseItem.case_id,
@@ -1365,6 +1369,34 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
 
         // 处理更新的用例
         if (Array.isArray(updatedCases) && updatedCases.length > 0) {
+            // 预加载所有关联表映射，避免循环内逐条查询
+            const [allEnvs] = await connection.execute('SELECT id, name FROM environments');
+            const envMap = new Map(allEnvs.map(e => [e.name, e.id]));
+
+            const [allPhases] = await connection.execute('SELECT id, name FROM test_phases');
+            const phaseMap = new Map(allPhases.map(p => [p.name, p.id]));
+
+            const [allTypes] = await connection.execute('SELECT id, name FROM test_types');
+            const typeMap = new Map(allTypes.map(t => [t.name, t.id]));
+
+            const [allSources] = await connection.execute('SELECT id, name FROM test_sources');
+            const sourceMap = new Map(allSources.map(s => [s.name, s.id]));
+
+            const [allMethods] = await connection.execute('SELECT id, name FROM test_methods');
+            const methodMap = new Map(allMethods.map(m => [m.name, m.id]));
+
+            // 批量删除所有待更新用例的关联数据（移到循环外）
+            const caseIds = updatedCases.filter(c => c.id && c.name && c.name.trim() !== '').map(c => c.id);
+            if (caseIds.length > 0) {
+                const casePlaceholders = caseIds.map(() => '?').join(',');
+                await connection.execute(`DELETE FROM test_case_environments WHERE test_case_id IN (${casePlaceholders})`, caseIds);
+                await connection.execute(`DELETE FROM test_case_phases WHERE test_case_id IN (${casePlaceholders})`, caseIds);
+                await connection.execute(`DELETE FROM test_case_test_types WHERE test_case_id IN (${casePlaceholders})`, caseIds);
+                await connection.execute(`DELETE FROM test_case_sources WHERE test_case_id IN (${casePlaceholders})`, caseIds);
+                await connection.execute(`DELETE FROM test_case_methods WHERE test_case_id IN (${casePlaceholders})`, caseIds);
+                await connection.execute(`DELETE FROM test_case_projects WHERE test_case_id IN (${casePlaceholders})`, caseIds);
+            }
+
             for (const caseData of updatedCases) {
                 if (!caseData.id || !caseData.name || caseData.name.trim() === '') continue;
 
@@ -1390,72 +1422,47 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
                     ]
                 );
 
-                // 更新关联表
-                // 删除旧的关联数据
-                await connection.execute('DELETE FROM test_case_environments WHERE test_case_id = ?', [caseData.id]);
-                await connection.execute('DELETE FROM test_case_phases WHERE test_case_id = ?', [caseData.id]);
-                await connection.execute('DELETE FROM test_case_test_types WHERE test_case_id = ?', [caseData.id]);
-                await connection.execute('DELETE FROM test_case_sources WHERE test_case_id = ?', [caseData.id]);
-                await connection.execute('DELETE FROM test_case_methods WHERE test_case_id = ?', [caseData.id]);
-
-                // 重新插入环境
+                // 重新插入环境（使用预加载的映射，不再逐条查询）
+                const envIdSet = new Set();
                 if (caseData.env && caseData.env.trim()) {
                     const envNames = caseData.env.split(',').map(e => e.trim()).filter(Boolean);
                     for (const envName of envNames) {
-                        const [envRows] = await connection.execute(
-                            'SELECT id FROM environments WHERE name = ?',
-                            [envName]
-                        );
-                        if (envRows.length > 0) {
-                            await connection.execute(
-                                'INSERT IGNORE INTO test_case_environments (test_case_id, environment_id) VALUES (?, ?)',
-                                [caseData.id, envRows[0].id]
-                            );
-                        }
+                        const envId = envMap.get(envName);
+                        if (envId) envIdSet.add(envId);
                     }
                 }
-
-                // 插入 environments（多选）
                 if (caseData.environments && caseData.environments.trim()) {
                     const envNames = caseData.environments.split(',').map(e => e.trim()).filter(Boolean);
                     for (const envName of envNames) {
-                        const [envRows] = await connection.execute(
-                            'SELECT id FROM environments WHERE name = ?',
-                            [envName]
-                        );
-                        if (envRows.length > 0) {
-                            await connection.execute(
-                                'INSERT IGNORE INTO test_case_environments (test_case_id, environment_id) VALUES (?, ?)',
-                                [caseData.id, envRows[0].id]
-                            );
-                        }
+                        const envId = envMap.get(envName);
+                        if (envId) envIdSet.add(envId);
                     }
+                }
+                for (const envId of envIdSet) {
+                    await connection.execute(
+                        'INSERT IGNORE INTO test_case_environments (test_case_id, environment_id) VALUES (?, ?)',
+                        [caseData.id, envId]
+                    );
                 }
 
                 // 插入阶段
                 if (caseData.phase) {
-                    const [phaseRows] = await connection.execute(
-                        'SELECT id FROM test_phases WHERE name = ?',
-                        [caseData.phase]
-                    );
-                    if (phaseRows.length > 0) {
+                    const phaseId = phaseMap.get(caseData.phase);
+                    if (phaseId) {
                         await connection.execute(
                             'INSERT IGNORE INTO test_case_phases (test_case_id, phase_id) VALUES (?, ?)',
-                            [caseData.id, phaseRows[0].id]
+                            [caseData.id, phaseId]
                         );
                     }
                 }
 
                 // 插入类型
                 if (caseData.type) {
-                    const [typeRows] = await connection.execute(
-                        'SELECT id FROM test_types WHERE name = ?',
-                        [caseData.type]
-                    );
-                    if (typeRows.length > 0) {
+                    const typeId = typeMap.get(caseData.type);
+                    if (typeId) {
                         await connection.execute(
                             'INSERT IGNORE INTO test_case_test_types (test_case_id, test_type_id) VALUES (?, ?)',
-                            [caseData.id, typeRows[0].id]
+                            [caseData.id, typeId]
                         );
                     }
                 }
@@ -1464,14 +1471,11 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
                 if (caseData.sources && caseData.sources.trim()) {
                     const sourceNames = caseData.sources.split(',').map(s => s.trim()).filter(Boolean);
                     for (const sourceName of sourceNames) {
-                        const [sourceRows] = await connection.execute(
-                            'SELECT id FROM test_sources WHERE name = ?',
-                            [sourceName]
-                        );
-                        if (sourceRows.length > 0) {
+                        const sourceId = sourceMap.get(sourceName);
+                        if (sourceId) {
                             await connection.execute(
                                 'INSERT IGNORE INTO test_case_sources (test_case_id, source_id) VALUES (?, ?)',
-                                [caseData.id, sourceRows[0].id]
+                                [caseData.id, sourceId]
                             );
                         }
                     }
@@ -1481,20 +1485,17 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
                 if (caseData.methods && caseData.methods.trim()) {
                     const methodNames = caseData.methods.split(',').map(m => m.trim()).filter(Boolean);
                     for (const methodName of methodNames) {
-                        const [methodRows] = await connection.execute(
-                            'SELECT id FROM test_methods WHERE name = ?',
-                            [methodName]
-                        );
-                        if (methodRows.length > 0) {
+                        const methodId = methodMap.get(methodName);
+                        if (methodId) {
                             await connection.execute(
                                 'INSERT IGNORE INTO test_case_methods (test_case_id, method_id) VALUES (?, ?)',
-                                [caseData.id, methodRows[0].id]
+                                [caseData.id, methodId]
                             );
                         }
                     }
                 }
 
-                // 更新项目关联
+                // 更新项目关联（DELETE已在循环外批量完成，此处只需INSERT）
                 if (caseData.projects) {
                     let projects = [];
                     if (typeof caseData.projects === 'string') {
@@ -1503,10 +1504,6 @@ router.post('/batch-update', authenticateToken, async (req, res) => {
                         projects = caseData.projects;
                     }
 
-                    // 先删除旧的项目关联
-                    await connection.execute('DELETE FROM test_case_projects WHERE test_case_id = ?', [caseData.id]);
-
-                    // 插入新的项目关联
                     for (const proj of projects) {
                         const projectId = parseInt(proj.project_id || proj.id);
                         if (!isNaN(projectId)) {
@@ -1726,30 +1723,16 @@ router.get('/level1/:level1Id', authenticateToken, async (req, res) => {
                 tc.created_at,
                 tc.updated_at,
                 tc.level1_id,
-                CAST((SELECT COUNT(*) FROM case_execution_records cer WHERE cer.case_id = tc.id AND cer.record_type = 'defect') 
-                + (SELECT COUNT(DISTINCT tpc.plan_id) FROM test_plan_cases tpc WHERE tpc.case_id = tc.id AND tpc.bug_id IS NOT NULL AND tpc.bug_id != '') AS SIGNED) as bug_count,
-                CASE 
-                    WHEN EXISTS (
-                        SELECT 1 FROM case_execution_records cer 
-                        WHERE cer.case_id = tc.id AND cer.record_type = 'defect'
-                    ) OR EXISTS (
-                        SELECT 1 FROM test_plan_cases tpc 
-                        WHERE tpc.case_id = tc.id AND tpc.bug_id IS NOT NULL AND tpc.bug_id != ''
-                    ) THEN 1 
-                    ELSE 0 
-                END as has_defect,
-                CASE 
-                    WHEN EXISTS (
-                        SELECT 1 FROM case_execution_records cer 
-                        WHERE cer.case_id = tc.id
-                    ) OR EXISTS (
-                        SELECT 1 FROM test_plan_cases tpc 
-                        WHERE tpc.case_id = tc.id AND tpc.status != 'pending'
-                    ) THEN 1 
-                    ELSE 0 
-                END as executed
+                COUNT(DISTINCT cer.id) + COUNT(DISTINCT CASE WHEN tpc.bug_id IS NOT NULL AND tpc.bug_id != '' THEN tpc.plan_id END) as bug_count,
+                MAX(CASE WHEN cer.id IS NOT NULL OR tpc.bug_id IS NOT NULL AND tpc.bug_id != '' THEN 1 ELSE 0 END) as has_defect,
+                MAX(CASE WHEN cer2.id IS NOT NULL OR tpc2.id IS NOT NULL THEN 1 ELSE 0 END) as executed
             FROM test_cases tc
+            LEFT JOIN case_execution_records cer ON tc.id = cer.case_id AND cer.record_type = 'defect'
+            LEFT JOIN test_plan_cases tpc ON tc.id = tpc.case_id AND tpc.bug_id IS NOT NULL AND tpc.bug_id != ''
+            LEFT JOIN case_execution_records cer2 ON tc.id = cer2.case_id
+            LEFT JOIN test_plan_cases tpc2 ON tc.id = tpc2.case_id AND tpc2.status != 'pending'
             WHERE tc.level1_id = ?
+            GROUP BY tc.id
             ORDER BY tc.created_at DESC
         `, [level1Id]);
         
@@ -1786,61 +1769,59 @@ router.get('/:id', authenticateToken, async (req, res) => {
         
         const testCase = testCases[0];
         
-        const [environments] = await pool.execute(`
-            SELECT e.id, e.name
-            FROM test_case_environments tce
-            JOIN environments e ON tce.environment_id = e.id
-            WHERE tce.test_case_id = ?
-        `, [id]);
-        
-        const [phases] = await pool.execute(`
-            SELECT tp.id, tp.name
-            FROM test_case_phases tcp
-            JOIN test_phases tp ON tcp.phase_id = tp.id
-            WHERE tcp.test_case_id = ?
-        `, [id]);
-        
-        const [methods] = await pool.execute(`
-            SELECT tm.id, tm.name
-            FROM test_case_methods tcm
-            JOIN test_methods tm ON tcm.method_id = tm.id
-            WHERE tcm.test_case_id = ?
-        `, [id]);
-        
-        const [projects] = await pool.execute(`
-            SELECT 
-                tcp.id,
-                tcp.project_id,
-                tcp.owner,
-                tcp.remark,
-                tcp.created_at,
-                p.name as project_name,
-                tp.name as progress_name,
-                ts.name as status_name
-            FROM test_case_projects tcp
-            LEFT JOIN projects p ON tcp.project_id = p.id
-            LEFT JOIN test_progresses tp ON tcp.progress_id = tp.id
-            LEFT JOIN test_statuses ts ON tcp.status_id = ts.id
-            WHERE tcp.test_case_id = ?
-            ORDER BY tcp.created_at DESC
-        `, [id]);
-        
-        const [executionRecords] = await pool.execute(`
-            SELECT 
-                id,
-                record_type,
-                bug_id,
-                bug_type,
-                description,
-                images,
-                creator,
-                created_at,
-                updated_at
-            FROM case_execution_records
-            WHERE case_id = ?
-            ORDER BY created_at DESC
-            LIMIT 20
-        `, [id]);
+        const [environments, phases, methods, projects, executionRecords] = await Promise.all([
+            pool.execute(`
+                SELECT e.id, e.name
+                FROM test_case_environments tce
+                JOIN environments e ON tce.environment_id = e.id
+                WHERE tce.test_case_id = ?
+            `, [id]),
+            pool.execute(`
+                SELECT tp.id, tp.name
+                FROM test_case_phases tcp
+                JOIN test_phases tp ON tcp.phase_id = tp.id
+                WHERE tcp.test_case_id = ?
+            `, [id]),
+            pool.execute(`
+                SELECT tm.id, tm.name
+                FROM test_case_methods tcm
+                JOIN test_methods tm ON tcm.method_id = tm.id
+                WHERE tcm.test_case_id = ?
+            `, [id]),
+            pool.execute(`
+                SELECT 
+                    tcp.id,
+                    tcp.project_id,
+                    tcp.owner,
+                    tcp.remark,
+                    tcp.created_at,
+                    p.name as project_name,
+                    tp.name as progress_name,
+                    ts.name as status_name
+                FROM test_case_projects tcp
+                LEFT JOIN projects p ON tcp.project_id = p.id
+                LEFT JOIN test_progresses tp ON tcp.progress_id = tp.id
+                LEFT JOIN test_statuses ts ON tcp.status_id = ts.id
+                WHERE tcp.test_case_id = ?
+                ORDER BY tcp.created_at DESC
+            `, [id]),
+            pool.execute(`
+                SELECT 
+                    id,
+                    record_type,
+                    bug_id,
+                    bug_type,
+                    description,
+                    images,
+                    creator,
+                    created_at,
+                    updated_at
+                FROM case_execution_records
+                WHERE case_id = ?
+                ORDER BY created_at DESC
+                LIMIT 20
+            `, [id])
+        ]);
         
         testCase.environments = environments || [];
         testCase.phases = phases || [];

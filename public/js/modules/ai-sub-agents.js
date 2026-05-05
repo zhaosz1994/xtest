@@ -692,6 +692,10 @@ function renderAgentListTable(agents) {
         const isEnabled = agent.isEnabled === 1 || agent.isEnabled === true || agent.is_enabled === 1 || agent.is_enabled === true;
         const memoryEnabled = agent.memoryEnabled === 1 || agent.memoryEnabled === true || agent.memory_enabled === 1 || agent.memory_enabled === true;
 
+        const ms = agent.memoryStats || {};
+        const totalCount = (ms.global && ms.global.count || 0) + (ms.library && ms.library.count || 0) + (ms.module && ms.module.count || 0);
+        const memoryStatsHtml = memoryEnabled ? `<div class="sa-memory-stats">${totalCount} \u6761\u8BB0\u5F55</div>` : '';
+
         return `
         <tr data-agent-id="${agent.id}" data-agent-code="${saEscapeHtml(agent.agentCode || agent.agent_code)}" data-is-system="${isSystem}">
             <td>
@@ -700,7 +704,9 @@ function renderAgentListTable(agents) {
             </td>
             <td>${saEscapeHtml(agent.displayName || agent.display_name)}</td>
             <td>${saGetCategoryBadge(agent.category)}</td>
-            <td>${memoryEnabled ? '\u2705' : '\u274C'}</td>
+            <td>${memoryEnabled ? '\u2705' : '\u274C'}
+                ${memoryStatsHtml}
+            </td>
             <td>
                 <label class="sa-toggle">
                     <input type="checkbox" ${isEnabled ? 'checked' : ''} data-toggle-id="${agent.id}" data-action="toggle">
@@ -720,11 +726,6 @@ function renderAgentListTable(agents) {
             </td>
         </tr>`;
     }).join('');
-
-    // 加载每个智能体的记忆统计
-    agents.forEach(agent => {
-        loadMemoryStatsBadge(agent.id);
-    });
 }
 
 async function loadMemoryStatsBadge(agentId) {

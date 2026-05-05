@@ -1,12 +1,14 @@
 const pool = require('../db');
-const fs = require('fs');
-const fsPromises = require('fs').promises;
+const fsp = require('fs').promises;
 const path = require('path');
 
 const REPORTS_DIR = path.join(process.cwd(), 'uploads', 'reports');
-
-if (!fs.existsSync(REPORTS_DIR)) {
-    fs.mkdirSync(REPORTS_DIR, { recursive: true });
+let _reportsDirReady = false;
+async function ensureReportsDir() {
+    if (!_reportsDirReady) {
+        await fsp.mkdir(REPORTS_DIR, { recursive: true });
+        _reportsDirReady = true;
+    }
 }
 
 // ==================== 统一的状态判定函数 ====================
@@ -108,7 +110,7 @@ async function assembleReportData(testPlanId) {
         const testPlan = testPlans[0];
         
         const [testCases] = await connection.execute(`
-            SELECT tc.*, 
+            SELECT tc.id, tc.case_id, tc.name, tc.priority, tc.type, tc.status, tc.owner, tc.creator, tc.precondition, tc.purpose, tc.steps, tc.expected, tc.key_config, tc.remark, tc.method, tc.level1_id, tc.module_id, tc.library_id, tc.created_at, tc.updated_at,
                    m.name as module_name,
                    l1.name as level1_name,
                    tpc.status as execution_status,
@@ -121,24 +123,29 @@ async function assembleReportData(testPlanId) {
             LEFT JOIN modules m ON tc.module_id = m.id
             LEFT JOIN level1_points l1 ON tc.level1_id = l1.id
             LEFT JOIN test_statuses ts ON tpc.status = ts.name
-            WHERE tpc.plan_id = ?
+            WHERE tpc.plan_id = ? LIMIT 5000
         `, [testPlanId]);
+        if (testCases.length === 5000) {
+            const logger = require('./logger');
+            logger.warn('assembleReportData: 查询结果达到LIMIT 5000上限，数据可能被截断', { testPlanId });
+        }
         
         const stats = calculateStatistics(testCases);
         
         const moduleStats = {};
         const ownerStats = {};
-        
+        const priorityStats = {};
+
         testCases.forEach(tc => {
+            const status = tc.execution_status || tc.status_name || '';
+            const category = getStatusCategory(status);
+
+            // Module stats
             const moduleName = tc.module_name || '未分类';
             if (!moduleStats[moduleName]) {
                 moduleStats[moduleName] = { total: 0, passed: 0, failed: 0, blocked: 0, notRun: 0 };
             }
             moduleStats[moduleName].total++;
-            
-            const status = tc.execution_status || tc.status_name || '';
-            const category = getStatusCategory(status);
-            
             if (category === 'passed') {
                 moduleStats[moduleName].passed++;
             } else if (category === 'failed') {
@@ -148,23 +155,20 @@ async function assembleReportData(testPlanId) {
             } else {
                 moduleStats[moduleName].notRun++;
             }
-            
+
+            // Owner stats
             const owner = tc.owner || tc.executor_id || '未分配';
             if (!ownerStats[owner]) {
                 ownerStats[owner] = 0;
             }
             ownerStats[owner]++;
-        });
-        
-        const priorityStats = {};
-        testCases.forEach(tc => {
+
+            // Priority stats
             const priority = tc.priority || 'P2';
             if (!priorityStats[priority]) {
                 priorityStats[priority] = { total: 0, passed: 0, failed: 0 };
             }
             priorityStats[priority].total++;
-            
-            const status = tc.execution_status || tc.status_name || '';
             if (isStatusPassed(status)) {
                 priorityStats[priority].passed++;
             } else if (isStatusFailed(status)) {
@@ -543,16 +547,17 @@ function getHardwareKnowledge() {
 }
 
 async function saveReportToFile(reportId, markdownContent) {
+    await ensureReportsDir();
     const fileName = `report-${reportId}-${Date.now()}.md`;
     const filePath = path.join(REPORTS_DIR, fileName);
-    await fsPromises.writeFile(filePath, markdownContent, 'utf8');
+    await fsp.writeFile(filePath, markdownContent, 'utf8');
     return filePath;
 }
 
 async function readReportFromFile(filePath) {
     try {
-        await fsPromises.access(filePath);
-        return await fsPromises.readFile(filePath, 'utf8');
+        await fsp.access(filePath);
+        return await fsp.readFile(filePath, 'utf8');
     } catch {
         return null;
     }
@@ -560,7 +565,7 @@ async function readReportFromFile(filePath) {
 
 async function deleteReportFile(filePath) {
     try {
-        await fsPromises.unlink(filePath);
+        await fsp.unlink(filePath);
     } catch {
         // 文件不存在或删除失败，忽略
     }

@@ -21,66 +21,35 @@ router.get('/list', authenticateToken, async (req, res) => {
       WHERE 1=1
     `;
     
-    let query = `
-      SELECT
-        tp.id,
-        tp.name,
-        tp.owner,
-        tp.status,
-        tp.test_phase,
-        tp.project,
-        tp.iteration,
-        tp.pass_rate,
-        tp.tested_cases,
-        tp.total_cases,
-        tp.created_at,
-        tp.updated_at,
-        u.username as owner_name,
-        p.name as project_name,
-        COALESCE(tc.pass_count, 0) as pass_count,
-        COALESCE(tc.fail_count, 0) as fail_count,
-        COALESCE(tc.blocked_count, 0) as blocked_count,
-        COALESCE(tc.paused_count, 0) as paused_count,
-        COALESCE(tc.pending_count, 0) as pending_count
+    // 先查询分页后的计划ID，避免子查询对全表聚合
+    let idQuery = `
+      SELECT tp.id
       FROM test_plans tp
-      LEFT JOIN users u ON tp.owner = u.username
-      LEFT JOIN projects p ON tp.project = p.code
-      LEFT JOIN (
-        SELECT
-          plan_id,
-          SUM(CASE WHEN LOWER(status) = 'pass' THEN 1 ELSE 0 END) as pass_count,
-          SUM(CASE WHEN LOWER(status) IN ('fail', 'asic_hang', 'core_dump', 'traffic_drop') THEN 1 ELSE 0 END) as fail_count,
-          SUM(CASE WHEN LOWER(status) = 'blocked' THEN 1 ELSE 0 END) as blocked_count,
-          SUM(CASE WHEN LOWER(status) = 'paused' THEN 1 ELSE 0 END) as paused_count,
-          SUM(CASE WHEN LOWER(status) = 'pending' THEN 1 ELSE 0 END) as pending_count
-        FROM test_plan_cases
-        GROUP BY plan_id
-      ) tc ON tp.id = tc.plan_id
       WHERE 1=1
     `;
     
     const params = [];
     
     if (project) {
-      query += ' AND tp.project = ?';
+      idQuery += ' AND tp.project = ?';
       countQuery += ' AND tp.project = ?';
       params.push(project);
     }
     
     if (iteration) {
-      query += ' AND tp.iteration = ?';
+      idQuery += ' AND tp.iteration = ?';
       countQuery += ' AND tp.iteration = ?';
       params.push(iteration);
     }
     
     if (owner) {
-      query += ' AND tp.owner = ?';
+      idQuery += ' AND tp.owner = ?';
       countQuery += ' AND tp.owner = ?';
       params.push(owner);
     }
     
     if (status) {
-      query += ' AND tp.status = ?';
+      idQuery += ' AND tp.status = ?';
       countQuery += ' AND tp.status = ?';
       params.push(status);
     }
@@ -89,10 +58,56 @@ router.get('/list', authenticateToken, async (req, res) => {
     const [countResult] = await pool.execute(countQuery, params);
     const total = countResult[0].total;
     
-    // 添加排序和分页（使用模板字符串，因为MySQL不支持LIMIT/OFFSET参数化）
-    query += ` ORDER BY tp.created_at DESC LIMIT ${pageSize} OFFSET ${offset}`;
+    // 添加排序和分页，获取当前页的计划ID
+    idQuery += ` ORDER BY tp.created_at DESC LIMIT ${pageSize} OFFSET ${offset}`;
+    const [planIdRows] = await pool.execute(idQuery, params);
+    const planIds = planIdRows.map(r => r.id);
     
-    const [testPlans] = await pool.execute(query, params);
+    let testPlans = [];
+    if (planIds.length > 0) {
+      // 仅对当前页的计划ID聚合，避免全表聚合
+      const planPlaceholders = planIds.map(() => '?').join(',');
+      let query = `
+        SELECT
+          tp.id,
+          tp.name,
+          tp.owner,
+          tp.status,
+          tp.test_phase,
+          tp.project,
+          tp.iteration,
+          tp.pass_rate,
+          tp.tested_cases,
+          tp.total_cases,
+          tp.created_at,
+          tp.updated_at,
+          u.username as owner_name,
+          p.name as project_name,
+          COALESCE(tc.pass_count, 0) as pass_count,
+          COALESCE(tc.fail_count, 0) as fail_count,
+          COALESCE(tc.blocked_count, 0) as blocked_count,
+          COALESCE(tc.paused_count, 0) as paused_count,
+          COALESCE(tc.pending_count, 0) as pending_count
+        FROM test_plans tp
+        LEFT JOIN users u ON tp.owner = u.username
+        LEFT JOIN projects p ON tp.project = p.code
+        LEFT JOIN (
+          SELECT
+            plan_id,
+            SUM(CASE WHEN LOWER(status) = 'pass' THEN 1 ELSE 0 END) as pass_count,
+            SUM(CASE WHEN LOWER(status) IN ('fail', 'asic_hang', 'core_dump', 'traffic_drop') THEN 1 ELSE 0 END) as fail_count,
+            SUM(CASE WHEN LOWER(status) = 'blocked' THEN 1 ELSE 0 END) as blocked_count,
+            SUM(CASE WHEN LOWER(status) = 'paused' THEN 1 ELSE 0 END) as paused_count,
+            SUM(CASE WHEN LOWER(status) = 'pending' THEN 1 ELSE 0 END) as pending_count
+          FROM test_plan_cases
+          WHERE plan_id IN (${planPlaceholders})
+          GROUP BY plan_id
+        ) tc ON tp.id = tc.plan_id
+        WHERE tp.id IN (${planPlaceholders})
+        ORDER BY tp.created_at DESC
+      `;
+      [testPlans] = await pool.execute(query, [...planIds, ...planIds]);
+    }
     
     const formattedPlans = testPlans.map(plan => ({
       id: plan.id,
@@ -576,15 +591,25 @@ router.put('/:id', authenticateToken, async (req, res) => {
             `, [...removedCaseIds, projectId]);
             
             if (casesWithProject.length > 0) {
-              // 检查这些测试用例是否还被其他测试计划关联到同一个项目
+              // 批量查询这些测试用例是否还被其他测试计划关联到同一个项目
+              const caseIdsWithProject = casesWithProject.map(c => c.test_case_id);
+              const cwpPlaceholders = caseIdsWithProject.map(() => '?').join(',');
+              const [otherPlans] = await connection.execute(`
+                SELECT DISTINCT tpc.case_id, tp.id as plan_id, tp.name as plan_name
+                FROM test_plan_cases tpc
+                JOIN test_plans tp ON tpc.plan_id = tp.id
+                WHERE tpc.case_id IN (${cwpPlaceholders}) AND tp.project = ? AND tp.id != ?
+              `, [...caseIdsWithProject, project, id]);
+              
+              // 按 case_id 分组
+              const caseOtherPlans = {};
+              for (const row of otherPlans) {
+                if (!caseOtherPlans[row.case_id]) caseOtherPlans[row.case_id] = [];
+                caseOtherPlans[row.case_id].push({ id: row.plan_id, name: row.plan_name });
+              }
+              
               for (const caseInfo of casesWithProject) {
-                const [otherPlans] = await connection.execute(`
-                  SELECT DISTINCT tp.id, tp.name
-                  FROM test_plan_cases tpc
-                  JOIN test_plans tp ON tpc.plan_id = tp.id
-                  WHERE tpc.case_id = ? AND tp.project = ? AND tp.id != ?
-                `, [caseInfo.test_case_id, project, id]);
-                
+                const otherPlansForCase = caseOtherPlans[caseInfo.test_case_id] || [];
                 projectUnlinkConfirmations.push({
                   caseId: caseInfo.test_case_id,
                   caseCode: caseInfo.case_id,
@@ -593,8 +618,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
                   projectName: projectName,
                   projectCode: project,
                   remark: caseInfo.remark,
-                  otherPlans: otherPlans.map(p => ({ id: p.id, name: p.name })),
-                  hasOtherPlans: otherPlans.length > 0
+                  otherPlans: otherPlansForCase,
+                  hasOtherPlans: otherPlansForCase.length > 0
                 });
               }
             }

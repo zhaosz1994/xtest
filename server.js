@@ -65,13 +65,22 @@ function extractTablesFromSQL(sql) {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const cors_config = {
-    origin: function (origin, callback) {
-        const allowedOrigins = process.env.CORS_ORIGINS 
+let _allowedOriginsSet = null;
+function getAllowedOriginsSet() {
+    if (!_allowedOriginsSet) {
+        const origins = process.env.CORS_ORIGINS 
             ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
             : ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://10.10.25.154:8000'];
+        _allowedOriginsSet = new Set(origins);
+    }
+    return _allowedOriginsSet;
+}
+
+const cors_config = {
+    origin: function (origin, callback) {
+        const allowedOrigins = getAllowedOriginsSet();
         
-        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+        if (!origin || allowedOrigins.has(origin)) {
             callback(null, true);
         } else {
             logger.warn(`[CORS] 拒绝来自 ${origin} 的请求`);
@@ -774,9 +783,12 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
     // 4. 克隆测试用例
     if (includeTestCases) {
       const [testCases] = await connection.execute(
-        'SELECT * FROM test_cases WHERE module_id = ?',
+        'SELECT * FROM test_cases WHERE module_id = ? LIMIT 5000',
         [sourceModuleId]
       );
+      if (testCases.length === 5000) {
+        logger.warn('模块克隆: 测试用例查询达到LIMIT 5000上限，数据可能被截断', { sourceModuleId });
+      }
       
       // 测试用例ID映射表：old_id -> new_id
       const testCaseIdMap = new Map();
@@ -1073,6 +1085,17 @@ app.get('/api/testpoints/level1/:moduleId', authenticateToken, async (req, res) 
       return res.json({ success: false, message: '模块ID无效' });
     }
     
+    const page = parseInt(req.query.page) || 1;
+    const pageSize = parseInt(req.query.pageSize) || 100;
+    const offset = (page - 1) * pageSize;
+    
+    // 获取总数
+    const [countResult] = await pool.execute(
+      `SELECT COUNT(*) as total FROM level1_points WHERE module_id = ?`,
+      [numericModuleId]
+    );
+    const total = countResult[0].total;
+    
     const [points] = await pool.execute(
       `SELECT 
         l1.id, 
@@ -1090,7 +1113,8 @@ app.get('/api/testpoints/level1/:moduleId', authenticateToken, async (req, res) 
       LEFT JOIN case_execution_records cer ON tc.id = cer.case_id AND cer.record_type = 'defect'
       WHERE l1.module_id = ?
       GROUP BY l1.id, l1.name, l1.test_type, l1.summary, l1.module_id, l1.order_index, l1.created_at, l1.updated_at
-      ORDER BY l1.order_index ASC, l1.created_at ASC`,
+      ORDER BY l1.order_index ASC, l1.created_at ASC
+      LIMIT ${pageSize} OFFSET ${offset}`,
       [numericModuleId]
     );
     
@@ -1107,7 +1131,13 @@ app.get('/api/testpoints/level1/:moduleId', authenticateToken, async (req, res) 
         bug_count: p.bug_count,
         created_at: p.created_at,
         updated_at: p.updated_at
-      }))
+      })),
+      pagination: {
+        page: page,
+        pageSize: pageSize,
+        total: total,
+        totalPages: Math.ceil(total / pageSize)
+      }
     });
   } catch (error) {
     logger.error('获取一级测试点列表错误:', { error: error.message });
@@ -1257,109 +1287,62 @@ app.post('/api/cases/create', authenticateToken, async (req, res) => {
             }
           }
         } else {
-          // 兼容旧版API，只使用项目ID
-          for (const projectId of projects) {
-            await connection.execute(
-              `INSERT INTO test_case_projects (
-                test_case_id, 
-                project_id, 
-                created_at
-              ) VALUES (?, ?, CURRENT_TIMESTAMP)`,
-              [testCaseId, projectId]
-            );
+          // 兼容旧版API，只使用项目ID - batch insert
+          if (projects && projects.length > 0 && !req.body.projectAssociations) {
+            const projPlaceholders = projects.map(() => '(?, ?, CURRENT_TIMESTAMP)').join(',');
+            const projValues = projects.flatMap(projId => [testCaseId, projId]);
+            await connection.execute(`INSERT INTO test_case_projects (test_case_id, project_id, created_at) VALUES ${projPlaceholders}`, projValues);
           }
         }
         logger.info('项目关联添加成功');
       }
       
-      // 处理环境关联
+      // Environments batch insert
       if (environments && environments.length > 0) {
-        for (const environmentId of environments) {
-          await connection.execute(
-            `INSERT INTO test_case_environments (
-              test_case_id, 
-              environment_id, 
-              created_at
-            ) VALUES (?, ?, CURRENT_TIMESTAMP)`,
-            [testCaseId, environmentId]
-          );
-        }
+        const envPlaceholders = environments.map(() => '(?, ?, CURRENT_TIMESTAMP)').join(',');
+        const envValues = environments.flatMap(envId => [testCaseId, envId]);
+        await connection.execute(`INSERT INTO test_case_environments (test_case_id, environment_id, created_at) VALUES ${envPlaceholders}`, envValues);
         logger.info('环境关联添加成功');
       }
       
-      // 处理测试点来源关联
+      // Sources batch insert
       const sources = req.body.sources;
       if (sources && sources.length > 0) {
-        for (const sourceId of sources) {
-          await connection.execute(
-            `INSERT INTO test_case_sources (
-              test_case_id, 
-              source_id, 
-              created_at
-            ) VALUES (?, ?, CURRENT_TIMESTAMP)`,
-            [testCaseId, sourceId]
-          );
-        }
+        const sourcePlaceholders = sources.map(() => '(?, ?, CURRENT_TIMESTAMP)').join(',');
+        const sourceValues = sources.flatMap(sourceId => [testCaseId, sourceId]);
+        await connection.execute(`INSERT INTO test_case_sources (test_case_id, source_id, created_at) VALUES ${sourcePlaceholders}`, sourceValues);
         logger.info('测试点来源关联添加成功');
       }
       
-      // 处理测试方式关联
+      // Methods batch insert
       if (methods && methods.length > 0) {
-        for (const methodId of methods) {
-          await connection.execute(
-            `INSERT INTO test_case_methods (
-              test_case_id, 
-              method_id, 
-              created_at
-            ) VALUES (?, ?, CURRENT_TIMESTAMP)`,
-            [testCaseId, methodId]
-          );
-        }
+        const methodPlaceholders = methods.map(() => '(?, ?, CURRENT_TIMESTAMP)').join(',');
+        const methodValues = methods.flatMap(methodId => [testCaseId, methodId]);
+        await connection.execute(`INSERT INTO test_case_methods (test_case_id, method_id, created_at) VALUES ${methodPlaceholders}`, methodValues);
         logger.info('测试方式关联添加成功');
       }
       
-      // 处理测试类型关联
+      // Test types batch insert
       if (testTypes && Array.isArray(testTypes) && testTypes.length > 0) {
-        for (const testTypeId of testTypes) {
-          await connection.execute(
-            `INSERT INTO test_case_test_types (
-              test_case_id, 
-              test_type_id, 
-              created_at
-            ) VALUES (?, ?, CURRENT_TIMESTAMP)`,
-            [testCaseId, testTypeId]
-          );
-        }
+        const ttPlaceholders = testTypes.map(() => '(?, ?, CURRENT_TIMESTAMP)').join(',');
+        const ttValues = testTypes.flatMap(ttId => [testCaseId, ttId]);
+        await connection.execute(`INSERT INTO test_case_test_types (test_case_id, test_type_id, created_at) VALUES ${ttPlaceholders}`, ttValues);
         logger.info('测试类型关联添加成功');
       }
       
-      // 处理测试状态关联
+      // Test statuses batch insert
       if (testStatuses && Array.isArray(testStatuses) && testStatuses.length > 0) {
-        for (const statusId of testStatuses) {
-          await connection.execute(
-            `INSERT INTO test_case_statuses (
-              test_case_id, 
-              status_id, 
-              created_at
-            ) VALUES (?, ?, CURRENT_TIMESTAMP)`,
-            [testCaseId, statusId]
-          );
-        }
+        const tsPlaceholders = testStatuses.map(() => '(?, ?, CURRENT_TIMESTAMP)').join(',');
+        const tsValues = testStatuses.flatMap(tsId => [testCaseId, tsId]);
+        await connection.execute(`INSERT INTO test_case_statuses (test_case_id, status_id, created_at) VALUES ${tsPlaceholders}`, tsValues);
         logger.info('测试状态关联添加成功');
       }
       
-      // 处理测试阶段关联
+      // Phases batch insert
       if (phases && Array.isArray(phases) && phases.length > 0) {
-        for (const phaseId of phases) {
-          await connection.execute(
-            `INSERT INTO test_case_phases (
-              test_case_id, 
-              phase_id, 
-              created_at
-            ) VALUES (?, ?, CURRENT_TIMESTAMP)`,
-            [testCaseId, phaseId]
-          );
-        }
+        const phasePlaceholders = phases.map(() => '(?, ?, CURRENT_TIMESTAMP)').join(',');
+        const phaseValues = phases.flatMap(phaseId => [testCaseId, phaseId]);
+        await connection.execute(`INSERT INTO test_case_phases (test_case_id, phase_id, created_at) VALUES ${phasePlaceholders}`, phaseValues);
         logger.info('测试阶段关联添加成功');
       }
       

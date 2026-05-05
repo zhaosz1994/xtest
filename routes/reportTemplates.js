@@ -3,6 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const fsp = require('fs').promises;
 const pool = require('../db');
 const logger = require('../services/logger');
 
@@ -12,9 +13,7 @@ const storage = multer.diskStorage({
     const uploadDir = path.join(process.cwd(), 'uploads', 'templates');
     
     // 确保目录存在
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
+    fs.mkdirSync(uploadDir, { recursive: true });
     
     cb(null, uploadDir);
   },
@@ -92,7 +91,7 @@ router.get('/detail/:id', async (req, res) => {
     // 读取模板内容
     let content = '';
     try {
-      content = fs.readFileSync(template.file_path, 'utf8');
+      content = await fsp.readFile(template.file_path, 'utf8');
     } catch (e) {
       logger.error('读取模板文件错误:', { error: e.message });
     }
@@ -133,7 +132,7 @@ router.post('/upload', upload.single('template'), async (req, res) => {
     // 验证必填字段
     if (!name) {
       // 删除已上传的文件
-      fs.unlinkSync(filePath);
+      try { await fsp.unlink(filePath); } catch (e) {}
       return res.json({ success: false, message: '模板名称不能为空' });
     }
     
@@ -156,8 +155,8 @@ router.post('/upload', upload.single('template'), async (req, res) => {
   } catch (error) {
     logger.error('上传模板错误:', { error: error.message });
     // 如果上传失败，删除已上传的文件
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
+    if (req.file) {
+      try { await fsp.unlink(req.file.path); } catch (e) {}
     }
     res.status(500).json({ success: false, message: '上传模板失败: ' + error.message });
   }
@@ -204,7 +203,7 @@ router.put('/update-content/:id', async (req, res) => {
     const filePath = templates[0].file_path;
     
     // 写入新内容
-    fs.writeFileSync(filePath, content, 'utf8');
+    await fsp.writeFile(filePath, content, 'utf8');
     
     // 更新编辑者信息
     await pool.execute(
@@ -263,9 +262,7 @@ router.delete('/:id', async (req, res) => {
     }
     
     // 删除文件
-    if (fs.existsSync(template.file_path)) {
-      fs.unlinkSync(template.file_path);
-    }
+    try { await fsp.unlink(template.file_path); } catch (e) {}
     
     // 删除数据库记录
     await pool.execute('DELETE FROM report_templates WHERE id = ?', [id]);
@@ -294,15 +291,16 @@ router.get('/default-content', async (req, res) => {
     
     const filePath = templates[0].file_path;
     
-    if (!fs.existsSync(filePath)) {
+    let content;
+    try {
+      content = await fsp.readFile(filePath, 'utf8');
+    } catch {
       return res.json({ 
         success: false, 
         message: '模板文件不存在',
         content: getDefaultFallbackTemplate()
       });
     }
-    
-    const content = fs.readFileSync(filePath, 'utf8');
     
     res.json({
       success: true,
@@ -338,15 +336,16 @@ router.get('/content/:id', async (req, res) => {
     
     const filePath = templates[0].file_path;
     
-    if (!fs.existsSync(filePath)) {
+    let content;
+    try {
+      content = await fsp.readFile(filePath, 'utf8');
+    } catch {
       return res.json({ 
         success: false, 
         message: '模板文件不存在',
         content: getDefaultFallbackTemplate()
       });
     }
-    
-    const content = fs.readFileSync(filePath, 'utf8');
     
     res.json({
       success: true,

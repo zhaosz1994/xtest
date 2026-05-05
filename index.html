@@ -8004,7 +8004,7 @@ return rows[0];'></textarea>
     </div>
 
     <!-- 新建测试报告 - 右侧抽屉 Drawer -->
-    <div id="report-drawer-overlay" class="drawer-overlay"></div>
+    <div id="report-drawer-overlay" class="drawer-overlay" onclick="closeReportDrawer()"></div>
     <div id="report-drawer" class="report-drawer">
         <div class="drawer-header">
             <h2>新建测试报告</h2>
@@ -8647,7 +8647,7 @@ return rows[0];'></textarea>
     </div>
     
     <!-- 测试计划详情抽屉 -->
-    <div id="testplan-drawer-overlay" class="drawer-overlay"></div>
+    <div id="testplan-drawer-overlay" class="drawer-overlay" onclick="closeTestPlanDrawer()"></div>
     <div id="testplan-drawer" class="testplan-drawer">
         <div class="drawer-header">
             <h2 id="testplan-drawer-title">测试计划详情</h2>
@@ -8724,7 +8724,7 @@ return rows[0];'></textarea>
     </div>
     
     <!-- 测试报告详情抽屉 -->
-    <div id="report-detail-drawer-overlay" class="drawer-overlay"></div>
+    <div id="report-detail-drawer-overlay" class="drawer-overlay" onclick="closeReportDetailDrawer()"></div>
     <div id="report-detail-drawer" class="testplan-drawer">
         <div class="drawer-header">
             <h2 id="report-drawer-title">测试报告详情</h2>
@@ -9094,7 +9094,7 @@ return rows[0];'></textarea>
     </div>
 
     <!-- 测试用例编辑滑屉 -->
-    <div class="drawer-overlay" id="testcase-drawer-overlay"></div>
+    <div class="drawer-overlay" id="testcase-drawer-overlay" onclick="closeTestCaseDrawer()"></div>
     <div class="drawer drawer-modern" id="testcase-edit-drawer">
         <div class="drawer-resize-handle" id="drawer-resize-handle"></div>
         <div class="drawer-header-modern">

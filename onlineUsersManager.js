@@ -1,12 +1,27 @@
 // 在线用户管理模块
 const onlineUsers = new Map();
+const usernameIndex = new Map(); // username -> Set of socketIds
 
 module.exports = {
     addOnlineUser: function(socketId, user) {
         onlineUsers.set(socketId, user);
+        if (!usernameIndex.has(user.username)) {
+            usernameIndex.set(user.username, new Set());
+        }
+        usernameIndex.get(user.username).add(socketId);
     },
     
     removeOnlineUser: function(socketId) {
+        const user = onlineUsers.get(socketId);
+        if (user) {
+            const sockets = usernameIndex.get(user.username);
+            if (sockets) {
+                sockets.delete(socketId);
+                if (sockets.size === 0) {
+                    usernameIndex.delete(user.username);
+                }
+            }
+        }
         onlineUsers.delete(socketId);
     },
     
@@ -19,19 +34,10 @@ module.exports = {
     },
     
     isUserOnline: function(username) {
-        for (const user of onlineUsers.values()) {
-            if (user.username === username) {
-                return true;
-            }
-        }
-        return false;
+        return usernameIndex.has(username);
     },
     
     getOnlineUsernames: function() {
-        const usernames = new Set();
-        for (const user of onlineUsers.values()) {
-            usernames.add(user.username);
-        }
-        return Array.from(usernames);
+        return Array.from(usernameIndex.keys());
     }
 };

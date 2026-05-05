@@ -1007,8 +1007,13 @@ function renderDetailPanel(file) {
     const body = document.getElementById('detailBody');
     const actions = document.getElementById('detailActions');
     const isFolder = file.type === 'folder';
+    const previewableExts = ['docx', 'doc', 'xlsx', 'xls', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'txt', 'md', 'markdown', 'pptx'];
+    const ext = (file.file_ext || '').toLowerCase();
+    const canPreview = !isFolder && previewableExts.includes(ext);
 
     body.innerHTML = `
+        ${canPreview ? '<div class="kl-detail-preview" id="detailPreview"></div>' : ''}
+        <div class="kl-detail-info">
         <div class="kl-detail-row">
             <span class="kl-detail-label">文件名</span>
             <span class="kl-detail-value">${klEscapeHtml(file.name)}</span>
@@ -1049,7 +1054,12 @@ function renderDetailPanel(file) {
             <span class="kl-detail-label">描述</span>
             <span class="kl-detail-value">${klEscapeHtml(file.description)}</span>
         </div>` : ''}
+        </div>
     `;
+
+    if (canPreview) {
+        loadDetailPreview(file.id, ext);
+    }
 
     actions.innerHTML = '';
     if (!isFolder) {
@@ -1080,6 +1090,80 @@ function renderDetailPanel(file) {
         klShowConfirm(`确定要删除 "${file.name}" 吗？`, () => deleteFile(file.id), '🗑️');
     });
     actions.appendChild(deleteBtn);
+}
+
+async function loadDetailPreview(fileId, ext) {
+    const container = document.getElementById('detailPreview');
+    if (!container) return;
+    container.innerHTML = '<div class="kl-loading"><div class="kl-spinner"></div></div>';
+    try {
+        const res = await klApiGet(`/api/knowledge/preview/${fileId}`);
+        if (!res || !res.success) {
+            container.innerHTML = '<p style="color:#94a3b8;text-align:center;padding:20px;">预览加载失败</p>';
+            return;
+        }
+        const data = res.data;
+        if (data.type === 'image') {
+            container.innerHTML = `<img src="${klEscapeHtml(data.url || '')}" style="max-width:100%;border-radius:6px;" onerror="this.outerHTML='<p style=\\'color:#94a3b8;text-align:center;padding:20px;\\'>图片加载失败</p>'">`;
+        } else if (data.type === 'pdf') {
+            const pdfUrl = data.url || '';
+            const token = localStorage.getItem('authToken') || localStorage.getItem('token');
+            const resp = await fetch(pdfUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+            if (resp.ok) {
+                const blob = await resp.blob();
+                const blobUrl = URL.createObjectURL(blob);
+                container.innerHTML = `<iframe src="${blobUrl}" style="width:100%;height:400px;border:none;border-radius:6px;"></iframe>`;
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+            } else {
+                container.innerHTML = '<p style="color:#94a3b8;text-align:center;padding:20px;">PDF加载失败</p>';
+            }
+        } else if (data.type === 'excel') {
+            const sheets = data.sheets || [];
+            const sheetsHtml = data.sheetsHtml || {};
+            const activeSheet = data.activeSheet || sheets[0] || '';
+            let html = '';
+            if (sheets.length > 1) {
+                html += '<div class="kl-detail-excel-tabs">';
+                for (const s of sheets) {
+                    html += `<button class="kl-detail-excel-tab${s === activeSheet ? ' active' : ''}" data-sheet="${klEscapeHtml(s)}">${klEscapeHtml(s)}</button>`;
+                }
+                html += '</div>';
+            }
+            const sanitized = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(sheetsHtml[activeSheet] || '') : klEscapeHtml(sheetsHtml[activeSheet] || '');
+            html += `<div class="kl-detail-excel-content markdown-body">${sanitized}</div>`;
+            container.innerHTML = html;
+            container.querySelectorAll('.kl-detail-excel-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    container.querySelectorAll('.kl-detail-excel-tab').forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+                    const sheetName = tab.getAttribute('data-sheet');
+                    const contentEl = container.querySelector('.kl-detail-excel-content');
+                    if (contentEl) {
+                        const s2 = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(sheetsHtml[sheetName] || '') : klEscapeHtml(sheetsHtml[sheetName] || '');
+                        contentEl.innerHTML = s2;
+                    }
+                });
+            });
+        } else if (data.type === 'html') {
+            const purifyConfig = { ADD_TAGS: ['img'], ADD_ATTR: ['src'], ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$)|data:image\/)/i };
+            const sanitized = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(data.content || '', purifyConfig) : klEscapeHtml(data.content || '');
+            container.innerHTML = `<div class="markdown-body">${sanitized}</div>`;
+        } else if (data.type === 'markdown') {
+            if (typeof marked !== 'undefined' && marked.parse) {
+                const rawHtml = marked.parse(data.content || '');
+                const sanitized = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(rawHtml) : klEscapeHtml(data.content || '');
+                container.innerHTML = `<div class="markdown-body">${sanitized}</div>`;
+            } else {
+                container.innerHTML = `<pre style="white-space:pre-wrap;font-size:12px;">${klEscapeHtml(data.content || '')}</pre>`;
+            }
+        } else if (data.type === 'text') {
+            container.innerHTML = `<pre style="white-space:pre-wrap;font-size:12px;">${klEscapeHtml(data.content || '')}</pre>`;
+        } else {
+            container.innerHTML = '<p style="color:#94a3b8;text-align:center;padding:20px;">该类型暂不支持预览</p>';
+        }
+    } catch (e) {
+        container.innerHTML = '<p style="color:#94a3b8;text-align:center;padding:20px;">预览加载失败</p>';
+    }
 }
 
 async function deleteFile(fileId) {

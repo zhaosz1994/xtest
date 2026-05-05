@@ -8,7 +8,7 @@ const dbConfig = {
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   waitForConnections: true,
-  connectionLimit: 50,
+  connectionLimit: 30,
   queueLimit: 200,
   enableKeepAlive: true,
   keepAliveInitialDelay: 30000,
@@ -43,7 +43,7 @@ pool.on('error', (error) => {
 });
 
 // 添加连接池状态监控
-setInterval(() => {
+const _poolMonitorTimer = setInterval(() => {
   const poolStatus = pool._stat;
   if (poolStatus) {
     const activeConnections = poolStatus.active || 0;
@@ -61,5 +61,20 @@ setInterval(() => {
     }
   }
 }, 60000); // 每分钟记录一次
+
+// 优雅关闭
+function gracefulShutdown() {
+  clearInterval(_poolMonitorTimer);
+  pool.end((err) => {
+    if (err) {
+      logger.error('数据库连接池关闭失败', { error: err.message });
+    } else {
+      logger.info('数据库连接池已关闭');
+    }
+  });
+}
+
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
 
 module.exports = pool.promise();

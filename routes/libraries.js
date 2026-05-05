@@ -234,10 +234,13 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       
       // 3. 获取所有测试用例的ID
       const [testCases] = await connection.execute(
-        `SELECT id FROM test_cases WHERE level1_id IN (${level1Placeholders})`,
+        `SELECT id FROM test_cases WHERE level1_id IN (${level1Placeholders}) LIMIT 5000`,
         level1Ids
       );
       const testCaseIds = testCases.map(tc => tc.id);
+      if (testCases.length === 5000) {
+        logger.warn('级联删除: 测试用例查询达到LIMIT 5000上限，数据可能被截断', { libraryId: id });
+      }
       logger.debug(`删除用例库进度`, { step: '查找测试用例', count: testCaseIds.length });
       
       // 4. 批量删除测试用例项目关联（分批处理，每批1000条）

@@ -80,6 +80,7 @@ const uploadRateLimiter = {
     uploads: new Map(),
     limit: 10,
     windowMs: 60 * 1000,
+    maxMapSize: 10000,
     check(userId) {
         const now = Date.now();
         const userUploads = this.uploads.get(userId) || [];
@@ -104,10 +105,21 @@ const uploadRateLimiter = {
                 this.uploads.set(userId, recentUploads);
             }
         }
+        // 防止Map无限增长，超过上限时淘汰最早的条目
+        if (this.uploads.size > this.maxMapSize) {
+            const entriesToKeep = Math.floor(this.maxMapSize / 2);
+            let deleteCount = this.uploads.size - entriesToKeep;
+            for (const key of this.uploads.keys()) {
+                if (deleteCount <= 0) break;
+                this.uploads.delete(key);
+                deleteCount--;
+            }
+        }
     }
 };
 
-setInterval(() => uploadRateLimiter.cleanup(), 60 * 1000);
+const _uploadCleanupTimer = setInterval(() => uploadRateLimiter.cleanup(), 60 * 1000);
+_uploadCleanupTimer.unref();
 
 const MAX_FILE_SIZE_MB = parseInt(process.env.FORUM_MAX_FILE_SIZE_MB) || 100;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
@@ -179,9 +191,7 @@ const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         const userId = req.user?.id || 'anonymous';
         const uploadDir = path.join(__dirname, '../public/uploads/forum', String(userId));
-        if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
-        }
+        fs.mkdirSync(uploadDir, { recursive: true });
         cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
@@ -357,35 +367,46 @@ router.post('/posts', authenticateToken, checkMuted, async (req, res) => {
         if (tags && Array.isArray(tags) && tags.length > 0) {
             const tagIds = [];
             
-            for (const tagName of tags) {
-                if (!tagName || typeof tagName !== 'string') continue;
-                
-                const trimmedName = tagName.trim();
-                if (!trimmedName || trimmedName === '全部') continue;
-                
-                let [existingTags] = await connection.execute(
-                    `SELECT id FROM forum_tags WHERE name = ?`,
-                    [trimmedName]
+            // 过滤有效标签名
+            const validTagNames = tags
+                .filter(t => t && typeof t === 'string')
+                .map(t => t.trim())
+                .filter(t => t && t !== '全部');
+            
+            if (validTagNames.length > 0) {
+                // 批量查询所有已存在的标签
+                const tagPlaceholders = validTagNames.map(() => '?').join(',');
+                const [existingTags] = await connection.execute(
+                    `SELECT id, name FROM forum_tags WHERE name IN (${tagPlaceholders})`,
+                    validTagNames
                 );
+                const existingTagMap = new Map(existingTags.map(t => [t.name, t.id]));
                 
-                let tagId;
-                if (existingTags.length > 0) {
-                    tagId = existingTags[0].id;
-                } else {
+                // 找出需要新建的标签
+                const newTagNames = validTagNames.filter(name => !existingTagMap.has(name));
+                const newTagIds = [];
+                
+                // 批量插入新标签
+                for (const tagName of newTagNames) {
                     const randomColor = '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
                     const [tagResult] = await connection.execute(
                         `INSERT INTO forum_tags (name, color, post_count, created_at) VALUES (?, ?, 0, NOW())`,
-                        [trimmedName, randomColor]
+                        [tagName, randomColor]
                     );
-                    tagId = tagResult.insertId;
-                    logger.info(`自动创建新标签: ${trimmedName} (ID: ${tagId})`);
+                    newTagIds.push(tagResult.insertId);
+                    logger.info(`自动创建新标签: ${tagName} (ID: ${tagResult.insertId})`);
                 }
                 
-                if (tagId && !tagIds.includes(tagId)) {
-                    tagIds.push(tagId);
+                // 合并所有标签ID（去重）
+                for (const [, id] of existingTagMap) {
+                    if (!tagIds.includes(id)) tagIds.push(id);
+                }
+                for (const id of newTagIds) {
+                    if (!tagIds.includes(id)) tagIds.push(id);
                 }
             }
             
+            // 批量插入帖子-标签关联
             for (const tagId of tagIds) {
                 await connection.execute(
                     `INSERT INTO forum_post_tags (post_id, tag_id) VALUES (?, ?)`,

@@ -15,6 +15,13 @@ function escapeHtml(text) {
         .replace(/'/g, '&#039;');
 }
 
+function withTimeout(promise, ms) {
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
+    ]);
+}
+
 function validateSearchParams({ keyword, types, limit, offset }) {
     if (!keyword || typeof keyword !== 'string') {
         return { valid: false, message: '搜索关键词不能为空' };
@@ -55,24 +62,13 @@ async function searchTestPlans(keyword, limit, offset, userProjects, isAdmin) {
             projectFilter = ' AND 1=0';
         }
         
-        const [countResult] = await pool.execute(`
-            SELECT COUNT(*) as total
-            FROM test_plans tp
-            WHERE (tp.name LIKE ? 
-               OR tp.project LIKE ? 
-               OR tp.owner LIKE ?
-               OR tp.test_phase LIKE ?)${projectFilter}
-        `, params);
-        
-        const total = countResult[0].total;
-        
         const queryParams = [searchPattern, searchPattern, searchPattern, searchPattern];
         if (!isAdmin && userProjects.length > 0) {
             userProjects.forEach(id => queryParams.push(id));
         }
         
         const [rows] = await pool.execute(`
-            SELECT 
+            SELECT SQL_CALC_FOUND_ROWS
                 tp.id,
                 tp.name,
                 tp.project,
@@ -93,6 +89,9 @@ async function searchTestPlans(keyword, limit, offset, userProjects, isAdmin) {
             ORDER BY tp.updated_at DESC
             LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
         `, queryParams);
+        
+        const [countResult] = await pool.execute('SELECT FOUND_ROWS() as total');
+        const total = countResult[0].total;
         
         return {
             total,
@@ -132,24 +131,13 @@ async function searchTestCases(keyword, limit, offset, userId, userProjects, isA
             projectFilter = ' AND 1=0';
         }
         
-        const [countResult] = await pool.execute(`
-            SELECT COUNT(*) as total
-            FROM test_cases tc
-            LEFT JOIN modules m ON tc.module_id = m.id
-            WHERE (tc.name LIKE ? 
-               OR tc.purpose LIKE ?
-               OR m.name LIKE ?)${projectFilter}
-        `, params);
-        
-        const total = countResult[0].total;
-        
         const queryParams = [searchPattern, searchPattern, searchPattern];
         if (!isAdmin && userProjects.length > 0) {
             userProjects.forEach(id => queryParams.push(id));
         }
         
         const [rows] = await pool.execute(`
-            SELECT 
+            SELECT SQL_CALC_FOUND_ROWS
                 tc.id,
                 tc.name,
                 tc.priority,
@@ -165,6 +153,9 @@ async function searchTestCases(keyword, limit, offset, userId, userProjects, isA
             ORDER BY tc.updated_at DESC
             LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
         `, queryParams);
+        
+        const [countResult] = await pool.execute('SELECT FOUND_ROWS() as total');
+        const total = countResult[0].total;
         
         return {
             total,
@@ -194,16 +185,8 @@ async function searchPosts(keyword, limit, offset) {
         if (hasChinese) {
             const searchPattern = `%${keyword}%`;
             
-            const [count] = await pool.execute(`
-                SELECT COUNT(*) as total
-                FROM forum_posts
-                WHERE status = 'normal' 
-                  AND (title LIKE ? OR content LIKE ?)
-            `, [searchPattern, searchPattern]);
-            countResult = count;
-            
             const [data] = await pool.execute(`
-                SELECT 
+                SELECT SQL_CALC_FOUND_ROWS
                     p.id,
                     p.post_id,
                     p.title,
@@ -223,17 +206,12 @@ async function searchPosts(keyword, limit, offset) {
                 LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
             `, [searchPattern, searchPattern]);
             rows = data;
-        } else {
-            const [count] = await pool.execute(`
-                SELECT COUNT(*) as total
-                FROM forum_posts
-                WHERE status = 'normal'
-                  AND MATCH(title, content) AGAINST (? IN BOOLEAN MODE)
-            `, [keyword]);
-            countResult = count;
             
+            const [count] = await pool.execute('SELECT FOUND_ROWS() as total');
+            countResult = count;
+        } else {
             const [data] = await pool.execute(`
-                SELECT 
+                SELECT SQL_CALC_FOUND_ROWS
                     p.id,
                     p.post_id,
                     p.title,
@@ -253,6 +231,9 @@ async function searchPosts(keyword, limit, offset) {
                 LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
             `, [keyword]);
             rows = data;
+            
+            const [count] = await pool.execute('SELECT FOUND_ROWS() as total');
+            countResult = count;
         }
         
         const total = countResult[0].total;
@@ -284,19 +265,8 @@ async function searchComments(keyword, limit, offset) {
     const searchPattern = `%${keyword}%`;
     
     try {
-        const [countResult] = await pool.execute(`
-            SELECT COUNT(*) as total
-            FROM forum_comments c
-            JOIN forum_posts p ON c.post_id = p.id
-            WHERE c.status = 'normal' 
-              AND p.status = 'normal'
-              AND c.content LIKE ?
-        `, [searchPattern]);
-        
-        const total = countResult[0].total;
-        
         const [rows] = await pool.execute(`
-            SELECT 
+            SELECT SQL_CALC_FOUND_ROWS
                 c.id,
                 c.content,
                 c.post_id,
@@ -314,6 +284,9 @@ async function searchComments(keyword, limit, offset) {
             ORDER BY c.created_at DESC
             LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
         `, [searchPattern]);
+        
+        const [countResult] = await pool.execute('SELECT FOUND_ROWS() as total');
+        const total = countResult[0].total;
         
         return {
             total,
@@ -340,17 +313,8 @@ async function searchScripts(keyword, limit, offset) {
     const searchPattern = `%${keyword}%`;
     
     try {
-        const [countResult] = await pool.execute(`
-            SELECT COUNT(*) as total
-            FROM test_case_scripts
-            WHERE script_name LIKE ? 
-               OR description LIKE ?
-        `, [searchPattern, searchPattern]);
-        
-        const total = countResult[0].total;
-        
         const [rows] = await pool.execute(`
-            SELECT 
+            SELECT SQL_CALC_FOUND_ROWS
                 s.id,
                 s.script_name,
                 s.script_type,
@@ -370,6 +334,9 @@ async function searchScripts(keyword, limit, offset) {
             ORDER BY s.created_at DESC
             LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
         `, [searchPattern, searchPattern]);
+        
+        const [countResult] = await pool.execute('SELECT FOUND_ROWS() as total');
+        const total = countResult[0].total;
         
         return {
             total,
@@ -406,20 +373,9 @@ async function searchAgents(keyword, limit, offset, userId, isAdmin) {
             params.push(userId);
         }
         
-        const countParams = [...params];
-        const [countResult] = await pool.execute(`
-            SELECT COUNT(*) as total
-            FROM ai_sub_agents a
-            WHERE (a.display_name LIKE ? 
-               OR a.description LIKE ?
-               OR a.agent_code LIKE ?)${visibilityFilter}
-        `, countParams);
-        
-        const total = countResult[0].total;
-        
         const queryParams = [...params];
         const [rows] = await pool.execute(`
-            SELECT 
+            SELECT SQL_CALC_FOUND_ROWS
                 a.id,
                 a.agent_code,
                 a.display_name,
@@ -437,6 +393,9 @@ async function searchAgents(keyword, limit, offset, userId, isAdmin) {
             ORDER BY a.updated_at DESC
             LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
         `, queryParams);
+        
+        const [countResult] = await pool.execute('SELECT FOUND_ROWS() as total');
+        const total = countResult[0].total;
         
         return {
             total,
@@ -472,20 +431,9 @@ async function searchAITools(keyword, limit, offset, userId, isAdmin) {
             params.push(userId);
         }
         
-        const countParams = [...params];
-        const [countResult] = await pool.execute(`
-            SELECT COUNT(*) as total
-            FROM ai_custom_tools t
-            WHERE (t.tool_name LIKE ? 
-               OR t.display_name LIKE ?
-               OR t.description LIKE ?)${visibilityFilter}
-        `, countParams);
-        
-        const total = countResult[0].total;
-        
         const queryParams = [...params];
         const [rows] = await pool.execute(`
-            SELECT 
+            SELECT SQL_CALC_FOUND_ROWS
                 t.id,
                 t.tool_name,
                 t.display_name,
@@ -501,6 +449,9 @@ async function searchAITools(keyword, limit, offset, userId, isAdmin) {
             ORDER BY t.updated_at DESC
             LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
         `, queryParams);
+        
+        const [countResult] = await pool.execute('SELECT FOUND_ROWS() as total');
+        const total = countResult[0].total;
         
         return {
             total,
@@ -526,19 +477,8 @@ async function searchMemories(keyword, limit, offset) {
     const searchPattern = `%${keyword}%`;
     
     try {
-        const [countResult] = await pool.execute(`
-            SELECT COUNT(*) as total
-            FROM ai_sub_agent_memories m
-            LEFT JOIN ai_sub_agents a ON m.agent_id = a.id
-            WHERE (m.title LIKE ? 
-               OR m.content LIKE ?)
-               AND m.is_active = 1
-        `, [searchPattern, searchPattern]);
-        
-        const total = countResult[0].total;
-        
         const [rows] = await pool.execute(`
-            SELECT 
+            SELECT SQL_CALC_FOUND_ROWS
                 m.id,
                 m.agent_id,
                 m.title,
@@ -559,6 +499,9 @@ async function searchMemories(keyword, limit, offset) {
             ORDER BY m.updated_at DESC
             LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
         `, [searchPattern, searchPattern]);
+        
+        const [countResult] = await pool.execute('SELECT FOUND_ROWS() as total');
+        const total = countResult[0].total;
         
         return {
             total,
@@ -621,68 +564,69 @@ router.get('/search', authenticateToken, async (req, res) => {
         
         const results = {};
         const searchPromises = [];
+        const searchTimeout = 5000;
         
         if (typeList.includes('testplan')) {
             searchPromises.push(
-                searchTestPlans(searchTerm, limitNum, offsetNum, userProjects, isAdmin)
+                withTimeout(searchTestPlans(searchTerm, limitNum, offsetNum, userProjects, isAdmin), searchTimeout)
                     .then(r => { results.testPlans = r; })
-                    .catch(e => { results.testPlans = { total: 0, items: [], error: e.message }; })
+                    .catch(e => { results.testPlans = { total: 0, hasMore: false, items: [], error: e.message }; })
             );
         }
         
         if (typeList.includes('case')) {
             searchPromises.push(
-                searchTestCases(searchTerm, limitNum, offsetNum, userId, userProjects, isAdmin)
+                withTimeout(searchTestCases(searchTerm, limitNum, offsetNum, userId, userProjects, isAdmin), searchTimeout)
                     .then(r => { results.testCases = r; })
-                    .catch(e => { results.testCases = { total: 0, items: [], error: e.message }; })
+                    .catch(e => { results.testCases = { total: 0, hasMore: false, items: [], error: e.message }; })
             );
         }
         
         if (typeList.includes('post')) {
             searchPromises.push(
-                searchPosts(searchTerm, limitNum, offsetNum)
+                withTimeout(searchPosts(searchTerm, limitNum, offsetNum), searchTimeout)
                     .then(r => { results.posts = r; })
-                    .catch(e => { results.posts = { total: 0, items: [], error: e.message }; })
+                    .catch(e => { results.posts = { total: 0, hasMore: false, items: [], error: e.message }; })
             );
         }
         
         if (typeList.includes('comment')) {
             searchPromises.push(
-                searchComments(searchTerm, limitNum, offsetNum)
+                withTimeout(searchComments(searchTerm, limitNum, offsetNum), searchTimeout)
                     .then(r => { results.comments = r; })
-                    .catch(e => { results.comments = { total: 0, items: [], error: e.message }; })
+                    .catch(e => { results.comments = { total: 0, hasMore: false, items: [], error: e.message }; })
             );
         }
         
         if (typeList.includes('script')) {
             searchPromises.push(
-                searchScripts(searchTerm, limitNum, offsetNum)
+                withTimeout(searchScripts(searchTerm, limitNum, offsetNum), searchTimeout)
                     .then(r => { results.scripts = r; })
-                    .catch(e => { results.scripts = { total: 0, items: [], error: e.message }; })
+                    .catch(e => { results.scripts = { total: 0, hasMore: false, items: [], error: e.message }; })
             );
         }
         
         if (typeList.includes('agent')) {
             searchPromises.push(
-                searchAgents(searchTerm, limitNum, offsetNum, userId, isAdmin)
+                withTimeout(searchAgents(searchTerm, limitNum, offsetNum, userId, isAdmin), searchTimeout)
                     .then(r => { results.agents = r; })
-                    .catch(e => { results.agents = { total: 0, items: [], error: e.message }; })
+                    .catch(e => { results.agents = { total: 0, hasMore: false, items: [], error: e.message }; })
             );
         }
         
         if (typeList.includes('aitool')) {
             searchPromises.push(
-                searchAITools(searchTerm, limitNum, offsetNum, userId, isAdmin)
+                withTimeout(searchAITools(searchTerm, limitNum, offsetNum, userId, isAdmin), searchTimeout)
                     .then(r => { results.aiTools = r; })
-                    .catch(e => { results.aiTools = { total: 0, items: [], error: e.message }; })
+                    .catch(e => { results.aiTools = { total: 0, hasMore: false, items: [], error: e.message }; })
             );
         }
         
         if (typeList.includes('memory')) {
             searchPromises.push(
-                searchMemories(searchTerm, limitNum, offsetNum)
+                withTimeout(searchMemories(searchTerm, limitNum, offsetNum), searchTimeout)
                     .then(r => { results.memories = r; })
-                    .catch(e => { results.memories = { total: 0, items: [], error: e.message }; })
+                    .catch(e => { results.memories = { total: 0, hasMore: false, items: [], error: e.message }; })
             );
         }
         

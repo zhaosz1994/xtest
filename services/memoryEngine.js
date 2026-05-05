@@ -108,8 +108,9 @@ class MemoryEngine {
      */
     async getMemoryStats(agentId) {
         try {
-            const [memories] = await pool.execute(
-                'SELECT level, char_count, last_distilled_at FROM ai_sub_agent_memories WHERE agent_id = ?',
+            const [rows] = await pool.execute(
+                `SELECT level, COUNT(*) AS cnt, COALESCE(SUM(char_count), 0) AS total_chars, MAX(last_distilled_at) AS last_distilled_at
+                 FROM ai_sub_agent_memories WHERE agent_id = ? GROUP BY level`,
                 [agentId]
             );
 
@@ -123,16 +124,15 @@ class MemoryEngine {
 
             let latestDistilled = null;
 
-            for (const m of memories) {
-                if (stats[m.level]) {
-                    stats[m.level].count++;
-                    stats[m.level].totalChars += m.char_count || 0;
+            for (const r of rows) {
+                if (stats[r.level]) {
+                    stats[r.level].count = r.cnt;
+                    stats[r.level].totalChars = r.total_chars;
                 }
-                stats.totalChars += m.char_count || 0;
-
-                if (m.last_distilled_at) {
-                    if (!latestDistilled || new Date(m.last_distilled_at) > new Date(latestDistilled)) {
-                        latestDistilled = m.last_distilled_at;
+                stats.totalChars += r.total_chars;
+                if (r.last_distilled_at) {
+                    if (!latestDistilled || new Date(r.last_distilled_at) > new Date(latestDistilled)) {
+                        latestDistilled = r.last_distilled_at;
                     }
                 }
             }
@@ -149,6 +149,60 @@ class MemoryEngine {
                 totalChars: 0,
                 lastDistilledAt: null
             };
+        }
+    }
+
+    async getBatchMemoryStats(agentIds) {
+        if (!agentIds || agentIds.length === 0) return {};
+
+        try {
+            const placeholders = agentIds.map(() => '?').join(',');
+            const [rows] = await pool.execute(
+                `SELECT agent_id, level, COUNT(*) AS cnt, COALESCE(SUM(char_count), 0) AS total_chars, MAX(last_distilled_at) AS last_distilled_at
+                 FROM ai_sub_agent_memories WHERE agent_id IN (${placeholders}) GROUP BY agent_id, level`,
+                agentIds
+            );
+
+            const result = {};
+            for (const id of agentIds) {
+                result[id] = {
+                    global: { count: 0, totalChars: 0 },
+                    library: { count: 0, totalChars: 0 },
+                    module: { count: 0, totalChars: 0 },
+                    totalChars: 0,
+                    lastDistilledAt: null
+                };
+            }
+
+            for (const r of rows) {
+                const aid = r.agent_id;
+                if (!result[aid]) continue;
+                if (result[aid][r.level]) {
+                    result[aid][r.level].count = r.cnt;
+                    result[aid][r.level].totalChars = r.total_chars;
+                }
+                result[aid].totalChars += r.total_chars;
+                if (r.last_distilled_at) {
+                    if (!result[aid].lastDistilledAt || new Date(r.last_distilled_at) > new Date(result[aid].lastDistilledAt)) {
+                        result[aid].lastDistilledAt = r.last_distilled_at;
+                    }
+                }
+            }
+
+            return result;
+        } catch (error) {
+            logger.error('批量获取记忆统计失败', { agentIds, error: error.message });
+            const result = {};
+            for (const id of agentIds) {
+                result[id] = {
+                    global: { count: 0, totalChars: 0 },
+                    library: { count: 0, totalChars: 0 },
+                    module: { count: 0, totalChars: 0 },
+                    totalChars: 0,
+                    lastDistilledAt: null
+                };
+            }
+            return result;
         }
     }
 

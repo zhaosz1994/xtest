@@ -37,28 +37,30 @@ async function processMentions(content, senderId, targetId, sourceUrl, sourceTyp
         `;
         const [users] = await pool.execute(query, mentionedUsernames);
 
-        for (const user of users) {
-            if (user.id === senderId) continue;
-
-            const title = `${senderName} 在讨论中@了你`;
+        const targetUsers = users.filter(user => user.id !== senderId);
+        
+        if (targetUsers.length > 0) {
+            const insertPlaceholders = targetUsers.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(',');
+            const insertValues = targetUsers.flatMap(user => [
+                user.id, senderId, 'mention', targetId, 
+                `${senderName} 在讨论中@了你`, preview, preview
+            ]);
             await pool.execute(
-                `INSERT INTO notifications (user_id, sender_id, type, target_id, title, content, content_preview) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                [user.id, senderId, 'mention', targetId, title, preview, preview]
+                `INSERT INTO notifications (user_id, sender_id, type, target_id, title, content, content_preview) VALUES ${insertPlaceholders}`,
+                insertValues
             );
 
-            emailNotificationService.send({
-                emailType: 'mention',
-                to: user.id,
-                data: {
-                    senderName: senderName,
-                    preview: preview,
-                    sourceUrl: sourceUrl
-                },
-                options: { skipInApp: true }
-            }).catch(e => logger.error('发送@提醒邮件失败', { error: e.message }));
+            for (const user of targetUsers) {
+                emailNotificationService.send({
+                    emailType: 'mention',
+                    to: user.id,
+                    data: { senderName, preview, sourceUrl },
+                    options: { skipInApp: true }
+                }).catch(e => console.error('发送@提醒邮件失败', e));
+            }
         }
     } catch (error) {
-        logger.error('处理 @ 提及过程出错', { error: error.message });
+        console.error('处理 @ 提及过程出错:', error);
     }
 }
 

@@ -1,4 +1,6 @@
 const cheerio = require('cheerio');
+const { default: PQueue } = require('p-queue');
+const crawlQueue = new PQueue({ concurrency: 2 });
 
 class WebCrawlerService {
   constructor() {
@@ -52,6 +54,10 @@ class WebCrawlerService {
   }
 
   async crawlSimple(url, options = {}) {
+    return crawlQueue.add(() => this._crawlSimpleImpl(url, options));
+  }
+
+  async _crawlSimpleImpl(url, options = {}) {
     const axios = require('axios');
     
     try {
@@ -87,6 +93,10 @@ class WebCrawlerService {
   }
 
   async crawlWithAuth(url, options = {}) {
+    return crawlQueue.add(() => this._crawlWithAuthImpl(url, options));
+  }
+
+  async _crawlWithAuthImpl(url, options = {}) {
     try {
       const puppeteer = require('puppeteer');
 

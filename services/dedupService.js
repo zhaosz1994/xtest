@@ -50,6 +50,23 @@ class DedupService {
       .filter(t => t.length > 1);
   }
 
+  _quickNameFilter(tempName, existingCases, maxCandidates = 50) {
+    const candidates = [];
+    const tempLower = tempName.toLowerCase();
+    for (const existing of existingCases) {
+      const existLower = (existing.name || '').toLowerCase();
+      let commonPrefixLen = 0;
+      const minLen = Math.min(tempLower.length, existLower.length);
+      for (let i = 0; i < minLen; i++) {
+        if (tempLower[i] === existLower[i]) commonPrefixLen++;
+        else break;
+      }
+      candidates.push({ case: existing, commonPrefixLen });
+    }
+    candidates.sort((a, b) => b.commonPrefixLen - a.commonPrefixLen);
+    return candidates.slice(0, maxCandidates).map(c => c.case);
+  }
+
   async executeReducePhase(taskId) {
     await pool.execute(`
       UPDATE ai_case_generation_tasks 
@@ -102,7 +119,10 @@ class DedupService {
 
         const tempEmbedding = await this.getOrGenerateEmbedding(tempCase, 'temp', userId);
 
-        for (const existing of existingCases) {
+        // Pre-filter to top candidates by name similarity
+        const candidates = this._quickNameFilter(tempCase.name || '', existingCases);
+
+        for (const existing of candidates) {
           let similarity = 0;
 
           if (tempEmbedding && existing.embedding) {

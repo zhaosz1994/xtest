@@ -34,6 +34,10 @@ const DANGEROUS_PATTERNS = [
 ];
 
 class SandboxExecutor {
+    constructor() {
+        this._dockerAvailable = null; // null = not checked yet
+    }
+
     /**
      * 验证代码安全性，检查是否包含危险模式
      * @param {string} code - 待执行的代码
@@ -177,7 +181,7 @@ class SandboxExecutor {
 
             const vmContext = vm.createContext(sandbox);
             vmContext.constructor = undefined;
-            const asyncFn = script.runInContext(vmContext, { timeout: 5000, microtaskMode: 'afterEvaluate' });
+            const asyncFn = script.runInContext(vmContext, { timeout: timeoutMs || 5000, microtaskMode: 'afterEvaluate' });
 
             // 4. 执行并设置超时
             const result = await Promise.race([
@@ -225,6 +229,26 @@ class SandboxExecutor {
         }
     }
 
+    async _checkDockerAvailable() {
+        if (this._dockerAvailable !== null) return this._dockerAvailable;
+
+        const { execFile } = require('child_process');
+        return new Promise((resolve) => {
+            const timeout = setTimeout(() => resolve(false), 3000);
+            try {
+                execFile('docker', ['--version'], (error) => {
+                    clearTimeout(timeout);
+                    this._dockerAvailable = !error;
+                    resolve(this._dockerAvailable);
+                });
+            } catch (e) {
+                clearTimeout(timeout);
+                this._dockerAvailable = false;
+                resolve(false);
+            }
+        });
+    }
+
     /**
      * 执行Python代码（需要Docker环境）
      * 如果Docker不可用，返回错误提示
@@ -238,20 +262,8 @@ class SandboxExecutor {
         const { toolName, toolId, userId } = context;
 
         try {
-            // 尝试检测Docker是否可用
-            const { execFile } = require('child_process');
-            const dockerAvailable = await new Promise((resolve) => {
-                const timeout = setTimeout(() => resolve(false), 3000);
-                try {
-                    execFile('docker', ['--version'], (error) => {
-                        clearTimeout(timeout);
-                        resolve(!error);
-                    });
-                } catch (e) {
-                    clearTimeout(timeout);
-                    resolve(false);
-                }
-            });
+            // 尝试检测Docker是否可用（带缓存）
+            const dockerAvailable = await this._checkDockerAvailable();
 
             if (!dockerAvailable) {
                 return {
