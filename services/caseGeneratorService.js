@@ -102,11 +102,18 @@ class CaseGeneratorService {
           await this.updateProgressFromDB(taskId, processedCount, chunks.length);
 
         } catch (error) {
+          const errorMsg = error.message || error.toString() || '未知错误';
+          logger.error('处理chunk失败', { 
+            chunkId: chunk.id, 
+            taskId, 
+            error: errorMsg,
+            stack: error.stack
+          });
           await pool.execute(`
             UPDATE ai_material_chunks 
             SET status = 'failed', error_message = ?, retry_count = retry_count + 1
             WHERE id = ?
-          `, [error.message, chunk.id]);
+          `, [errorMsg, chunk.id]);
           processedCount++;
           await this.updateProgressFromDB(taskId, processedCount, chunks.length);
         }
@@ -244,23 +251,67 @@ ${chunk.chunk_content}
     const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
     const model = aiConfig.model_name || config?.model || 'deepseek-chat';
 
-    const response = await axios.post(apiUrl, {
-      model: model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      temperature: config?.temperature || 0.7,
-      max_tokens: config?.max_tokens || 4000
-    }, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      timeout: timeoutConfig.generalAITask
+    logger.info('调用AI API', { 
+      apiUrl: apiUrl.replace(/\/v1\/chat\/completions$/, '/...'), 
+      model, 
+      promptLength: userPrompt.length 
     });
 
-    return response.data;
+    try {
+      const response = await axios.post(apiUrl, {
+        model: model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: config?.temperature || 0.7,
+        max_tokens: config?.max_tokens || 4000
+      }, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        timeout: timeoutConfig.generalAITask
+      });
+
+      logger.info('AI API 调用成功', { 
+        model, 
+        status: response.status,
+        hasContent: !!response.data?.choices?.[0]?.message?.content
+      });
+
+      return response.data;
+    } catch (error) {
+      let errorMsg = error.message || '未知错误';
+      
+      if (error.code === 'ECONNABORTED') {
+        errorMsg = `AI API 请求超时（${timeoutConfig.generalAITask/1000}秒），请检查网络或增加超时时间`;
+      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+        errorMsg = `无法连接到 AI API 服务器 (${error.code})，请检查 endpoint 配置: ${apiUrl}`;
+      } else if (error.response) {
+        const status = error.response.status;
+        const data = error.response.data;
+        
+        if (status === 401) {
+          errorMsg = `AI API 认证失败 (401)，请检查 API Key 是否正确`;
+        } else if (status === 429) {
+          errorMsg = `AI API 请求频率超限 (429)，请稍后重试`;
+        } else if (status >= 500) {
+          errorMsg = `AI API 服务器错误 (${status}): ${data?.error?.message || data?.message || errorMsg}`;
+        } else {
+          errorMsg = `AI API 错误 (${status}): ${JSON.stringify(data).substring(0, 200)}`;
+        }
+      }
+
+      logger.error('调用 AI API 失败', { 
+        error: errorMsg, 
+        code: error.code,
+        status: error.response?.status,
+        stack: error.stack
+      });
+
+      throw new Error(errorMsg);
+    }
   }
 
   parseAIResponse(content) {

@@ -23112,7 +23112,8 @@ async function generateKeyConfig() {
                 purpose,
                 steps,
                 expected,
-                appendMode
+                appendMode,
+                caseId: (typeof currentEditingTestCaseId !== 'undefined' && currentEditingTestCaseId && currentEditingTestCaseId !== 'new') ? currentEditingTestCaseId : null
             })
         });
 
@@ -23167,7 +23168,18 @@ function handleAITaskComplete(data) {
             showSuccessMessage('AI关键配置生成完成，已自动填入');
             delete window._pendingAIKeyConfig;
         } else {
-            showSuccessMessage('AI关键配置生成完成，请在消息中心查看结果');
+            if (data.success && data.result) {
+                const keyConfigField = document.getElementById('drawer-testcase-key-config') || document.getElementById('detail-case-key-config');
+                if (keyConfigField && data.caseId && typeof currentEditingTestCaseId !== 'undefined' && String(currentEditingTestCaseId) === String(data.caseId)) {
+                    if (data.appendMode && keyConfigField.value.trim()) {
+                        keyConfigField.value = keyConfigField.value.trim() + '\n' + data.result;
+                    } else {
+                        keyConfigField.value = data.result;
+                    }
+                    keyConfigField.dispatchEvent(new Event('input'));
+                }
+            }
+            showSuccessMessage('AI关键配置生成完成，已自动保存');
             delete window._pendingAIKeyConfig;
         }
     } else if (data.taskType === 'overview') {
@@ -23186,7 +23198,10 @@ function handleAITaskComplete(data) {
             showSuccessMessage('AI概述生成完成，已自动填入');
             delete window._pendingAIOverview;
         } else {
-            showSuccessMessage('AI概述生成完成，请查看消息中心');
+            if (data.success && data.result && typeof updateLevel1SummaryInList === 'function') {
+                updateLevel1SummaryInList(data.level1PointId, data.result);
+            }
+            showSuccessMessage('AI概述生成完成，已自动保存');
             delete window._pendingAIOverview;
         }
     }

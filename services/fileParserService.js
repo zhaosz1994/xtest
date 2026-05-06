@@ -2,10 +2,43 @@ const pool = require('../db');
 const path = require('path');
 const fs = require('fs').promises;
 const logger = require('./logger');
+const PQueue = require('p-queue').default;
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
 
+const DEADLOCK_ERROR_CODES = [1213, 1205];
+const MAX_RETRY_ATTEMPTS = 3;
+const RETRY_BASE_DELAY = 200;
+
 class FileParserService {
+  constructor() {
+    this.parseQueue = new PQueue({
+      concurrency: parseInt(process.env.FILE_PARSE_CONCURRENCY) || 2
+    });
+  }
+
+  isDeadlockError(error) {
+    return DEADLOCK_ERROR_CODES.includes(error.errno) ||
+      DEADLOCK_ERROR_CODES.includes(error.code) ||
+      (error.message && error.message.includes('Deadlock'));
+  }
+
+  async retryOnDeadlock(fn, label = 'operation') {
+    for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        if (this.isDeadlockError(error) && attempt < MAX_RETRY_ATTEMPTS) {
+          const delay = RETRY_BASE_DELAY * Math.pow(2, attempt - 1) + Math.random() * 100;
+          logger.warn(`${label}遇到死锁，第${attempt}次重试`, { attempt, delay: Math.round(delay) });
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
   async parseAndChunk(fileId) {
     const [files] = await pool.execute(`
       SELECT f.*, COALESCE(m.name, '用例库文件') as module_name
@@ -18,11 +51,13 @@ class FileParserService {
 
     const file = files[0];
 
-    await pool.execute(`
-      UPDATE module_knowledge_files 
-      SET parse_status = 'parsing' 
-      WHERE id = ?
-    `, [fileId]);
+    await this.retryOnDeadlock(async () => {
+      await pool.execute(`
+        UPDATE module_knowledge_files 
+        SET parse_status = 'parsing' 
+        WHERE id = ?
+      `, [fileId]);
+    }, `更新文件解析状态[fileId=${fileId}]`);
 
     try {
       const filePath = path.join(UPLOAD_DIR, file.file_path);
@@ -58,23 +93,29 @@ class FileParserService {
 
       await this.saveChunks(fileId, file.module_id, chunks, file.library_id);
 
-      await pool.execute(`
-        UPDATE module_knowledge_files 
-        SET parse_status = 'parsed', 
-            chunk_count = ?,
-            total_tokens = ?,
-            parsed_at = NOW()
-        WHERE id = ?
-      `, [chunks.length, chunks.reduce((sum, c) => sum + c.tokenCount, 0), fileId]);
+      await this.retryOnDeadlock(async () => {
+        await pool.execute(`
+          UPDATE module_knowledge_files 
+          SET parse_status = 'parsed', 
+              chunk_count = ?,
+              total_tokens = ?,
+              parsed_at = NOW()
+          WHERE id = ?
+        `, [chunks.length, chunks.reduce((sum, c) => sum + c.tokenCount, 0), fileId]);
+      }, `更新文件解析完成状态[fileId=${fileId}]`);
 
       return { fileId, chunkCount: chunks.length };
 
     } catch (error) {
-      await pool.execute(`
-        UPDATE module_knowledge_files 
-        SET parse_status = 'failed', parse_error = ?
-        WHERE id = ?
-      `, [error.message, fileId]);
+      await this.retryOnDeadlock(async () => {
+        await pool.execute(`
+          UPDATE module_knowledge_files 
+          SET parse_status = 'failed', parse_error = ?
+          WHERE id = ?
+        `, [error.message, fileId]);
+      }, `更新文件解析失败状态[fileId=${fileId}]`).catch(err => {
+        logger.error('更新解析失败状态时出错', { fileId, error: err.message });
+      });
 
       throw error;
     }
@@ -186,43 +227,45 @@ class FileParserService {
   }
 
   async saveChunks(fileId, moduleId, chunks, libraryId) {
-    const connection = await pool.getConnection();
+    return this.retryOnDeadlock(async () => {
+      const connection = await pool.getConnection();
 
-    try {
-      await connection.beginTransaction();
+      try {
+        await connection.beginTransaction();
 
-      await connection.execute(`
-        DELETE FROM ai_material_chunks WHERE file_id = ?
-      `, [fileId]);
+        await connection.execute(`
+          DELETE FROM ai_material_chunks WHERE file_id = ?
+        `, [fileId]);
 
-      if (chunks.length > 0) {
-        const batchSize = 100;
-        for (let i = 0; i < chunks.length; i += batchSize) {
-          const batch = chunks.slice(i, i + batchSize);
-          const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(',');
-          const values = [];
-          for (const chunk of batch) {
-            values.push(fileId, moduleId || null, libraryId || null, chunk.chunkIndex, chunk.chunkContent, chunk.tokenCount, chunk.charCount);
+        if (chunks.length > 0) {
+          const batchSize = 100;
+          for (let i = 0; i < chunks.length; i += batchSize) {
+            const batch = chunks.slice(i, i + batchSize);
+            const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(',');
+            const values = [];
+            for (const chunk of batch) {
+              values.push(fileId, moduleId || null, libraryId || null, chunk.chunkIndex, chunk.chunkContent, chunk.tokenCount, chunk.charCount);
+            }
+            await connection.execute(`
+              INSERT INTO ai_material_chunks
+                (file_id, module_id, library_id, chunk_index, chunk_content, token_count, char_count)
+              VALUES ${placeholders}
+            `, values);
           }
-          await connection.execute(`
-            INSERT INTO ai_material_chunks
-              (file_id, module_id, library_id, chunk_index, chunk_content, token_count, char_count)
-            VALUES ${placeholders}
-          `, values);
         }
-      }
 
-      await connection.commit();
-    } catch (error) {
-      await connection.rollback();
-      throw error;
-    } finally {
-      connection.release();
-    }
+        await connection.commit();
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
+      }
+    }, `保存文件分块[fileId=${fileId}]`);
   }
 
   asyncParseFile(fileId) {
-    Promise.resolve().then(async () => {
+    this.parseQueue.add(async () => {
       try {
         await this.parseAndChunk(fileId);
       } catch (error) {

@@ -348,7 +348,7 @@ router.post('/generate-key-config', authenticateToken, async (req, res) => {
 
 router.post('/generate-key-config-async', authenticateToken, async (req, res) => {
   try {
-    const { caseName, precondition, purpose, steps, expected, appendMode } = req.body;
+    const { caseName, precondition, purpose, steps, expected, appendMode, caseId } = req.body;
 
     if (!caseName && !purpose && !steps) {
       return res.status(400).json({ success: false, message: '请至少填写用例名称、目的或步骤' });
@@ -445,12 +445,36 @@ router.post('/generate-key-config-async', authenticateToken, async (req, res) =>
       }
 
       try {
+        if (success && keyConfig && caseId) {
+          let existingKeyConfig = '';
+          if (appendMode) {
+            const [caseRows] = await pool.execute(
+              'SELECT key_config FROM test_cases WHERE id = ?',
+              [caseId]
+            );
+            existingKeyConfig = caseRows.length > 0 ? (caseRows[0].key_config || '') : '';
+          }
+          const finalKeyConfig = (appendMode && existingKeyConfig)
+            ? existingKeyConfig + '\n' + keyConfig
+            : keyConfig;
+          await pool.execute(
+            'UPDATE test_cases SET key_config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [finalKeyConfig, caseId]
+          );
+          keyConfig = finalKeyConfig;
+        }
+      } catch (dbError) {
+        logger.error('[async-key-config] 关键配置写入数据库失败:', { error: dbError.message });
+      }
+
+      try {
         const notificationType = success ? 'ai_key_config_complete' : 'system';
         const title = success ? `AI关键配置生成完成 - ${caseName || '未命名'}` : `AI关键配置生成失败 - ${caseName || '未命名'}`;
         const content = success ? keyConfig : 'AI生成关键配置失败，请重试';
         const data = JSON.stringify({
           taskType: 'key_config',
           taskId,
+          caseId: caseId || null,
           caseName: caseName || '',
           result: success ? keyConfig : '',
           appendMode: !!appendMode,
@@ -458,14 +482,15 @@ router.post('/generate-key-config-async', authenticateToken, async (req, res) =>
         });
 
         await pool.execute(
-          `INSERT INTO notifications (user_id, type, title, content, content_preview, data, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-          [userId, notificationType, title, content, content.substring(0, 100), data]
+          `INSERT INTO notifications (user_id, type, target_id, title, content, content_preview, data, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+          [userId, notificationType, caseId || 0, title, content, content.substring(0, 100), data]
         );
 
         if (global.io) {
           global.io.to(`user_${userId}`).emit('ai_task_complete', {
             taskType: 'key_config',
             taskId,
+            caseId: caseId || null,
             caseName: caseName || '',
             result: success ? keyConfig : '',
             appendMode: !!appendMode,
@@ -599,6 +624,22 @@ ${caseInfo}
       }
 
       try {
+        if (success && overview) {
+          let finalSummary = overview;
+          if (appendMode && point.summary) {
+            finalSummary = point.summary + '\n' + overview;
+          }
+          await pool.execute(
+            'UPDATE level1_points SET summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [finalSummary, level1PointId]
+          );
+          overview = finalSummary;
+        }
+      } catch (dbError) {
+        logger.error('[async-overview] 概述写入数据库失败:', { error: dbError.message });
+      }
+
+      try {
         const notificationType = success ? 'ai_overview_complete' : 'system';
         const title = success ? `AI概述生成完成 - ${point.name}` : `AI概述生成失败 - ${point.name}`;
         const content = success ? overview : 'AI生成概述失败，请重试';
@@ -613,8 +654,8 @@ ${caseInfo}
         });
 
         await pool.execute(
-          `INSERT INTO notifications (user_id, type, title, content, content_preview, data, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-          [userId, notificationType, title, content, content.substring(0, 100), data]
+          `INSERT INTO notifications (user_id, type, target_id, title, content, content_preview, data, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+          [userId, notificationType, parseInt(level1PointId) || 0, title, content, content.substring(0, 100), data]
         );
 
         if (global.io) {

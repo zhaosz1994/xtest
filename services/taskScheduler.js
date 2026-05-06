@@ -137,16 +137,18 @@ class TaskScheduler {
       logger.info('任务完成', { taskId });
 
     } catch (error) {
-      logger.error('任务失败', { taskId, error: error.message });
+      const errorMsg = error.message || error.toString() || '未知错误（error对象为空）';
+      const errorStack = error.stack || new Error().stack;
+      logger.error('任务失败', { taskId, error: errorMsg, stack: errorStack });
 
       await pool.execute(`
         UPDATE ai_case_generation_tasks 
         SET status = 'failed', 
             error_message = ?,
             error_stack = ?,
-            progress_message = '任务失败'
+            progress_message = ?
         WHERE task_id = ?
-      `, [error.message, error.stack, taskId]);
+      `, [errorMsg, errorStack, `任务失败: ${errorMsg}`, taskId]);
     }
   }
 

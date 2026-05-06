@@ -939,7 +939,17 @@ function updateProgressUI(task) {
             switchTab('preview', { taskId: task.task_id });
         }, 1500);
     } else if (task.status === 'failed') {
-        aiNotify('任务失败: ' + (task.error_message || '未知错误'), 'error');
+        const errorMsg = task.error_message || task.progress_message || '未知错误（请查看服务器日志）';
+        const errorDetail = task.error_stack ? `\n\n详细堆栈:\n${task.error_stack.substring(0, 500)}` : '';
+        console.error('[AI Generation] 任务失败详情:', {
+            taskId: task.task_id,
+            error_message: task.error_message,
+            error_stack: task.error_stack,
+            progress_message: task.progress_message,
+            stage: task.stage,
+            progress: task.progress
+        });
+        aiNotify(`任务失败: ${errorMsg}${errorDetail}`, 'error');
     }
 }
 
