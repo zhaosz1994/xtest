@@ -289,6 +289,12 @@ router.get('/recent-activities', authenticateToken, async (req, res) => {
         const daysNum = parseInt(days) || 7;
         const limitNum = parseInt(limit) || 20;
 
+        const excludedActions = [
+            '用户登录', '用户登出', '用户注册',
+            '修改密码', '修改邮箱'
+        ];
+        const excludedPlaceholders = excludedActions.map(() => '?').join(',');
+
         const [activities] = await pool.execute(
             `SELECT 
                 id,
@@ -300,9 +306,10 @@ router.get('/recent-activities', authenticateToken, async (req, res) => {
              FROM activity_logs
              WHERE user_id = ?
              AND created_at >= DATE_SUB(NOW(), INTERVAL ${daysNum} DAY)
+             AND action NOT IN (${excludedPlaceholders})
              ORDER BY created_at DESC
              LIMIT ${limitNum}`,
-            [currentUser.id]
+            [currentUser.id, ...excludedActions]
         );
 
         const activitiesWithTimeAgo = activities.map(a => ({

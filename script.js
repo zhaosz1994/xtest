@@ -22882,6 +22882,8 @@ async function generateLevel1PointSummary() {
         return;
     }
 
+    if (generateBtn.disabled) return;
+
     const existingSummary = summaryTextarea.value.trim();
     let appendMode = false;
     if (existingSummary) {
@@ -22892,11 +22894,12 @@ async function generateLevel1PointSummary() {
 
     try {
         generateBtn.disabled = true;
+        generateBtn.title = 'AI正在后台生成概述，请稍候...';
         generateBtn.innerHTML = `
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite;">
                 <circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="32"></circle>
             </svg>
-            提交中...
+            生成中...
         `;
 
         const response = await apiRequest('/ai-generation/generate-overview-async', {
@@ -22909,18 +22912,29 @@ async function generateLevel1PointSummary() {
                 textarea: summaryTextarea,
                 existingSummary,
                 appendMode,
-                pointId: parseInt(pointId)
+                pointId: parseInt(pointId),
+                generateBtn: generateBtn
             };
-            showSuccessMessage('AI概述生成任务已提交后台运行，完成后将在消息中心通知您');
+            showSuccessMessage('AI概述生成任务已提交后台运行，请稍候...');
         } else {
             showErrorMessage(response.message || 'AI生成概述失败');
+            resetOverviewBtn(generateBtn);
         }
 
     } catch (error) {
         console.error('提交概述生成任务失败:', error);
         showErrorMessage('提交概述生成任务失败: ' + error.message);
-    } finally {
+        resetOverviewBtn(generateBtn);
+    }
+}
+
+function resetOverviewBtn(generateBtn) {
+    if (!generateBtn) {
+        generateBtn = document.getElementById('ai-generate-summary-btn');
+    }
+    if (generateBtn) {
         generateBtn.disabled = false;
+        generateBtn.title = '点击AI自动生成概述';
         generateBtn.innerHTML = `
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"></path>
@@ -23087,6 +23101,8 @@ async function generateKeyConfig() {
         return;
     }
 
+    if (generateBtn.disabled) return;
+
     const existingConfig = keyConfigTextarea.value.trim();
     let appendMode = false;
     if (existingConfig) {
@@ -23097,11 +23113,12 @@ async function generateKeyConfig() {
 
     try {
         generateBtn.disabled = true;
+        generateBtn.title = 'AI正在后台生成关键配置，请稍候...';
         generateBtn.innerHTML = `
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite;">
                 <circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="32"></circle>
             </svg>
-            提交中...
+            生成中...
         `;
 
         const response = await apiRequest('/ai-generation/generate-key-config-async', {
@@ -23122,18 +23139,29 @@ async function generateKeyConfig() {
                 textarea: keyConfigTextarea,
                 existingConfig,
                 appendMode,
-                caseName
+                caseName,
+                generateBtn: generateBtn
             };
-            showSuccessMessage('AI关键配置生成任务已提交后台运行，完成后将在消息中心通知您');
+            showSuccessMessage('AI关键配置生成任务已提交后台运行，请稍候...');
         } else {
             showErrorMessage(response.message || 'AI生成关键配置失败');
+            resetKeyConfigBtn(generateBtn);
         }
 
     } catch (error) {
         console.error('提交关键配置生成任务失败:', error);
         showErrorMessage('提交关键配置生成任务失败: ' + error.message);
-    } finally {
+        resetKeyConfigBtn(generateBtn);
+    }
+}
+
+function resetKeyConfigBtn(generateBtn) {
+    if (!generateBtn) {
+        generateBtn = document.getElementById('ai-generate-key-config-btn');
+    }
+    if (generateBtn) {
         generateBtn.disabled = false;
+        generateBtn.title = '点击AI自动生成关键配置';
         generateBtn.innerHTML = `
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
@@ -23148,6 +23176,12 @@ function handleAITaskComplete(data) {
     if (!data || !data.success) {
         if (data && data.title) {
             showErrorMessage(data.title);
+        }
+        if (data && data.taskType === 'overview') {
+            resetOverviewBtn();
+        }
+        if (data && data.taskType === 'key_config') {
+            resetKeyConfigBtn();
         }
         if (typeof NotificationManager !== 'undefined' && NotificationManager.fetchUnreadCount) {
             NotificationManager.fetchUnreadCount();
@@ -23166,6 +23200,7 @@ function handleAITaskComplete(data) {
             }
             pending.textarea.dispatchEvent(new Event('input'));
             showSuccessMessage('AI关键配置生成完成，已自动填入');
+            if (pending.generateBtn) resetKeyConfigBtn(pending.generateBtn);
             delete window._pendingAIKeyConfig;
         } else {
             if (data.success && data.result) {
@@ -23180,6 +23215,7 @@ function handleAITaskComplete(data) {
                 }
             }
             showSuccessMessage('AI关键配置生成完成，已自动保存');
+            resetKeyConfigBtn();
             delete window._pendingAIKeyConfig;
         }
     } else if (data.taskType === 'overview') {
@@ -23196,12 +23232,14 @@ function handleAITaskComplete(data) {
                 updateLevel1SummaryInList(pending.pointId, pending.textarea.value);
             }
             showSuccessMessage('AI概述生成完成，已自动填入');
+            if (pending.generateBtn) resetOverviewBtn(pending.generateBtn);
             delete window._pendingAIOverview;
         } else {
             if (data.success && data.result && typeof updateLevel1SummaryInList === 'function') {
                 updateLevel1SummaryInList(data.level1PointId, data.result);
             }
             showSuccessMessage('AI概述生成完成，已自动保存');
+            resetOverviewBtn();
             delete window._pendingAIOverview;
         }
     }
@@ -24544,8 +24582,9 @@ function handleTemplateFileSelect(file) {
 }
 
 // 初始化AI配置页面
+let _aiGenParamsEventsInitialized = false;
+
 async function initAIConfigPage() {
-    // 加载全局配置
     const config = await loadAIConfig();
     if (config) {
         const enabledSelect = document.getElementById('ai-enabled-select');
@@ -24554,8 +24593,356 @@ async function initAIConfigPage() {
         }
     }
 
-    // 加载AI模型列表
     await renderAIModelsList();
+    await loadAIGenerationParams();
+    await loadAIAgentsParams();
+    if (!_aiGenParamsEventsInitialized) {
+        initAIGenParamsEvents();
+        _aiGenParamsEventsInitialized = true;
+    }
+}
+
+let aiGenParamsCache = null;
+
+const AI_GEN_PARAMS_DEFAULTS = {
+    temperature: '0.3', max_tokens: '4000', top_p: '1.0',
+    frequency_penalty: '0', presence_penalty: '0',
+    tool_choice: 'auto', response_format: 'text',
+    request_timeout: '120000', max_retries: '3',
+    ai_rate_limit: '10', seed: '',
+    scene_data_analysis: { temperature: '0.3', max_tokens: '2000', max_context_rounds: '10' },
+    scene_case_generation: { temperature: '0.7', max_tokens: '4000' },
+    scene_report_analysis: { temperature: '0.3', max_tokens: '2000' },
+    scene_memory_distillation: { temperature: '0.3', max_tokens: '800' }
+};
+
+async function loadAIGenerationParams() {
+    try {
+        const response = await apiRequest('/ai-generation-params/get', { useCache: false });
+        if (response.success && response.params) {
+            aiGenParamsCache = response.params;
+            renderAIGenerationParams(response.params);
+        }
+    } catch (error) {
+        console.error('加载AI生成参数错误:', error);
+    }
+}
+
+function renderAIGenerationParams(params) {
+    const p = { ...AI_GEN_PARAMS_DEFAULTS, ...params };
+
+    setSliderValue('ai-param-temperature', 'ai-param-temperature-val', parseFloat(p.temperature));
+    setInputValue('ai-param-max-tokens', parseInt(p.max_tokens));
+    setInputValue('ai-param-request-timeout', parseInt(p.request_timeout));
+    setInputValue('ai-param-max-retries', parseInt(p.max_retries));
+    setSelectValue('ai-param-tool-choice', p.tool_choice);
+    setSelectValue('ai-param-response-format', p.response_format);
+
+    setSliderValue('ai-param-top-p', 'ai-param-top-p-val', parseFloat(p.top_p));
+    setInputValue('ai-param-frequency-penalty', parseFloat(p.frequency_penalty));
+    setInputValue('ai-param-presence-penalty', parseFloat(p.presence_penalty));
+    setInputValue('ai-param-seed', p.seed ? parseInt(p.seed) : '');
+    setInputValue('ai-param-ai-rate-limit', parseInt(p.ai_rate_limit));
+
+    const scenes = ['data_analysis', 'case_generation', 'report_analysis', 'memory_distillation'];
+    scenes.forEach(scene => {
+        const sceneKey = 'scene_' + scene;
+        const sceneData = p[sceneKey] || {};
+        Object.entries(sceneData).forEach(([key, val]) => {
+            const el = document.getElementById('ai-scene-' + scene + '-' + key);
+            if (el) el.value = val;
+        });
+    });
+}
+
+function setSliderValue(sliderId, numberId, value) {
+    const slider = document.getElementById(sliderId);
+    const number = document.getElementById(numberId);
+    if (slider) slider.value = value;
+    if (number) number.value = value;
+}
+
+function setInputValue(inputId, value) {
+    const el = document.getElementById(inputId);
+    if (el) el.value = value;
+}
+
+function setSelectValue(selectId, value) {
+    const el = document.getElementById(selectId);
+    if (el) el.value = value;
+}
+
+function toggleAIAdvancedParams() {
+    const panel = document.getElementById('ai-gen-advanced-panel');
+    const arrow = document.getElementById('ai-gen-advanced-arrow');
+    if (!panel) return;
+    const isOpen = panel.style.display !== 'none';
+    panel.style.display = isOpen ? 'none' : 'block';
+    if (arrow) {
+        arrow.classList.toggle('open', !isOpen);
+    }
+}
+
+function initAIGenParamsEvents() {
+    const sliderPairs = [
+        ['ai-param-temperature', 'ai-param-temperature-val'],
+        ['ai-param-top-p', 'ai-param-top-p-val']
+    ];
+
+    sliderPairs.forEach(([sliderId, numberId]) => {
+        const slider = document.getElementById(sliderId);
+        const number = document.getElementById(numberId);
+        if (slider && number) {
+            slider.addEventListener('input', function() {
+                number.value = this.value;
+            });
+            number.addEventListener('input', function() {
+                const val = parseFloat(this.value);
+                if (!isNaN(val)) {
+                    slider.value = val;
+                }
+            });
+        }
+    });
+
+    const sceneTabs = document.querySelectorAll('#ai-scene-tabs .ai-scene-tab');
+    const scenePanels = document.querySelectorAll('.ai-scene-panel');
+    sceneTabs.forEach(tab => {
+        tab.addEventListener('click', function() {
+            sceneTabs.forEach(t => t.classList.remove('active'));
+            scenePanels.forEach(p => p.classList.remove('active'));
+            this.classList.add('active');
+            const sceneName = this.dataset.scene;
+            const panel = document.getElementById('ai-scene-' + sceneName);
+            if (panel) panel.classList.add('active');
+        });
+    });
+
+    const saveBtn = document.getElementById('save-ai-gen-params-btn');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', saveAIGenerationParams);
+    }
+
+    const resetBtn = document.getElementById('reset-ai-gen-params-btn');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', resetAIGenerationParams);
+    }
+}
+
+function collectAIGenerationParams() {
+    const generationParams = {
+        temperature: getElValue('ai-param-temperature-val'),
+        max_tokens: getElValue('ai-param-max-tokens'),
+        top_p: getElValue('ai-param-top-p-val'),
+        frequency_penalty: getElValue('ai-param-frequency-penalty'),
+        presence_penalty: getElValue('ai-param-presence-penalty'),
+        tool_choice: getElValue('ai-param-tool-choice'),
+        response_format: getElValue('ai-param-response-format'),
+        request_timeout: getElValue('ai-param-request-timeout'),
+        max_retries: getElValue('ai-param-max-retries'),
+        ai_rate_limit: getElValue('ai-param-ai-rate-limit'),
+        seed: getElValue('ai-param-seed')
+    };
+
+    const scenes = ['data_analysis', 'case_generation', 'report_analysis', 'memory_distillation'];
+    const sceneParams = {};
+    scenes.forEach(scene => {
+        const sceneData = {};
+        const sceneKey = 'scene_' + scene;
+        const sceneEl = document.getElementById('ai-scene-' + scene);
+        if (sceneEl) {
+            const inputs = sceneEl.querySelectorAll('.ai-param-input');
+            inputs.forEach(input => {
+                const idParts = input.id.split('-');
+                const paramKey = idParts.slice(3).join('_');
+                if (input.value !== '' && input.value !== undefined) {
+                    sceneData[paramKey] = input.value;
+                }
+            });
+        }
+        if (Object.keys(sceneData).length > 0) {
+            sceneParams[sceneKey] = sceneData;
+        }
+    });
+
+    return { generationParams, sceneParams };
+}
+
+function getElValue(id) {
+    const el = document.getElementById(id);
+    return el ? el.value : '';
+}
+
+async function saveAIGenerationParams() {
+    try {
+        showLoading();
+        const { generationParams, sceneParams } = collectAIGenerationParams();
+
+        const response = await apiRequest('/ai-config/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                generationParams,
+                sceneParams,
+                username: currentUser ? currentUser.username : 'admin'
+            })
+        });
+
+        if (response.success) {
+            showSuccessMessage('AI生成参数保存成功');
+            aiGenParamsCache = { ...generationParams, ...sceneParams };
+        } else {
+            showErrorMessage(response.message || '保存失败');
+        }
+    } catch (error) {
+        console.error('保存AI生成参数错误:', error);
+        showErrorMessage('保存失败: ' + error.message);
+    } finally {
+        hideLoading();
+    }
+}
+
+async function resetAIGenerationParams() {
+    if (!(await showConfirmMessage('确定要恢复所有AI生成参数为默认值吗？'))) {
+        return;
+    }
+    renderAIGenerationParams(AI_GEN_PARAMS_DEFAULTS);
+    showSuccessMessage('已恢复为默认值，请点击保存按钮生效');
+}
+
+let _aiAgentsParamsCache = null;
+
+async function loadAIAgentsParams() {
+    try {
+        const response = await apiRequest('/ai-sub-agents/list', { useCache: false });
+        if (response.success && response.agents) {
+            _aiAgentsParamsCache = response.agents;
+            renderAIAgentsParams(response.agents);
+        } else {
+            const container = document.getElementById('ai-agents-params-container');
+            if (container) {
+                container.innerHTML = '<div style="text-align: center; padding: 20px; color: #94a3b8;">暂无智能体</div>';
+            }
+        }
+    } catch (error) {
+        console.error('加载智能体参数错误:', error);
+        const container = document.getElementById('ai-agents-params-container');
+        if (container) {
+            container.innerHTML = '<div style="text-align: center; padding: 20px; color: #ef4444;">加载失败: ' + escapeHtml(error.message) + '</div>';
+        }
+    }
+}
+
+function renderAIAgentsParams(agents) {
+    const container = document.getElementById('ai-agents-params-container');
+    if (!container) return;
+
+    if (!agents || agents.length === 0) {
+        container.innerHTML = '<div style="text-align: center; padding: 20px; color: #94a3b8;">暂无智能体，请在智能体编排台中创建</div>';
+        return;
+    }
+
+    const enabledAgents = agents.filter(a => a.is_enabled !== 0);
+    if (enabledAgents.length === 0) {
+        container.innerHTML = '<div style="text-align: center; padding: 20px; color: #94a3b8;">暂无启用的智能体</div>';
+        return;
+    }
+
+    const systemCount = enabledAgents.filter(a => a.is_system === 1).length;
+    const customCount = enabledAgents.filter(a => a.is_system !== 1).length;
+
+    let html = '<div style="margin-bottom: 12px; padding: 10px 12px; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 6px; font-size: 12px; color: #0369a1;">';
+    html += '<strong>📋 说明：</strong>此表格展示所有启用的智能体。';
+    html += '当前共 <b>' + enabledAgents.length + '</b> 个智能体（系统内置 <b>' + systemCount + '</b> 个，自定义 <b>' + customCount + '</b> 个）。';
+    html += '<br><span style="color: #64748b;">• 管理员可直接修改所有智能体参数 • 普通用户修改系统内置智能体时会创建私有覆盖版本</span>';
+    html += '</div>';
+
+    html += '<div class="ai-agents-params-table"><table class="config-table" style="margin-top: 0;"><thead><tr>';
+    html += '<th style="width: 160px;">智能体名称</th>';
+    html += '<th style="width: 70px;">类型</th>';
+    html += '<th style="width: 80px;">温度</th>';
+    html += '<th style="width: 100px;">最大Token</th>';
+    html += '<th style="width: 80px;">最大重试</th>';
+    html += '<th style="width: 80px;">超时(秒)</th>';
+    html += '</tr></thead><tbody>';
+
+    enabledAgents.forEach(agent => {
+        const agentId = agent.id;
+        const displayName = escapeHtml(agent.display_name || agent.displayName || agent.agent_code);
+        const temperature = agent.llm_temperature || 0.7;
+        const maxTokens = agent.llm_max_tokens || 4096;
+        const maxRetries = agent.max_retries || 3;
+        const timeoutSeconds = agent.timeout_seconds || 300;
+        const isSystem = agent.is_system === 1;
+
+        html += '<tr>';
+        html += '<td><span title="' + escapeHtml(agent.agent_code) + '">' + displayName + '</span></td>';
+        html += '<td>' + (isSystem ? '<span style="color: #6366f1; font-size: 12px;">系统</span>' : '<span style="color: #10b981; font-size: 12px;">自定义</span>') + '</td>';
+        html += '<td><input type="number" class="ai-param-input" data-agent-id="' + agentId + '" data-field="llm_temperature" value="' + temperature + '" min="0" max="2" step="0.1" style="width: 60px;"></td>';
+        html += '<td><input type="number" class="ai-param-input" data-agent-id="' + agentId + '" data-field="llm_max_tokens" value="' + maxTokens + '" min="100" max="128000" step="100" style="width: 80px;"></td>';
+        html += '<td><input type="number" class="ai-param-input" data-agent-id="' + agentId + '" data-field="max_retries" value="' + maxRetries + '" min="0" max="10" step="1" style="width: 60px;"></td>';
+        html += '<td><input type="number" class="ai-param-input" data-agent-id="' + agentId + '" data-field="timeout_seconds" value="' + timeoutSeconds + '" min="10" max="3600" step="10" style="width: 70px;"></td>';
+        html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+    html += '<div style="margin-top: 12px;"><button class="btn btn-primary" id="save-ai-agents-params-btn"><span class="btn-icon">💾</span> 保存智能体参数</button></div>';
+
+    container.innerHTML = html;
+
+    const saveBtn = document.getElementById('save-ai-agents-params-btn');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', saveAIAgentsParams);
+    }
+}
+
+async function saveAIAgentsParams() {
+    try {
+        showLoading();
+        const inputs = document.querySelectorAll('#ai-agents-params-container input[data-agent-id]');
+        const agentParamsMap = {};
+
+        inputs.forEach(input => {
+            const agentId = input.dataset.agentId;
+            const field = input.dataset.field;
+            const value = input.value;
+
+            if (!agentParamsMap[agentId]) {
+                agentParamsMap[agentId] = {};
+            }
+            agentParamsMap[agentId][field] = value;
+        });
+
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const [agentId, params] of Object.entries(agentParamsMap)) {
+            try {
+                const response = await apiRequest('/ai-sub-agents/update/' + agentId, {
+                    method: 'PUT',
+                    body: JSON.stringify(params)
+                });
+                if (response.success) {
+                    successCount++;
+                } else {
+                    failCount++;
+                }
+            } catch (e) {
+                failCount++;
+            }
+        }
+
+        if (failCount === 0) {
+            showSuccessMessage('智能体参数保存成功 (' + successCount + '个)');
+        } else {
+            showErrorMessage('部分保存失败: 成功 ' + successCount + ' 个, 失败 ' + failCount + ' 个');
+        }
+    } catch (error) {
+        console.error('保存智能体参数错误:', error);
+        showErrorMessage('保存失败: ' + error.message);
+    } finally {
+        hideLoading();
+    }
 }
 
 // 渲染AI模型列表
@@ -32598,8 +32985,8 @@ function renderRecentActivitiesList(activities) {
     if (!activities || activities.length === 0) {
         container.innerHTML = `
             <div class="empty-state">
-                <span class="empty-icon">🎉</span>
-                <p>暂无最近活动</p>
+                <span class="empty-icon">📝</span>
+                <p>暂无最近处理记录</p>
             </div>
         `;
         return;
@@ -32612,23 +32999,40 @@ function renderRecentActivitiesList(activities) {
         html += `
             <div class="activity-date-group">
                 <div class="activity-date-label">${date}</div>
-                ${items.map(a => `
-                    <div class="activity-timeline-item">
-                        <div class="activity-dot ${getActivityDotClass(a.action)}"></div>
+                ${items.map(a => {
+                    const icon = getActivityIcon(a.action, a.entity_type);
+                    const dotClass = getActivityDotClass(a.action);
+                    const linkHtml = getActivityLinkHtml(a.entity_type, a.entity_id, a.description);
+                    return `
+                    <div class="activity-timeline-item" ${linkHtml ? `data-entity-type="${a.entity_type || ''}" data-entity-id="${a.entity_id || ''}"` : ''}>
+                        <div class="activity-dot ${dotClass}">
+                            <span class="activity-dot-icon">${icon}</span>
+                        </div>
                         <div class="activity-content">
                             <div class="activity-header">
                                 <span class="activity-action">${escapeHtml(a.action)}</span>
                                 <span class="activity-time">${a.time_ago || ''}</span>
                             </div>
                             <div class="activity-desc">${escapeHtml(a.description || '')}</div>
+                            ${linkHtml ? `<div class="activity-link">${linkHtml}</div>` : ''}
                         </div>
                     </div>
-                `).join('')}
+                `}).join('')}
             </div>
         `;
     }
     
     container.innerHTML = html;
+    
+    container.querySelectorAll('.activity-link a').forEach(link => {
+        link.addEventListener('click', function(e) {
+            e.preventDefault();
+            const href = this.getAttribute('href');
+            if (href && href !== '#') {
+                window.location.hash = href;
+            }
+        });
+    });
 }
 
 function groupActivitiesByDate(activities) {
@@ -32690,9 +33094,58 @@ function getActivityDotClass(action) {
     if (!action) return 'execution';
     const a = action.toLowerCase();
     if (a.includes('评审') || a.includes('review')) return 'review';
-    if (a.includes('创建') || a.includes('create')) return 'create';
+    if (a.includes('创建') || a.includes('create') || a.includes('克隆')) return 'create';
     if (a.includes('提交') || a.includes('submit')) return 'submit';
-    return 'execution';
+    if (a.includes('删除') || a.includes('delete') || a.includes('移除')) return 'delete';
+    if (a.includes('执行') || a.includes('execute')) return 'execution';
+    if (a.includes('更新') || a.includes('update') || a.includes('编辑')) return 'update';
+    return 'default';
+}
+
+function getActivityIcon(action, entityType) {
+    if (!action) return '📋';
+    const a = action.toLowerCase();
+    if (a.includes('执行测试') || a.includes('批量执行')) return '✅';
+    if (a.includes('评审') || a.includes('review')) return '🔍';
+    if (a.includes('创建') || a.includes('create')) {
+        if (entityType === 'test_case') return '🧪';
+        if (entityType === 'test_plan') return '📋';
+        if (entityType === 'case_library') return '📚';
+        if (entityType === 'module') return '📁';
+        if (entityType === 'test_report') return '📊';
+        return '➕';
+    }
+    if (a.includes('克隆')) return '📋';
+    if (a.includes('删除') || a.includes('移除')) return '🗑️';
+    if (a.includes('更新') || a.includes('编辑')) return '✏️';
+    if (a.includes('提交')) return '📤';
+    if (entityType === 'test_case') return '🧪';
+    if (entityType === 'test_plan') return '📋';
+    if (entityType === 'case_library') return '📚';
+    if (entityType === 'module') return '📁';
+    if (entityType === 'test_report') return '📊';
+    if (entityType === 'test_plan_case') return '✅';
+    return '📋';
+}
+
+function getActivityLinkHtml(entityType, entityId, description) {
+    if (!entityType || !entityId) return '';
+    switch (entityType) {
+        case 'test_plan':
+            return `<a href="#testplans" class="activity-goto-link">查看测试计划 →</a>`;
+        case 'test_case':
+            return `<a href="#testcases" class="activity-goto-link">查看测试用例 →</a>`;
+        case 'case_library':
+            return `<a href="#libraries" class="activity-goto-link">查看用例库 →</a>`;
+        case 'module':
+            return `<a href="#libraries" class="activity-goto-link">查看模块 →</a>`;
+        case 'test_report':
+            return `<a href="#reports" class="activity-goto-link">查看测试报告 →</a>`;
+        case 'test_plan_case':
+            return `<a href="#testplans" class="activity-goto-link">查看执行详情 →</a>`;
+        default:
+            return '';
+    }
 }
 
 // 处理URL参数中的action

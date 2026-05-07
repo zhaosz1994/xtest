@@ -1,6 +1,7 @@
 const pool = require('../db');
-const { getUserAIConfig, getUserAITimeoutConfig } = require('./aiService');
+const { getUserAIConfig, getUserAITimeoutConfig, getAIGenerationParams, getSceneParams } = require('./aiService');
 const logger = require('./logger');
+const aiRequestLogger = require('./aiRequestLogger');
 const axios = require('axios');
 
 const MEMORY_CHAR_LIMIT = 5000;
@@ -549,6 +550,7 @@ class MemoryEngine {
         const apiKey = aiConfig.api_key;
         const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
         const model = aiConfig.model_name || 'deepseek-chat';
+        const startTime = Date.now();
 
         let systemPrompt = `你是经验提炼专家，将信息压缩合并到现有记忆中。
 
@@ -578,31 +580,67 @@ ${currentMemory || '(空)'}
         }
 
         const timeoutConfig = await getUserAITimeoutConfig(aiConfig.user_id);
+        const genParams = await getAIGenerationParams();
+        const sceneParams = getSceneParams(genParams, 'scene_memory_distillation');
 
-        const response = await axios.post(apiUrl, {
-            model: model,
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt }
-            ],
-            temperature: 0.3,
-            max_tokens: 800
-        }, {
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            timeout: timeoutConfig.generalAITask || 120000
-        });
+        try {
+            const response = await axios.post(apiUrl, {
+                model: model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ],
+                temperature: sceneParams.temperature,
+                max_tokens: sceneParams.max_tokens
+            }, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                timeout: timeoutConfig.generalAITask || genParams.request_timeout || 120000
+            });
 
-        const content = response.data?.choices?.[0]?.message?.content || '';
+            const content = response.data?.choices?.[0]?.message?.content || '';
+            const promptTokens = response.data?.usage?.prompt_tokens || 0;
+            const completionTokens = response.data?.usage?.completion_tokens || 0;
+            const totalTokens = response.data?.usage?.total_tokens || 0;
+            const executionTimeMs = Date.now() - startTime;
 
-        // 限制最大500字符
-        if (content.length > 500) {
-            return content.substring(0, 497) + '...';
+            aiRequestLogger.logSuccess({
+                userId: aiConfig.user_id,
+                triggerType: 'memory_refine',
+                triggerSource: 'memory_distiller',
+                triggerSourceName: '记忆提炼',
+                systemPrompt,
+                userPrompt,
+                aiResponse: content,
+                promptTokens,
+                completionTokens,
+                totalTokens,
+                modelName: model,
+                executionTimeMs
+            });
+
+            if (content.length > 500) {
+                return content.substring(0, 497) + '...';
+            }
+
+            return content;
+        } catch (error) {
+            const executionTimeMs = Date.now() - startTime;
+            aiRequestLogger.logFailure({
+                userId: aiConfig.user_id,
+                triggerType: 'memory_refine',
+                triggerSource: 'memory_distiller',
+                triggerSourceName: '记忆提炼',
+                systemPrompt,
+                userPrompt,
+                executionTimeMs,
+                errorMessage: error.message,
+                modelName: model
+            });
+            throw error;
         }
-
-        return content;
     }
 }
 

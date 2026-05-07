@@ -171,9 +171,8 @@ router.post('/create', authenticateToken, async (req, res) => {
       });
     }
     
-    const { userId, title, content, type = 'system', data = null } = req.body;
+    const { userId, title, content, type = 'system', data = null, targetId = 0 } = req.body;
     
-    // 参数验证
     if (!userId || !title || !content) {
       return res.status(400).json({ 
         success: false, 
@@ -182,9 +181,9 @@ router.post('/create', authenticateToken, async (req, res) => {
     }
     
     const [result] = await pool.execute(`
-      INSERT INTO notifications (user_id, sender_id, title, content, type, data, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, NOW())
-    `, [userId, req.user.id, title, content, type, data ? JSON.stringify(data) : null]);
+      INSERT INTO notifications (user_id, sender_id, type, target_id, title, content, data, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+    `, [userId, req.user.id, type, targetId, title, content, data ? JSON.stringify(data) : null]);
     
     res.json({ success: true, id: result.insertId });
   } catch (error) {

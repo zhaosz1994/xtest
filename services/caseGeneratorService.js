@@ -2,6 +2,8 @@ const pool = require('../db');
 const { v4: uuidv4 } = require('uuid');
 const { default: PQueue } = require('p-queue');
 const logger = require('./logger');
+const aiAuditLogger = require('./aiAuditLogger');
+const aiRequestLogger = require('./aiRequestLogger');
 
 class CaseGeneratorService {
   constructor() {
@@ -161,12 +163,30 @@ class CaseGeneratorService {
       ? this.applyTemplate(agentPrompt.userTemplate, chunk, task, config)
       : this.buildPrompt(chunk, task, config);
 
+    logger.debug('生成用例Prompt', {
+      chunkId: chunk.id,
+      hasAgentPrompt: !!agentPrompt,
+      systemPromptLength: systemPrompt.length,
+      userPromptLength: userPrompt.length,
+      userPromptPreview: userPrompt.substring(0, 300)
+    });
+
     const aiConfig = await this.getAIConfig(task.user_id);
 
-    const response = await this.callAI(aiConfig, systemPrompt, userPrompt, config, task.user_id);
+    const response = await this.callAI(aiConfig, systemPrompt, userPrompt, config, task.user_id, task.library_id, task.module_id);
 
     const content = response.choices?.[0]?.message?.content || '';
-    return this.parseAIResponse(content);
+    
+    logger.info('AI返回内容', { 
+      chunkId: chunk.id,
+      contentLength: content.length,
+      contentPreview: content.substring(0, 500),
+      fullContent: content
+    });
+    
+    const cases = this.parseAIResponse(content);
+    
+    return cases;
   }
 
   getDefaultSystemPrompt() {
@@ -229,13 +249,34 @@ ${chunk.chunk_content}
   }
 
   applyTemplate(template, chunk, task, config) {
-    return template
+    const moduleDesc = task.module_desc || task.module_name || '无';
+    const focusAreas = (config.focusAreas || []).join(', ');
+    const caseLimit = config.caseCountLimit || 20;
+    
+    let context = `模块名称: ${task.module_name}\n`;
+    context += `模块描述: ${moduleDesc}\n`;
+    if (focusAreas) {
+      context += `重点关注: ${focusAreas}\n`;
+    }
+    
+    const result = template
       .replace(/\{\{module_name\}\}/g, task.module_name)
-      .replace(/\{\{module_description\}\}/g, task.module_desc || task.module_name || '无')
+      .replace(/\{\{module_description\}\}/g, moduleDesc)
       .replace(/\{\{material_content\}\}/g, chunk.chunk_content)
-      .replace(/\{\{case_count_limit\}\}/g, config.caseCountLimit || 20)
-      .replace(/\{\{focus_areas\}\}/g, (config.focusAreas || []).join(', '))
-      .replace(/\{\{existing_case_style\}\}/g, config.existingCaseStyle || '无');
+      .replace(/\{\{content\}\}/g, chunk.chunk_content)
+      .replace(/\{\{case_count_limit\}\}/g, caseLimit)
+      .replace(/\{\{focus_areas\}\}/g, focusAreas)
+      .replace(/\{\{existing_case_style\}\}/g, config.existingCaseStyle || '无')
+      .replace(/\{\{context\}\}/g, context);
+    
+    logger.debug('模板替换完成', {
+      chunkId: chunk.id,
+      templateLength: template.length,
+      resultLength: result.length,
+      hasContent: result.includes(chunk.chunk_content.substring(0, 50))
+    });
+    
+    return result;
   }
 
   async getAIConfig(userId) {
@@ -243,10 +284,12 @@ ${chunk.chunk_content}
     return aiService.getUserAIConfig(userId);
   }
 
-  async callAI(aiConfig, systemPrompt, userPrompt, config, userId) {
+  async callAI(aiConfig, systemPrompt, userPrompt, config, userId, libraryId = null, moduleId = null) {
     const axios = require('axios');
-    const { getUserAITimeoutConfig } = require('./aiService');
+    const { getUserAITimeoutConfig, getAIGenerationParams, getSceneParams } = require('./aiService');
     const timeoutConfig = await getUserAITimeoutConfig(userId);
+    const genParams = await getAIGenerationParams();
+    const sceneParams = getSceneParams(genParams, 'scene_case_generation');
     const apiKey = aiConfig.api_key;
     const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
     const model = aiConfig.model_name || config?.model || 'deepseek-chat';
@@ -257,31 +300,85 @@ ${chunk.chunk_content}
       promptLength: userPrompt.length 
     });
 
+    const effectiveTemp = config?.temperature ?? sceneParams.temperature;
+    const effectiveMaxTokens = config?.max_tokens ?? sceneParams.max_tokens;
+
+    const startTime = Date.now();
     try {
-      const response = await axios.post(apiUrl, {
+      const requestBody = {
         model: model,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        temperature: config?.temperature || 0.7,
-        max_tokens: config?.max_tokens || 4000
-      }, {
+        temperature: effectiveTemp,
+        max_tokens: effectiveMaxTokens
+      };
+
+      if (genParams.top_p !== undefined && genParams.top_p !== 1.0) {
+        requestBody.top_p = genParams.top_p;
+      }
+      if (genParams.frequency_penalty !== undefined && genParams.frequency_penalty !== 0) {
+        requestBody.frequency_penalty = genParams.frequency_penalty;
+      }
+      if (genParams.presence_penalty !== undefined && genParams.presence_penalty !== 0) {
+        requestBody.presence_penalty = genParams.presence_penalty;
+      }
+
+      const response = await axios.post(apiUrl, requestBody, {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
         },
-        timeout: timeoutConfig.generalAITask
+        timeout: timeoutConfig.generalAITask || genParams.request_timeout
       });
+
+      const executionTimeMs = Date.now() - startTime;
+      const promptTokens = response.data?.usage?.prompt_tokens || 0;
+      const completionTokens = response.data?.usage?.completion_tokens || 0;
+      const totalTokens = response.data?.usage?.total_tokens || 0;
+      const aiResponse = response.data?.choices?.[0]?.message?.content || '';
 
       logger.info('AI API 调用成功', { 
         model, 
         status: response.status,
-        hasContent: !!response.data?.choices?.[0]?.message?.content
+        hasContent: !!aiResponse,
+        executionTimeMs,
+        totalTokens
+      });
+
+      aiAuditLogger.logSuccess({
+        userId,
+        skillName: 'AI生成测试用例',
+        operationType: 'GENERATE',
+        executionTimeMs,
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        modelName: model,
+        resultCount: 1
+      });
+
+      aiRequestLogger.logSuccess({
+        userId,
+        triggerType: 'generation',
+        triggerSource: 'case_generator',
+        triggerSourceName: 'AI生成测试用例',
+        systemPrompt,
+        userPrompt,
+        aiResponse,
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        modelName: model,
+        executionTimeMs,
+        libraryId,
+        moduleId
       });
 
       return response.data;
     } catch (error) {
+      const executionTimeMs = Date.now() - startTime;
       let errorMsg = error.message || '未知错误';
       
       if (error.code === 'ECONNABORTED') {
@@ -310,25 +407,64 @@ ${chunk.chunk_content}
         stack: error.stack
       });
 
+      aiAuditLogger.logFailure({
+        userId,
+        skillName: 'AI生成测试用例',
+        operationType: 'GENERATE',
+        executionTimeMs,
+        errorMessage: errorMsg,
+        modelName: model
+      });
+
+      aiRequestLogger.logFailure({
+        userId,
+        triggerType: 'generation',
+        triggerSource: 'case_generator',
+        triggerSourceName: 'AI生成测试用例',
+        systemPrompt,
+        userPrompt,
+        executionTimeMs,
+        errorMessage: errorMsg,
+        modelName: model,
+        libraryId,
+        moduleId
+      });
+
       throw new Error(errorMsg);
     }
   }
 
   parseAIResponse(content) {
+    logger.debug('开始解析AI响应', { contentLength: content.length });
+    
     const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/);
     if (jsonMatch) {
+      logger.debug('找到JSON代码块', { matchedLength: jsonMatch[1].length });
       try {
         const parsed = JSON.parse(jsonMatch[1]);
-        return parsed.cases || [];
-      } catch {
+        const cases = parsed.cases || [];
+        logger.info('JSON代码块解析成功', { casesCount: cases.length });
+        return cases;
+      } catch (error) {
+        logger.error('JSON代码块解析失败', { 
+          error: error.message,
+          content: jsonMatch[1].substring(0, 200)
+        });
         return [];
       }
     }
 
+    logger.debug('未找到JSON代码块，尝试直接解析');
     try {
       const parsed = JSON.parse(content);
-      return parsed.cases || [];
-    } catch {
+      const cases = parsed.cases || [];
+      logger.info('直接解析JSON成功', { casesCount: cases.length });
+      return cases;
+    } catch (error) {
+      logger.error('直接解析JSON失败', { 
+        error: error.message,
+        contentPreview: content.substring(0, 200)
+      });
       return [];
     }
   }

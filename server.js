@@ -2728,7 +2728,7 @@ app.post('/api/ai-config/save', authenticateToken, requireAdmin, async (req, res
   try {
     logger.debug('接收到保存AI配置请求:', req.body);
     
-    const { enabled, defaultModelId, username } = req.body;
+    const { enabled, defaultModelId, username, generationParams, sceneParams } = req.body;
     
     if (enabled !== undefined) {
       await pool.execute(
@@ -2743,10 +2743,85 @@ app.post('/api/ai-config/save', authenticateToken, requireAdmin, async (req, res
         [defaultModelId, username || 'admin', 'default_model_id']
       );
     }
+
+    if (generationParams && typeof generationParams === 'object') {
+      for (const [key, value] of Object.entries(generationParams)) {
+        if (value !== undefined && value !== null) {
+          await pool.execute(
+            'INSERT INTO ai_config (config_key, config_value, description, updated_by) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_by = VALUES(updated_by)',
+            [key, String(value), '', username || 'admin']
+          );
+        }
+      }
+    }
+
+    if (sceneParams && typeof sceneParams === 'object') {
+      for (const [key, value] of Object.entries(sceneParams)) {
+        if (value !== undefined && value !== null) {
+          const jsonValue = typeof value === 'string' ? value : JSON.stringify(value);
+          await pool.execute(
+            'INSERT INTO ai_config (config_key, config_value, description, updated_by) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_by = VALUES(updated_by)',
+            [key, jsonValue, '', username || 'admin']
+          );
+        }
+      }
+    }
+
+    const { invalidateAIConfigCache } = require('./services/aiService');
+    invalidateAIConfigCache();
     
     res.json({ success: true, message: 'AI配置保存成功' });
   } catch (error) {
     logger.error('保存AI配置错误:', { error: error.message });
+    res.json({ success: false, message: '服务器错误', error: error.message });
+  }
+});
+
+app.get('/api/ai-generation-params/get', authenticateToken, async (req, res) => {
+  try {
+    const [configs] = await pool.execute(
+      'SELECT config_key, config_value FROM ai_config WHERE config_key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ['temperature', 'max_tokens', 'top_p', 'frequency_penalty', 'presence_penalty',
+       'tool_choice', 'response_format', 'request_timeout', 'max_retries', 'ai_rate_limit', 'seed',
+       'scene_data_analysis', 'scene_case_generation', 'scene_report_analysis', 'scene_memory_distillation']
+    );
+
+    const result = {};
+    const sceneKeys = ['scene_data_analysis', 'scene_case_generation', 'scene_report_analysis', 'scene_memory_distillation'];
+
+    for (const config of configs) {
+      if (sceneKeys.includes(config.config_key)) {
+        try {
+          result[config.config_key] = JSON.parse(config.config_value || '{}');
+        } catch (e) {
+          result[config.config_key] = {};
+        }
+      } else {
+        result[config.config_key] = config.config_value;
+      }
+    }
+
+    const defaults = {
+      temperature: '0.3', max_tokens: '4000', top_p: '1.0',
+      frequency_penalty: '0', presence_penalty: '0',
+      tool_choice: 'auto', response_format: 'text',
+      request_timeout: '120000', max_retries: '3',
+      ai_rate_limit: '10', seed: '',
+      scene_data_analysis: { temperature: '0.3', max_tokens: '2000', max_context_rounds: '10' },
+      scene_case_generation: { temperature: '0.7', max_tokens: '4000' },
+      scene_report_analysis: { temperature: '0.3', max_tokens: '2000', tool_choice: 'function' },
+      scene_memory_distillation: { temperature: '0.3', max_tokens: '800' }
+    };
+
+    for (const [key, val] of Object.entries(defaults)) {
+      if (result[key] === undefined) {
+        result[key] = val;
+      }
+    }
+
+    res.json({ success: true, params: result });
+  } catch (error) {
+    logger.error('获取AI生成参数错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3098,6 +3173,10 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
     messages.push({ role: 'user', content: query });
     
     // 第一次调用 AI
+    const { getAIGenerationParams, getSceneParams } = require('./services/aiService');
+    const _genParams = await getAIGenerationParams();
+    const _sceneParams = getSceneParams(_genParams, 'scene_data_analysis');
+
     const response = await fetch(aiModel.endpoint, {
       method: 'POST',
       headers: {
@@ -3108,9 +3187,9 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
         model: aiModel.model_name,
         messages: messages,
         tools: tools,
-        tool_choice: 'auto',
-        temperature: 0.3,
-        max_tokens: 2000
+        tool_choice: _genParams.tool_choice || 'auto',
+        temperature: _sceneParams.temperature,
+        max_tokens: _sceneParams.max_tokens
       })
     });
     
@@ -3286,8 +3365,8 @@ ${result.instructions}
                 body: JSON.stringify({
                   model: aiModel.model_name,
                   messages: reportMessages,
-                  temperature: 0.3,
-                  max_tokens: 4000
+                  temperature: _sceneParams.temperature,
+                  max_tokens: _sceneParams.max_tokens
                 })
               });
               
@@ -3391,9 +3470,9 @@ ${result.instructions}
             model: aiModel.model_name,
             messages: currentMessages,
             tools: tools,
-            tool_choice: 'auto',
-            temperature: 0.3,
-            max_tokens: 4000
+            tool_choice: _genParams.tool_choice || 'auto',
+            temperature: _sceneParams.temperature,
+            max_tokens: _sceneParams.max_tokens
           })
         });
         
@@ -7278,6 +7357,10 @@ app.post('/api/testplans/ai_parse_filter', authenticateToken, async (req, res) =
 只返回JSON，不要有其他解释。`;
 
     // 调用AI模型
+    const { getAIGenerationParams: _getGP, getSceneParams: _getSP } = require('./services/aiService');
+    const _gp7 = await _getGP();
+    const _sp7 = _getSP(_gp7, 'scene_data_analysis');
+
     const response = await fetch(aiModel.endpoint, {
       method: 'POST',
       headers: {
@@ -7290,8 +7373,8 @@ app.post('/api/testplans/ai_parse_filter', authenticateToken, async (req, res) =
           { role: 'system', content: systemPrompt },
           { role: 'user', content: query }
         ],
-        temperature: 0.3,
-        max_tokens: 500
+        temperature: _sp7.temperature,
+        max_tokens: _sp7.max_tokens
       })
     });
     
@@ -8861,6 +8944,38 @@ async function ensureAITablesExist() {
         INDEX \`idx_operation_type\` (\`operation_type\`),
         INDEX \`idx_ai_logs_total_tokens\` (\`total_tokens\`)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI操作审计日志表'`
+    },
+    {
+      name: 'ai_request_logs',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_request_logs\` (
+        \`id\` BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '日志ID',
+        \`user_id\` INT NOT NULL COMMENT '触发用户ID',
+        \`username\` VARCHAR(100) COMMENT '触发用户名',
+        \`trigger_type\` VARCHAR(50) NOT NULL COMMENT '触发类型',
+        \`trigger_source\` VARCHAR(50) DEFAULT NULL COMMENT '触发来源标识',
+        \`trigger_source_name\` VARCHAR(200) DEFAULT NULL COMMENT '触发来源显示名称',
+        \`system_prompt\` MEDIUMTEXT COMMENT 'System提示词',
+        \`user_prompt\` MEDIUMTEXT COMMENT 'User提示词',
+        \`ai_response\` MEDIUMTEXT COMMENT 'AI输出结果',
+        \`prompt_tokens\` INT DEFAULT 0 COMMENT '提示词Token数',
+        \`completion_tokens\` INT DEFAULT 0 COMMENT '完成Token数',
+        \`total_tokens\` INT DEFAULT 0 COMMENT '总Token数',
+        \`model_name\` VARCHAR(100) COMMENT '使用的AI模型名称',
+        \`status\` VARCHAR(20) NOT NULL DEFAULT 'success' COMMENT '状态',
+        \`error_message\` TEXT COMMENT '错误信息',
+        \`execution_time_ms\` INT COMMENT '执行耗时（毫秒）',
+        \`project_id\` INT DEFAULT NULL COMMENT '关联项目ID',
+        \`library_id\` INT DEFAULT NULL COMMENT '关联用例库ID',
+        \`module_id\` INT DEFAULT NULL COMMENT '关联模块ID',
+        \`ip_address\` VARCHAR(50) COMMENT 'IP地址',
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+        INDEX \`idx_user_id\` (\`user_id\`),
+        INDEX \`idx_trigger_type\` (\`trigger_type\`),
+        INDEX \`idx_status\` (\`status\`),
+        INDEX \`idx_created_at\` (\`created_at\`),
+        INDEX \`idx_trigger_source\` (\`trigger_source\`),
+        INDEX \`idx_composite_query\` (\`user_id\`, \`trigger_type\`, \`created_at\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI请求日志表-记录所有AI触发的Prompt和响应'`
     }
   ];
 

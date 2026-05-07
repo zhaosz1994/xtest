@@ -1,5 +1,5 @@
 const pool = require('../db');
-const { getUserAIConfig, getUserAITimeoutConfig } = require('./aiService');
+const { getUserAIConfig, getUserAITimeoutConfig, getAIGenerationParams, getSceneParams } = require('./aiService');
 const aiAuditLogger = require('./aiAuditLogger');
 const logger = require('./logger');
 
@@ -101,7 +101,9 @@ ${caseSummary}
 
     const controller = new AbortController();
     const timeoutConfig = await getUserAITimeoutConfig(userId);
-    const timeoutId = setTimeout(() => controller.abort(), timeoutConfig.generalAITask);
+    const genParams = await getAIGenerationParams();
+    const sceneParams = getSceneParams(genParams, 'scene_case_generation');
+    const timeoutId = setTimeout(() => controller.abort(), timeoutConfig.generalAITask || genParams.request_timeout);
     
     const response = await fetch(aiModel.endpoint, {
       method: 'POST',
@@ -115,8 +117,8 @@ ${caseSummary}
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: userPrompt }
         ],
-        temperature: 0.7,
-        max_tokens: 500
+        temperature: sceneParams.temperature,
+        max_tokens: sceneParams.max_tokens
       }),
       signal: controller.signal
     });

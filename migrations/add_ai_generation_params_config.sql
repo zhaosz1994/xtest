@@ -1,0 +1,17 @@
+INSERT IGNORE INTO ai_config (config_key, config_value, description) VALUES
+('temperature', '0.3', '全局模型温度参数(0-2)'),
+('max_tokens', '4000', '全局最大输出Token数'),
+('top_p', '1.0', 'Top-P核采样阈值(0-1)'),
+('frequency_penalty', '0', '频率惩罚(-2到2)'),
+('presence_penalty', '0', '存在惩罚(-2到2)'),
+('tool_choice', 'auto', '工具调用方式(auto/required/none)'),
+('response_format', 'text', '响应格式(text/json_object)'),
+('request_timeout', '120000', '请求超时时间(毫秒)'),
+('max_retries', '3', '最大重试次数'),
+('ai_rate_limit', '10', 'AI速率限制(次/分钟)'),
+('seed', '', '随机种子(留空则随机)'),
+('scene_data_analysis', '{"temperature":"0.3","max_tokens":"2000","max_context_rounds":"10"}', '数据分析助手场景参数'),
+('scene_case_generation', '{"temperature":"0.7","max_tokens":"4000"}', '用例生成场景参数'),
+('scene_report_analysis', '{"temperature":"0.3","max_tokens":"2000","tool_choice":"function"}', '报告分析场景参数'),
+('scene_memory_distillation', '{"temperature":"0.3","max_tokens":"800"}', '记忆蒸馏场景参数'),
+('scene_code_review', '{"temperature":"0.3","max_tokens":"4000"}', '代码审查场景参数');

@@ -3761,6 +3761,164 @@
                                 
                                 <div id="ai-config-status" class="config-status" style="display: none;"></div>
                             </div>
+
+                            <div class="config-section" style="margin-top: 20px;">
+                                <h3>🎛️ 全局生成参数</h3>
+                                <p class="config-description">配置AI模型调用的全局默认参数，各场景可单独覆盖。</p>
+
+                                <div class="ai-gen-params-grid">
+                                    <div class="ai-gen-param-item">
+                                        <label>模型温度 <span class="ai-param-hint" title="控制输出随机性，值越高越随机，越有创造力">ℹ️</span></label>
+                                        <div class="ai-param-slider-row">
+                                            <input type="range" id="ai-param-temperature" class="ai-param-slider" min="0" max="2" step="0.1" value="0.3">
+                                            <input type="number" id="ai-param-temperature-val" class="ai-param-number" min="0" max="2" step="0.1" value="0.3">
+                                        </div>
+                                    </div>
+                                    <div class="ai-gen-param-item">
+                                        <label>最大Token数 <span class="ai-param-hint" title="单次回复的最大长度，越大回复越长">ℹ️</span></label>
+                                        <input type="number" id="ai-param-max-tokens" class="ai-param-input" min="100" max="128000" step="100" value="4000">
+                                    </div>
+                                    <div class="ai-gen-param-item">
+                                        <label>请求超时(ms) <span class="ai-param-hint" title="API请求超时时间，网络慢时可适当增大">ℹ️</span></label>
+                                        <input type="number" id="ai-param-request-timeout" class="ai-param-input" min="10000" max="600000" step="10000" value="120000">
+                                    </div>
+                                    <div class="ai-gen-param-item">
+                                        <label>最大重试次数 <span class="ai-param-hint" title="API调用失败后的最大重试次数">ℹ️</span></label>
+                                        <input type="number" id="ai-param-max-retries" class="ai-param-input" min="0" max="10" step="1" value="3">
+                                    </div>
+                                    <div class="ai-gen-param-item">
+                                        <label>工具调用方式 <span class="ai-param-hint" title="auto=自动判断, required=必须调用工具, none=禁止调用工具">ℹ️</span></label>
+                                        <select id="ai-param-tool-choice" class="ai-param-select">
+                                            <option value="auto">自动 (auto)</option>
+                                            <option value="required">必须调用 (required)</option>
+                                            <option value="none">禁止调用 (none)</option>
+                                        </select>
+                                    </div>
+                                    <div class="ai-gen-param-item">
+                                        <label>响应格式 <span class="ai-param-hint" title="text=普通文本, json_object=强制JSON输出">ℹ️</span></label>
+                                        <select id="ai-param-response-format" class="ai-param-select">
+                                            <option value="text">文本 (text)</option>
+                                            <option value="json_object">JSON (json_object)</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div class="ai-gen-advanced-toggle" id="ai-gen-advanced-toggle" onclick="toggleAIAdvancedParams()">
+                                    <span>⚙️ 高级参数</span>
+                                    <span class="ai-gen-advanced-arrow" id="ai-gen-advanced-arrow">▾</span>
+                                </div>
+                                <div class="ai-gen-advanced-panel" id="ai-gen-advanced-panel" style="display: none;">
+                                    <div class="ai-gen-params-grid">
+                                        <div class="ai-gen-param-item">
+                                            <label>Top-P <span class="ai-param-hint" title="核采样阈值，与temperature配合使用">ℹ️</span></label>
+                                            <div class="ai-param-slider-row">
+                                                <input type="range" id="ai-param-top-p" class="ai-param-slider" min="0" max="1" step="0.05" value="1.0">
+                                                <input type="number" id="ai-param-top-p-val" class="ai-param-number" min="0" max="1" step="0.05" value="1.0">
+                                            </div>
+                                        </div>
+                                        <div class="ai-gen-param-item">
+                                            <label>频率惩罚 <span class="ai-param-hint" title="降低模型重复使用同一词的倾向，范围-2到2">ℹ️</span></label>
+                                            <input type="number" id="ai-param-frequency-penalty" class="ai-param-input" min="-2" max="2" step="0.1" value="0">
+                                        </div>
+                                        <div class="ai-gen-param-item">
+                                            <label>存在惩罚 <span class="ai-param-hint" title="增加模型谈论新话题的倾向，范围-2到2">ℹ️</span></label>
+                                            <input type="number" id="ai-param-presence-penalty" class="ai-param-input" min="-2" max="2" step="0.1" value="0">
+                                        </div>
+                                        <div class="ai-gen-param-item">
+                                            <label>种子值 <span class="ai-param-hint" title="固定随机种子可复现结果，留空则随机">ℹ️</span></label>
+                                            <input type="number" id="ai-param-seed" class="ai-param-input" placeholder="留空则随机">
+                                        </div>
+                                        <div class="ai-gen-param-item">
+                                            <label>AI速率限制(次/分) <span class="ai-param-hint" title="每分钟允许的AI调用次数上限">ℹ️</span></label>
+                                            <input type="number" id="ai-param-ai-rate-limit" class="ai-param-input" min="1" max="100" step="1" value="10">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="config-section" style="margin-top: 20px;">
+                                <h3>🎯 场景参数（按场景独立配置）</h3>
+                                <p class="config-description">不同AI使用场景可覆盖全局参数，留空则使用全局默认值。</p>
+
+                                <div class="ai-scene-tabs" id="ai-scene-tabs">
+                                    <button class="ai-scene-tab active" data-scene="data_analysis">📊 数据分析助手</button>
+                                    <button class="ai-scene-tab" data-scene="case_generation">📝 用例生成</button>
+                                    <button class="ai-scene-tab" data-scene="report_analysis">📋 报告分析</button>
+                                    <button class="ai-scene-tab" data-scene="memory_distillation">🧠 记忆蒸馏</button>
+                                </div>
+
+                                <div class="ai-scene-panels">
+                                    <div class="ai-scene-panel active" id="ai-scene-data_analysis">
+                                        <div class="ai-gen-params-grid">
+                                            <div class="ai-gen-param-item">
+                                                <label>温度覆盖</label>
+                                                <input type="number" id="ai-scene-data_analysis-temperature" class="ai-param-input" min="0" max="2" step="0.1" placeholder="留空使用全局值">
+                                            </div>
+                                            <div class="ai-gen-param-item">
+                                                <label>Token上限</label>
+                                                <input type="number" id="ai-scene-data_analysis-max_tokens" class="ai-param-input" min="100" max="128000" step="100" placeholder="留空使用全局值">
+                                            </div>
+                                            <div class="ai-gen-param-item">
+                                                <label>最大上下文轮数 <span class="ai-param-hint" title="保留的历史对话轮数，仅数据分析助手使用">ℹ️</span></label>
+                                                <input type="number" id="ai-scene-data_analysis-max_context_rounds" class="ai-param-input" min="1" max="50" step="1" value="10">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="ai-scene-panel" id="ai-scene-case_generation">
+                                        <div class="ai-gen-params-grid">
+                                            <div class="ai-gen-param-item">
+                                                <label>温度覆盖</label>
+                                                <input type="number" id="ai-scene-case_generation-temperature" class="ai-param-input" min="0" max="2" step="0.1" placeholder="留空使用全局值">
+                                            </div>
+                                            <div class="ai-gen-param-item">
+                                                <label>Token上限</label>
+                                                <input type="number" id="ai-scene-case_generation-max_tokens" class="ai-param-input" min="100" max="128000" step="100" placeholder="留空使用全局值">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="ai-scene-panel" id="ai-scene-report_analysis">
+                                        <div class="ai-gen-params-grid">
+                                            <div class="ai-gen-param-item">
+                                                <label>温度覆盖</label>
+                                                <input type="number" id="ai-scene-report_analysis-temperature" class="ai-param-input" min="0" max="2" step="0.1" placeholder="留空使用全局值">
+                                            </div>
+                                            <div class="ai-gen-param-item">
+                                                <label>Token上限</label>
+                                                <input type="number" id="ai-scene-report_analysis-max_tokens" class="ai-param-input" min="100" max="128000" step="100" placeholder="留空使用全局值">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="ai-scene-panel" id="ai-scene-memory_distillation">
+                                        <div class="ai-gen-params-grid">
+                                            <div class="ai-gen-param-item">
+                                                <label>温度覆盖</label>
+                                                <input type="number" id="ai-scene-memory_distillation-temperature" class="ai-param-input" min="0" max="2" step="0.1" placeholder="留空使用全局值">
+                                            </div>
+                                            <div class="ai-gen-param-item">
+                                                <label>Token上限</label>
+                                                <input type="number" id="ai-scene-memory_distillation-max_tokens" class="ai-param-input" min="100" max="128000" step="100" placeholder="留空使用全局值">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="config-section" style="margin-top: 20px;">
+                                <h3>🤖 智能体参数配置</h3>
+                                <p class="config-description">管理所有智能体的LLM调用参数，每个智能体可独立配置温度、Token上限等。</p>
+                                <div id="ai-agents-params-container">
+                                    <div class="ai-agents-loading" style="text-align: center; padding: 20px; color: #94a3b8;">加载中...</div>
+                                </div>
+                            </div>
+
+                            <div class="config-actions" style="margin-top: 20px; display: flex; gap: 12px;">
+                                <button class="btn btn-secondary" id="reset-ai-gen-params-btn">
+                                    <span class="btn-icon">🔄</span> 恢复默认
+                                </button>
+                                <button class="btn btn-primary" id="save-ai-gen-params-btn">
+                                    <span class="btn-icon">💾</span> 保存配置
+                                </button>
+                            </div>
                         </div>
                         
                         <!-- AI模型编辑模态框 -->
@@ -4520,7 +4678,7 @@ return rows[0];'></textarea>
             <h1><span class="icon">🤖</span> AI测试用例生成</h1>
             <div style="display:flex;gap:8px;">
                 <button class="ai-btn ai-btn-outline" onclick="showTaskHistory()">📋 任务历史</button>
-                <button class="ai-btn ai-btn-outline" onclick="showSkillsManager()">⚙️ Skills管理</button>
+                <button class="ai-btn ai-btn-outline" onclick="showAgentsViewer()">🤖 代理查看</button>
             </div>
         </div>
 
@@ -4535,7 +4693,11 @@ return rows[0];'></textarea>
                 <div class="ai-card">
                     <div class="ai-card-header">
                         <h3>📚 知识库文件</h3>
-                        <div style="display:flex;gap:8px;">
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <label class="ai-file-select-all-label">
+                                <input type="checkbox" id="fileSelectAllCb" onchange="toggleFileSelectAll()">
+                                <span id="fileSelectionInfo">已选 0/0 个文件</span>
+                            </label>
                             <button class="ai-btn ai-btn-sm ai-btn-outline" onclick="openKnowledgeDrawer()">📂 管理知识库</button>
                             <button class="ai-btn ai-btn-sm ai-btn-outline" onclick="showCrawlModal()">🌐 爬取网页</button>
                         </div>
@@ -4725,15 +4887,57 @@ return rows[0];'></textarea>
                                 <th>用例名称</th>
                                 <th style="width:80px;">AI动作</th>
                                 <th style="width:70px;">AI评分</th>
+                                <th style="width:70px;">置信度</th>
+                                <th style="width:70px;">反思轮数</th>
                                 <th>Diff摘要</th>
                                 <th style="width:80px;">决策</th>
                                 <th style="width:60px;">操作</th>
                             </tr>
                         </thead>
                         <tbody id="ai-review-results-body">
-                            <tr><td colspan="7" class="no-data">加载中...</td></tr>
+                            <tr><td colspan="9" class="no-data">加载中...</td></tr>
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="ai-compare-modal-overlay" id="aiCompareModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:99999;align-items:center;justify-content:center;">
+        <div class="ai-compare-modal" style="background:#fff;border-radius:12px;width:90%;max-width:900px;max-height:85vh;overflow-y:auto;position:relative;">
+            <div style="padding:16px 20px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;">
+                <h3 style="margin:0;font-size:16px;color:#1f2937;">AI评审对比详情</h3>
+                <button id="aiCompareCancelBtn" style="background:none;border:none;font-size:20px;cursor:pointer;color:#9ca3af;">✕</button>
+            </div>
+            <div class="ai-compare-modal-body" style="padding:20px;">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                    <div>
+                        <h4 style="margin:0 0 8px;font-size:14px;color:#6b7280;">原始用例</h4>
+                        <div id="aiCompareOriginal" style="background:#f9fafb;padding:12px;border-radius:6px;font-size:13px;"></div>
+                    </div>
+                    <div>
+                        <h4 style="margin:0 0 8px;font-size:14px;color:#6b7280;">AI建议修改</h4>
+                        <div id="aiCompareSuggested" style="background:#f0fdf4;padding:12px;border-radius:6px;font-size:13px;"></div>
+                    </div>
+                </div>
+                <div id="aiCompareDiff" style="margin-top:16px;"></div>
+                <div id="aiCompareMemoryNote" style="display:none;margin-top:8px;font-size:13px;color:#6366f1;"></div>
+                <div id="aiCompareComment" style="margin-top:16px;"></div>
+                <div style="margin-top:16px;padding:12px;background:#f9fafb;border-radius:6px;">
+                    <h4 style="margin:0 0 8px;font-size:14px;color:#6b7280;">决策</h4>
+                    <div style="display:flex;gap:12px;margin-bottom:12px;">
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="radio" name="compareDecision" value="accepted"> 采纳</label>
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="radio" name="compareDecision" value="rejected"> 拒绝</label>
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="radio" name="compareDecision" value="modified_accepted"> 修改后采纳</label>
+                    </div>
+                    <div id="aiCompareEditArea" style="display:none;margin-bottom:12px;">
+                        <textarea id="aiCompareEditText" class="form-input" rows="6" style="width:100%;font-size:13px;"></textarea>
+                    </div>
+                    <textarea id="aiCompareUserComment" class="form-input" rows="2" placeholder="决策备注（可选）" style="width:100%;font-size:13px;"></textarea>
+                </div>
+                <div style="text-align:right;margin-top:16px;">
+                    <button id="aiCompareConfirmBtn" class="btn btn-primary">确认决策</button>
+                    <button id="aiCompareCancelBtn2" class="btn btn-secondary" style="margin-left:8px;">取消</button>
                 </div>
             </div>
         </div>
@@ -4749,6 +4953,10 @@ return rows[0];'></textarea>
         </div>
         <div class="ai-drawer-body" style="padding: 0;">
             <div class="ai-knowledge-toolbar">
+                <label class="ai-file-select-all-label">
+                    <input type="checkbox" id="drawerSelectAllCb" onchange="toggleDrawerSelectAll()">
+                    <span>全选</span>
+                </label>
                 <button class="ai-btn ai-btn-sm ai-btn-primary" id="createFolderBtn" onclick="createFolder()">📁 新建文件夹</button>
                 <button class="ai-btn ai-btn-sm ai-btn-primary" id="uploadFileBtn" onclick="triggerUpload()">📄 上传文件</button>
                 <div class="search-box">
@@ -4969,95 +5177,66 @@ return rows[0];'></textarea>
         <div class="ai-modal-resizer"></div>
     </div>
 
-    <div class="ai-modal ai-modal-lg" id="skillsModal">
+    <div class="ai-modal ai-modal-lg" id="agentsModal">
         <div class="ai-modal-header" data-drag-handle>
-            <h3>Skills 列表</h3>
+            <h3>🤖 当前生成代理</h3>
             <div style="display:flex;gap:8px;align-items:center;">
-                <button class="ai-btn ai-btn-primary" id="btnCreateSkill" style="padding:4px 12px;font-size:13px;">+ 新建</button>
-                <button class="ai-close-btn" onclick="closeSkillsModal()">✕</button>
+                <button class="ai-close-btn" onclick="closeAgentsModal()">✕</button>
             </div>
         </div>
         <div class="ai-modal-body ai-skills-modal-body">
             <div class="ai-skills-split-container">
                 <div class="ai-skills-sidebar">
                     <div class="ai-skills-list-header">
-                        <span>技能列表</span>
+                        <span>代理列表</span>
                     </div>
-                    <div id="skillsList" class="ai-skills-list"></div>
+                    <div id="agentsList" class="ai-skills-list"></div>
                 </div>
-                <div class="ai-skills-detail-view" id="ai-skills-detail-container">
-                    <div id="skillsEmptyHint" class="ai-detail-empty">
-                        <div class="ai-detail-empty-icon">📋</div>
-                        <p>请从左侧选择一个技能查看详情<br>或点击上方按钮新增</p>
+                <div class="ai-skills-detail-view" id="ai-agents-detail-container">
+                    <div id="agentsEmptyHint" class="ai-detail-empty">
+                        <div class="ai-detail-empty-icon">🤖</div>
+                        <p>请从左侧选择一个代理查看详情</p>
                     </div>
-                    <div id="skillEditForm" class="ai-skills-form-panel" style="display:none;">
+                    <div id="agentViewPanel" class="ai-skills-form-panel" style="display:none;">
                         <div class="ai-skills-panel-header">
-                            <h4 id="skillFormTitle">新建Skill</h4>
+                            <h4 id="agentViewTitle"></h4>
                             <div class="ai-skills-panel-actions">
-                                <button class="ai-btn ai-btn-sm ai-btn-ghost" id="btnCancelSkill">取消</button>
-                            </div>
-                        </div>
-                        <div class="ai-skills-panel-body">
-                            <div class="ai-form-group">
-                                <label>Skill名称</label>
-                                <input type="text" id="skillName" class="ai-input" placeholder="英文标识，如 my_test_skill">
-                            </div>
-                            <div class="ai-form-group">
-                                <label>显示名称</label>
-                                <input type="text" id="skillDisplayName" class="ai-input" placeholder="我的测试Skill">
-                            </div>
-                            <div class="ai-form-group">
-                                <label>描述</label>
-                                <textarea id="skillDescription" class="ai-textarea" placeholder="描述此Skill的用途"></textarea>
-                            </div>
-                            <div class="ai-form-group">
-                                <label>系统提示词 (定义AI的角色和能力)</label>
-                                <textarea id="skillSystemPrompt" class="ai-textarea" style="min-height:120px;" placeholder="你是一个专业的测试用例设计专家..."></textarea>
-                            </div>
-                            <div class="ai-form-group">
-                                <label>用户提示词模板 (支持变量: {{module_name}}, {{module_description}}, {{material_content}}, {{case_count_limit}})</label>
-                                <textarea id="skillUserTemplate" class="ai-textarea" style="min-height:120px;" placeholder="## 模块信息&#10;模块名称: {{module_name}}&#10;..."></textarea>
-                            </div>
-                            <div class="ai-form-group">
-                                <label style="display:flex;align-items:center;gap:8px;">
-                                    <input type="checkbox" id="skillIsPublic" checked>
-                                    公开 (其他用户可以使用此Skill)
-                                </label>
-                            </div>
-                            <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:8px;">
-                                <button class="ai-btn ai-btn-primary" id="btnSaveSkill">保存</button>
-                            </div>
-                        </div>
-                    </div>
-                    <div id="skillViewPanel" class="ai-skills-form-panel" style="display:none;">
-                        <div class="ai-skills-panel-header">
-                            <h4 id="skillViewTitle"></h4>
-                            <div class="ai-skills-panel-actions">
-                                <button class="ai-btn ai-btn-sm ai-btn-outline" id="btnEditSkill">编辑</button>
-                                <button class="ai-btn ai-btn-sm ai-btn-ghost" id="btnCloseSkillView">✕ 关闭</button>
+                                <button class="ai-btn ai-btn-sm ai-btn-ghost" id="btnCloseAgentView">✕ 关闭</button>
                             </div>
                         </div>
                         <div class="ai-skills-panel-body">
                             <div class="ai-skill-detail">
                                 <div class="ai-skill-detail-row">
-                                    <span class="ai-skill-detail-label">Skill名称</span>
-                                    <span id="skillViewName" class="ai-skill-detail-value"></span>
+                                    <span class="ai-skill-detail-label">代理标识</span>
+                                    <span id="agentViewCode" class="ai-skill-detail-value"></span>
                                 </div>
                                 <div class="ai-skill-detail-row">
                                     <span class="ai-skill-detail-label">类型</span>
-                                    <span id="skillViewType" class="ai-skill-detail-value"></span>
+                                    <span id="agentViewType" class="ai-skill-detail-value"></span>
+                                </div>
+                                <div class="ai-skill-detail-row">
+                                    <span class="ai-skill-detail-label">分类</span>
+                                    <span id="agentViewCategory" class="ai-skill-detail-value"></span>
+                                </div>
+                                <div class="ai-skill-detail-row">
+                                    <span class="ai-skill-detail-label">状态</span>
+                                    <span id="agentViewStatus" class="ai-skill-detail-value"></span>
                                 </div>
                                 <div class="ai-skill-detail-row">
                                     <span class="ai-skill-detail-label">描述</span>
-                                    <span id="skillViewDesc" class="ai-skill-detail-value"></span>
+                                    <span id="agentViewDesc" class="ai-skill-detail-value"></span>
                                 </div>
-                                <div class="ai-skill-detail-row" style="flex-direction:column;gap:8px;">
-                                    <span class="ai-skill-detail-label">系统提示词</span>
-                                    <pre id="skillViewSystemPrompt" class="ai-skill-detail-pre"></pre>
+                                <div class="ai-skill-detail-row">
+                                    <span class="ai-skill-detail-label">模型</span>
+                                    <span id="agentViewModel" class="ai-skill-detail-value"></span>
                                 </div>
-                                <div class="ai-skill-detail-row" style="flex-direction:column;gap:8px;">
-                                    <span class="ai-skill-detail-label">用户提示词模板</span>
-                                    <pre id="skillViewUserTemplate" class="ai-skill-detail-pre"></pre>
+                                <div class="ai-skill-detail-row">
+                                    <span class="ai-skill-detail-label">记忆</span>
+                                    <span id="agentViewMemory" class="ai-skill-detail-value"></span>
+                                </div>
+                                <div id="agentConfigFilesSection"></div>
+                                <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--ai-border, #e2e8f0);">
+                                    <a href="javascript:void(0)" id="agentGoToConfig" class="ai-btn ai-btn-outline" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;">📋 前往配置中心编辑</a>
                                 </div>
                             </div>
                         </div>

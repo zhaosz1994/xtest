@@ -4,6 +4,72 @@ const pool = require('../db');
 const { authenticateToken, requireAdmin, isAdmin } = require('../middleware');
 const logger = require('../services/logger');
 const memoryEngine = require('../services/memoryEngine');
+const aiService = require('../services/aiService');
+
+// GET /available-models - 获取用户可用的模型列表
+router.get('/available-models', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    const [userModels] = await pool.execute(
+      'SELECT model_id, name, model_name, is_default FROM ai_models WHERE user_id = ? AND is_enabled = TRUE ORDER BY is_default DESC, created_at ASC',
+      [userId]
+    );
+    
+    const [systemDefault] = await pool.execute(
+      'SELECT model_id, name, model_name FROM ai_models WHERE is_default = TRUE AND is_enabled = TRUE AND (user_id IS NULL OR user_id = 0) LIMIT 1'
+    );
+    
+    const models = [];
+    const seenNames = new Set();
+    
+    userModels.forEach(m => {
+      const modelName = m.model_name || m.name;
+      if (!seenNames.has(modelName)) {
+        models.push({
+          id: m.model_id,
+          name: modelName,
+          displayName: m.name,
+          isDefault: m.is_default === 1,
+          source: 'user'
+        });
+        seenNames.add(modelName);
+      }
+    });
+    
+    if (systemDefault.length > 0) {
+      const sd = systemDefault[0];
+      const modelName = sd.model_name || sd.name;
+      if (!seenNames.has(modelName)) {
+        models.push({
+          id: sd.model_id,
+          name: modelName,
+          displayName: sd.name,
+          isDefault: models.length === 0,
+          source: 'system'
+        });
+      }
+    }
+    
+    if (models.length === 0) {
+      models.push({
+        id: 'gpt-4o',
+        name: 'gpt-4o',
+        displayName: 'GPT-4o (默认)',
+        isDefault: true,
+        source: 'fallback'
+      });
+    }
+    
+    res.json({ success: true, data: models });
+  } catch (error) {
+    logger.error('获取可用模型列表失败', { error: error.message });
+    res.json({ 
+      success: true, 
+      data: [{ id: 'gpt-4o', name: 'gpt-4o', displayName: 'GPT-4o (默认)', isDefault: true, source: 'fallback' }] 
+    });
+  }
+});
 
 // GET /list - 获取Sub-Agent列表（含Override逻辑 + 内联记忆统计）
 router.get('/list', authenticateToken, async (req, res) => {
@@ -95,6 +161,8 @@ router.get('/list', authenticateToken, async (req, res) => {
           visibility: a.visibility,
           memoryEnabled: a.memory_enabled,
           memoryDistillThreshold: a.memory_distill_threshold,
+          model: a.llm_model || null,
+          sortOrder: a.sort_order || 0,
           isOverridden: a.is_overridden || false,
           systemId: a.system_id || null,
           systemDisplayName: a.system_display_name || null,
@@ -196,6 +264,9 @@ router.get('/detail/:agentCode', authenticateToken, async (req, res) => {
           visibility: agent.visibility,
           memoryEnabled: agent.memory_enabled,
           memoryDistillThreshold: agent.memory_distill_threshold,
+          model: agent.llm_model || null,
+          temperature: agent.llm_temperature !== null && agent.llm_temperature !== undefined ? Number(agent.llm_temperature) : null,
+          sortOrder: agent.sort_order || 0,
           isOverridden,
           createdAt: agent.created_at,
           updatedAt: agent.updated_at,
@@ -230,7 +301,8 @@ router.post('/create', authenticateToken, async (req, res) => {
     const {
       agent_code, display_name, description, category,
       allow_qa, memory_enabled, memory_distill_threshold,
-      is_enabled, configFiles
+      is_enabled, configFiles, model, sort_order,
+      llm_temperature, llm_max_tokens, max_retries, timeout_seconds
     } = req.body;
     const userId = req.user.id;
     const userIsAdmin = isAdmin(req.user);
@@ -260,8 +332,8 @@ router.post('/create', authenticateToken, async (req, res) => {
     // 插入代理记录
     const [result] = await connection.execute(
       `INSERT INTO ai_sub_agents
-        (agent_code, display_name, description, category, is_system, allow_qa, is_enabled, creator_id, visibility, memory_enabled, memory_distill_threshold)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (agent_code, display_name, description, category, is_system, allow_qa, is_enabled, creator_id, visibility, memory_enabled, memory_distill_threshold, llm_model, llm_temperature, llm_max_tokens, max_retries, timeout_seconds, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         agent_code,
         display_name,
@@ -273,7 +345,13 @@ router.post('/create', authenticateToken, async (req, res) => {
         creatorId,
         visibility,
         memory_enabled !== undefined ? memory_enabled : 1,
-        memory_distill_threshold || 2000
+        memory_distill_threshold || 2000,
+        model || null,
+        llm_temperature || 0.7,
+        llm_max_tokens || 4096,
+        max_retries || 3,
+        timeout_seconds || 300,
+        sort_order || 0
       ]
     );
 
@@ -369,7 +447,8 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
     const {
       display_name, description, category,
       allow_qa, memory_enabled, memory_distill_threshold,
-      is_enabled, configFiles
+      is_enabled, configFiles, model, sort_order,
+      llm_temperature, llm_max_tokens, max_retries, timeout_seconds
     } = req.body;
 
     // 查找当前代理
@@ -408,6 +487,12 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
         if (memory_enabled !== undefined) { updates.push('memory_enabled = ?'); params.push(memory_enabled); }
         if (memory_distill_threshold !== undefined) { updates.push('memory_distill_threshold = ?'); params.push(memory_distill_threshold); }
         if (is_enabled !== undefined) { updates.push('is_enabled = ?'); params.push(is_enabled); }
+        if (model !== undefined) { updates.push('llm_model = ?'); params.push(model || null); }
+        if (sort_order !== undefined) { updates.push('sort_order = ?'); params.push(sort_order); }
+        if (llm_temperature !== undefined) { updates.push('llm_temperature = ?'); params.push(llm_temperature); }
+        if (llm_max_tokens !== undefined) { updates.push('llm_max_tokens = ?'); params.push(llm_max_tokens); }
+        if (max_retries !== undefined) { updates.push('max_retries = ?'); params.push(max_retries); }
+        if (timeout_seconds !== undefined) { updates.push('timeout_seconds = ?'); params.push(timeout_seconds); }
 
         if (updates.length > 0) {
           params.push(overrideId);
@@ -436,8 +521,8 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
         // 创建新的私有覆盖
         const [overrideResult] = await connection.execute(
           `INSERT INTO ai_sub_agents
-            (agent_code, display_name, description, category, is_system, allow_qa, is_enabled, creator_id, visibility, memory_enabled, memory_distill_threshold)
-           VALUES (?, ?, ?, ?, 0, ?, ?, ?, 'private', ?, ?)`,
+            (agent_code, display_name, description, category, is_system, allow_qa, is_enabled, creator_id, visibility, memory_enabled, memory_distill_threshold, llm_model, llm_temperature, llm_max_tokens, max_retries, timeout_seconds, sort_order)
+           VALUES (?, ?, ?, ?, 0, ?, ?, ?, 'private', ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             agent.agent_code,
             display_name || agent.display_name,
@@ -447,7 +532,13 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
             is_enabled !== undefined ? is_enabled : agent.is_enabled,
             userId,
             memory_enabled !== undefined ? memory_enabled : agent.memory_enabled,
-            memory_distill_threshold || agent.memory_distill_threshold
+            memory_distill_threshold || agent.memory_distill_threshold,
+            model !== undefined ? (model || null) : agent.llm_model,
+            llm_temperature !== undefined ? llm_temperature : (agent.llm_temperature || 0.7),
+            llm_max_tokens !== undefined ? llm_max_tokens : (agent.llm_max_tokens || 4096),
+            max_retries !== undefined ? max_retries : (agent.max_retries || 3),
+            timeout_seconds !== undefined ? timeout_seconds : (agent.timeout_seconds || 300),
+            sort_order !== undefined ? sort_order : (agent.sort_order || 0)
           ]
         );
 
@@ -516,6 +607,12 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
       if (memory_enabled !== undefined) { updates.push('memory_enabled = ?'); params.push(memory_enabled); }
       if (memory_distill_threshold !== undefined) { updates.push('memory_distill_threshold = ?'); params.push(memory_distill_threshold); }
       if (is_enabled !== undefined) { updates.push('is_enabled = ?'); params.push(is_enabled); }
+      if (model !== undefined) { updates.push('llm_model = ?'); params.push(model || null); }
+      if (sort_order !== undefined) { updates.push('sort_order = ?'); params.push(sort_order); }
+      if (llm_temperature !== undefined) { updates.push('llm_temperature = ?'); params.push(llm_temperature); }
+      if (llm_max_tokens !== undefined) { updates.push('llm_max_tokens = ?'); params.push(llm_max_tokens); }
+      if (max_retries !== undefined) { updates.push('max_retries = ?'); params.push(max_retries); }
+      if (timeout_seconds !== undefined) { updates.push('timeout_seconds = ?'); params.push(timeout_seconds); }
 
       if (updates.length > 0) {
         params.push(id);
@@ -751,5 +848,313 @@ async function _upsertConfigFiles(connection, agentId, configFiles, userId) {
     );
   }
 }
+
+// POST /seed-config-files - 手动触发配置文件补充（管理员专用）
+router.post('/seed-config-files', authenticateToken, async (req, res) => {
+  try {
+    const userIsAdmin = isAdmin(req.user);
+    if (!userIsAdmin) {
+      return res.status(403).json({ success: false, message: '仅管理员可执行此操作' });
+    }
+
+    const autoMigration = require('../services/autoMigration');
+    const result = await autoMigration.seedDefaultConfigFiles();
+
+    if (result.success) {
+      res.json({ success: true, message: result.detail });
+    } else {
+      res.status(500).json({ success: false, message: result.error });
+    }
+  } catch (error) {
+    logger.error('补充配置文件失败', { error: error.message });
+    res.status(500).json({ success: false, message: '补充配置文件失败: ' + error.message });
+  }
+});
+
+// GET /workflow/:agentCode - 获取智能体工作流可视化数据
+router.get('/workflow/:agentCode', authenticateToken, async (req, res) => {
+  try {
+    const { agentCode } = req.params;
+    const userId = req.user.id;
+    const userIsAdmin = isAdmin(req.user);
+
+    const agentExecutionEngine = require('../services/agentExecutionEngine');
+
+    const agent = await agentExecutionEngine._resolveAgent(agentCode, userId);
+    if (!agent) {
+      return res.json({ success: false, message: '代理不存在' });
+    }
+
+    if (!userIsAdmin && agent.visibility === 'private' && agent.creator_id !== userId) {
+      return res.status(403).json({ success: false, message: '您没有权限查看此代理' });
+    }
+
+    let resolvedFrom = 'system_default';
+    let systemVersion = null;
+    if (agent.is_system) {
+      resolvedFrom = 'system_default';
+    } else if (agent.creator_id === userId) {
+      const [systemAgents] = await pool.execute(
+        'SELECT id, display_name FROM ai_sub_agents WHERE agent_code = ? AND is_system = 1 LIMIT 1',
+        [agentCode]
+      );
+      if (systemAgents.length > 0) {
+        resolvedFrom = 'private_override';
+        systemVersion = { id: systemAgents[0].id, displayName: systemAgents[0].display_name };
+      } else {
+        resolvedFrom = 'public';
+      }
+    } else {
+      resolvedFrom = 'public';
+    }
+
+    const configFiles = await agentExecutionEngine._loadConfigFiles(agent.id);
+
+    const soulContent = configFiles.get('soul') || agentExecutionEngine._getDefaultSoul(agent);
+    const userTemplate = configFiles.get('user') || '';
+    const toolsConfig = configFiles.get('tools') || '';
+    const rules = configFiles.get('rules') || [];
+    const refDocs = configFiles.get('ref_docs') || [];
+
+    let memoryContext = '';
+    let memoryStats = null;
+    let memoryTruncationSteps = [];
+    let memoryIsFullPreview = false;
+    if (agent.memory_enabled) {
+      memoryStats = await memoryEngine.getMemoryStats(agent.id);
+      const MEMORY_CHAR_LIMIT = 5000;
+
+      let sql = 'SELECT id, library_id, module_id, level, content, char_count FROM ai_sub_agent_memories WHERE agent_id = ?';
+      const params = [agent.id];
+      const conditions = ["level = 'global'"];
+      conditions.push("(level = 'library')");
+      conditions.push("(level = 'module')");
+      sql += ` AND (${conditions.join(' OR ')}) ORDER BY level ASC`;
+      const [memories] = await pool.execute(sql, params);
+
+      memoryIsFullPreview = true;
+
+      if (memories.length > 0) {
+        let totalChars = memories.reduce((sum, m) => sum + (m.char_count || 0), 0);
+        let filteredMemories = [...memories];
+
+        if (totalChars > MEMORY_CHAR_LIMIT) {
+          if (filteredMemories.some(m => m.level === 'module')) {
+            const moduleChars = filteredMemories.filter(m => m.level === 'module').reduce((s, m) => s + (m.char_count || 0), 0);
+            filteredMemories = filteredMemories.filter(m => m.level !== 'module');
+            totalChars = filteredMemories.reduce((sum, m) => sum + (m.char_count || 0), 0);
+            memoryTruncationSteps.push({ action: 'remove_module', charsRemoved: moduleChars, remaining: totalChars });
+          }
+
+          if (totalChars > MEMORY_CHAR_LIMIT && filteredMemories.some(m => m.level === 'library')) {
+            const libChars = filteredMemories.filter(m => m.level === 'library').reduce((s, m) => s + (m.char_count || 0), 0);
+            filteredMemories = filteredMemories.filter(m => m.level !== 'library');
+            totalChars = filteredMemories.reduce((sum, m) => sum + (m.char_count || 0), 0);
+            memoryTruncationSteps.push({ action: 'truncate_library', charsRemoved: libChars, remaining: totalChars });
+          }
+
+          if (totalChars > MEMORY_CHAR_LIMIT) {
+            const globalCharsBefore = filteredMemories.reduce((s, m) => s + (m.char_count || 0), 0);
+            for (const m of filteredMemories) {
+              if (totalChars <= MEMORY_CHAR_LIMIT) break;
+              const excess = totalChars - MEMORY_CHAR_LIMIT;
+              const contentChars = m.char_count || 0;
+              if (contentChars > excess) {
+                m.content = m.content.substring(0, contentChars - excess) + '\n...(已截断)';
+                m.char_count = m.content.length;
+                totalChars = MEMORY_CHAR_LIMIT;
+              } else {
+                m.content = '';
+                m.char_count = 0;
+                totalChars -= contentChars;
+              }
+            }
+            memoryTruncationSteps.push({ action: 'truncate_global', charsRemoved: globalCharsBefore - totalChars, remaining: totalChars });
+          }
+        }
+
+        const sections = [];
+        for (const memory of filteredMemories) {
+          if (!memory.content) continue;
+          const levelLabel = { global: '全局基础规范', library: '用例库共识', module: '模块级踩坑记录' }[memory.level] || memory.level;
+          sections.push(`### ${levelLabel}\n${memory.content}`);
+        }
+        if (sections.length > 0) {
+          memoryContext = `<Memory_Context>\n以下是本团队长期积累的评审经验，请严格遵循：\n\n${sections.join('\n\n')}\n</Memory_Context>`;
+        }
+      }
+    } else {
+      memoryStats = await memoryEngine.getMemoryStats(agent.id);
+      if (!memoryStats) {
+        memoryStats = { global: { count: 0, totalChars: 0 }, library: { count: 0, totalChars: 0 }, module: { count: 0, totalChars: 0 }, totalChars: 0, lastDistilledAt: null };
+      }
+    }
+
+    const sampleVariables = { module_name: '示例模块', material_content: '...(示例素材内容)', content: '...(示例内容)', context: '...(示例上下文)' };
+    const renderedUserPrompt = agentExecutionEngine._renderUserPrompt(userTemplate, sampleVariables);
+    const fullUserPrompt = agentExecutionEngine._appendRefDocs(renderedUserPrompt, refDocs);
+
+    let toolNames = [];
+    if (toolsConfig) {
+      toolNames = agentExecutionEngine._parseToolNames(toolsConfig);
+    }
+    const toolsFunctionCalling = await agentExecutionEngine._loadToolsConfig(toolNames);
+
+    let toolDetails = [];
+    if (toolNames.length > 0) {
+      try {
+        const placeholders = toolNames.map(() => '?').join(',');
+        const [toolRecords] = await pool.execute(
+          `SELECT tool_name, display_name, description, language, allowed_tables, input_schema FROM ai_custom_tools WHERE tool_name IN (${placeholders})`,
+          toolNames
+        );
+        toolDetails = toolRecords.map(t => {
+          let inputSchema = {};
+          if (t.input_schema) {
+            try { inputSchema = typeof t.input_schema === 'string' ? JSON.parse(t.input_schema) : t.input_schema; } catch (e) { inputSchema = { type: 'object', properties: {} }; }
+          }
+          const fcJson = {
+            type: 'function',
+            function: { name: t.tool_name, description: t.description || t.display_name || t.tool_name, parameters: inputSchema }
+          };
+          return {
+            toolName: t.tool_name,
+            displayName: t.display_name || t.tool_name,
+            description: t.description || '',
+            language: t.language || 'javascript',
+            allowedTables: (() => { try { return t.allowed_tables ? (typeof t.allowed_tables === 'string' ? JSON.parse(t.allowed_tables) : t.allowed_tables) : []; } catch(e) { return []; } })(),
+            inputSchema,
+            functionCallingJson: fcJson
+          };
+        });
+      } catch (e) {
+        logger.error('加载工具详情失败', { error: e.message });
+      }
+    }
+
+    let aiModelConfig = null;
+    try {
+      const aiConfig = await aiService.getUserAIConfig(userId);
+      if (aiConfig) {
+        const genParams = await aiService.getAIGenerationParams();
+        const sceneParams = aiService.getSceneParams(genParams, 'scene_case_generation');
+        const effectiveModel = agent.llm_model || aiConfig.model_name || 'deepseek-chat';
+        const effectiveTemperature = agent.llm_temperature != null ? parseFloat(agent.llm_temperature) : sceneParams.temperature;
+        const effectiveMaxTokens = agent.llm_max_tokens || sceneParams.max_tokens;
+        const endpoint = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
+        const endpointMasked = endpoint.replace(/(https?:\/\/[^/]+).*/, '$1/***');
+        aiModelConfig = {
+          model: effectiveModel,
+          endpoint: endpointMasked,
+          temperature: effectiveTemperature,
+          maxTokens: effectiveMaxTokens,
+          scene: 'scene_case_generation',
+          sceneParams: { temperature: sceneParams.temperature, max_tokens: sceneParams.max_tokens },
+          timeout: 120000,
+          topP: genParams.top_p,
+          frequencyPenalty: genParams.frequency_penalty,
+          presencePenalty: genParams.presence_penalty,
+          responseFormat: genParams.response_format || 'text',
+          toolChoice: genParams.tool_choice || 'auto'
+        };
+      }
+    } catch (e) {
+      logger.error('获取AI配置失败', { error: e.message });
+    }
+
+    const [allConfigFiles] = await pool.execute(
+      'SELECT file_type, file_name, sort_order FROM ai_sub_agent_config_files WHERE agent_id = ? ORDER BY sort_order ASC',
+      [agent.id]
+    );
+
+    res.json({
+      success: true,
+      data: {
+        agent: {
+          id: agent.id,
+          agentCode: agent.agent_code,
+          displayName: agent.display_name,
+          description: agent.description,
+          category: agent.category,
+          isSystem: agent.is_system === 1,
+          isEnabled: agent.is_enabled === 1,
+          memoryEnabled: agent.memory_enabled === 1,
+          memoryDistillThreshold: agent.memory_distill_threshold || 2000,
+          model: agent.llm_model || null,
+          temperature: agent.llm_temperature != null ? Number(agent.llm_temperature) : null,
+          sortOrder: agent.sort_order || 0,
+          isOverridden: resolvedFrom === 'private_override',
+          createdAt: agent.created_at,
+          updatedAt: agent.updated_at
+        },
+        resolvedFrom,
+        systemVersion,
+        promptAssembly: {
+          systemPrompt: {
+            soul: { content: soulContent, source: 'Soul.md', charCount: soulContent.length },
+            memory: {
+              content: memoryContext,
+              source: 'memoryEngine',
+              charCount: memoryContext.length,
+              levels: memoryStats ? { global: memoryStats.global.count, library: memoryStats.library.count, module: memoryStats.module.count } : { global: 0, library: 0, module: 0 },
+              truncated: memoryTruncationSteps.length > 0,
+              truncationDetail: memoryTruncationSteps
+            }
+          },
+          userPrompt: {
+            template: { content: userTemplate, source: 'User.md', charCount: userTemplate.length },
+            variables: sampleVariables,
+            rendered: renderedUserPrompt,
+            renderedCharCount: renderedUserPrompt.length,
+            refDocs: refDocs.map(d => ({
+              type: d.type,
+              name: d.name,
+              content: d.content,
+              charCount: (d.content || '').length,
+              sortOrder: d.sort_order
+            })),
+            fullContent: fullUserPrompt,
+            fullCharCount: fullUserPrompt.length
+          }
+        },
+        tools: {
+          rawConfig: toolsConfig,
+          parsed: toolNames,
+          details: toolDetails,
+          functionCallingList: toolsFunctionCalling,
+          agenticLoop: { maxRounds: 5 }
+        },
+        reflectionPipeline: {
+          rules: rules.map(r => ({
+            sortOrder: r.sort_order,
+            fileName: r.file_name,
+            content: r.content,
+            charCount: (r.content || '').length,
+            maxRetries: 3,
+            responseFormat: 'json_object',
+            outputFormat: { passed: 'boolean', summary: 'string', revised_draft: 'object|null', confidence: 'number' }
+          })),
+          outputFormat: { passed: 'boolean', summary: 'string', revised_draft: 'object|null', confidence: 'number' }
+        },
+        memory: {
+          enabled: agent.memory_enabled === 1,
+          stats: memoryStats || { global: { count: 0, totalChars: 0 }, library: { count: 0, totalChars: 0 }, module: { count: 0, totalChars: 0 }, totalChars: 0, lastDistilledAt: null },
+          totalCharCount: memoryStats ? memoryStats.totalChars : 0,
+          charLimit: 5000,
+          truncated: memoryTruncationSteps.length > 0,
+          truncationSteps: memoryTruncationSteps,
+          distillThreshold: agent.memory_distill_threshold || 2000,
+          distillScene: 'scene_memory_distillation',
+          isFullPreview: memoryIsFullPreview
+        },
+        aiConfig: aiModelConfig,
+        configFiles: allConfigFiles.map(f => ({ fileType: f.file_type, fileName: f.file_name, sortOrder: f.sort_order }))
+      }
+    });
+  } catch (error) {
+    logger.error('获取智能体工作流数据失败', { error: error.message, agentCode: req.params.agentCode });
+    res.status(500).json({ success: false, message: '获取工作流数据失败: ' + error.message });
+  }
+});
 
 module.exports = router;

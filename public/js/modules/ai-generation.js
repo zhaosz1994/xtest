@@ -10,16 +10,7 @@ function initAIGeneration() {
     loadModules();
     loadAgents();
 
-    const btnCreateSkill = document.getElementById('btnCreateSkill');
-    const btnCancelSkill = document.getElementById('btnCancelSkill');
-    const btnSaveSkill = document.getElementById('btnSaveSkill');
-    const btnCloseSkillView = document.getElementById('btnCloseSkillView');
     const aiNewFolderName = document.getElementById('aiNewFolderName');
-
-    if (btnCreateSkill) btnCreateSkill.addEventListener('click', showCreateSkillForm);
-    if (btnCancelSkill) btnCancelSkill.addEventListener('click', hideCreateSkillForm);
-    if (btnSaveSkill) btnSaveSkill.addEventListener('click', saveSkill);
-    if (btnCloseSkillView) btnCloseSkillView.addEventListener('click', hideSkillViewPanel);
 
     if (aiNewFolderName) {
         aiNewFolderName.addEventListener('keydown', (e) => {
@@ -121,7 +112,7 @@ function aiRenderPagination(containerId, currentPage, totalPages, total, onPageF
 let currentLevel1Mode = 'auto';
 let currentMergeMode = 'direct';
 let conflictFileData = null;
-let editingSkillId = null;
+let currentSelectedAgentId = null;
 
 function aiEscapeHtml(str) {
     if (str == null) return '';
@@ -519,6 +510,7 @@ async function onLibraryChange() {
     const moduleSelect = document.getElementById('moduleSelect');
     moduleSelect.innerHTML = '<option value="">请选择模块</option>';
     document.getElementById('fileList').innerHTML = '<div class="ai-empty"><div class="icon">📁</div><p>请先选择模块，然后从知识库选择文件</p></div>';
+    updateFileSelectionInfo();
     if (aiCurrentLibraryId) {
         await loadModulesByLibrary(aiCurrentLibraryId);
     }
@@ -530,9 +522,11 @@ async function onModuleChange() {
     aiSelectedFiles.clear();
     if (aiCurrentModuleId) {
         await loadKnowledgeFiles();
+        selectAllFiles();
         await loadAILevel1Points();
     } else {
         document.getElementById('fileList').innerHTML = '<div class="ai-empty"><div class="icon">📁</div><p>请先选择模块</p></div>';
+        updateFileSelectionInfo();
     }
 }
 
@@ -552,6 +546,7 @@ function renderFileList(files) {
     const container = document.getElementById('fileList');
     if (!files || files.length === 0) {
         container.innerHTML = '<div class="ai-empty"><div class="icon">📁</div><p>暂无文件，请上传或从知识库管理中添加</p></div>';
+        updateFileSelectionInfo();
         return;
     }
 
@@ -561,7 +556,8 @@ function renderFileList(files) {
         const statusBadge = f.type === 'file' ? getStatusBadge(f.parse_status) : '';
         const sizeStr = f.file_size ? aiFormatSize(f.file_size) : '';
 
-        return `<div class="ai-file-item ${isSelected ? 'selected' : ''}" onclick="toggleFileSelection(${f.id})">
+        return `<div class="ai-file-item ${isSelected ? 'selected' : ''}" data-file-id="${f.id}">
+            <input type="checkbox" class="ai-file-checkbox" ${isSelected ? 'checked' : ''} data-file-id="${f.id}">
             <span class="ai-file-icon">${icon}</span>
             <div class="ai-file-info">
                 <div class="ai-file-name">${aiEscapeHtml(f.name)}</div>
@@ -569,6 +565,30 @@ function renderFileList(files) {
             </div>
         </div>`;
     }).join('');
+
+    container.querySelectorAll('.ai-file-item').forEach(item => {
+        item.addEventListener('click', function(e) {
+            if (e.target.classList.contains('ai-file-checkbox')) return;
+            const fileId = parseInt(this.dataset.fileId);
+            toggleFileSelection(fileId);
+            updateFileListSelection(fileId);
+        });
+    });
+
+    container.querySelectorAll('.ai-file-checkbox').forEach(cb => {
+        cb.addEventListener('change', function(e) {
+            e.stopPropagation();
+            const fileId = parseInt(this.dataset.fileId);
+            if (this.checked) {
+                aiSelectedFiles.add(fileId);
+            } else {
+                aiSelectedFiles.delete(fileId);
+            }
+            updateFileListSelection(fileId);
+        });
+    });
+
+    updateFileSelectionInfo();
 }
 
 function getFileIcon(ext) {
@@ -596,6 +616,66 @@ function toggleFileSelection(fileId) {
         aiSelectedFiles.add(fileId);
     }
     updateFileRowSelection(fileId);
+}
+
+function updateFileListSelection(fileId) {
+    const item = document.querySelector(`#fileList .ai-file-item[data-file-id="${fileId}"]`);
+    if (item) {
+        item.classList.toggle('selected', aiSelectedFiles.has(fileId));
+        const checkbox = item.querySelector('.ai-file-checkbox');
+        if (checkbox) {
+            checkbox.checked = aiSelectedFiles.has(fileId);
+        }
+    }
+    updateFileSelectionInfo();
+}
+
+function updateFileSelectionInfo() {
+    const infoEl = document.getElementById('fileSelectionInfo');
+    if (infoEl) {
+        const total = document.querySelectorAll('#fileList .ai-file-item').length;
+        const selected = aiSelectedFiles.size;
+        infoEl.textContent = `已选 ${selected}/${total} 个文件`;
+    }
+    const selectAllCb = document.getElementById('fileSelectAllCb');
+    if (selectAllCb) {
+        const total = document.querySelectorAll('#fileList .ai-file-item').length;
+        selectAllCb.checked = total > 0 && aiSelectedFiles.size >= total;
+        selectAllCb.indeterminate = aiSelectedFiles.size > 0 && aiSelectedFiles.size < total;
+    }
+}
+
+function selectAllFiles() {
+    document.querySelectorAll('#fileList .ai-file-item').forEach(item => {
+        const fileId = parseInt(item.dataset.fileId);
+        aiSelectedFiles.add(fileId);
+        item.classList.add('selected');
+        const checkbox = item.querySelector('.ai-file-checkbox');
+        if (checkbox) checkbox.checked = true;
+    });
+    updateFileSelectionInfo();
+    updateSelectionCount();
+}
+
+function deselectAllFiles() {
+    document.querySelectorAll('#fileList .ai-file-item').forEach(item => {
+        const fileId = parseInt(item.dataset.fileId);
+        aiSelectedFiles.delete(fileId);
+        item.classList.remove('selected');
+        const checkbox = item.querySelector('.ai-file-checkbox');
+        if (checkbox) checkbox.checked = false;
+    });
+    updateFileSelectionInfo();
+    updateSelectionCount();
+}
+
+function toggleFileSelectAll() {
+    const cb = document.getElementById('fileSelectAllCb');
+    if (cb.checked) {
+        selectAllFiles();
+    } else {
+        deselectAllFiles();
+    }
 }
 
 async function loadAILevel1Points() {
@@ -835,10 +915,42 @@ async function createTask() {
         }
     }
 
+    const selectedFiles = Array.from(aiSelectedFiles);
+    
+    try {
+        const statusRes = await aiApiGet(`/api/ai-generation/check-chunks-status/${aiCurrentModuleId}?fileIds=${selectedFiles.join(',')}`);
+        if (statusRes.success && !statusRes.data.hasPendingChunks && statusRes.data.total > 0) {
+            const confirmed = await showConfirmDialog(
+                '所选文件的所有文本块已处理完成',
+                `共 ${statusRes.data.total} 个文本块，已完成 ${statusRes.data.completed} 个，失败 ${statusRes.data.failed} 个。\n\n是否重新生成这些文件的测试用例？\n（将重置文本块状态为待处理）`,
+                '重新生成',
+                '取消'
+            );
+            
+            if (!confirmed) {
+                return;
+            }
+            
+            const resetRes = await aiApiPost('/api/ai-generation/reset-chunks', {
+                moduleId: aiCurrentModuleId,
+                fileIds: selectedFiles
+            });
+            
+            if (!resetRes.success) {
+                aiNotify('重置文本块状态失败: ' + resetRes.message, 'error');
+                return;
+            }
+            
+            aiNotify(`已重置 ${resetRes.data.affectedRows} 个文本块，开始生成用例...`, 'success');
+        }
+    } catch (e) {
+        console.error('检查chunks状态失败:', e);
+    }
+
     const data = {
         moduleId: aiCurrentModuleId,
         libraryId: document.getElementById('librarySelect').value || null,
-        selectedFiles: Array.from(aiSelectedFiles),
+        selectedFiles: selectedFiles,
         agentId: document.getElementById('agentSelect').value || null,
         caseCountLimit: parseInt(document.getElementById('caseCountLimit').value) || 20,
         enableDedup: document.getElementById('enableDedup').checked,
@@ -860,6 +972,46 @@ async function createTask() {
     } catch (e) {
         aiNotify('创建任务失败: ' + e.message, 'error');
     }
+}
+
+function showConfirmDialog(title, message, confirmText = '确认', cancelText = '取消') {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'ai-modal-overlay show';
+        overlay.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 10000; display: flex; align-items: center; justify-content: center;';
+        
+        const dialog = document.createElement('div');
+        dialog.style.cssText = 'background: white; border-radius: 8px; padding: 24px; max-width: 500px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);';
+        
+        dialog.innerHTML = `
+            <h3 style="margin: 0 0 16px 0; font-size: 18px; color: #1f2937;">${title}</h3>
+            <p style="margin: 0 0 24px 0; color: #6b7280; line-height: 1.6; white-space: pre-wrap;">${message}</p>
+            <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                <button class="btn-cancel" style="padding: 8px 16px; border: 1px solid #d1d5db; background: white; border-radius: 6px; cursor: pointer; color: #6b7280;">${cancelText}</button>
+                <button class="btn-confirm" style="padding: 8px 16px; border: none; background: #3b82f6; color: white; border-radius: 6px; cursor: pointer;">${confirmText}</button>
+            </div>
+        `;
+        
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+        
+        dialog.querySelector('.btn-confirm').onclick = () => {
+            document.body.removeChild(overlay);
+            resolve(true);
+        };
+        
+        dialog.querySelector('.btn-cancel').onclick = () => {
+            document.body.removeChild(overlay);
+            resolve(false);
+        };
+        
+        overlay.onclick = (e) => {
+            if (e.target === overlay) {
+                document.body.removeChild(overlay);
+                resolve(false);
+            }
+        };
+    });
 }
 
 function showProgressModal(taskId) {
@@ -1312,6 +1464,43 @@ function updateSelectionCount() {
     const countEl = document.getElementById('knowledgeSelectionCount');
     if (countEl) {
         countEl.textContent = `已选择 ${count} 个文件`;
+    }
+    const drawerSelectAllCb = document.getElementById('drawerSelectAllCb');
+    if (drawerSelectAllCb) {
+        const total = document.querySelectorAll('#knowledgeTree .ai-knowledge-row[data-file-id]').length;
+        drawerSelectAllCb.checked = total > 0 && count >= total;
+        drawerSelectAllCb.indeterminate = count > 0 && count < total;
+    }
+}
+
+function selectAllKnowledgeFiles() {
+    document.querySelectorAll('#knowledgeTree .ai-knowledge-row[data-file-id]').forEach(row => {
+        const fileId = parseInt(row.dataset.fileId);
+        aiSelectedFiles.add(fileId);
+        row.classList.add('selected');
+        const checkbox = row.querySelector('input[type="checkbox"]');
+        if (checkbox) checkbox.checked = true;
+    });
+    updateSelectionCount();
+}
+
+function deselectAllKnowledgeFiles() {
+    document.querySelectorAll('#knowledgeTree .ai-knowledge-row[data-file-id]').forEach(row => {
+        const fileId = parseInt(row.dataset.fileId);
+        aiSelectedFiles.delete(fileId);
+        row.classList.remove('selected');
+        const checkbox = row.querySelector('input[type="checkbox"]');
+        if (checkbox) checkbox.checked = false;
+    });
+    updateSelectionCount();
+}
+
+function toggleDrawerSelectAll() {
+    const cb = document.getElementById('drawerSelectAllCb');
+    if (cb.checked) {
+        selectAllKnowledgeFiles();
+    } else {
+        deselectAllKnowledgeFiles();
     }
 }
 
@@ -2472,10 +2661,13 @@ async function executeMerge() {
         }
 
         if (res.success) {
+            const mergedCount = res.data && res.data.mergedCount;
             if (currentMergeMode === 'review') {
                 aiNotify('已提交评审，等待评审人确认！', 'success');
+            } else if (mergedCount === 0) {
+                aiNotify('没有可合并的用例（可能全部被标记为重复）', 'warning');
             } else {
-                aiNotify('已合并进库！', 'success');
+                aiNotify(`已合并进库！共合并 ${mergedCount} 个用例`, 'success');
             }
             closeMergeModal();
             selectedCases.clear();
@@ -2483,7 +2675,10 @@ async function executeMerge() {
         } else {
             aiNotify(res.message || '操作失败', 'error');
         }
-    } catch (e) {}
+    } catch (e) {
+        console.error('合并操作失败:', e);
+        aiNotify(e.message || '合并操作失败，请重试', 'error');
+    }
 }
 
 async function loadReviewList() {
@@ -2738,8 +2933,8 @@ function aiCloseAllModals() {
     document.querySelectorAll('#ai-generation-section .ai-modal, #ai-generation-section .ai-drawer').forEach(el => el.classList.remove('open'));
 }
 
-function initSkillsDragResize() {
-    const modal = document.getElementById('skillsModal');
+function initAgentsDragResize() {
+    const modal = document.getElementById('agentsModal');
     if (!modal || modal.dataset.dragInit === '1') return;
     modal.dataset.dragInit = '1';
     const resizer = modal.querySelector('.ai-modal-resizer');
@@ -2781,198 +2976,181 @@ function initSkillsDragResize() {
     document.addEventListener('mouseup', handleMouseUp);
 }
 
-async function showSkillsManager() {
+async function showAgentsViewer() {
     try {
-        const res = await aiApiGet('/api/ai-generation/skills');
+        const res = await aiApiGet('/api/ai-sub-agents/list?category=test_generation');
         if (res.success) {
-            renderSkillsList(res.data || []);
-            document.getElementById('skillViewPanel').style.display = 'none';
-            document.getElementById('skillEditForm').style.display = 'none';
-            document.getElementById('skillsEmptyHint').style.display = 'flex';
-            initSkillsDragResize();
+            renderAgentsList(res.data || []);
+            document.getElementById('agentViewPanel').style.display = 'none';
+            document.getElementById('agentsEmptyHint').style.display = 'flex';
+            initAgentsDragResize();
+            const closeViewBtn = document.getElementById('btnCloseAgentView');
+            if (closeViewBtn && !closeViewBtn.dataset.bound) {
+                closeViewBtn.dataset.bound = '1';
+                closeViewBtn.addEventListener('click', function() {
+                    document.getElementById('agentViewPanel').style.display = 'none';
+                    document.getElementById('agentsEmptyHint').style.display = 'flex';
+                    currentSelectedAgentId = null;
+                    document.querySelectorAll('#agentsList .ai-skill-card').forEach(c => c.classList.remove('active'));
+                });
+            }
             document.getElementById('aiGenOverlay').classList.add('show');
-            document.getElementById('skillsModal').classList.add('open');
+            document.getElementById('agentsModal').classList.add('open');
         }
     } catch (e) {}
 }
 
-let currentSelectedSkillId = null;
+const CATEGORY_MAP = {
+    'test_generation': '用例生成',
+    'test_review': '用例评审',
+    'data_analysis': '数据分析',
+    'assistant': '通用助手'
+};
 
-function renderSkillsList(skills) {
-    const container = document.getElementById('skillsList');
+function renderAgentsList(agents) {
+    const container = document.getElementById('agentsList');
     container.innerHTML = '';
-    if (skills.length === 0) {
-        container.innerHTML = '<div style="text-align:center;padding:40px 16px;color:var(--ai-text-secondary);font-size:14px;">暂无Skill<br>点击上方按钮新建</div>';
+    if (agents.length === 0) {
+        container.innerHTML = '<div style="text-align:center;padding:40px 16px;color:var(--ai-text-secondary);font-size:14px;">暂无可用代理<br>请在配置中心创建</div>';
         return;
     }
-    skills.forEach(s => {
+    agents.forEach(a => {
         const card = document.createElement('div');
         card.className = 'ai-skill-card';
-        card.dataset.skillId = s.id;
-        if (currentSelectedSkillId === s.id) {
+        card.dataset.agentId = a.id;
+        if (currentSelectedAgentId === a.id) {
             card.classList.add('active');
         }
+        const statusIcon = a.isEnabled ? '✅' : '⏸️';
+        const typeBadge = a.isSystem
+            ? '<span class="ai-skill-badge ai-skill-badge-system">内置</span>'
+            : (a.isOverridden
+                ? '<span class="ai-skill-badge ai-skill-badge-system">内置</span><span class="ai-skill-badge ai-skill-badge-custom" style="margin-left:4px;">已自定义</span>'
+                : '<span class="ai-skill-badge ai-skill-badge-custom">自定义</span>');
         card.innerHTML = `
-            <div class="ai-skill-name">${aiEscapeHtml(s.displayName)} <span class="ai-skill-badge ${s.isSystem ? 'ai-skill-badge-system' : 'ai-skill-badge-custom'}">${s.isSystem ? '内置' : '自定义'}</span></div>
-            <div class="ai-skill-desc">${aiEscapeHtml(s.description || '无描述')}</div>
+            <div class="ai-skill-name">${aiEscapeHtml(a.displayName)} ${typeBadge}</div>
+            <div class="ai-skill-desc">${statusIcon} ${aiEscapeHtml(a.description || '无描述')}</div>
         `;
         card.addEventListener('click', function(e) {
             e.preventDefault();
             e.stopPropagation();
-            currentSelectedSkillId = s.id;
-            document.querySelectorAll('#skillsList .ai-skill-card').forEach(c => c.classList.remove('active'));
+            currentSelectedAgentId = a.id;
+            document.querySelectorAll('#agentsList .ai-skill-card').forEach(c => c.classList.remove('active'));
             this.classList.add('active');
-            viewSkill(s.id);
+            viewAgentDetail(a.id, a.agentCode);
         });
         container.appendChild(card);
     });
 }
 
-async function viewSkill(id) {
+async function viewAgentDetail(agentId, agentCode) {
     try {
-        const res = await aiApiGet(`/api/ai-skills/detail/${id}`);
+        const res = await aiApiGet(`/api/ai-sub-agents/detail/${encodeURIComponent(agentCode)}`);
         if (res.success) {
-            const skill = res.data || res.skill;
-            currentSelectedSkillId = id;
-            
-            document.getElementById('skillViewTitle').textContent = skill.displayName || skill.display_name || '';
-            document.getElementById('skillViewName').textContent = skill.name || '';
-            const isSystem = skill.isSystem === true || skill.is_system === 1;
-            document.getElementById('skillViewType').innerHTML = isSystem
+            const agent = res.data.agent;
+            const configFiles = res.data.configFiles || [];
+            const memoryStats = res.data.memoryStats || {};
+            currentSelectedAgentId = agentId;
+
+            document.getElementById('agentViewTitle').textContent = agent.displayName || '';
+            document.getElementById('agentViewCode').textContent = agent.agentCode || '';
+            const isSystem = agent.isSystem === true || agent.is_system === 1;
+            const isOverridden = agent.isOverridden === true;
+            let typeHtml = isSystem
                 ? '<span class="ai-skill-badge ai-skill-badge-system">内置</span>'
                 : '<span class="ai-skill-badge ai-skill-badge-custom">自定义</span>';
-            document.getElementById('skillViewDesc').textContent = skill.description || '无描述';
+            if (isOverridden) {
+                typeHtml += ' <span class="ai-skill-badge ai-skill-badge-custom" style="margin-left:4px;">已自定义</span>';
+            }
+            document.getElementById('agentViewType').innerHTML = typeHtml;
+            const categoryLabel = CATEGORY_MAP[agent.category] || agent.category || '-';
+            document.getElementById('agentViewCategory').textContent = categoryLabel;
+            document.getElementById('agentViewStatus').innerHTML = agent.isEnabled
+                ? '<span style="color:#16a34a;">✅ 已启用</span>'
+                : '<span style="color:#dc2626;">⏸️ 已禁用</span>';
+            document.getElementById('agentViewDesc').textContent = agent.description || '无描述';
+            document.getElementById('agentViewModel').textContent = agent.model || '默认模型';
 
-            let systemPrompt = '', userTemplate = '';
-            try {
-                const def = typeof skill.definition === 'string' ? JSON.parse(skill.definition) : skill.definition;
-                systemPrompt = def?.prompts?.system || '';
-                userTemplate = def?.prompts?.userTemplate || '';
-            } catch (e) {}
-            document.getElementById('skillViewSystemPrompt').textContent = systemPrompt || '（未设置）';
-            document.getElementById('skillViewUserTemplate').textContent = userTemplate || '（未设置）';
-
-            const btnEdit = document.getElementById('btnEditSkill');
-            if (isSystem) {
-                btnEdit.style.display = 'none';
+            const memEnabled = agent.memoryEnabled;
+            if (memEnabled) {
+                const globalCount = (memoryStats.global && memoryStats.global.count) || 0;
+                const libraryCount = (memoryStats.library && memoryStats.library.count) || 0;
+                const moduleCount = (memoryStats.module && memoryStats.module.count) || 0;
+                const totalChars = memoryStats.totalChars || 0;
+                document.getElementById('agentViewMemory').innerHTML =
+                    `<span style="color:#16a34a;">✅ 已启用</span> — 全局: ${globalCount}条 | 用例库: ${libraryCount}条 | 模块: ${moduleCount}条 | 共 ${totalChars} 字符`;
             } else {
-                btnEdit.style.display = '';
-                btnEdit.onclick = function() { editSkill(id); };
+                document.getElementById('agentViewMemory').innerHTML = '<span style="color:#94a3b8;">⏸️ 未启用</span>';
             }
 
-            document.getElementById('skillsEmptyHint').style.display = 'none';
-            document.getElementById('skillEditForm').style.display = 'none';
-            document.getElementById('skillViewPanel').style.display = 'flex';
+            const configSection = document.getElementById('agentConfigFilesSection');
+            configSection.innerHTML = '';
+            if (configFiles.length > 0) {
+                const sectionTitle = document.createElement('div');
+                sectionTitle.style.cssText = 'margin-top:12px;margin-bottom:8px;font-weight:600;font-size:14px;color:var(--ai-text, #1e293b);';
+                sectionTitle.textContent = '配置文件';
+                configSection.appendChild(sectionTitle);
+                configFiles.forEach(f => {
+                    const FILE_TYPE_LABELS = {
+                        'soul': 'Soul.md (灵魂)',
+                        'user': 'User.md (用户模板)',
+                        'tools': 'Tools.md (工具)',
+                        'rule': 'Rule.md (规则链)',
+                        'checklist': 'Checklist.md (检查清单)',
+                        'examples': 'Examples.md (示例)',
+                        'glossary': 'Glossary.md (术语表)',
+                        'template': 'Template.md (模板)',
+                        'ref_doc': '参考文档',
+                        'custom': '自定义'
+                    };
+                    const label = FILE_TYPE_LABELS[f.fileType] || f.fileType;
+                    const preview = (f.content || '').substring(0, 500);
+                    const needEllipsis = (f.content || '').length > 500;
+                    const row = document.createElement('div');
+                    row.className = 'ai-skill-detail-row';
+                    row.style.cssText = 'flex-direction:column;gap:6px;margin-bottom:8px;';
+                    const pre = document.createElement('pre');
+                    pre.className = 'ai-skill-detail-pre';
+                    pre.style.cssText = 'overflow-y:auto;' + (needEllipsis ? 'position:relative;' : '');
+                    pre.textContent = preview;
+                    if (needEllipsis) {
+                        const ellipsis = document.createElement('span');
+                        ellipsis.style.cssText = 'position:sticky;bottom:0;display:block;text-align:center;background:linear-gradient(transparent,#f8fafc 70%);padding:12px 0 0;color:var(--ai-text-secondary, #64748b);font-size:12px;cursor:pointer;';
+                        ellipsis.textContent = '...点击下方前往配置中心查看完整内容';
+                        pre.appendChild(ellipsis);
+                    }
+                    const labelSpan = document.createElement('span');
+                    labelSpan.className = 'ai-skill-detail-label';
+                    labelSpan.textContent = label;
+                    row.appendChild(labelSpan);
+                    row.appendChild(pre);
+                    configSection.appendChild(row);
+                });
+            }
+
+            const goBtn = document.getElementById('agentGoToConfig');
+            goBtn.onclick = function() {
+                closeAgentsModal();
+                window.location.hash = '#/settings?config=ai-sub-agents';
+            };
+
+            document.getElementById('agentsEmptyHint').style.display = 'none';
+            document.getElementById('agentViewPanel').style.display = 'flex';
         }
     } catch (e) {
-        console.error('[viewSkill] Error:', e);
+        console.error('[viewAgentDetail] Error:', e);
     }
 }
 
-function showCreateSkillForm() {
-    editingSkillId = null;
-    currentSelectedSkillId = null;
-    document.querySelectorAll('#skillsList .ai-skill-card').forEach(c => c.classList.remove('active'));
-    document.getElementById('skillFormTitle').textContent = '新建Skill';
-    document.getElementById('skillName').value = '';
-    document.getElementById('skillDisplayName').value = '';
-    document.getElementById('skillDescription').value = '';
-    document.getElementById('skillSystemPrompt').value = '';
-    document.getElementById('skillUserTemplate').value = '';
-    document.getElementById('skillIsPublic').checked = true;
-    document.getElementById('skillsEmptyHint').style.display = 'none';
-    document.getElementById('skillViewPanel').style.display = 'none';
-    document.getElementById('skillEditForm').style.display = 'flex';
-}
-
-function hideCreateSkillForm() {
-    document.getElementById('skillEditForm').style.display = 'none';
-    document.getElementById('skillsEmptyHint').style.display = 'flex';
-    currentSelectedSkillId = null;
-    document.querySelectorAll('#skillsList .ai-skill-card').forEach(c => c.classList.remove('active'));
-}
-
-function hideSkillViewPanel() {
-    document.getElementById('skillViewPanel').style.display = 'none';
-    document.getElementById('skillsEmptyHint').style.display = 'flex';
-    currentSelectedSkillId = null;
-    document.querySelectorAll('#skillsList .ai-skill-card').forEach(c => c.classList.remove('active'));
-}
-
-async function saveSkill() {
-    const data = {
-        name: document.getElementById('skillName').value,
-        displayName: document.getElementById('skillDisplayName').value,
-        description: document.getElementById('skillDescription').value,
-        systemPrompt: document.getElementById('skillSystemPrompt').value,
-        userPromptTemplate: document.getElementById('skillUserTemplate').value,
-        isPublic: document.getElementById('skillIsPublic').checked
-    };
-
-    try {
-        let res;
-        if (editingSkillId) {
-            res = await aiApiPut(`/api/ai-generation/skills/${editingSkillId}`, data);
-        } else {
-            res = await aiApiPost('/api/ai-generation/skills', data);
-        }
-
-        if (res.success) {
-            aiNotify('Skill保存成功', 'success');
-            const savedId = editingSkillId || res.data?.id;
-            await showSkillsManager();
-            if (savedId) {
-                currentSelectedSkillId = savedId;
-                viewSkill(savedId);
-            }
-        } else {
-            aiNotify(res.message || '保存失败', 'error');
-        }
-    } catch (e) {}
-}
-
-async function editSkill(id) {
-    try {
-        const res = await aiApiGet(`/api/ai-skills/detail/${id}`);
-        if (res.success) {
-            const skill = res.data || res.skill;
-            editingSkillId = id;
-            document.getElementById('skillFormTitle').textContent = '编辑Skill';
-            document.getElementById('skillName').value = skill.name || '';
-            document.getElementById('skillDisplayName').value = skill.display_name || skill.displayName || '';
-            document.getElementById('skillDescription').value = skill.description || '';
-
-            try {
-                const def = typeof skill.definition === 'string' ? JSON.parse(skill.definition) : skill.definition;
-                document.getElementById('skillSystemPrompt').value = def?.prompts?.system || '';
-                document.getElementById('skillUserTemplate').value = def?.prompts?.userTemplate || '';
-            } catch (e) {}
-
-            document.getElementById('skillIsPublic').checked = skill.is_public === 1 || skill.isPublic === true;
-            document.getElementById('skillsEmptyHint').style.display = 'none';
-            document.getElementById('skillViewPanel').style.display = 'none';
-            document.getElementById('skillEditForm').style.display = 'flex';
-        }
-    } catch (e) {}
-}
-
-async function deleteSkill(id) {
-    if (!(await aiShowConfirmMessage('确定要删除此Skill吗？'))) return;
-    try {
-        await aiApiDelete(`/api/ai-generation/skills/${id}`);
-        aiNotify('Skill已删除', 'success');
-        showSkillsManager();
-    } catch (e) {}
-}
-
-function closeSkillsModal() {
+function closeAgentsModal() {
     document.getElementById('aiGenOverlay').classList.remove('show');
-    const modal = document.getElementById('skillsModal');
+    const modal = document.getElementById('agentsModal');
     modal.classList.remove('open');
     modal.style.width = '';
     modal.style.height = '';
-    hideCreateSkillForm();
-    hideSkillViewPanel();
+    currentSelectedAgentId = null;
+    document.getElementById('agentViewPanel').style.display = 'none';
+    document.getElementById('agentsEmptyHint').style.display = 'flex';
 }
 
 /**

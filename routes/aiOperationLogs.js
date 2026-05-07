@@ -586,4 +586,196 @@ router.get('/agent-tool-overview', authenticateToken, async (req, res) => {
   }
 });
 
+const ADMIN_ROLES = ['管理员', 'admin', 'Administrator'];
+
+router.get('/request-logs', authenticateToken, async (req, res) => {
+  try {
+    const { page = 1, pageSize = 20, triggerType, status, keyword, startDate, endDate } = req.query;
+    const isAdminUser = ADMIN_ROLES.includes(req.user.role);
+
+    let whereConditions = [];
+    let params = [];
+
+    if (!isAdminUser) {
+      whereConditions.push('user_id = ?');
+      params.push(req.user.id);
+    }
+
+    if (triggerType) {
+      whereConditions.push('trigger_type = ?');
+      params.push(triggerType);
+    }
+    if (status) {
+      whereConditions.push('status = ?');
+      params.push(status);
+    }
+    if (keyword) {
+      const escapedKeyword = keyword.replace(/%/g, '\\%').replace(/_/g, '\\_');
+      whereConditions.push('(LEFT(system_prompt, 500) LIKE ? OR LEFT(user_prompt, 500) LIKE ? OR LEFT(ai_response, 500) LIKE ?)');
+      params.push(`%${escapedKeyword}%`, `%${escapedKeyword}%`, `%${escapedKeyword}%`);
+    }
+    if (startDate) {
+      whereConditions.push('created_at >= ?');
+      params.push(startDate);
+    }
+    if (endDate) {
+      whereConditions.push('created_at <= ?');
+      params.push(endDate);
+    }
+
+    const whereClause = whereConditions.length > 0
+      ? 'WHERE ' + whereConditions.join(' AND ')
+      : '';
+
+    const safePageSize = Math.max(1, Math.min(50, parseInt(pageSize) || 20));
+    const safePage = Math.max(1, parseInt(page) || 1);
+    const offset = (safePage - 1) * safePageSize;
+
+    const [logs] = await pool.execute(`
+      SELECT
+        id, user_id, username, trigger_type, trigger_source, trigger_source_name,
+        LEFT(system_prompt, 200) AS system_prompt_preview,
+        LEFT(user_prompt, 200) AS user_prompt_preview,
+        LEFT(ai_response, 200) AS ai_response_preview,
+        prompt_tokens, completion_tokens, total_tokens,
+        model_name, status, error_message, execution_time_ms,
+        project_id, library_id, module_id, ip_address, created_at
+      FROM ai_request_logs
+      ${whereClause}
+      ORDER BY created_at DESC
+      LIMIT ${safePageSize} OFFSET ${offset}
+    `, params);
+
+    const countParams = [...params];
+    const [countResult] = await pool.execute(
+      `SELECT COUNT(*) AS total FROM ai_request_logs ${whereClause}`,
+      countParams
+    );
+
+    res.json({
+      success: true,
+      logs,
+      isAdmin: isAdminUser,
+      pagination: {
+        page: safePage,
+        pageSize: safePageSize,
+        total: countResult[0].total
+      }
+    });
+  } catch (error) {
+    logger.error('获取AI请求日志失败', { error: error.message });
+    res.status(500).json({
+      success: false,
+      message: '获取AI请求日志失败'
+    });
+  }
+});
+
+router.get('/request-logs/stats', authenticateToken, async (req, res) => {
+  try {
+    const isAdminUser = ADMIN_ROLES.includes(req.user.role);
+
+    let userCondition = '';
+    let params = [];
+
+    if (!isAdminUser) {
+      userCondition = 'WHERE user_id = ?';
+      params.push(req.user.id);
+    }
+
+    const [totalStats] = await pool.execute(`
+      SELECT
+        COUNT(*) AS totalRequests,
+        COUNT(CASE WHEN status = 'success' THEN 1 END) AS successCount,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END) AS failedCount,
+        COALESCE(SUM(total_tokens), 0) AS totalTokens,
+        COALESCE(AVG(total_tokens), 0) AS avgTokensPerRequest
+      FROM ai_request_logs
+      ${userCondition}
+    `, params);
+
+    const [byType] = await pool.execute(`
+      SELECT
+        trigger_type,
+        COUNT(*) AS count,
+        COALESCE(SUM(total_tokens), 0) AS tokens
+      FROM ai_request_logs
+      ${userCondition}
+      GROUP BY trigger_type
+      ORDER BY count DESC
+    `, params);
+
+    const [byModel] = await pool.execute(`
+      SELECT
+        model_name,
+        COUNT(*) AS count,
+        COALESCE(SUM(total_tokens), 0) AS tokens
+      FROM ai_request_logs
+      ${userCondition}
+      GROUP BY model_name
+      ORDER BY count DESC
+    `, params);
+
+    res.json({
+      success: true,
+      isAdmin: isAdminUser,
+      stats: {
+        totalRequests: totalStats[0].totalRequests || 0,
+        successCount: totalStats[0].successCount || 0,
+        failedCount: totalStats[0].failedCount || 0,
+        totalTokens: totalStats[0].totalTokens || 0,
+        avgTokensPerRequest: Math.round(totalStats[0].avgTokensPerRequest || 0),
+        byType: byType || [],
+        byModel: byModel || []
+      }
+    });
+  } catch (error) {
+    logger.error('获取AI请求日志统计失败', { error: error.message });
+    res.status(500).json({
+      success: false,
+      message: '获取AI请求日志统计失败'
+    });
+  }
+});
+
+router.get('/request-logs/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const isAdminUser = ADMIN_ROLES.includes(req.user.role);
+
+    const [logs] = await pool.execute(
+      `SELECT id, user_id, username, trigger_type, trigger_source, trigger_source_name,
+        LEFT(system_prompt, 50000) AS system_prompt,
+        LEFT(user_prompt, 50000) AS user_prompt,
+        LEFT(ai_response, 50000) AS ai_response,
+        prompt_tokens, completion_tokens, total_tokens, model_name,
+        status, error_message, execution_time_ms,
+        project_id, library_id, module_id, ip_address, created_at,
+        LENGTH(system_prompt) AS system_prompt_length,
+        LENGTH(user_prompt) AS user_prompt_length,
+        LENGTH(ai_response) AS ai_response_length
+      FROM ai_request_logs WHERE id = ?`,
+      [id]
+    );
+
+    if (logs.length === 0) {
+      return res.status(404).json({ success: false, message: '日志不存在' });
+    }
+
+    const log = logs[0];
+
+    if (!isAdminUser && log.user_id !== req.user.id) {
+      return res.status(403).json({ success: false, message: '无权查看此日志' });
+    }
+
+    res.json({ success: true, log });
+  } catch (error) {
+    logger.error('获取AI请求日志详情失败', { error: error.message });
+    res.status(500).json({
+      success: false,
+      message: '获取AI请求日志详情失败'
+    });
+  }
+});
+
 module.exports = router;

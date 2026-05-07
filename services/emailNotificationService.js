@@ -145,8 +145,11 @@ function getTemplateRenderers() {
         task_deadline: (d) => renderTaskDeadline(d),
         ai_review_complete: (d) => renderAIReviewComplete(d),
         ai_review_result: (d) => renderAIReviewResult(d),
+        ai_review_circuit_break: (d) => renderAIReviewCircuitBreak(d),
+        ai_review_decision: (d) => renderAIReviewDecision(d),
         ai_key_config_complete: (d) => renderAIKeyConfigComplete(d),
-        ai_overview_complete: (d) => renderAIOverviewComplete(d)
+        ai_overview_complete: (d) => renderAIOverviewComplete(d),
+        ai_generation_complete: (d) => renderAIGenerationComplete(d)
     };
 }
 
@@ -288,6 +291,17 @@ function renderAIReviewResult(d) {
     return `${base.header}<p>尊敬的 <strong>${d.reviewerName || ''}</strong>，您好！</p><p>AI评审智能体 <strong>${d.agentName || ''}</strong> 已完成对以下用例的评审：</p>${infoBox(`<h3 style="margin:0 0 10px;color:#4338ca;">${d.caseName || ''}</h3><p style="margin:5px 0;"><strong>AI评审动作：</strong><span style="color:${actionColor};font-weight:bold;">${actionLabel}</span></p><p style="margin:5px 0;"><strong>AI评分：</strong>${d.aiScore || '-'}/10</p>${d.aiComment ? `<p style="margin:5px 0;"><strong>AI意见：</strong>${d.aiComment}</p>` : ''}`)}${diffHtml}${memoryNote}${d.reviewLink ? actionButton('查看详情并决策', d.reviewLink, '#6366f1') : ''}${base.footer}`;
 }
 
+function renderAIReviewCircuitBreak(d) {
+    const base = emailBase('⚠️ AI评审熔断通知', '#e65100');
+    const historyHtml = d.historyPreview ? `<div style="background:#fff8e1;padding:12px;border-radius:6px;margin:15px 0;font-size:12px;white-space:pre-wrap;max-height:200px;overflow-y:auto;border:1px solid #ffe082;">${d.historyPreview}</div>` : '';
+    return `${base.header}<p>尊敬的 <strong>${d.userName || ''}</strong>，您好！</p><p>AI辅助评审任务发生熔断，部分用例需要人工介入：</p>${infoBox(`<h3 style="margin:0 0 10px;color:#e65100;">${d.taskName || 'AI评审任务'}</h3><p style="margin:5px 0;"><strong>评审智能体：</strong>${d.agentName || ''}</p><p style="margin:5px 0;"><strong>用例总数：</strong>${d.totalCases || 0}</p><p style="margin:5px 0;"><strong style="color:#e65100;">需人工介入：</strong>${d.needsHumanCount || 0} 条</p><p style="margin:5px 0;"><strong>熔断规则：</strong>${d.failedRuleInfo || '-'}</p><p style="margin:5px 0;"><strong>完成时间：</strong>${d.completedAt || ''}</p>`, '#e65100')}${historyHtml}<p style="color:#e65100;font-weight:600;">请尽快登录系统查看熔断原因和完整评审履历，做出人工决策。</p>${d.reviewLink ? actionButton('查看熔断详情', d.reviewLink, '#e65100') : ''}${base.footer}`;
+}
+
+function renderAIReviewDecision(d) {
+    const base = emailBase('📋 AI评审决策通知', '#6366f1');
+    return `${base.header}<p>尊敬的 <strong>${d.userName || ''}</strong>，您好！</p><p>评审人对AI评审结果已做出决策：</p>${infoBox(`<h3 style="margin:0 0 10px;color:#4338ca;">${d.taskName || 'AI评审任务'}</h3><p style="margin:5px 0;"><strong>评审智能体：</strong>${d.agentName || ''}</p><p style="margin:5px 0;"><strong>最终决策：</strong><span style="font-weight:bold;">${d.decision || '-'}</span></p>${d.userComment ? `<p style="margin:5px 0;"><strong>决策备注：</strong>${d.userComment}</p>` : ''}<p style="margin:5px 0;"><strong>决策时间：</strong>${d.decidedAt || ''}</p>`)}${d.reviewLink ? actionButton('查看详情', d.reviewLink, '#6366f1') : ''}${base.footer}`;
+}
+
 function renderAIKeyConfigComplete(d) {
     const base = emailBase('🤖 AI关键配置生成完成', '#6366f1');
     const resultPreview = d.result ? `<div style="background:#f8f9fa;padding:12px;border-radius:6px;margin:15px 0;font-size:13px;white-space:pre-wrap;max-height:200px;overflow-y:auto;">${d.result.substring(0, 500)}${d.result.length > 500 ? '...' : ''}</div>` : '';
@@ -298,6 +312,15 @@ function renderAIOverviewComplete(d) {
     const base = emailBase('🤖 AI概述生成完成', '#6366f1');
     const resultPreview = d.result ? `<div style="background:#f8f9fa;padding:12px;border-radius:6px;margin:15px 0;font-size:13px;white-space:pre-wrap;max-height:200px;overflow-y:auto;">${d.result.substring(0, 500)}${d.result.length > 500 ? '...' : ''}</div>` : '';
     return `${base.header}<p>尊敬的 <strong>${d.userName || ''}</strong>，您好！</p><p>AI概述生成任务已完成：</p>${infoBox(`<h3 style="margin:0 0 10px;color:#4338ca;">${d.pointName || '未命名测试点'}</h3><p style="margin:5px 0;"><strong>生成状态：</strong><span style="color:#16a34a;font-weight:bold;">✅ 成功</span></p>`)}${resultPreview}<p>请在消息中心查看完整结果，或返回测试点编辑页面查看已自动填入的概述。</p>${base.footer}`;
+}
+
+function renderAIGenerationComplete(d) {
+    const base = emailBase('🤖 AI测试用例生成完成', '#6366f1');
+    const statusIcon = d.status === 'completed' ? '✅' : '❌';
+    const statusText = d.status === 'completed' ? '成功' : '失败';
+    const statusColor = d.status === 'completed' ? '#16a34a' : '#dc3545';
+    
+    return `${base.header}<p>尊敬的 <strong>${d.username || ''}</strong>，您好！</p><p>您的AI测试用例生成任务已完成：</p>${infoBox(`<h3 style="margin:0 0 10px;color:#4338ca;">任务ID: ${d.taskId || ''}</h3><p style="margin:5px 0;"><strong>模块名称：</strong>${d.moduleName || ''}</p><p style="margin:5px 0;"><strong>生成状态：</strong><span style="color:${statusColor};font-weight:bold;">${statusIcon} ${statusText}</span></p><p style="margin:5px 0;"><strong>生成用例数：</strong>${d.totalCases || 0} 个</p>${d.duplicateCount > 0 ? `<p style="margin:5px 0;"><strong>去重数量：</strong>${d.duplicateCount} 个</p>` : ''}`)}<p>请前往系统查看生成的测试用例，并进行审核和合并操作。</p>${actionButton('查看测试用例', `${APP_URL}/?action=ai_generation&taskId=${d.taskId}`, '#6366f1')}${base.footer}`;
 }
 
 async function sendToSingleUser(emailType, userId, data, options = {}) {

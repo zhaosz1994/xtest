@@ -1,10 +1,11 @@
 const pool = require('../db');
-const { getUserAIConfig, getUserAITimeoutConfig } = require('./aiService');
+const { getUserAIConfig, getUserAITimeoutConfig, getAIGenerationParams, getSceneParams } = require('./aiService');
 const sandboxExecutor = require('./sandboxExecutor');
 const llmResponseParser = require('./llmResponseParser');
 const diffGenerator = require('./diffGenerator');
 const logger = require('./logger');
 const agentToolUsageLogger = require('./agentToolUsageLogger');
+const aiRequestLogger = require('./aiRequestLogger');
 const axios = require('axios');
 
 const MAX_TOOL_CALL_ROUNDS = 5;
@@ -64,7 +65,30 @@ class AgentExecutionEngine {
 
             // 5. 渲染User Prompt（Handlebars变量插值）
             const userTemplate = configFiles.get('user') || '';
-            const userPrompt = this._renderUserPrompt(userTemplate, variables);
+            let userPrompt = this._renderUserPrompt(userTemplate, variables);
+
+            // 5.1 追加参考文档到 User Prompt 末尾
+            const refDocs = configFiles.get('ref_docs');
+            if (refDocs && refDocs.length > 0) {
+                userPrompt = this._appendRefDocs(userPrompt, refDocs);
+            }
+
+            // 5.2 如果User Prompt为空，跳过AI调用，避免只发送系统提示词
+            if (!userPrompt || userPrompt.trim().length === 0) {
+                logger.warn('Agent缺少User Prompt模板，跳过AI调用', {
+                    agentCode,
+                    agentId: agent.id,
+                    userId
+                });
+                return {
+                    success: false,
+                    result: null,
+                    error: '代理缺少User Prompt模板，无法生成有效请求',
+                    toolCallsLog: [],
+                    memoryContribution: null,
+                    executionTimeMs: Date.now() - startTime
+                };
+            }
 
             // 6. 加载工具并转换为Function Calling JSON
             const toolsConfig = configFiles.get('tools');
@@ -93,6 +117,9 @@ class AgentExecutionEngine {
             // 9. 处理工具调用（Agentic Loop，最多5轮）
             const toolCallsLog = [];
             let rounds = 0;
+            let totalPromptTokens = llmResult.usage?.prompt_tokens || 0;
+            let totalCompletionTokens = llmResult.usage?.completion_tokens || 0;
+            let totalTokensAccum = llmResult.usage?.total_tokens || 0;
 
             while (llmResult.tool_calls && llmResult.tool_calls.length > 0 && rounds < MAX_TOOL_CALL_ROUNDS) {
                 rounds++;
@@ -124,11 +151,16 @@ class AgentExecutionEngine {
                     tools,
                     aiConfig
                 );
+
+                totalPromptTokens += llmResult.usage?.prompt_tokens || 0;
+                totalCompletionTokens += llmResult.usage?.completion_tokens || 0;
+                totalTokensAccum += llmResult.usage?.total_tokens || 0;
             }
 
             // 10. 解析最终结果
             const finalContent = llmResult.content || '';
             const executionTimeMs = Date.now() - startTime;
+            const hitMaxRounds = llmResult.tool_calls && llmResult.tool_calls.length > 0;
 
             logger.info('Agent执行完成', {
                 agentCode,
@@ -136,7 +168,8 @@ class AgentExecutionEngine {
                 userId,
                 rounds,
                 toolCallsCount: toolCallsLog.length,
-                executionTimeMs
+                executionTimeMs,
+                hitMaxRounds
             });
 
             agentToolUsageLogger.logSuccess({
@@ -147,24 +180,69 @@ class AgentExecutionEngine {
                 itemName: agent.display_name,
                 source: context.source || null,
                 executionTimeMs,
-                promptTokens: 0,
-                completionTokens: 0,
-                totalTokens: 0,
+                promptTokens: totalPromptTokens,
+                completionTokens: totalCompletionTokens,
+                totalTokens: totalTokensAccum,
                 modelName: aiConfig.model_name || null,
                 contextInfo: {
                     libraryId: context.libraryId,
                     moduleId: context.moduleId,
                     toolCallsCount: toolCallsLog.length,
-                    rounds
+                    rounds,
+                    hitMaxRounds
                 }
             });
+
+            if (hitMaxRounds) {
+                aiRequestLogger.logFailure({
+                    userId,
+                    username: context.username,
+                    triggerType: context.source || 'agent',
+                    triggerSource: agentCode,
+                    triggerSourceName: agent.display_name,
+                    systemPrompt,
+                    userPrompt,
+                    aiResponse: finalContent || '(Agent达到最大工具调用轮次，未生成最终回复)',
+                    promptTokens: totalPromptTokens,
+                    completionTokens: totalCompletionTokens,
+                    totalTokens: totalTokensAccum,
+                    modelName: aiConfig.model_name || null,
+                    executionTimeMs,
+                    errorMessage: `Agent达到最大工具调用轮次(${MAX_TOOL_CALL_ROUNDS})，任务可能未完成`,
+                    libraryId: context.libraryId,
+                    moduleId: context.moduleId
+                });
+            } else {
+                aiRequestLogger.logSuccess({
+                    userId,
+                    username: context.username,
+                    triggerType: context.source || 'agent',
+                    triggerSource: agentCode,
+                    triggerSourceName: agent.display_name,
+                    systemPrompt,
+                    userPrompt,
+                    aiResponse: finalContent,
+                    promptTokens: totalPromptTokens,
+                    completionTokens: totalCompletionTokens,
+                    totalTokens: totalTokensAccum,
+                    modelName: aiConfig.model_name || null,
+                    executionTimeMs,
+                    libraryId: context.libraryId,
+                    moduleId: context.moduleId
+                });
+            }
 
             return {
                 success: true,
                 result: finalContent,
                 toolCallsLog,
                 memoryContribution,
-                executionTimeMs
+                executionTimeMs,
+                agentId: agent.id,
+                agentConfig: {
+                    maxRetries: agent.max_retries || 3,
+                    rules: configFiles.get('rules') || []
+                }
             };
 
         } catch (error) {
@@ -189,6 +267,22 @@ class AgentExecutionEngine {
                     libraryId: context.libraryId,
                     moduleId: context.moduleId
                 }
+            });
+
+            aiRequestLogger.logFailure({
+                userId,
+                username: context.username,
+                triggerType: context.source || 'agent',
+                triggerSource: agentCode,
+                triggerSourceName: null,
+                systemPrompt: null,
+                userPrompt: null,
+                aiResponse: null,
+                executionTimeMs,
+                errorMessage: error.message,
+                modelName: aiConfig?.model_name || null,
+                libraryId: context.libraryId,
+                moduleId: context.moduleId
             });
 
             return {
@@ -253,16 +347,38 @@ class AgentExecutionEngine {
      */
     async _loadConfigFiles(agentId) {
         const configMap = new Map();
+        const refDocTypes = ['checklist', 'examples', 'glossary', 'template', 'custom', 'ref_doc'];
 
         try {
             const [files] = await pool.execute(
-                'SELECT file_type, content FROM ai_sub_agent_config_files WHERE agent_id = ? ORDER BY sort_order ASC',
+                'SELECT file_type, file_name, content, sort_order FROM ai_sub_agent_config_files WHERE agent_id = ? ORDER BY sort_order ASC',
                 [agentId]
             );
 
             for (const file of files) {
                 if (file.content) {
-                    configMap.set(file.file_type, file.content);
+                    if (file.file_type === 'rule') {
+                        if (!configMap.has('rules')) {
+                            configMap.set('rules', []);
+                        }
+                        configMap.get('rules').push({
+                            content: file.content,
+                            sort_order: file.sort_order,
+                            file_name: file.file_name || ''
+                        });
+                    } else if (refDocTypes.includes(file.file_type)) {
+                        if (!configMap.has('ref_docs')) {
+                            configMap.set('ref_docs', []);
+                        }
+                        configMap.get('ref_docs').push({
+                            type: file.file_type,
+                            name: file.file_name || file.file_type,
+                            content: file.content,
+                            sort_order: file.sort_order
+                        });
+                    } else {
+                        configMap.set(file.file_type, file.content);
+                    }
                 }
             }
         } catch (error) {
@@ -320,6 +436,41 @@ class AgentExecutionEngine {
         });
 
         return rendered;
+    }
+
+    /**
+     * 追加参考文档到 User Prompt 末尾
+     * @param {string} userPrompt - 原始 User Prompt
+     * @param {Array} refDocs - 参考文档数组
+     * @returns {string} 追加参考文档后的 User Prompt
+     */
+    _appendRefDocs(userPrompt, refDocs) {
+        if (!refDocs || refDocs.length === 0) {
+            return userPrompt;
+        }
+
+        // 按 sort_order 排序
+        const sortedDocs = [...refDocs].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+
+        const typeLabels = {
+            checklist: '检查清单',
+            examples: '示例参考',
+            glossary: '术语表',
+            template: '输出模板',
+            custom: '自定义参考',
+            ref_doc: '参考文档'
+        };
+
+        let refDocsSection = '\n\n---\n\n## 参考文档\n\n';
+
+        for (const doc of sortedDocs) {
+            const label = typeLabels[doc.type] || doc.type;
+            refDocsSection += `### ${label}: ${doc.name}\n\n`;
+            refDocsSection += doc.content;
+            refDocsSection += '\n\n';
+        }
+
+        return userPrompt + refDocsSection;
     }
 
     /**
@@ -404,6 +555,9 @@ class AgentExecutionEngine {
         const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
         const model = aiConfig.model_name || 'deepseek-chat';
 
+        const genParams = await getAIGenerationParams();
+        const sceneParams = getSceneParams(genParams, 'scene_case_generation');
+
         const messages = [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
@@ -412,16 +566,31 @@ class AgentExecutionEngine {
         const requestBody = {
             model: model,
             messages: messages,
-            temperature: 0.3,
-            max_tokens: 4000
+            temperature: sceneParams.temperature,
+            max_tokens: sceneParams.max_tokens
         };
 
-        // 如果有工具，添加tools和tool_choice
+        if (genParams.top_p !== undefined && genParams.top_p !== 1.0) {
+            requestBody.top_p = genParams.top_p;
+        }
+        if (genParams.frequency_penalty !== undefined && genParams.frequency_penalty !== 0) {
+            requestBody.frequency_penalty = genParams.frequency_penalty;
+        }
+        if (genParams.presence_penalty !== undefined && genParams.presence_penalty !== 0) {
+            requestBody.presence_penalty = genParams.presence_penalty;
+        }
+        if (genParams.seed !== null && genParams.seed !== undefined) {
+            requestBody.seed = genParams.seed;
+        }
+
         if (tools && tools.length > 0) {
             requestBody.tools = tools;
-            requestBody.tool_choice = 'auto';
+            requestBody.tool_choice = genParams.tool_choice || 'auto';
         } else {
-            requestBody.response_format = { type: 'json_object' };
+            const responseFormat = genParams.response_format || 'text';
+            if (responseFormat === 'json_object') {
+                requestBody.response_format = { type: 'json_object' };
+            }
         }
 
         const timeoutConfig = await getUserAITimeoutConfig(aiConfig.user_id);
@@ -431,7 +600,7 @@ class AgentExecutionEngine {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${apiKey}`
             },
-            timeout: timeoutConfig.generalAITask || 120000
+            timeout: timeoutConfig.generalAITask || genParams.request_timeout || 120000
         });
 
         const choice = response.data?.choices?.[0];
@@ -440,10 +609,16 @@ class AgentExecutionEngine {
         }
 
         const message = choice.message || {};
+        const usage = response.data?.usage || {};
 
         return {
             content: message.content || '',
-            tool_calls: message.tool_calls || null
+            tool_calls: message.tool_calls || null,
+            usage: {
+                prompt_tokens: usage.prompt_tokens || 0,
+                completion_tokens: usage.completion_tokens || 0,
+                total_tokens: usage.total_tokens || 0
+            }
         };
     }
 
@@ -462,6 +637,9 @@ class AgentExecutionEngine {
         const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
         const model = aiConfig.model_name || 'deepseek-chat';
 
+        const genParams = await getAIGenerationParams();
+        const sceneParams = getSceneParams(genParams, 'scene_case_generation');
+
         const messages = [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
@@ -472,7 +650,6 @@ class AgentExecutionEngine {
             }
         ];
 
-        // 添加工具结果消息
         for (let i = 0; i < toolCalls.length; i++) {
             const tc = toolCalls[i];
             const tr = toolResults[i];
@@ -486,10 +663,10 @@ class AgentExecutionEngine {
         const requestBody = {
             model: model,
             messages: messages,
-            temperature: 0.3,
-            max_tokens: 4000,
+            temperature: sceneParams.temperature,
+            max_tokens: sceneParams.max_tokens,
             tools: tools,
-            tool_choice: 'auto'
+            tool_choice: genParams.tool_choice || 'auto'
         };
 
         const timeoutConfig = await getUserAITimeoutConfig(aiConfig.user_id);
@@ -508,10 +685,16 @@ class AgentExecutionEngine {
         }
 
         const message = choice.message || {};
+        const usage = response.data?.usage || {};
 
         return {
             content: message.content || '',
-            tool_calls: message.tool_calls || null
+            tool_calls: message.tool_calls || null,
+            usage: {
+                prompt_tokens: usage.prompt_tokens || 0,
+                completion_tokens: usage.completion_tokens || 0,
+                total_tokens: usage.total_tokens || 0
+            }
         };
     }
 

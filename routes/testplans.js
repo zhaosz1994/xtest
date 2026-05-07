@@ -1093,6 +1093,31 @@ router.put('/:planId/cases/:caseId', authenticateToken, async (req, res) => {
     
     await connection.commit();
     
+    const statusLabelMap = {
+      'pass': '通过', 'fail': '失败', 'blocked': '阻塞',
+      'paused': '暂停', 'pending': '待测试', 'asic_hang': 'ASIC挂起',
+      'core_dump': '核心转储', 'traffic_drop': '流量丢失'
+    };
+    const statusLabel = statusLabelMap[normalizedStatus] || normalizedStatus;
+    const ipAddress = req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.connection.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+    
+    try {
+      await logActivity(
+        currentUser.id,
+        currentUser.username,
+        currentUser.role,
+        '执行测试用例',
+        `在测试计划 #${planId} 中将用例 #${caseId} 标记为「${statusLabel}」`,
+        'test_plan_case',
+        parseInt(caseId),
+        ipAddress,
+        userAgent
+      );
+    } catch (logErr) {
+      logger.warn('记录执行活动日志失败', { error: logErr.message });
+    }
+
     const responseData = {
       success: true,
       message: '状态更新成功',
@@ -1197,6 +1222,31 @@ router.put('/:planId/cases/batch', authenticateToken, async (req, res) => {
     
     await connection.commit();
     
+    const batchStatusLabelMap = {
+      'pass': '通过', 'fail': '失败', 'blocked': '阻塞',
+      'paused': '暂停', 'pending': '待测试', 'asic_hang': 'ASIC挂起',
+      'core_dump': '核心转储', 'traffic_drop': '流量丢失'
+    };
+    const batchStatusLabel = batchStatusLabelMap[normalizedStatus] || normalizedStatus;
+    const batchIpAddress = req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.connection.remoteAddress;
+    const batchUserAgent = req.headers['user-agent'];
+    
+    try {
+      await logActivity(
+        currentUser.id,
+        currentUser.username,
+        currentUser.role,
+        '批量执行测试用例',
+        `在测试计划 #${planId} 中批量将 ${caseIds.length} 个用例标记为「${batchStatusLabel}」`,
+        'test_plan_case',
+        null,
+        batchIpAddress,
+        batchUserAgent
+      );
+    } catch (logErr) {
+      logger.warn('记录批量执行活动日志失败', { error: logErr.message });
+    }
+
     const responseData = {
       success: true,
       message: `已更新 ${caseIds.length} 个用例的状态`,

@@ -72,6 +72,9 @@ class ReviewService {
   async mergeApprovedCases(taskId, options = {}) {
     const { defaultOwner, projectIds } = options;
 
+    const level1PointService = require('./level1PointService');
+    await level1PointService.mergeLevel1Points(taskId);
+
     const [tempCases] = await pool.execute(`
       SELECT * FROM temp_test_cases 
       WHERE task_id = ? AND status = 'approved'
@@ -80,9 +83,6 @@ class ReviewService {
     if (tempCases.length === 0) {
       return { mergedCount: 0 };
     }
-
-    const level1PointService = require('./level1PointService');
-    await level1PointService.mergeLevel1Points(taskId);
 
     const connection = await pool.getConnection();
     const mergedCaseIds = [];
@@ -247,6 +247,12 @@ class ReviewService {
 
       await connection.commit();
 
+      setImmediate(() => {
+        this.checkAndCleanupTask(taskId).catch(err => {
+          logger.error('后台清理任务失败', { taskId, error: err.message });
+        });
+      });
+
       return { mergedCount: mergedCaseIds.length };
 
     } catch (error) {
@@ -385,13 +391,18 @@ class ReviewService {
       WHERE temp_case_id IN (${updatePlaceholders}) AND is_duplicate = 0
     `, tempCaseIds);
 
-    const approvedIds = tempCases.map(c => c.temp_case_id);
-
     const level1PointService = require('./level1PointService');
     const taskId = options.taskId || tempCases[0].task_id;
     if (taskId) {
       await level1PointService.mergeLevel1Points(taskId);
     }
+
+    const [refreshedTempCases] = await pool.execute(`
+      SELECT * FROM temp_test_cases 
+      WHERE temp_case_id IN (${placeholders}) AND is_duplicate = 0
+    `, tempCaseIds);
+
+    const casesToMerge = refreshedTempCases.length > 0 ? refreshedTempCases : tempCases;
 
     const connection = await pool.getConnection();
     const mergedCaseIds = [];
@@ -400,7 +411,7 @@ class ReviewService {
       await connection.beginTransaction();
 
       const moduleGroups = {};
-      for (const tempCase of tempCases) {
+      for (const tempCase of casesToMerge) {
         const key = `${tempCase.module_id}`;
         if (!moduleGroups[key]) {
           moduleGroups[key] = [];
@@ -422,7 +433,7 @@ class ReviewService {
         });
       }
 
-      for (const tempCase of tempCases) {
+      for (const tempCase of casesToMerge) {
         const owner = tempCase.owner || options.defaultOwner || '';
         const caseId = caseIdMap[tempCase.temp_case_id];
 
@@ -475,11 +486,20 @@ class ReviewService {
         }
 
         await connection.execute(`
-          UPDATE temp_test_cases SET status = 'merged' WHERE temp_case_id = ?
-        `, [tempCase.temp_case_id]);
+          UPDATE temp_test_cases SET status = 'merged', merged_case_id = ?, merged_at = NOW() WHERE temp_case_id = ?
+        `, [formalCaseId, tempCase.temp_case_id]);
       }
 
       await connection.commit();
+      
+      if (taskId) {
+        setImmediate(() => {
+          this.checkAndCleanupTask(taskId).catch(err => {
+            logger.error('后台清理任务失败', { taskId, error: err.message });
+          });
+        });
+      }
+      
       return { mergedCount: mergedCaseIds.length };
     } catch (error) {
       await connection.rollback();
@@ -505,7 +525,45 @@ class ReviewService {
       WHERE task_id = ? AND status = 'pending' AND is_duplicate = 0
     `, [taskId]);
 
+    await pool.execute(`
+      UPDATE temp_level1_points SET status = 'approved' WHERE task_id = ? AND status = 'pending'
+    `, [taskId]);
+
     return this.mergeApprovedCases(taskId, options);
+  }
+
+  async checkAndCleanupTask(taskId) {
+    try {
+      const [remainingCases] = await pool.execute(`
+        SELECT COUNT(*) as count
+        FROM temp_test_cases
+        WHERE task_id = ? AND status != 'merged'
+      `, [taskId]);
+
+      const [remainingLevel1] = await pool.execute(`
+        SELECT COUNT(*) as count
+        FROM temp_level1_points
+        WHERE task_id = ? AND status != 'merged'
+      `, [taskId]);
+
+      if (remainingCases[0].count === 0 && remainingLevel1[0].count === 0) {
+        await pool.execute(`
+          DELETE FROM ai_case_generation_tasks WHERE task_id = ?
+        `, [taskId]);
+        
+        logger.info('任务已清理', { 
+          taskId, 
+          reason: '所有临时用例和一级测试点已处理完成' 
+        });
+        
+        return { cleaned: true };
+      }
+
+      return { cleaned: false, remainingCases: remainingCases[0].count, remainingLevel1: remainingLevel1[0].count };
+    } catch (error) {
+      logger.error('检查任务清理状态失败', { taskId, error: error.message });
+      return { cleaned: false, error: error.message };
+    }
   }
 }
 

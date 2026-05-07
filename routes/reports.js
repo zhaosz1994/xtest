@@ -3,7 +3,7 @@ const router = express.Router();
 const pool = require('../db');
 const { authenticateToken, isAdmin } = require('../middleware');
 const reportService = require('../services/reportService');
-const { getUserAIConfig, getUserAITimeoutConfig } = require('../services/aiService');
+const { getUserAIConfig, getUserAITimeoutConfig, getAIGenerationParams, getSceneParams } = require('../services/aiService');
 const { logActivity } = require('./history');
 const logger = require('../services/logger');
 const aiAuditLogger = require('../services/aiAuditLogger');
@@ -602,6 +602,9 @@ ${blockedCases.slice(0, 10).map(tc =>
   try {
     const controller = new AbortController();
     const timeoutConfig = await getUserAITimeoutConfig(userId);
+    const genParams = await getAIGenerationParams();
+    const sceneParams = getSceneParams(genParams, 'scene_report_analysis');
+    
     const timeoutId = setTimeout(() => controller.abort(), timeoutConfig.reportGeneration);
     
     const response = await fetch(aiModel.endpoint, {
@@ -646,7 +649,7 @@ ${blockedCases.slice(0, 10).map(tc =>
           }
         }],
         tool_choice: { type: 'function', function: { name: 'fill_report_analysis' } },
-        temperature: 0.3
+        temperature: sceneParams.temperature
       }),
       signal: controller.signal
     });

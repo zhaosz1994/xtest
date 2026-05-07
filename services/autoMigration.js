@@ -379,6 +379,10 @@ class AutoMigration {
             { name: 'migrate_ai_skills_to_custom_tools', fn: () => this.migrateAISkillsToCustomTools() },
             { name: 'seed_ai_sub_agents_and_memories', fn: () => this.seedAISubAgentsAndMemories() },
             { name: 'add_ai_task_notification_types', fn: () => this.addAITaskNotificationTypes() },
+            { name: 'seed_default_config_files', fn: () => this.seedDefaultConfigFiles() },
+            { name: 'seed_default_rule_config_files', fn: () => this.seedDefaultRuleConfigFiles() },
+            { name: 'seed_ai_generation_params', fn: () => this.seedAIGenerationParams() },
+            { name: 'ensure_builtin_sub_agents', fn: () => this.ensureBuiltinSubAgents() },
         ];
 
         for (const migration of dataMigrations) {
@@ -608,12 +612,17 @@ class AutoMigration {
             );
 
             if (overviewAgent.length === 0) {
-                await pool.execute(
+                const [overviewResult] = await pool.execute(
                     `INSERT INTO ai_sub_agents
                         (agent_code, display_name, description, category, is_system, allow_qa, is_enabled, visibility, memory_enabled, memory_distill_threshold)
                      VALUES ('generate_overview', '概述生成', '根据一级测试点下的测试用例内容，AI自动生成简洁的测试点概述（summary），帮助快速了解测试范围和重点', 'test_generation', 1, 0, 1, 'public', 1, 2000)`
                 );
+                const overviewAgentId = overviewResult.insertId;
                 detail += '插入内置 generate_overview 智能体; ';
+                await this._seedOverviewConfigFiles(overviewAgentId);
+                detail += '插入 generate_overview 配置文件; ';
+            } else {
+                await this._seedOverviewConfigFiles(overviewAgent[0].id);
             }
 
             // 2.2 确保内置 generate_key_config 智能体存在
@@ -622,12 +631,17 @@ class AutoMigration {
             );
 
             if (keyConfigAgent.length === 0) {
-                await pool.execute(
+                const [keyConfigResult] = await pool.execute(
                     `INSERT INTO ai_sub_agents
                         (agent_code, display_name, description, category, is_system, allow_qa, is_enabled, visibility, memory_enabled, memory_distill_threshold)
                      VALUES ('generate_key_config', '关键配置生成', '根据测试用例的名称、前置条件、目的、步骤和预期结果，AI自动生成关键配置信息（命令、参数、环境变量等）', 'test_generation', 1, 0, 1, 'public', 1, 2000)`
                 );
+                const keyConfigAgentId = keyConfigResult.insertId;
                 detail += '插入内置 generate_key_config 智能体; ';
+                await this._seedKeyConfigConfigFiles(keyConfigAgentId);
+                detail += '插入 generate_key_config 配置文件; ';
+            } else {
+                await this._seedKeyConfigConfigFiles(keyConfigAgent[0].id);
             }
 
             // 3. 为每个没有记忆的系统智能体，插入 global 级别记忆种子
@@ -766,6 +780,766 @@ class AutoMigration {
             `);
 
             return { success: true, detail: 'AI任务通知类型添加成功' };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async _seedOverviewConfigFiles(agentId) {
+        if (!agentId) return;
+        try {
+            const [existingSoul] = await pool.query(
+                'SELECT id FROM ai_sub_agent_config_files WHERE agent_id = ? AND file_type = ?',
+                [agentId, 'soul']
+            );
+            if (existingSoul.length === 0) {
+                await pool.execute(
+                    `INSERT INTO ai_sub_agent_config_files (agent_id, file_type, file_name, content, description, is_required, sort_order, version)
+                     VALUES (?, 'soul', 'soul.md', ?, '概述生成智能体核心人设', 1, 1, 1)`,
+                    [agentId, `# 概述生成
+
+## 身份
+你是一个专业的测试管理专家。你的任务是根据一级测试点下的所有测试用例内容，生成一段简洁的概述（summary），帮助测试人员快速了解该测试点的测试范围和重点。
+
+## 能力
+- 分析测试用例的名称、步骤、预期结果等信息
+- 提炼测试点的核心测试方向和重点
+- 生成50-200字的简洁专业概述
+
+## 输出格式
+请直接输出概述文本，不需要任何标题、格式标记或JSON包裹。`]
+                );
+            }
+
+            const [existingUser] = await pool.query(
+                'SELECT id FROM ai_sub_agent_config_files WHERE agent_id = ? AND file_type = ?',
+                [agentId, 'user']
+            );
+            if (existingUser.length === 0) {
+                await pool.execute(
+                    `INSERT INTO ai_sub_agent_config_files (agent_id, file_type, file_name, content, description, is_required, sort_order, version)
+                     VALUES (?, 'user', 'user.md', ?, '概述生成用户提示模板', 1, 2, 1)`,
+                    [agentId, `请为以下一级测试点生成概述：
+
+## 测试点信息
+- 测试点名称: {{pointName}}
+- 测试类型: {{testType}}
+- 测试用例数量: {{caseCount}}
+
+## 测试用例详情
+{{caseInfo}}
+
+请根据以上测试用例的内容，生成一段简洁的概述，总结该测试点的测试内容和目的。`]
+                );
+            }
+        } catch (err) {
+            logger.error('种子 generate_overview 配置文件失败:', { error: err.message });
+        }
+    }
+
+    async _seedKeyConfigConfigFiles(agentId) {
+        if (!agentId) return;
+        try {
+            const [existingSoul] = await pool.query(
+                'SELECT id FROM ai_sub_agent_config_files WHERE agent_id = ? AND file_type = ?',
+                [agentId, 'soul']
+            );
+            if (existingSoul.length === 0) {
+                await pool.execute(
+                    `INSERT INTO ai_sub_agent_config_files (agent_id, file_type, file_name, content, description, is_required, sort_order, version)
+                     VALUES (?, 'soul', 'soul.md', ?, '关键配置生成智能体核心人设', 1, 1, 1)`,
+                    [agentId, `# 关键配置生成
+
+## 身份
+你是一个专业的测试工程师。你的任务是根据测试用例的信息，生成该用例的"关键配置"内容。
+
+## 能力
+- 从前置条件中提取环境要求
+- 从步骤中提取操作命令和参数
+- 识别关键的配置项、命令、参数、环境变量、数据准备等
+
+## 输出格式
+每行一个配置点，使用 "配置项: 值" 或 "- 配置说明" 的格式。如果没有特殊配置，输出 "无特殊配置要求"。不要输出JSON格式。`]
+                );
+            }
+
+            const [existingUser] = await pool.query(
+                'SELECT id FROM ai_sub_agent_config_files WHERE agent_id = ? AND file_type = ?',
+                [agentId, 'user']
+            );
+            if (existingUser.length === 0) {
+                await pool.execute(
+                    `INSERT INTO ai_sub_agent_config_files (agent_id, file_type, file_name, content, description, is_required, sort_order, version)
+                     VALUES (?, 'user', 'user.md', ?, '关键配置生成用户提示模板', 1, 2, 1)`,
+                    [agentId, `请为以下测试用例生成关键配置：
+
+- 用例名称: {{caseName}}
+- 前置条件: {{precondition}}
+- 测试目的: {{purpose}}
+- 测试步骤: {{steps}}
+- 预期结果: {{expected}}`]
+                );
+            }
+        } catch (err) {
+            logger.error('种子 generate_key_config 配置文件失败:', { error: err.message });
+        }
+    }
+
+    async seedDefaultConfigFiles() {
+        try {
+            const agentsExists = await this.checkTableExists('ai_sub_agents');
+            if (!agentsExists) {
+                return { success: true, detail: 'ai_sub_agents 表不存在，跳过' };
+            }
+
+            const configFilesExists = await this.checkTableExists('ai_sub_agent_config_files');
+            if (!configFilesExists) {
+                return { success: true, detail: 'ai_sub_agent_config_files 表不存在，跳过' };
+            }
+
+            const [agents] = await pool.query('SELECT id, agent_code, display_name, description, category FROM ai_sub_agents');
+            if (agents.length === 0) {
+                return { success: true, detail: '没有智能体需要处理' };
+            }
+
+            let inserted = 0;
+
+            const defaultSoulTemplate = `# AI 助手
+
+## 身份
+你是一名AI助手，专门协助测试团队完成各类任务。
+
+## 核心原则
+1. 准确性优先
+2. 建设性反馈
+3. 规范遵循
+
+## 输出格式
+严格按照 JSON 格式输出结果。`;
+
+            const defaultUserTemplate = `# 用户偏好
+
+## 待处理内容
+{{content}}
+
+## 上下文
+{{context}}`;
+
+            for (const agent of agents) {
+                const [existingFiles] = await pool.query(
+                    'SELECT file_type, content FROM ai_sub_agent_config_files WHERE agent_id = ?',
+                    [agent.id]
+                );
+                const existingMap = new Map();
+                existingFiles.forEach(f => existingMap.set(f.file_type, f.content || ''));
+
+                if (!existingMap.has('soul') || !existingMap.get('soul').trim()) {
+                    const customSoul = this._getCustomSoulTemplate(agent.agent_code, agent.display_name, agent.description, agent.category);
+                    if (!existingMap.has('soul')) {
+                        await pool.execute(
+                            `INSERT INTO ai_sub_agent_config_files (agent_id, file_type, file_name, content, description, is_required, sort_order, version)
+                             VALUES (?, 'soul', 'Soul.md', ?, '智能体核心人设文件', 1, 1, 1)`,
+                            [agent.id, customSoul]
+                        );
+                    } else {
+                        await pool.execute(
+                            `UPDATE ai_sub_agent_config_files SET content = ? WHERE agent_id = ? AND file_type = 'soul'`,
+                            [customSoul, agent.id]
+                        );
+                    }
+                    inserted++;
+                }
+
+                if (!existingMap.has('user') || !existingMap.get('user').trim()) {
+                    const customUser = this._getCustomUserTemplate(agent.agent_code);
+                    if (!existingMap.has('user')) {
+                        await pool.execute(
+                            `INSERT INTO ai_sub_agent_config_files (agent_id, file_type, file_name, content, description, is_required, sort_order, version)
+                             VALUES (?, 'user', 'User.md', ?, '用户提示模板', 1, 2, 1)`,
+                            [agent.id, customUser]
+                        );
+                    } else {
+                        await pool.execute(
+                            `UPDATE ai_sub_agent_config_files SET content = ? WHERE agent_id = ? AND file_type = 'user'`,
+                            [customUser, agent.id]
+                        );
+                    }
+                    inserted++;
+                }
+
+                const existingTools = existingMap.get('tools') || '[]';
+                let existingToolsArr = [];
+                try {
+                    existingToolsArr = JSON.parse(existingTools);
+                } catch (e) {}
+                if (!Array.isArray(existingToolsArr)) existingToolsArr = [];
+                
+                if (existingToolsArr.length === 0) {
+                    const defaultTools = this._getDefaultTools(agent.agent_code, agent.category);
+                    if (defaultTools.length > 0) {
+                        if (!existingMap.has('tools')) {
+                            await pool.execute(
+                                `INSERT INTO ai_sub_agent_config_files (agent_id, file_type, file_name, content, description, is_required, sort_order, version)
+                                 VALUES (?, 'tools', 'Tools.md', ?, '工具配置文件', 1, 3, 1)`,
+                                [agent.id, JSON.stringify(defaultTools)]
+                            );
+                        } else {
+                            await pool.execute(
+                                `UPDATE ai_sub_agent_config_files SET content = ? WHERE agent_id = ? AND file_type = 'tools'`,
+                                [JSON.stringify(defaultTools), agent.id]
+                            );
+                        }
+                        inserted++;
+                    }
+                }
+
+                if (!existingMap.has('rule')) {
+                    const customRule = this._getCustomRuleTemplate(agent.agent_code, agent.category);
+                    if (customRule) {
+                        await pool.execute(
+                            `INSERT INTO ai_sub_agent_config_files (agent_id, file_type, file_name, content, description, is_required, sort_order, version)
+                             VALUES (?, 'rule', 'Rule.md', ?, '评审/校验规则文件', 0, 6, 1)`,
+                            [agent.id, customRule]
+                        );
+                        inserted++;
+                    }
+                }
+            }
+
+            return { success: true, detail: `为 ${agents.length} 个智能体插入了 ${inserted} 个默认配置文件` };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async seedDefaultRuleConfigFiles() {
+        try {
+            const agentsExists = await this.checkTableExists('ai_sub_agents');
+            if (!agentsExists) {
+                return { success: true, detail: 'ai_sub_agents 表不存在，跳过' };
+            }
+
+            const configFilesExists = await this.checkTableExists('ai_sub_agent_config_files');
+            if (!configFilesExists) {
+                return { success: true, detail: 'ai_sub_agent_config_files 表不存在，跳过' };
+            }
+
+            const [enumCheck] = await pool.query(
+                "SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ai_sub_agent_config_files' AND COLUMN_NAME = 'file_type'"
+            );
+            if (enumCheck.length > 0 && !enumCheck[0].COLUMN_TYPE.includes('rule')) {
+                await pool.query(
+                    "ALTER TABLE `ai_sub_agent_config_files` MODIFY COLUMN `file_type` ENUM('soul','user','tools','rule','checklist','examples','glossary','template','custom') NOT NULL COMMENT '配置文件类型'"
+                );
+                logger.info('ai_sub_agent_config_files.file_type ENUM 已补充 rule 值');
+            }
+
+            const [agents] = await pool.query('SELECT id, agent_code, category FROM ai_sub_agents WHERE is_system = 1');
+            if (agents.length === 0) {
+                return { success: true, detail: '没有系统智能体需要处理' };
+            }
+
+            let inserted = 0;
+
+            for (const agent of agents) {
+                const [existing] = await pool.query(
+                    'SELECT id FROM ai_sub_agent_config_files WHERE agent_id = ? AND file_type = ?',
+                    [agent.id, 'rule']
+                );
+
+                if (existing.length > 0) continue;
+
+                const customRule = this._getCustomRuleTemplate(agent.agent_code, agent.category);
+                if (!customRule) continue;
+
+                await pool.execute(
+                    `INSERT INTO ai_sub_agent_config_files (agent_id, file_type, file_name, content, description, is_required, sort_order, version)
+                     VALUES (?, 'rule', 'Rule.md', ?, '评审/校验规则文件', 0, 6, 1)`,
+                    [agent.id, customRule]
+                );
+                inserted++;
+            }
+
+            return { success: true, detail: `为 ${inserted} 个系统智能体补充了 Rule.md 配置文件` };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    _getCustomSoulTemplate(agentCode, displayName, description, category) {
+        const templates = {
+            'query_test_statistics': `# 测试统计查询助手
+
+## 身份
+你是一名专业的测试数据分析师，专门负责查询和分析测试统计数据。
+
+## 核心能力
+1. 查询测试用例执行统计
+2. 分析测试覆盖率
+3. 统计缺陷分布
+4. 生成测试报告数据
+
+## 输出格式
+严格按照 JSON 格式输出统计结果，包含清晰的字段说明。`,
+
+            'query_user_tasks': `# 用户任务查询助手
+
+## 身份
+你是一名任务管理助手，专门负责查询和管理用户的测试任务。
+
+## 核心能力
+1. 查询用户待办任务
+2. 统计任务完成情况
+3. 追踪任务进度
+4. 提醒任务截止时间
+
+## 输出格式
+严格按照 JSON 格式输出任务列表和状态信息。`,
+
+            'review_test_cases': `# AI 评审员
+
+## 身份
+你是一名资深的测试用例评审专家，拥有 10 年以上的软件测试经验。
+
+## 核心原则
+1. **准确性优先**：评审意见必须基于事实，不得臆测
+2. **建设性反馈**：拒绝时必须给出具体改进建议
+3. **规范遵循**：严格遵循项目测试用例编写规范
+
+## 评审维度
+1. 用例名称是否清晰准确
+2. 前置条件是否完整
+3. 测试步骤是否可执行
+4. 预期结果是否明确可验证
+
+## 输出格式
+严格按照 JSON 格式输出评审结果。`
+        };
+
+        if (templates[agentCode]) {
+            return templates[agentCode];
+        }
+
+        return `# ${displayName || agentCode}
+
+## 身份
+${description || '你是一名AI助手，专门协助测试团队完成各类任务。'}
+
+## 核心原则
+1. 准确性优先
+2. 建设性反馈
+3. 规范遵循
+
+## 输出格式
+严格按照 JSON 格式输出结果。`;
+    }
+
+    _getCustomUserTemplate(agentCode) {
+        const templates = {
+            'query_test_statistics': `# 统计查询参数
+
+## 查询条件
+- 时间范围: {{timeRange}}
+- 项目: {{project}}
+- 模块: {{module}}
+
+## 输出要求
+{{outputRequirements}}`,
+
+            'query_user_tasks': `# 任务查询参数
+
+## 用户信息
+- 用户ID: {{userId}}
+- 用户名: {{username}}
+
+## 查询条件
+- 任务状态: {{status}}
+- 时间范围: {{timeRange}}`,
+
+            'review_test_cases': `# 待评审用例
+
+## 用例信息
+{{temp_cases_json}}
+
+## 模块上下文
+- 模块名称: {{module_name}}
+- 模块描述: {{module_description}}
+
+## 评审要求
+- 评审数量: {{case_count}} 条
+- 自动通过阈值: {{auto_approve_score}}`
+        };
+
+        if (templates[agentCode]) {
+            return templates[agentCode];
+        }
+
+        return `# 用户偏好
+
+## 待处理内容
+{{content}}
+
+## 上下文
+{{context}}`;
+    }
+
+    _getDefaultTools(agentCode, category) {
+        const toolMappings = {
+            'query_test_statistics': ['query_test_statistics'],
+            'query_user_tasks': ['query_user_tasks'],
+            'analyze_module_coverage': ['analyze_module_coverage'],
+            'generate_test_report': ['generate_test_report'],
+            'review_test_cases': ['spec_checker', 'duplication_checker', 'coverage_analyzer', 'consistency_checker'],
+            'generate_overview': [],
+            'generate_key_config': [],
+            'generate_test_cases': [],
+            'generate_functional_cases': [],
+            'generate_performance_cases': [],
+            'generate_exception_cases': []
+        };
+
+        if (toolMappings[agentCode]) {
+            return toolMappings[agentCode];
+        }
+
+        if (category === 'test_review') {
+            return ['spec_checker', 'duplication_checker'];
+        }
+
+        if (category === 'test_generation') {
+            return [];
+        }
+
+        return [];
+    }
+
+    _getCustomRuleTemplate(agentCode, category) {
+        const templates = {
+            'review_test_cases': `# 评审规则链
+
+## 规则 #1: 格式与规范检查
+**检查维度**: 必填字段、格式规范、命名规范、优先级
+**判定标准**: 4项全部满足->通过，1项不满足->修正后通过
+**检查项**:
+- 用例名称是否包含模块名前缀且格式规范
+- 前置条件是否完整且可满足
+- 测试步骤是否有编号且可执行
+- 预期结果是否明确可验证
+
+## 规则 #2: 深度规则检查
+**检查维度**: 逻辑覆盖、边界值、性能风险、数据流、依赖关系
+**判定标准**: 5项全部满足->通过，1项不满足->修正后通过，2项及以上->需重写
+**检查项**:
+- 是否覆盖正常/异常/边界场景
+- 边界值是否合理
+- 是否存在性能风险
+- 数据流是否正确
+- 依赖关系是否清晰
+
+## 规则 #3: 业务逻辑验证
+**检查维度**: 业务正确性、预期合理性、风险识别、完整性
+**判定标准**: 4项全部满足->通过，1项不满足->修正后通过，2项及以上->需重写
+**检查项**:
+- 业务逻辑是否正确
+- 预期结果是否合理
+- 是否识别潜在风险
+- 用例是否完整覆盖业务场景`,
+
+            'generate_test_cases': `# 生成校验规则链
+
+## 规则 #1: 格式完整性检查
+**检查维度**: 必填字段、格式规范
+**判定标准**: 全部满足->通过，1项不满足->修正后通过
+**检查项**:
+- 用例名称是否包含模块名前缀
+- 前置条件是否明确（无则填"无"）
+- 测试步骤是否有编号且可执行
+- 预期结果是否明确可验证
+
+## 规则 #2: 场景覆盖检查
+**检查维度**: 正常/异常/边界场景覆盖
+**判定标准**: 至少覆盖正常+1类异常->通过
+**检查项**:
+- 是否覆盖正常流程
+- 是否覆盖异常输入场景
+- 是否考虑边界值情况
+- 用例之间是否有重复`,
+
+            'generate_functional_cases': `# 功能用例生成校验规则链
+
+## 规则 #1: 格式完整性检查
+**检查维度**: 必填字段、格式规范
+**判定标准**: 全部满足->通过，1项不满足->修正后通过
+**检查项**:
+- 用例名称是否包含模块名前缀且格式规范
+- 前置条件是否明确（无则填"无"）
+- 测试步骤是否有编号且可执行
+- 预期结果是否明确可验证
+
+## 规则 #2: 功能覆盖检查
+**检查维度**: 功能点覆盖、场景完整性
+**判定标准**: 核心功能全覆盖->通过
+**检查项**:
+- 是否覆盖正向功能流程
+- 是否覆盖异常输入场景
+- 是否考虑边界值情况
+- 功能路径是否完整`,
+
+            'generate_performance_cases': `# 性能用例生成校验规则链
+
+## 规则 #1: 格式完整性检查
+**检查维度**: 必填字段、性能指标
+**判定标准**: 全部满足->通过
+**检查项**:
+- 用例名称是否包含模块名前缀
+- 是否定义性能指标（并发数/响应时间/吞吐量）
+- 测试步骤是否包含负载施加方式
+- 预期结果是否包含量化阈值
+
+## 规则 #2: 性能场景合理性
+**检查维度**: 场景设计、指标合理性
+**判定标准**: 指标可量化且合理->通过
+**检查项**:
+- 并发数设定是否合理
+- 响应时间阈值是否可达成
+- 是否考虑渐增负载场景
+- 是否包含稳定性测试场景`,
+
+            'generate_exception_cases': `# 异常用例生成校验规则链
+
+## 规则 #1: 格式完整性检查
+**检查维度**: 必填字段、异常描述
+**判定标准**: 全部满足->通过
+**检查项**:
+- 用例名称是否包含模块名前缀
+- 前置条件是否说明异常触发前提
+- 测试步骤是否描述异常触发方式
+- 预期结果是否描述异常处理行为
+
+## 规则 #2: 异常场景覆盖
+**检查维度**: 异常类型覆盖、处理合理性
+**判定标准**: 覆盖主要异常类型->通过
+**检查项**:
+- 是否覆盖输入异常场景
+- 是否覆盖环境异常场景
+- 是否覆盖边界溢出场景
+- 异常处理预期是否合理`
+        };
+
+        if (templates[agentCode]) {
+            return templates[agentCode];
+        }
+
+        if (category === 'test_review') {
+            return `# 评审规则链
+
+## 规则 #1: 格式与规范检查
+**检查维度**: 必填字段、格式规范
+**判定标准**: 全部满足->通过，1项不满足->修正后通过
+**检查项**:
+- 用例名称是否规范
+- 前置条件是否完整
+- 测试步骤是否有编号且可执行
+- 预期结果是否明确可验证
+
+## 规则 #2: 内容质量检查
+**检查维度**: 逻辑正确性、场景覆盖
+**判定标准**: 核心项满足->通过
+**检查项**:
+- 逻辑是否正确
+- 是否覆盖关键场景
+- 预期结果是否合理`;
+        }
+
+        if (category === 'test_generation') {
+            return `# 生成校验规则链
+
+## 规则 #1: 格式完整性检查
+**检查维度**: 必填字段、格式规范
+**判定标准**: 全部满足->通过
+**检查项**:
+- 用例名称是否包含模块名前缀
+- 前置条件是否明确
+- 测试步骤是否有编号且可执行
+- 预期结果是否明确可验证
+
+## 规则 #2: 场景覆盖检查
+**检查维度**: 正常/异常场景覆盖
+**判定标准**: 至少覆盖正常+1类异常->通过
+**检查项**:
+- 是否覆盖正常流程
+- 是否覆盖异常场景
+- 用例之间是否有重复`;
+        }
+
+        return null;
+    }
+
+    async ensureBuiltinSubAgents() {
+        try {
+            const agentsExists = await this.checkTableExists('ai_sub_agents');
+            if (!agentsExists) {
+                return { success: true, detail: 'ai_sub_agents 表不存在，跳过' };
+            }
+
+            let detail = '';
+
+            const builtinAgents = [
+                {
+                    agent_code: 'generate_overview',
+                    display_name: '概述生成',
+                    description: '根据一级测试点下的测试用例内容，AI自动生成简洁的测试点概述（summary），帮助快速了解测试范围和重点',
+                    category: 'test_generation',
+                    allow_qa: 0,
+                    seedFn: 'overview'
+                },
+                {
+                    agent_code: 'generate_key_config',
+                    display_name: '关键配置生成',
+                    description: '根据测试用例的名称、前置条件、目的、步骤和预期结果，AI自动生成关键配置信息（命令、参数、环境变量等）',
+                    category: 'test_generation',
+                    allow_qa: 0,
+                    seedFn: 'keyConfig'
+                }
+            ];
+
+            for (const agent of builtinAgents) {
+                const [existing] = await pool.query(
+                    'SELECT id FROM ai_sub_agents WHERE agent_code = ? AND is_system = 1 LIMIT 1',
+                    [agent.agent_code]
+                );
+
+                if (existing.length === 0) {
+                    const [result] = await pool.execute(
+                        `INSERT INTO ai_sub_agents
+                            (agent_code, display_name, description, category, is_system, allow_qa, is_enabled, visibility, memory_enabled, memory_distill_threshold)
+                         VALUES (?, ?, ?, ?, 1, ?, 1, 'public', 1, 2000)`,
+                        [agent.agent_code, agent.display_name, agent.description, agent.category, agent.allow_qa]
+                    );
+                    const agentId = result.insertId;
+                    detail += `插入内置 ${agent.agent_code} 智能体; `;
+
+                    if (agent.seedFn === 'overview') {
+                        await this._seedOverviewConfigFiles(agentId);
+                        detail += `插入 ${agent.agent_code} 配置文件; `;
+                    } else if (agent.seedFn === 'keyConfig') {
+                        await this._seedKeyConfigConfigFiles(agentId);
+                        detail += `插入 ${agent.agent_code} 配置文件; `;
+                    }
+                } else {
+                    if (agent.seedFn === 'overview') {
+                        await this._seedOverviewConfigFiles(existing[0].id);
+                    } else if (agent.seedFn === 'keyConfig') {
+                        await this._seedKeyConfigConfigFiles(existing[0].id);
+                    }
+                }
+            }
+
+            const memoriesExists = await this.checkTableExists('ai_sub_agent_memories');
+            if (memoriesExists) {
+                const memorySeeds = {
+                    'generate_overview': {
+                        content: '## 概述生成知识\n- 概述长度控制在50-200字\n- 概括测试点的主要测试内容和方向\n- 多个方向按重要性简要列举\n- 语言简洁专业，避免冗余\n- 优先参考该测试点下的用例实际内容',
+                        charCount: 82
+                    },
+                    'generate_key_config': {
+                        content: '## 关键配置生成知识\n- 关键配置包括: 命令、参数值、环境变量、数据准备、端口配置等\n- 从前置条件中提取环境要求\n- 从步骤中提取操作命令和参数\n- 格式: "配置项: 值" 或 "- 配置说明"\n- 无特殊配置时输出 "无特殊配置要求"',
+                        charCount: 85
+                    }
+                };
+
+                for (const agentCode of Object.keys(memorySeeds)) {
+                    const [agentRows] = await pool.query(
+                        'SELECT id FROM ai_sub_agents WHERE agent_code = ? AND is_system = 1 LIMIT 1',
+                        [agentCode]
+                    );
+                    if (agentRows.length === 0) continue;
+
+                    const sa = agentRows[0];
+                    const seed = memorySeeds[agentCode];
+
+                    const [existingMemory] = await pool.query(
+                        'SELECT id FROM ai_sub_agent_memories WHERE agent_id = ? AND level = ? AND library_id IS NULL AND module_id IS NULL LIMIT 1',
+                        [sa.id, 'global']
+                    );
+
+                    if (existingMemory.length === 0) {
+                        try {
+                            await pool.execute(
+                                `INSERT INTO ai_sub_agent_memories (agent_id, library_id, module_id, level, content, char_count)
+                                 VALUES (?, NULL, NULL, 'global', ?, ?)`,
+                                [sa.id, seed.content, seed.charCount]
+                            );
+                            detail += `插入 ${agentCode} 记忆种子; `;
+                        } catch (memErr) {
+                            logger.warn(`插入 ${agentCode} 记忆种子失败: ${memErr.message}`);
+                        }
+                    }
+                }
+            }
+
+            return { success: true, detail: detail || '所有内置智能体已存在，无需操作' };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async seedAIGenerationParams() {
+        try {
+            const aiConfigExists = await this.checkTableExists('ai_config');
+            if (!aiConfigExists) {
+                return { success: true, detail: 'ai_config 表不存在，跳过' };
+            }
+
+            const globalParams = [
+                { key: 'temperature', value: '0.3', desc: '全局模型温度参数(0-2)' },
+                { key: 'max_tokens', value: '4000', desc: '全局最大输出Token数' },
+                { key: 'top_p', value: '1.0', desc: 'Top-P核采样阈值(0-1)' },
+                { key: 'frequency_penalty', value: '0', desc: '频率惩罚(-2到2)' },
+                { key: 'presence_penalty', value: '0', desc: '存在惩罚(-2到2)' },
+                { key: 'tool_choice', value: 'auto', desc: '工具调用方式(auto/required/none)' },
+                { key: 'response_format', value: 'text', desc: '响应格式(text/json_object)' },
+                { key: 'request_timeout', value: '120000', desc: '请求超时时间(毫秒)' },
+                { key: 'max_retries', value: '3', desc: '最大重试次数' },
+                { key: 'ai_rate_limit', value: '10', desc: 'AI速率限制(次/分钟)' },
+                { key: 'seed', value: '', desc: '随机种子(留空则随机)' }
+            ];
+
+            const sceneParams = [
+                { key: 'scene_data_analysis', value: '{"temperature":"0.3","max_tokens":"2000","max_context_rounds":"10"}', desc: '数据分析助手场景参数' },
+                { key: 'scene_case_generation', value: '{"temperature":"0.7","max_tokens":"4000"}', desc: '用例生成场景参数' },
+                { key: 'scene_report_analysis', value: '{"temperature":"0.3","max_tokens":"2000"}', desc: '报告分析场景参数' },
+                { key: 'scene_memory_distillation', value: '{"temperature":"0.3","max_tokens":"800"}', desc: '记忆蒸馏场景参数' }
+            ];
+
+            let inserted = 0;
+            let skipped = 0;
+
+            for (const param of [...globalParams, ...sceneParams]) {
+                try {
+                    const [existing] = await pool.query(
+                        'SELECT config_key FROM ai_config WHERE config_key = ?',
+                        [param.key]
+                    );
+                    if (existing.length > 0) {
+                        skipped++;
+                        continue;
+                    }
+                    await pool.execute(
+                        'INSERT INTO ai_config (config_key, config_value, description) VALUES (?, ?, ?)',
+                        [param.key, param.value, param.desc]
+                    );
+                    inserted++;
+                } catch (err) {
+                    if (err.code === 'ER_DUP_ENTRY') {
+                        skipped++;
+                    } else {
+                        logger.warn(`插入AI生成参数 ${param.key} 失败: ${err.message}`);
+                    }
+                }
+            }
+
+            return { success: true, detail: `插入 ${inserted} 条, 跳过 ${skipped} 条` };
         } catch (error) {
             return { success: false, error: error.message };
         }

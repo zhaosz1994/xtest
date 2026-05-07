@@ -23,6 +23,10 @@ class TaskScheduler {
       this.cleanupExpiredTempCases();
     });
 
+    cron.schedule('0 2 * * *', () => {
+      this.cleanupCompletedTasks();
+    });
+
     logger.info('AI用例生成任务调度器已启动');
   }
 
@@ -171,6 +175,39 @@ class TaskScheduler {
       }
     } catch (error) {
       logger.error('清理过期临时用例失败', { error: error.message });
+    }
+  }
+
+  async cleanupCompletedTasks() {
+    try {
+      const [tasks] = await pool.execute(`
+        SELECT t.task_id
+        FROM ai_case_generation_tasks t
+        LEFT JOIN temp_test_cases tc ON t.task_id = tc.task_id AND tc.status != 'merged'
+        LEFT JOIN temp_level1_points tl ON t.task_id = tl.task_id AND tl.status != 'merged'
+        WHERE t.status = 'completed'
+          AND t.completed_at < DATE_SUB(NOW(), INTERVAL 3 DAY)
+          AND tc.id IS NULL
+          AND tl.id IS NULL
+      `);
+
+      if (tasks.length === 0) {
+        return;
+      }
+
+      const taskIds = tasks.map(t => t.task_id);
+      const placeholders = taskIds.map(() => '?').join(',');
+      
+      const [result] = await pool.execute(`
+        DELETE FROM ai_case_generation_tasks 
+        WHERE task_id IN (${placeholders})
+      `, taskIds);
+
+      if (result.affectedRows > 0) {
+        logger.info('清理了已完成的任务', { count: result.affectedRows, taskIds });
+      }
+    } catch (error) {
+      logger.error('清理已完成任务失败', { error: error.message });
     }
   }
 }

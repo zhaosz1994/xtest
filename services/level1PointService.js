@@ -347,8 +347,10 @@ ${materialContent.slice(0, 6000)}
 
   async callAI(aiConfig, systemPrompt, userPrompt, userId) {
     const axios = require('axios');
-    const { getUserAITimeoutConfig } = require('./aiService');
+    const { getUserAITimeoutConfig, getAIGenerationParams, getSceneParams } = require('./aiService');
     const timeoutConfig = await getUserAITimeoutConfig(userId);
+    const genParams = await getAIGenerationParams();
+    const sceneParams = getSceneParams(genParams, 'scene_case_generation');
     const apiKey = aiConfig.api_key;
     const apiUrl = aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
     const model = aiConfig.model_name || 'deepseek-chat';
@@ -359,14 +361,14 @@ ${materialContent.slice(0, 6000)}
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      temperature: 0.3,
-      max_tokens: 2000
+      temperature: sceneParams.temperature,
+      max_tokens: sceneParams.max_tokens
     }, {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
-      timeout: timeoutConfig.generalAITask
+      timeout: timeoutConfig.generalAITask || genParams.request_timeout
     });
 
     return response.data;

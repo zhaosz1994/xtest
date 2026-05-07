@@ -5,7 +5,7 @@ const { authenticateToken, requireAdmin, isAdmin } = require('../middleware');
 const logger = require('../services/logger');
 
 // 合法的 file_type 枚举值
-const VALID_FILE_TYPES = ['soul', 'user', 'tools', 'checklist', 'examples', 'glossary', 'template', 'custom'];
+const VALID_FILE_TYPES = ['soul', 'user', 'tools', 'rule', 'checklist', 'examples', 'glossary', 'template', 'custom', 'ref_doc'];
 
 // 核心配置文件类型，不允许删除
 const CORE_FILE_TYPES = ['soul', 'user', 'tools'];

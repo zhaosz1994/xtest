@@ -131,7 +131,7 @@ function initAIReviewEventListeners() {
             if (radio) {
                 const editArea = document.getElementById('aiCompareEditArea');
                 if (editArea) {
-                    editArea.style.display = radio.value === 'edit_accept' ? 'block' : 'none';
+                    editArea.style.display = (radio.value === 'modified_accepted' || radio.value === 'edit_accept') ? 'block' : 'none';
                 }
             }
 
@@ -140,7 +140,7 @@ function initAIReviewEventListeners() {
                 submitCompareDecision();
             }
 
-            const cancelBtn = e.target.closest('#aiCompareCancelBtn');
+            const cancelBtn = e.target.closest('#aiCompareCancelBtn') || e.target.closest('#aiCompareCancelBtn2');
             if (cancelBtn) {
                 closeCompareModal();
             }
@@ -273,6 +273,8 @@ function renderTaskCard(task) {
             '</div>' : '') +
         '<div class="ai-review-task-footer">' +
             '<span>用例数: ' + (task.total_cases || 0) + '</span>' +
+            (task.needs_human_cases > 0 ? '<span class="ai-review-needs-human-count">⚠️ 需人工介入: ' + task.needs_human_cases + '</span>' : '') +
+            (task.reflection_rounds > 0 ? '<span class="ai-review-reflection-rounds">🔄 反思轮数: ' + task.reflection_rounds + '</span>' : '') +
             '<button class="ai-btn ai-btn-sm ai-btn-primary" data-action="view-results" data-task-id="' + escapeHtml(task.review_task_id) + '">查看结果</button>' +
         '</div>' +
     '</div>';
@@ -347,11 +349,15 @@ function renderStatsCards(results) {
     let rejected = 0;
     let modified = 0;
     let pending = 0;
+    let needsHuman = 0;
     let memoryCount = 0;
 
     results.forEach(function (r) {
         const decision = r.userDecision || r.user_decision || r.decision || r.human_decision || '';
-        if (decision === 'accepted') approved++;
+        const action = r.action || r.ai_action || '';
+        if (action === 'needs_human') {
+            needsHuman++;
+        } else if (decision === 'accepted') approved++;
         else if (decision === 'rejected') rejected++;
         else if (decision === 'edit_accept' || decision === 'modified_accepted' || decision === 'modified') modified++;
         else pending++;
@@ -377,13 +383,18 @@ function renderStatsCards(results) {
             '<div class="ai-review-stat-value">' + modified + '</div>' +
             '<div class="ai-review-stat-label">建议修改</div>' +
         '</div>' +
+        (needsHuman > 0 ?
+            '<div class="ai-review-stat-card ai-review-stat-needs-human">' +
+                '<div class="ai-review-stat-icon">⚠️</div>' +
+                '<div class="ai-review-stat-value">' + needsHuman + '</div>' +
+                '<div class="ai-review-stat-label">需人工介入</div>' +
+            '</div>' : '') +
         '<div class="ai-review-stat-card ai-review-stat-pending">' +
             '<div class="ai-review-stat-icon">⏳</div>' +
             '<div class="ai-review-stat-value">' + pending + '</div>' +
             '<div class="ai-review-stat-label">待决策</div>' +
         '</div>';
 
-    // 记忆贡献提示
     const memoryNote = document.getElementById('ai-review-memory-note');
     if (memoryNote) {
         if (memoryCount > 0) {
@@ -422,19 +433,28 @@ function renderResultRow(result) {
     const score = result.aiScore != null ? result.aiScore : (result.ai_score != null ? result.ai_score : '-');
     const diffSummary = result.diffSummary || result.diff_summary || '';
     const decision = result.userDecision || result.user_decision || result.decision || result.human_decision || '';
+    const confidenceScore = result.confidenceScore != null ? result.confidenceScore : (result.confidence_score != null ? result.confidence_score : null);
+    const reflectionHistory = result.reflectionHistory || result.reflection_history || null;
+    const reflectionRounds = (reflectionHistory && Array.isArray(reflectionHistory)) ? reflectionHistory.length : 0;
     const taskId = aiReviewCurrentTaskId || '';
 
     const actionMap = {
         add: '新增',
         modify: '修改',
         delete: '删除',
-        keep: '保留'
+        keep: '保留',
+        approve: '通过',
+        reject: '拒绝',
+        needs_human: '需人工介入'
     };
     const actionClassMap = {
         add: 'ai-review-action-add',
         modify: 'ai-review-action-modify',
         delete: 'ai-review-action-delete',
-        keep: 'ai-review-action-keep'
+        keep: 'ai-review-action-keep',
+        approve: 'ai-review-action-approve',
+        reject: 'ai-review-action-reject',
+        needs_human: 'ai-review-action-needs-human'
     };
     const decisionMap = {
         accepted: '已采纳',
@@ -473,6 +493,8 @@ function renderResultRow(result) {
         '<td class="ai-review-case-name">' + escapeHtml(caseName) + '</td>' +
         '<td><span class="ai-review-action-badge ' + (actionClassMap[action] || '') + '">' + escapeHtml(displayAction) + '</span></td>' +
         '<td>' + (typeof score === 'number' ? '<span class="ai-review-score">' + score + '</span>' : score) + '</td>' +
+        '<td>' + (confidenceScore != null ? '<span class="ai-review-confidence' + (confidenceScore >= 80 ? ' ai-confidence-high' : confidenceScore >= 50 ? ' ai-confidence-medium' : ' ai-confidence-low') + '">' + confidenceScore + '</span>' : '-') + '</td>' +
+        '<td>' + (reflectionRounds > 0 ? '<span class="ai-review-rounds">' + reflectionRounds + '</span>' : '-') + '</td>' +
         '<td class="ai-review-diff-summary">' + escapeHtml(diffSummary) + '</td>' +
         '<td>' + decisionHtml + '</td>' +
         '<td class="ai-review-actions">' + actionsHtml + '</td>' +
@@ -543,23 +565,19 @@ function renderCompareModal(data, reviewTaskId, tempCaseId) {
     const editArea = document.getElementById('aiCompareEditArea');
     const editTextarea = document.getElementById('aiCompareEditText');
 
-    // 原始用例
     if (originalContent) {
         originalContent.innerHTML = renderCaseContent(data.original || {});
     }
 
-    // AI建议修改
     if (suggestedContent) {
         suggestedContent.innerHTML = renderCaseContent(data.suggested || data.ai_suggested || {});
     }
 
-    // Diff摘要
     if (diffSection) {
         const diffContent = data.diffSummary || data.diff_summary || data.diffDetail || data.diff_detail || data.diff || '无差异摘要';
         diffSection.innerHTML = '<h4>Diff摘要</h4><div class="ai-compare-diff-body">' + escapeHtml(diffContent).replace(/\n/g, '<br>') + '</div>';
     }
 
-    // 记忆贡献
     if (memoryNote) {
         const memCount = data.memory_count || 0;
         if (memCount > 0) {
@@ -570,25 +588,105 @@ function renderCompareModal(data, reviewTaskId, tempCaseId) {
         }
     }
 
-    // AI评论
     if (commentSection) {
-        commentSection.innerHTML = '<h4>AI评审意见</h4><div class="ai-compare-comment-body">' + escapeHtml(data.ai_comment || data.comment || '无评审意见') + '</div>';
+        let commentHtml = '<h4>评审详情</h4>';
+
+        commentHtml += '<div class="ai-compare-basic-info">';
+        const actionLabel = { approve: '通过', reject: '拒绝', modify: '建议修改', needs_human: '需人工介入' };
+        commentHtml += '<div class="ai-compare-info-item"><span class="ai-compare-info-label">评审结果:</span> <span class="ai-review-action-badge ' + (actionLabel[data.action] ? 'ai-review-action-' + data.action : '') + '">' + escapeHtml(actionLabel[data.action] || data.action || '-') + '</span></div>';
+
+        if (data.aiScore != null) {
+            commentHtml += '<div class="ai-compare-info-item"><span class="ai-compare-info-label">评审分数:</span> ' + data.aiScore + '</div>';
+        }
+
+        if (data.confidenceScore != null) {
+            commentHtml += '<div class="ai-compare-info-item"><span class="ai-compare-info-label">置信度:</span> <span class="ai-compare-confidence-value' +
+                (data.confidenceScore >= 80 ? ' ai-confidence-high' : data.confidenceScore >= 50 ? ' ai-confidence-medium' : ' ai-confidence-low') +
+                '">' + data.confidenceScore + '</span>/100</div>';
+        }
+
+        if (data.failedRule != null) {
+            commentHtml += '<div class="ai-compare-failed-rule">⚠️ 熔断规则: 规则#' + data.failedRule + '</div>';
+        }
+
+        if (data.finalRulePassed != null) {
+            commentHtml += '<div class="ai-compare-passed-rule">✅ 最终通过规则: 规则#' + data.finalRulePassed + '</div>';
+        }
+        commentHtml += '</div>';
+
+        commentHtml += '<div class="ai-compare-comment-body">' + escapeHtml(data.aiComment || data.ai_comment || data.comment || '无评审意见') + '</div>';
+
+        commentSection.innerHTML = commentHtml;
     }
 
-    // 重置决策区域
+    renderReflectionTimeline(data.reflectionHistory || data.reflection_history, data.failedRule != null ? data.failedRule : (data.failed_rule != null ? data.failed_rule : null));
+
     const radios = document.querySelectorAll('input[name="compareDecision"]');
     radios.forEach(function (r) { r.checked = false; });
 
     if (editArea) editArea.style.display = 'none';
     if (editTextarea) editTextarea.value = formatSuggestedContent(data.suggested || data.ai_suggested || {});
 
-    // 评论文本框
     const userComment = document.getElementById('aiCompareUserComment');
     if (userComment) userComment.value = '';
 
-    // 存储当前上下文
     modal.dataset.reviewTaskId = reviewTaskId;
     modal.dataset.tempCaseId = tempCaseId;
+}
+
+function renderReflectionTimeline(history, failedRule) {
+    let container = document.getElementById('aiCompareReflectionTimeline');
+    if (!container) {
+        const modal = document.getElementById('aiCompareModal');
+        if (!modal) return;
+        const modalBody = modal.querySelector('.ai-compare-modal-body') || modal.querySelector('.modal-body');
+        if (!modalBody) return;
+        const timelineDiv = document.createElement('div');
+        timelineDiv.id = 'aiCompareReflectionTimeline';
+        timelineDiv.className = 'ai-compare-reflection-timeline';
+        modalBody.appendChild(timelineDiv);
+        container = timelineDiv;
+    }
+
+    if (!history || !Array.isArray(history) || history.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+
+    container.style.display = 'block';
+
+    let html = '<h4>阶梯评审履历</h4><div class="ai-reflection-timeline">';
+
+    history.forEach(function (entry, index) {
+        let isPassed = false;
+        let isCircuitBreak = false;
+        let entryType = '';
+        let displayText = '';
+
+        if (typeof entry === 'object' && entry.type) {
+            entryType = entry.type;
+            displayText = entry.text || entry.summary || '';
+            isPassed = entryType === 'passed';
+            isCircuitBreak = failedRule != null && entryType === 'error' && index === history.length - 1;
+        } else if (typeof entry === 'string') {
+            displayText = entry;
+            isPassed = entry.includes('通过');
+            isCircuitBreak = failedRule != null && (entry.includes('异常') || entry.includes('熔断')) && index === history.length - 1;
+        }
+
+        const statusClass = isPassed ? 'ai-timeline-passed' : (isCircuitBreak ? 'ai-timeline-circuit-break' : 'ai-timeline-retry');
+        const icon = isPassed ? '✅' : (isCircuitBreak ? '🔴' : '🔄');
+
+        html += '<div class="ai-timeline-item ' + statusClass + '">' +
+            '<div class="ai-timeline-icon">' + icon + '</div>' +
+            '<div class="ai-timeline-content">' +
+                '<div class="ai-timeline-text">' + escapeHtml(displayText) + '</div>' +
+            '</div>' +
+        '</div>';
+    });
+
+    html += '</div>';
+    container.innerHTML = html;
 }
 
 /**

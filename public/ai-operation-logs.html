@@ -240,13 +240,17 @@
             background: white;
             border-radius: 12px;
             box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
-            max-width: 800px;
-            width: 90%;
-            max-height: 80vh;
+            width: 900px;
+            max-width: 95vw;
+            min-width: 600px;
+            height: 80vh;
+            min-height: 600px;
             display: flex;
             flex-direction: column;
             transform: scale(0.9);
             transition: transform 0.3s;
+            resize: both;
+            overflow: hidden;
         }
         
         .sql-modal-overlay.active .sql-modal {
@@ -292,6 +296,9 @@
             padding: 20px;
             overflow-y: auto;
             flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
         }
         
         .sql-content {
@@ -467,6 +474,112 @@
         .source-badge.generation { background: #e8f5e9; color: #2e7d32; }
         .source-badge.agent_loop { background: #fff3e0; color: #e65100; }
         .source-badge.test_run { background: #fce4ec; color: #c62828; }
+
+        .trigger-type-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+        .trigger-type-badge.generation { background: #e8f5e9; color: #2e7d32; }
+        .trigger-type-badge.generation_overview { background: #c8e6c9; color: #1b5e20; }
+        .trigger-type-badge.generation_key_config { background: #b2dfdb; color: #00695c; }
+        .trigger-type-badge.review { background: #e3f2fd; color: #1565c0; }
+        .trigger-type-badge.qa { background: #f3e5f5; color: #7b1fa2; }
+        .trigger-type-badge.agent { background: #fff3e0; color: #e65100; }
+        .trigger-type-badge.memory_refine { background: #fce4ec; color: #c62828; }
+        .trigger-type-badge.reflection { background: #efebe9; color: #4e342e; }
+
+        .rl-detail-info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px 20px;
+            margin-bottom: 16px;
+            flex-shrink: 0;
+        }
+        .rl-detail-token-section {
+            flex-shrink: 0;
+        }
+        .rl-detail-info-item {
+            display: flex;
+            gap: 8px;
+        }
+        .rl-detail-info-item label {
+            font-weight: bold;
+            color: #666;
+            min-width: 80px;
+            white-space: nowrap;
+        }
+        .rl-detail-info-item span {
+            color: #333;
+        }
+        .rl-detail-token-bar {
+            background: #f0f0f0;
+            border-radius: 4px;
+            height: 8px;
+            margin-top: 6px;
+            overflow: hidden;
+        }
+        .rl-detail-token-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #2196F3);
+            border-radius: 4px;
+        }
+        .rl-detail-tabs {
+            display: flex;
+            border-bottom: 2px solid #e0e0e0;
+            margin-bottom: 12px;
+            flex-shrink: 0;
+        }
+        .rl-detail-tab-btn {
+            padding: 8px 16px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 13px;
+            color: #666;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s;
+        }
+        .rl-detail-tab-btn:hover { color: #4CAF50; }
+        .rl-detail-tab-btn.active {
+            color: #4CAF50;
+            border-bottom-color: #4CAF50;
+            font-weight: bold;
+        }
+        .rl-detail-content {
+            display: none;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+        }
+        .rl-detail-content.active {
+            display: flex;
+            flex-direction: column;
+        }
+        .rl-detail-text {
+            background: #f5f5f5;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 16px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: #333;
+            height: 100%;
+            overflow-y: auto;
+            box-sizing: border-box;
+        }
+        .rl-clickable-row {
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .rl-clickable-row:hover {
+            background: #e8f5e9 !important;
+        }
         
         @media (max-width: 768px) {
             .overview-cards {
@@ -563,6 +676,7 @@
         <div class="tabs-container">
             <div class="tabs-header">
                 <button class="tab-btn active" data-tab="overview">📈 概览</button>
+                <button class="tab-btn" data-tab="request-logs">📝 AI请求日志</button>
                 <button class="tab-btn" data-tab="recent">📋 最近操作</button>
                 <button class="tab-btn" data-tab="failed">❌ 失败操作</button>
                 <button class="tab-btn" data-tab="skill-stats">🤖 技能统计</button>
@@ -592,6 +706,48 @@
                             <canvas id="top-users-chart"></canvas>
                         </div>
                     </div>
+                </div>
+            </div>
+            
+            <!-- AI请求日志标签页 -->
+            <div class="tab-content" id="request-logs-tab">
+                <div class="filter-bar">
+                    <label>触发类型:</label>
+                    <select id="rl-trigger-type">
+                        <option value="">全部</option>
+                        <option value="generation">AI生成用例</option>
+                        <option value="generation_overview">AI生成概述</option>
+                        <option value="generation_key_config">AI生成关键配置</option>
+                        <option value="review">AI评审</option>
+                        <option value="qa">AI问答</option>
+                        <option value="agent">Agent执行</option>
+                        <option value="memory_refine">记忆提炼</option>
+                        <option value="reflection">反思管道</option>
+                    </select>
+                    <label>状态:</label>
+                    <select id="rl-status">
+                        <option value="">全部</option>
+                        <option value="success">成功</option>
+                        <option value="failed">失败</option>
+                    </select>
+                    <label>关键词:</label>
+                    <input type="text" id="rl-keyword" placeholder="搜索Prompt/Response" style="width:200px;">
+                    <button class="time-range-btn active" id="rl-search-btn" style="padding:6px 16px;">🔍 搜索</button>
+                </div>
+                <div class="stats-grid" id="rl-stats-grid" style="margin-bottom:20px;">
+                    <div class="stat-item"><label>总请求数</label><div class="value" id="rl-total-requests">-</div></div>
+                    <div class="stat-item"><label>成功</label><div class="value" id="rl-success-count" style="color:#4CAF50">-</div></div>
+                    <div class="stat-item"><label>失败</label><div class="value" id="rl-failed-count" style="color:#f44336">-</div></div>
+                    <div class="stat-item"><label>总Token消耗</label><div class="value" id="rl-total-tokens">-</div></div>
+                </div>
+                <div id="rl-logs-container">
+                    <div class="loading">点击标签页加载数据...</div>
+                </div>
+                <div id="rl-pagination" style="display:none; margin-top:20px; justify-content:center; align-items:center; gap:10px;">
+                    <span id="rl-pagination-info"></span>
+                    <button class="time-range-btn" id="rl-prev-page">← 上一页</button>
+                    <span id="rl-page-indicator"></span>
+                    <button class="time-range-btn" id="rl-next-page">下一页 →</button>
                 </div>
             </div>
             
@@ -671,6 +827,19 @@
         </div>
     </div>
     
+    <div class="sql-modal-overlay" id="rl-detail-overlay">
+        <div class="sql-modal" style="max-width:900px;">
+            <div class="sql-modal-header">
+                <h3>📝 AI请求日志详情</h3>
+                <button class="sql-modal-close" id="rl-detail-close">&times;</button>
+            </div>
+            <div class="sql-modal-body" id="rl-detail-body">
+            </div>
+            <div class="sql-modal-footer" id="rl-detail-footer">
+            </div>
+        </div>
+    </div>
+    
     <script src="js/socket.io.min.js"></script>
     <script>
         let currentDays = 30;
@@ -706,6 +875,7 @@
             checkAuthentication();
             initializeTabs();
             initializeTimeRangeSelector();
+            restoreTabFromUrl();
             loadOverview();
         });
         
@@ -731,12 +901,34 @@
                     btn.classList.add('active');
                     document.getElementById(`${tabName}-tab`).classList.add('active');
                     
+                    history.replaceState(null, '', `#tab=${tabName}`);
+                    
                     loadTabContent(tabName);
                 });
             });
             
             document.getElementById('recent-limit').addEventListener('change', () => loadRecentLogs());
             document.getElementById('failed-limit').addEventListener('change', () => loadFailedLogs());
+        }
+        
+        function restoreTabFromUrl() {
+            const hash = window.location.hash;
+            const match = hash.match(/tab=([^&]+)/);
+            if (match) {
+                const tabName = match[1];
+                const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+                if (tabBtn) {
+                    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                    
+                    tabBtn.classList.add('active');
+                    const tabContent = document.getElementById(`${tabName}-tab`);
+                    if (tabContent) {
+                        tabContent.classList.add('active');
+                        loadTabContent(tabName);
+                    }
+                }
+            }
         }
         
         function initializeTimeRangeSelector() {
@@ -1216,6 +1408,9 @@
         
         function loadTabContent(tabName) {
             switch (tabName) {
+                case 'request-logs':
+                    loadRequestLogs();
+                    break;
                 case 'recent':
                     loadRecentLogs();
                     break;
@@ -1877,6 +2072,345 @@
                     }
                 }
             });
+        }
+
+        let rlCurrentPage = 1;
+        let rlTotalPages = 1;
+        let rlIsAdmin = false;
+
+        const TRIGGER_TYPE_LABELS = {
+            'generation': 'AI生成用例',
+            'generation_overview': 'AI生成概述',
+            'generation_key_config': 'AI生成关键配置',
+            'review': 'AI评审',
+            'qa': 'AI问答',
+            'agent': 'Agent执行',
+            'memory_refine': '记忆提炼',
+            'reflection': '反思管道'
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const searchBtn = document.getElementById('rl-search-btn');
+            if (searchBtn) {
+                searchBtn.addEventListener('click', () => {
+                    rlCurrentPage = 1;
+                    loadRequestLogs();
+                });
+            }
+            const keywordInput = document.getElementById('rl-keyword');
+            if (keywordInput) {
+                keywordInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        rlCurrentPage = 1;
+                        loadRequestLogs();
+                    }
+                });
+            }
+            const prevBtn = document.getElementById('rl-prev-page');
+            if (prevBtn) {
+                prevBtn.addEventListener('click', () => {
+                    if (rlCurrentPage > 1) {
+                        rlCurrentPage--;
+                        loadRequestLogs();
+                    }
+                });
+            }
+            const nextBtn = document.getElementById('rl-next-page');
+            if (nextBtn) {
+                nextBtn.addEventListener('click', () => {
+                    if (rlCurrentPage < rlTotalPages) {
+                        rlCurrentPage++;
+                        loadRequestLogs();
+                    }
+                });
+            }
+            const detailCloseBtn = document.getElementById('rl-detail-close');
+            if (detailCloseBtn) {
+                detailCloseBtn.addEventListener('click', closeRlDetailModal);
+            }
+            const detailOverlay = document.getElementById('rl-detail-overlay');
+            if (detailOverlay) {
+                detailOverlay.addEventListener('click', (e) => {
+                    if (e.target === detailOverlay) closeRlDetailModal();
+                });
+            }
+        });
+
+        async function loadRequestLogs() {
+            const container = document.getElementById('rl-logs-container');
+            container.innerHTML = '<div class="loading">加载中...</div>';
+
+            const triggerType = document.getElementById('rl-trigger-type').value;
+            const status = document.getElementById('rl-status').value;
+            const keyword = document.getElementById('rl-keyword').value;
+
+            let url = `/api/ai-operation-logs/request-logs?page=${rlCurrentPage}&pageSize=20`;
+            if (triggerType) url += `&triggerType=${encodeURIComponent(triggerType)}`;
+            if (status) url += `&status=${encodeURIComponent(status)}`;
+            if (keyword) url += `&keyword=${encodeURIComponent(keyword)}`;
+
+            try {
+                const data = await apiRequest(url);
+                if (data.success) {
+                    rlIsAdmin = data.isAdmin;
+                    rlTotalPages = Math.ceil(data.pagination.total / data.pagination.pageSize) || 1;
+                    updateRlPagination(data.pagination);
+                    loadRequestLogsStats();
+                    if (data.logs.length > 0) {
+                        container.innerHTML = renderRequestLogsTable(data.logs);
+                    } else {
+                        container.innerHTML = '<div class="no-data">暂无AI请求日志数据</div>';
+                    }
+                } else {
+                    container.innerHTML = '<div class="no-data">加载失败</div>';
+                }
+            } catch (error) {
+                container.innerHTML = '<div class="no-data">加载失败</div>';
+                console.error('加载AI请求日志失败:', error);
+            }
+        }
+
+        async function loadRequestLogsStats() {
+            try {
+                const data = await apiRequest('/api/ai-operation-logs/request-logs/stats');
+                if (data.success) {
+                    const s = data.stats;
+                    document.getElementById('rl-total-requests').textContent = s.totalRequests || 0;
+                    document.getElementById('rl-success-count').textContent = s.successCount || 0;
+                    document.getElementById('rl-failed-count').textContent = s.failedCount || 0;
+                    document.getElementById('rl-total-tokens').textContent = formatNumber(s.totalTokens || 0);
+                }
+            } catch (error) {
+                console.error('加载AI请求日志统计失败:', error);
+            }
+        }
+
+        function updateRlPagination(pagination) {
+            const paginationEl = document.getElementById('rl-pagination');
+            const infoEl = document.getElementById('rl-pagination-info');
+            const indicatorEl = document.getElementById('rl-page-indicator');
+            const prevBtn = document.getElementById('rl-prev-page');
+            const nextBtn = document.getElementById('rl-next-page');
+
+            if (pagination.total === 0) {
+                paginationEl.style.display = 'none';
+                return;
+            }
+
+            paginationEl.style.display = 'flex';
+            infoEl.textContent = `共 ${pagination.total} 条`;
+            indicatorEl.textContent = `第 ${pagination.page}/${rlTotalPages} 页`;
+            prevBtn.disabled = pagination.page <= 1;
+            nextBtn.disabled = pagination.page >= rlTotalPages;
+            prevBtn.style.opacity = pagination.page <= 1 ? '0.5' : '1';
+            nextBtn.style.opacity = pagination.page >= rlTotalPages ? '0.5' : '1';
+        }
+
+        function renderRequestLogsTable(logs) {
+            let html = `
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            ${rlIsAdmin ? '<th>用户</th>' : ''}
+                            <th>触发类型</th>
+                            <th>来源</th>
+                            <th>Prompt预览</th>
+                            <th>Token</th>
+                            <th>耗时</th>
+                            <th>模型</th>
+                            <th>状态</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            logs.forEach(log => {
+                const time = formatDateTime(log.created_at);
+                const statusClass = log.status === 'success' ? 'success' : 'failed';
+                const statusText = log.status === 'success' ? '成功' : '失败';
+                const tokenDisplay = log.total_tokens ? formatNumber(log.total_tokens) : '-';
+                const typeLabel = TRIGGER_TYPE_LABELS[log.trigger_type] || log.trigger_type;
+                const sourceDisplay = log.trigger_source_name || log.trigger_source || '-';
+                const promptPreview = escapeHtml(log.user_prompt_preview || log.system_prompt_preview || '-');
+
+                html += `
+                    <tr class="rl-clickable-row" data-log-id="${log.id}">
+                        <td>${time}</td>
+                        ${rlIsAdmin ? `<td>${escapeHtml(log.username || '用户' + log.user_id)}</td>` : ''}
+                        <td><span class="trigger-type-badge ${escapeHtml(log.trigger_type)}">${escapeHtml(typeLabel)}</span></td>
+                        <td>${escapeHtml(sourceDisplay)}</td>
+                        <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#666;">${promptPreview}</td>
+                        <td title="提示词: ${log.prompt_tokens || 0} | 完成: ${log.completion_tokens || 0}">${tokenDisplay}</td>
+                        <td>${log.execution_time_ms ? (log.execution_time_ms >= 1000 ? (log.execution_time_ms / 1000).toFixed(1) + 's' : log.execution_time_ms + 'ms') : '-'}</td>
+                        <td style="font-size:12px;">${escapeHtml(log.model_name || '-')}</td>
+                        <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+
+            setTimeout(() => {
+                document.querySelectorAll('.rl-clickable-row').forEach(row => {
+                    row.addEventListener('click', () => {
+                        const logId = row.dataset.logId;
+                        openRlDetailModal(logId);
+                    });
+                });
+            }, 50);
+
+            return html;
+        }
+
+        async function openRlDetailModal(logId) {
+            const overlay = document.getElementById('rl-detail-overlay');
+            const body = document.getElementById('rl-detail-body');
+            const footer = document.getElementById('rl-detail-footer');
+
+            body.innerHTML = '<div class="loading">加载中...</div>';
+            footer.innerHTML = '';
+            overlay.classList.add('active');
+
+            try {
+                const data = await apiRequest(`/api/ai-operation-logs/request-logs/${logId}`);
+                if (data.success) {
+                    renderRlDetail(data.log, body, footer);
+                } else {
+                    body.innerHTML = '<div class="no-data">加载失败</div>';
+                }
+            } catch (error) {
+                body.innerHTML = '<div class="no-data">加载失败</div>';
+                console.error('加载日志详情失败:', error);
+            }
+        }
+
+        function renderRlDetail(log, bodyEl, footerEl) {
+            const typeLabel = TRIGGER_TYPE_LABELS[log.trigger_type] || log.trigger_type;
+            const statusText = log.status === 'success' ? '✅ 成功' : '❌ 失败';
+            const promptRatio = log.total_tokens > 0 ? Math.round((log.prompt_tokens / log.total_tokens) * 100) : 0;
+            const compRatio = 100 - promptRatio;
+
+            let infoHtml = `
+                <div class="rl-detail-info-grid">
+                    <div class="rl-detail-info-item"><label>触发类型:</label><span><span class="trigger-type-badge ${escapeHtml(log.trigger_type)}">${escapeHtml(typeLabel)}</span></span></div>
+                    <div class="rl-detail-info-item"><label>来源:</label><span>${escapeHtml(log.trigger_source_name || log.trigger_source || '-')}</span></div>
+                    <div class="rl-detail-info-item"><label>触发用户:</label><span>${escapeHtml(log.username || '用户' + log.user_id)}</span></div>
+                    <div class="rl-detail-info-item"><label>触发时间:</label><span>${formatDateTime(log.created_at)}</span></div>
+                    <div class="rl-detail-info-item"><label>状态:</label><span>${statusText}</span></div>
+                    <div class="rl-detail-info-item"><label>耗时:</label><span>${log.execution_time_ms ? (log.execution_time_ms >= 1000 ? (log.execution_time_ms / 1000).toFixed(1) + 's' : log.execution_time_ms + 'ms') : '-'}</span></div>
+                    <div class="rl-detail-info-item"><label>模型:</label><span>${escapeHtml(log.model_name || '-')}</span></div>
+                    <div class="rl-detail-info-item"><label>IP:</label><span>${escapeHtml(log.ip_address || '-')}</span></div>
+                </div>
+            `;
+
+            let tokenHtml = `
+                <div class="rl-detail-token-section" style="margin-bottom:16px;">
+                    <div style="display:flex;gap:20px;margin-bottom:4px;">
+                        <span>提示词Token: <strong>${(log.prompt_tokens || 0).toLocaleString()}</strong></span>
+                        <span>完成Token: <strong>${(log.completion_tokens || 0).toLocaleString()}</strong></span>
+                        <span>总计: <strong>${(log.total_tokens || 0).toLocaleString()}</strong></span>
+                        <span style="color:#999;">(${promptRatio}% Prompt / ${compRatio}% Comp)</span>
+                    </div>
+                    <div class="rl-detail-token-bar">
+                        <div class="rl-detail-token-bar-fill" style="width:${promptRatio}%;"></div>
+                    </div>
+                </div>
+            `;
+
+            let tabsHtml = `
+                <div class="rl-detail-tabs">
+                    <button class="rl-detail-tab-btn active" data-rl-tab="system">System Prompt</button>
+                    <button class="rl-detail-tab-btn" data-rl-tab="user">User Prompt</button>
+                    <button class="rl-detail-tab-btn" data-rl-tab="response">AI Response</button>
+                    ${log.error_message ? '<button class="rl-detail-tab-btn" data-rl-tab="error">错误信息</button>' : ''}
+                </div>
+                <div class="rl-detail-content active" id="rl-tab-system">
+                    <div class="rl-detail-text" id="rl-text-system"></div>
+                </div>
+                <div class="rl-detail-content" id="rl-tab-user">
+                    <div class="rl-detail-text" id="rl-text-user"></div>
+                </div>
+                <div class="rl-detail-content" id="rl-tab-response">
+                    <div class="rl-detail-text" id="rl-text-response"></div>
+                </div>
+                ${log.error_message ? '<div class="rl-detail-content" id="rl-tab-error"><div class="rl-detail-text" style="color:#f44336;" id="rl-text-error"></div></div>' : ''}
+            `;
+
+            bodyEl.innerHTML = infoHtml + tokenHtml + tabsHtml;
+
+            footerEl.innerHTML = `
+                <button class="copy-btn" id="rl-copy-system">复制 System Prompt</button>
+                <button class="copy-btn" id="rl-copy-user">复制 User Prompt</button>
+                <button class="copy-btn" id="rl-copy-response">复制 AI Response</button>
+            `;
+
+            setTimeout(() => {
+                const MAX_DISPLAY_LEN = 100000;
+                function safeSetText(elementId, text, label) {
+                    const el = document.getElementById(elementId);
+                    if (!el) return;
+                    if (!text) {
+                        el.textContent = '(无)';
+                        return;
+                    }
+                    if (text.length > MAX_DISPLAY_LEN) {
+                        el.textContent = text.substring(0, MAX_DISPLAY_LEN) +
+                            '\n\n... (文本过长，已截断显示。原始长度: ' + text.length + ' 字符)';
+                    } else {
+                        el.textContent = text;
+                    }
+                }
+                safeSetText('rl-text-system', log.system_prompt, 'System Prompt');
+                safeSetText('rl-text-user', log.user_prompt, 'User Prompt');
+                safeSetText('rl-text-response', log.ai_response, 'AI Response');
+                safeSetText('rl-text-error', log.error_message, '错误信息');
+
+                bodyEl.querySelectorAll('.rl-detail-tab-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        bodyEl.querySelectorAll('.rl-detail-tab-btn').forEach(b => b.classList.remove('active'));
+                        bodyEl.querySelectorAll('.rl-detail-content').forEach(c => c.classList.remove('active'));
+                        btn.classList.add('active');
+                        const tabId = 'rl-tab-' + btn.dataset.rlTab;
+                        const tabContent = document.getElementById(tabId);
+                        if (tabContent) tabContent.classList.add('active');
+                    });
+                });
+
+                const copySystemBtn = document.getElementById('rl-copy-system');
+                const copyUserBtn = document.getElementById('rl-copy-user');
+                const copyResponseBtn = document.getElementById('rl-copy-response');
+
+                if (copySystemBtn) {
+                    copySystemBtn.addEventListener('click', () => {
+                        navigator.clipboard.writeText(log.system_prompt || '').then(() => {
+                            copySystemBtn.textContent = '已复制!';
+                            setTimeout(() => { copySystemBtn.textContent = '复制 System Prompt'; }, 2000);
+                        });
+                    });
+                }
+                if (copyUserBtn) {
+                    copyUserBtn.addEventListener('click', () => {
+                        navigator.clipboard.writeText(log.user_prompt || '').then(() => {
+                            copyUserBtn.textContent = '已复制!';
+                            setTimeout(() => { copyUserBtn.textContent = '复制 User Prompt'; }, 2000);
+                        });
+                    });
+                }
+                if (copyResponseBtn) {
+                    copyResponseBtn.addEventListener('click', () => {
+                        navigator.clipboard.writeText(log.ai_response || '').then(() => {
+                            copyResponseBtn.textContent = '已复制!';
+                            setTimeout(() => { copyResponseBtn.textContent = '复制 AI Response'; }, 2000);
+                        });
+                    });
+                }
+            }, 50);
+        }
+
+        function closeRlDetailModal() {
+            const overlay = document.getElementById('rl-detail-overlay');
+            overlay.classList.remove('active');
         }
     </script>
 </body>

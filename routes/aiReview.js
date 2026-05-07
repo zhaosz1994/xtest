@@ -137,6 +137,8 @@ router.get('/task/list', authenticateToken, async (req, res) => {
         approved_cases: t.approved_cases,
         rejected_cases: t.rejected_cases,
         modified_cases: t.modified_cases,
+        needs_human_cases: t.needs_human_cases || 0,
+        reflection_rounds: t.reflection_rounds || 0,
         progress: t.total_cases > 0 ? Math.round((t.reviewed_cases / t.total_cases) * 100) : 0,
         error_message: t.error_message,
         started_at: t.started_at,
@@ -183,6 +185,8 @@ router.get('/task/:reviewTaskId', authenticateToken, async (req, res) => {
         approvedCases: task.approved_cases,
         rejectedCases: task.rejected_cases,
         modifiedCases: task.modified_cases,
+        needsHumanCases: task.needs_human_cases || 0,
+        reflectionRounds: task.reflection_rounds || 0,
         errorMessage: task.error_message,
         startedAt: task.started_at,
         completedAt: task.completed_at,
@@ -241,7 +245,11 @@ router.get('/results/:reviewTaskId', authenticateToken, async (req, res) => {
         decidedAt: r.decided_at,
         decidedBy: r.decided_by,
         createdAt: r.created_at,
-        updatedAt: r.updated_at
+        updatedAt: r.updated_at,
+        reflectionHistory: r.reflection_history ? safeJsonParse(r.reflection_history) : null,
+        finalRulePassed: r.final_rule_passed || null,
+        failedRule: r.failed_rule || null,
+        confidenceScore: r.confidence_score || null
       }))
     });
   } catch (error) {
@@ -374,7 +382,7 @@ router.post('/batch-merge', authenticateToken, async (req, res) => {
     }
 
     // 检查任务是否已完成
-    if (task.status !== 'completed') {
+    if (task.status !== 'completed' && task.status !== 'needs_human') {
       return res.json({ success: false, message: '评审任务尚未完成，无法合并' });
     }
 
@@ -433,7 +441,11 @@ router.get('/compare/:reviewTaskId/:tempCaseId', authenticateToken, async (req, 
         userDecision: detail.userDecision,
         userComment: detail.userComment,
         userModifiedContent: detail.userModifiedContent,
-        toolCallsLog: detail.toolCallsLog
+        toolCallsLog: detail.toolCallsLog,
+        reflectionHistory: detail.reflectionHistory,
+        finalRulePassed: detail.finalRulePassed,
+        failedRule: detail.failedRule,
+        confidenceScore: detail.confidenceScore
       }
     });
   } catch (error) {

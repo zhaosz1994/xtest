@@ -6,6 +6,8 @@ const level1PointService = require('../services/level1PointService');
 const taskScheduler = require('../services/taskScheduler');
 const pool = require('../db');
 const logger = require('../services/logger');
+const aiAuditLogger = require('../services/aiAuditLogger');
+const aiRequestLogger = require('../services/aiRequestLogger');
 
 router.post('/create', authenticateToken, async (req, res) => {
   try {
@@ -86,6 +88,128 @@ router.post('/retry/:taskId', authenticateToken, async (req, res) => {
     const result = await caseGeneratorService.retryTask(taskId, req.user.id);
     res.json({ success: result });
   } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.post('/reset-chunks', authenticateToken, async (req, res) => {
+  try {
+    const { moduleId, fileIds } = req.body;
+    
+    if (!moduleId) {
+      return res.status(400).json({ success: false, message: '缺少模块ID' });
+    }
+
+    let sql = `UPDATE ai_material_chunks SET status = 'pending', generated_cases = 0, error_message = NULL WHERE module_id = ?`;
+    const params = [moduleId];
+    
+    if (fileIds && fileIds.length > 0) {
+      const placeholders = fileIds.map(() => '?').join(',');
+      sql += ` AND file_id IN (${placeholders})`;
+      params.push(...fileIds);
+    }
+    
+    const [result] = await pool.execute(sql, params);
+    
+    logger.info('重置chunks状态', { 
+      moduleId, 
+      fileIds: fileIds || 'all', 
+      affectedRows: result.affectedRows 
+    });
+    
+    res.json({ 
+      success: true, 
+      data: { 
+        affectedRows: result.affectedRows,
+        message: `已重置 ${result.affectedRows} 个文本块的状态` 
+      } 
+    });
+  } catch (error) {
+    logger.error('重置chunks状态失败', { error: error.message });
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.get('/check-chunks-status/:moduleId', authenticateToken, async (req, res) => {
+  try {
+    const { moduleId } = req.params;
+    const { fileIds } = req.query;
+    
+    let sql = `
+      SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+        SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) as processing
+      FROM ai_material_chunks
+      WHERE module_id = ?
+    `;
+    const params = [moduleId];
+    
+    if (fileIds) {
+      const fileIdArray = fileIds.split(',').map(id => parseInt(id));
+      const placeholders = fileIdArray.map(() => '?').join(',');
+      sql += ` AND file_id IN (${placeholders})`;
+      params.push(...fileIdArray);
+    }
+    
+    const [result] = await pool.execute(sql, params);
+    const stats = result[0];
+    
+    res.json({ 
+      success: true, 
+      data: {
+        total: stats.total || 0,
+        pending: stats.pending || 0,
+        completed: stats.completed || 0,
+        failed: stats.failed || 0,
+        processing: stats.processing || 0,
+        hasPendingChunks: stats.pending > 0
+      }
+    });
+  } catch (error) {
+    logger.error('检查chunks状态失败', { error: error.message });
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.post('/cleanup-task/:taskId', authenticateToken, async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    
+    const [taskCheck] = await pool.execute(`
+      SELECT user_id FROM ai_case_generation_tasks WHERE task_id = ?
+    `, [taskId]);
+    
+    if (taskCheck.length === 0) {
+      return res.status(404).json({ success: false, message: '任务不存在' });
+    }
+    
+    if (taskCheck[0].user_id !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: '无权操作此任务' });
+    }
+    
+    const reviewService = require('../services/reviewService');
+    const result = await reviewService.checkAndCleanupTask(taskId);
+    
+    if (result.cleaned) {
+      res.json({ 
+        success: true, 
+        data: { 
+          message: '任务已清理',
+          taskId 
+        } 
+      });
+    } else {
+      res.json({ 
+        success: false, 
+        message: '任务下还有未处理的临时用例或一级测试点',
+        data: result
+      });
+    }
+  } catch (error) {
+    logger.error('手动清理任务失败', { error: error.message });
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -219,31 +343,105 @@ ${caseInfo}
 
     const axios = require('axios');
     const timeoutConfig = await aiService.getUserAITimeoutConfig(req.user.id);
+    const _genParams1 = await aiService.getAIGenerationParams();
+    const _sceneParams1 = aiService.getSceneParams(_genParams1, 'scene_case_generation');
     const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
     const model = aiConfig.model_name || 'deepseek-chat';
 
-    const response = await axios.post(apiUrl, {
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      temperature: 0.5,
-      max_tokens: 500
-    }, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${aiConfig.api_key}`
-      },
-      timeout: timeoutConfig.generalAITask
-    });
+    const startTime = Date.now();
+    let overview = '';
+    let logStatus = 'success';
+    let logError = null;
 
-    const overview = response.data?.choices?.[0]?.message?.content?.trim() || '';
+    try {
+      const response = await axios.post(apiUrl, {
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: _sceneParams1.temperature,
+        max_tokens: _sceneParams1.max_tokens
+      }, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${aiConfig.api_key}`
+        },
+        timeout: timeoutConfig.generalAITask || _genParams1.request_timeout
+      });
 
-    res.json({ success: true, data: { overview } });
+      overview = response.data?.choices?.[0]?.message?.content?.trim() || '';
+      
+      const executionTimeMs = Date.now() - startTime;
+      const promptTokens = response.data?.usage?.prompt_tokens || 0;
+      const completionTokens = response.data?.usage?.completion_tokens || 0;
+      const totalTokens = response.data?.usage?.total_tokens || 0;
+
+      aiAuditLogger.logSuccess({
+        userId: req.user.id,
+        username: req.user.username,
+        skillName: 'AI生成一级测试点概述',
+        operationType: 'GENERATE',
+        executionTimeMs,
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        modelName: model,
+        resultCount: 1
+      });
+
+      aiRequestLogger.logSuccess({
+        userId: req.user.id,
+        username: req.user.username,
+        triggerType: 'generation_overview',
+        triggerSource: 'direct_llm',
+        triggerSourceName: 'AI生成概述(直接调用)',
+        systemPrompt,
+        userPrompt,
+        aiResponse: overview,
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        modelName: model,
+        executionTimeMs,
+        moduleId: point.module_id || null
+      });
+
+      res.json({ success: true, data: { overview } });
+    } catch (error) {
+      logStatus = 'failed';
+      logError = error.message;
+      const executionTimeMs = Date.now() - startTime;
+
+      aiAuditLogger.logFailure({
+        userId: req.user.id,
+        username: req.user.username,
+        skillName: 'AI生成一级测试点概述',
+        operationType: 'GENERATE',
+        executionTimeMs,
+        errorMessage: error.message,
+        modelName: model
+      });
+
+      aiRequestLogger.logFailure({
+        userId: req.user.id,
+        username: req.user.username,
+        triggerType: 'generation_overview',
+        triggerSource: 'direct_llm',
+        triggerSourceName: 'AI生成概述(直接调用)',
+        systemPrompt,
+        userPrompt,
+        executionTimeMs,
+        errorMessage: error.message,
+        modelName: model
+      });
+
+      logger.error('AI生成概述失败:', { error: error.message });
+      res.status(500).json({ success: false, message: 'AI生成概述失败: ' + error.message });
+    }
   } catch (error) {
-    logger.error('AI生成概述失败:', { error: error.message });
-    res.status(500).json({ success: false, message: 'AI生成概述失败: ' + error.message });
+    logger.error('AI生成概述异常:', { error: error.message });
+    res.status(500).json({ success: false, message: 'AI生成概述异常: ' + error.message });
   }
 });
 
@@ -318,31 +516,104 @@ router.post('/generate-key-config', authenticateToken, async (req, res) => {
 
     const axios = require('axios');
     const timeoutConfig = await aiService.getUserAITimeoutConfig(req.user.id);
+    const _genParams2 = await aiService.getAIGenerationParams();
+    const _sceneParams2 = aiService.getSceneParams(_genParams2, 'scene_case_generation');
     const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
     const model = aiConfig.model_name || 'deepseek-chat';
 
-    const response = await axios.post(apiUrl, {
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      temperature: 0.4,
-      max_tokens: 1000
-    }, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${aiConfig.api_key}`
-      },
-      timeout: timeoutConfig.generalAITask
-    });
+    const startTime = Date.now();
+    let keyConfig = '';
+    let logStatus = 'success';
+    let logError = null;
 
-    const keyConfig = response.data?.choices?.[0]?.message?.content?.trim() || '';
+    try {
+      const response = await axios.post(apiUrl, {
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: _sceneParams2.temperature,
+        max_tokens: _sceneParams2.max_tokens
+      }, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${aiConfig.api_key}`
+        },
+        timeout: timeoutConfig.generalAITask || _genParams2.request_timeout
+      });
 
-    res.json({ success: true, data: { keyConfig } });
+      keyConfig = response.data?.choices?.[0]?.message?.content?.trim() || '';
+      
+      const executionTimeMs = Date.now() - startTime;
+      const promptTokens = response.data?.usage?.prompt_tokens || 0;
+      const completionTokens = response.data?.usage?.completion_tokens || 0;
+      const totalTokens = response.data?.usage?.total_tokens || 0;
+
+      aiAuditLogger.logSuccess({
+        userId: req.user.id,
+        username: req.user.username,
+        skillName: 'AI生成关键配置',
+        operationType: 'GENERATE',
+        executionTimeMs,
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        modelName: model,
+        resultCount: 1
+      });
+
+      aiRequestLogger.logSuccess({
+        userId: req.user.id,
+        username: req.user.username,
+        triggerType: 'generation_key_config',
+        triggerSource: 'direct_llm',
+        triggerSourceName: 'AI生成关键配置(直接调用)',
+        systemPrompt,
+        userPrompt,
+        aiResponse: keyConfig,
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        modelName: model,
+        executionTimeMs
+      });
+
+      res.json({ success: true, data: { keyConfig } });
+    } catch (error) {
+      logStatus = 'failed';
+      logError = error.message;
+      const executionTimeMs = Date.now() - startTime;
+
+      aiAuditLogger.logFailure({
+        userId: req.user.id,
+        username: req.user.username,
+        skillName: 'AI生成关键配置',
+        operationType: 'GENERATE',
+        executionTimeMs,
+        errorMessage: error.message,
+        modelName: model
+      });
+
+      aiRequestLogger.logFailure({
+        userId: req.user.id,
+        username: req.user.username,
+        triggerType: 'generation_key_config',
+        triggerSource: 'direct_llm',
+        triggerSourceName: 'AI生成关键配置(直接调用)',
+        systemPrompt,
+        userPrompt,
+        executionTimeMs,
+        errorMessage: error.message,
+        modelName: model
+      });
+
+      logger.error('AI生成关键配置失败:', { error: error.message });
+      res.status(500).json({ success: false, message: 'AI生成关键配置失败: ' + error.message });
+    }
   } catch (error) {
-    logger.error('AI生成关键配置失败:', { error: error.message });
-    res.status(500).json({ success: false, message: 'AI生成关键配置失败: ' + error.message });
+    logger.error('AI生成关键配置异常:', { error: error.message });
+    res.status(500).json({ success: false, message: 'AI生成关键配置异常: ' + error.message });
   }
 });
 
@@ -391,6 +662,10 @@ router.post('/generate-key-config-async', authenticateToken, async (req, res) =>
           if (agentResult.success && agentResult.result) {
             keyConfig = agentResult.result.trim();
             success = true;
+          } else {
+            logger.warn('[async-key-config] Sub-Agent执行失败，回退到直接LLM调用', {
+              error: agentResult.error || '无结果'
+            });
           }
         }
 
@@ -417,27 +692,91 @@ router.post('/generate-key-config-async', authenticateToken, async (req, res) =>
 
           const axios = require('axios');
           const timeoutConfig = await aiService.getUserAITimeoutConfig(userId);
+          const _genParams3 = await aiService.getAIGenerationParams();
+          const _sceneParams3 = aiService.getSceneParams(_genParams3, 'scene_case_generation');
           const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
           const model = aiConfig.model_name || 'deepseek-chat';
 
-          const response = await axios.post(apiUrl, {
-            model,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt }
-            ],
-            temperature: 0.4,
-            max_tokens: 1000
-          }, {
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${aiConfig.api_key}`
-            },
-            timeout: timeoutConfig.generalAITask
-          });
+          const startTime = Date.now();
+          try {
+            const response = await axios.post(apiUrl, {
+              model,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt }
+              ],
+              temperature: _sceneParams3.temperature,
+              max_tokens: _sceneParams3.max_tokens
+            }, {
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${aiConfig.api_key}`
+              },
+              timeout: timeoutConfig.generalAITask || _genParams3.request_timeout
+            });
 
-          keyConfig = response.data?.choices?.[0]?.message?.content?.trim() || '';
-          success = true;
+            keyConfig = response.data?.choices?.[0]?.message?.content?.trim() || '';
+            success = true;
+
+            const executionTimeMs = Date.now() - startTime;
+            const promptTokens = response.data?.usage?.prompt_tokens || 0;
+            const completionTokens = response.data?.usage?.completion_tokens || 0;
+            const totalTokens = response.data?.usage?.total_tokens || 0;
+
+            aiAuditLogger.logSuccess({
+              userId,
+              username: req.user.username,
+              skillName: 'AI生成关键配置',
+              operationType: 'GENERATE',
+              executionTimeMs,
+              promptTokens,
+              completionTokens,
+              totalTokens,
+              modelName: model,
+              resultCount: 1
+            });
+
+            aiRequestLogger.logSuccess({
+              userId,
+              username: req.user.username,
+              triggerType: 'generation_key_config',
+              triggerSource: 'direct_llm',
+              triggerSourceName: 'AI生成关键配置(异步直接调用)',
+              systemPrompt,
+              userPrompt,
+              aiResponse: keyConfig,
+              promptTokens,
+              completionTokens,
+              totalTokens,
+              modelName: model,
+              executionTimeMs
+            });
+          } catch (llmError) {
+            const executionTimeMs = Date.now() - startTime;
+            aiAuditLogger.logFailure({
+              userId,
+              username: req.user.username,
+              skillName: 'AI生成关键配置',
+              operationType: 'GENERATE',
+              executionTimeMs,
+              errorMessage: llmError.message,
+              modelName: model
+            });
+
+            aiRequestLogger.logFailure({
+              userId,
+              username: req.user.username,
+              triggerType: 'generation_key_config',
+              triggerSource: 'direct_llm',
+              triggerSourceName: 'AI生成关键配置(异步直接调用)',
+              systemPrompt,
+              userPrompt,
+              executionTimeMs,
+              errorMessage: llmError.message,
+              modelName: model
+            });
+            throw llmError;
+          }
         }
       } catch (error) {
         logger.error('[async-key-config] AI生成失败:', { error: error.message });
@@ -573,6 +912,10 @@ router.post('/generate-overview-async', authenticateToken, async (req, res) => {
           if (agentResult.success && agentResult.result) {
             overview = agentResult.result.trim();
             success = true;
+          } else {
+            logger.warn('[async-overview] Sub-Agent执行失败，回退到直接LLM调用', {
+              error: agentResult.error || '无结果'
+            });
           }
         }
 
@@ -596,27 +939,92 @@ ${caseInfo}
 
           const axios = require('axios');
           const timeoutConfig = await aiService.getUserAITimeoutConfig(userId);
+          const _genParams4 = await aiService.getAIGenerationParams();
+          const _sceneParams4 = aiService.getSceneParams(_genParams4, 'scene_case_generation');
           const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
           const model = aiConfig.model_name || 'deepseek-chat';
 
-          const response = await axios.post(apiUrl, {
-            model,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt }
-            ],
-            temperature: 0.5,
-            max_tokens: 500
-          }, {
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${aiConfig.api_key}`
-            },
-            timeout: timeoutConfig.generalAITask
-          });
+          const startTime = Date.now();
+          try {
+            const response = await axios.post(apiUrl, {
+              model,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt }
+              ],
+              temperature: _sceneParams4.temperature,
+              max_tokens: _sceneParams4.max_tokens
+            }, {
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${aiConfig.api_key}`
+              },
+              timeout: timeoutConfig.generalAITask || _genParams4.request_timeout
+            });
 
-          overview = response.data?.choices?.[0]?.message?.content?.trim() || '';
-          success = true;
+            overview = response.data?.choices?.[0]?.message?.content?.trim() || '';
+            success = true;
+
+            const executionTimeMs = Date.now() - startTime;
+            const promptTokens = response.data?.usage?.prompt_tokens || 0;
+            const completionTokens = response.data?.usage?.completion_tokens || 0;
+            const totalTokens = response.data?.usage?.total_tokens || 0;
+
+            aiAuditLogger.logSuccess({
+              userId,
+              username: req.user.username,
+              skillName: 'AI生成一级测试点概述',
+              operationType: 'GENERATE',
+              executionTimeMs,
+              promptTokens,
+              completionTokens,
+              totalTokens,
+              modelName: model,
+              resultCount: 1
+            });
+
+            aiRequestLogger.logSuccess({
+              userId,
+              username: req.user.username,
+              triggerType: 'generation_overview',
+              triggerSource: 'direct_llm',
+              triggerSourceName: 'AI生成概述(异步直接调用)',
+              systemPrompt,
+              userPrompt,
+              aiResponse: overview,
+              promptTokens,
+              completionTokens,
+              totalTokens,
+              modelName: model,
+              executionTimeMs,
+              moduleId: point.module_id || null
+            });
+          } catch (llmError) {
+            const executionTimeMs = Date.now() - startTime;
+            aiAuditLogger.logFailure({
+              userId,
+              username: req.user.username,
+              skillName: 'AI生成一级测试点概述',
+              operationType: 'GENERATE',
+              executionTimeMs,
+              errorMessage: llmError.message,
+              modelName: model
+            });
+
+            aiRequestLogger.logFailure({
+              userId,
+              username: req.user.username,
+              triggerType: 'generation_overview',
+              triggerSource: 'direct_llm',
+              triggerSourceName: 'AI生成概述(异步直接调用)',
+              systemPrompt,
+              userPrompt,
+              executionTimeMs,
+              errorMessage: llmError.message,
+              modelName: model
+            });
+            throw llmError;
+          }
         }
       } catch (error) {
         logger.error('[async-overview] AI生成失败:', { error: error.message });
@@ -677,143 +1085,6 @@ ${caseInfo}
   } catch (error) {
     logger.error('AI异步生成概述失败:', { error: error.message });
     res.status(500).json({ success: false, message: 'AI异步生成概述失败: ' + error.message });
-  }
-});
-
-router.get('/skills', authenticateToken, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const [skills] = await pool.execute(`
-      SELECT id, name, display_name, description, category, is_system, creator_id
-      FROM ai_skills
-      WHERE category = 'test_generation'
-        AND is_enabled = 1
-        AND (is_public = 1 OR creator_id = ?)
-      ORDER BY is_system DESC, created_at DESC
-    `, [userId]);
-
-    res.json({
-      success: true,
-      data: skills.map(s => ({
-        id: s.id,
-        name: s.name,
-        displayName: s.display_name,
-        description: s.description,
-        category: s.category,
-        isSystem: s.is_system === 1,
-        isOwner: s.creator_id === userId
-      }))
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-router.post('/skills', authenticateToken, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const { name, displayName, description, systemPrompt, userPromptTemplate, category, isPublic } = req.body;
-
-    if (!name || !displayName) {
-      return res.status(400).json({ success: false, message: '缺少必要参数' });
-    }
-
-    const definition = JSON.stringify({
-      type: 'function',
-      function: {
-        name: name,
-        description: description,
-        parameters: {
-          type: 'object',
-          properties: {
-            module_context: { type: 'object' },
-            material_content: { type: 'string' }
-          }
-        }
-      },
-      prompts: {
-        system: systemPrompt,
-        userTemplate: userPromptTemplate
-      }
-    });
-
-    const [result] = await pool.execute(`
-      INSERT INTO ai_skills 
-        (name, display_name, description, definition, category, is_system, is_public, creator_id, created_by)
-      VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)
-    `, [name, displayName, description, definition, category || 'test_generation',
-        isPublic ? 1 : 0, userId, req.user.username]);
-
-    res.json({
-      success: true,
-      data: { id: result.insertId, name }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-router.put('/skills/:id', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { displayName, description, systemPrompt, userPromptTemplate, isPublic } = req.body;
-    const userId = req.user.id;
-
-    const [existing] = await pool.execute(`
-      SELECT id, is_system, creator_id, definition FROM ai_skills WHERE id = ?
-    `, [id]);
-
-    if (existing.length === 0) {
-      return res.status(404).json({ success: false, message: 'Skill不存在' });
-    }
-
-    if (existing[0].is_system === 1) {
-      return res.status(403).json({ success: false, message: '系统内置Skill不可修改' });
-    }
-
-    if (existing[0].creator_id !== userId && req.user.role !== 'admin') {
-      return res.status(403).json({ success: false, message: '无权修改此Skill' });
-    }
-
-    let existingDef = {};
-    try {
-      existingDef = typeof existing[0].definition === 'string' 
-        ? JSON.parse(existing[0].definition) 
-        : (existing[0].definition || {});
-    } catch (e) {}
-
-    existingDef.prompts = {
-      system: systemPrompt,
-      userTemplate: userPromptTemplate
-    };
-
-    const definition = JSON.stringify(existingDef);
-
-    await pool.execute(`
-      UPDATE ai_skills 
-      SET display_name = ?, description = ?, definition = ?, is_public = ?, updated_at = NOW()
-      WHERE id = ? AND is_system = 0
-    `, [displayName, description, definition, isPublic ? 1 : 0, id]);
-
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-router.delete('/skills/:id', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user.id;
-
-    const [result] = await pool.execute(`
-      DELETE FROM ai_skills 
-      WHERE id = ? AND is_system = 0 AND creator_id = ?
-    `, [id, userId]);
-
-    res.json({ success: result.affectedRows > 0 });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
   }
 });
 
