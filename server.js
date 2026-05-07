@@ -149,6 +149,7 @@ app.use('/api/workspace', require('./routes/workspace'));
 app.use('/api', require('./routes/search'));
 app.use('/api/knowledge', require('./routes/knowledge'));
 app.use('/api/ai-generation', require('./routes/aiGeneration'));
+app.use('/api/ai-tasks', require('./routes/aiTasks'));
 app.use('/api/temp-cases', require('./routes/tempCases'));
 app.use('/api/ai-sub-agents', require('./routes/aiSubAgents'));
 app.use('/api/ai-tools', require('./routes/aiTools'));
@@ -156,6 +157,7 @@ app.use('/api/ai-sub-agents/config-files', require('./routes/aiSubAgentConfigFil
 app.use('/api/ai-memories', require('./routes/aiMemories'));
 app.use('/api/ai-review', require('./routes/aiReview'));
 app.use('/api/ai-qa', require('./routes/aiQA'));
+app.use('/api/ai-import', require('./routes/aiImportOptimize'));
 
 app.get('/api/audit-logs', authenticateToken, requireAdmin, async (req, res) => {
     try {
@@ -3173,8 +3175,8 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
     messages.push({ role: 'user', content: query });
     
     // 第一次调用 AI
-    const { getAIGenerationParams, getSceneParams } = require('./services/aiService');
-    const _genParams = await getAIGenerationParams();
+    const { getUserAIGenerationParams, getSceneParams } = require('./services/aiService');
+    const _genParams = await getUserAIGenerationParams(currentUserId);
     const _sceneParams = getSceneParams(_genParams, 'scene_data_analysis');
 
     const response = await fetch(aiModel.endpoint, {

@@ -6,7 +6,7 @@ const logger = require('../services/logger');
 
 router.get('/recent', authenticateToken, async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 100;
+    const limit = sanitizeLimit(req.query.limit);
     const [logs] = await pool.execute(`
       SELECT 
         id,
@@ -30,8 +30,8 @@ router.get('/recent', authenticateToken, async (req, res) => {
         created_at
       FROM ai_operation_logs
       ORDER BY created_at DESC
-      LIMIT ${limit}
-    `);
+      LIMIT ?
+    `, [limit]);
     
     res.json({
       success: true,
@@ -48,7 +48,7 @@ router.get('/recent', authenticateToken, async (req, res) => {
 
 router.get('/failed', authenticateToken, async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 100;
+    const limit = sanitizeLimit(req.query.limit);
     const [logs] = await pool.execute(`
       SELECT 
         id,
@@ -73,8 +73,8 @@ router.get('/failed', authenticateToken, async (req, res) => {
       FROM ai_operation_logs
       WHERE status = 'failed'
       ORDER BY created_at DESC
-      LIMIT ${limit}
-    `);
+      LIMIT ?
+    `, [limit]);
     
     res.json({
       success: true,
@@ -91,7 +91,7 @@ router.get('/failed', authenticateToken, async (req, res) => {
 
 router.get('/skill-stats', authenticateToken, async (req, res) => {
   try {
-    const days = parseInt(req.query.days) || 30;
+    const days = sanitizeDays(req.query.days);
     const [stats] = await pool.execute(`
       SELECT 
         skill_name,
@@ -124,7 +124,7 @@ router.get('/skill-stats', authenticateToken, async (req, res) => {
 
 router.get('/user-stats', authenticateToken, async (req, res) => {
   try {
-    const days = parseInt(req.query.days) || 30;
+    const days = sanitizeDays(req.query.days);
     const [stats] = await pool.execute(`
       SELECT 
         user_id,
@@ -157,7 +157,7 @@ router.get('/user-stats', authenticateToken, async (req, res) => {
 
 router.get('/overview', authenticateToken, async (req, res) => {
   try {
-    const days = parseInt(req.query.days) || 30;
+    const days = sanitizeDays(req.query.days);
     
     const [totalStats] = await pool.execute(`
       SELECT 
@@ -230,7 +230,7 @@ router.get('/overview', authenticateToken, async (req, res) => {
 
 router.get('/timeline', authenticateToken, async (req, res) => {
   try {
-    const days = parseInt(req.query.days) || 7;
+    const days = sanitizeDays(req.query.days);
     const [timeline] = await pool.execute(`
       SELECT 
         DATE_FORMAT(created_at, '%Y-%m-%d %H:00') as hour,
@@ -259,7 +259,7 @@ router.get('/timeline', authenticateToken, async (req, res) => {
 
 router.get('/token-stats', authenticateToken, async (req, res) => {
   try {
-    const days = parseInt(req.query.days) || 30;
+    const days = sanitizeDays(req.query.days);
     
     const [totalTokenStats] = await pool.execute(`
       SELECT 
@@ -341,7 +341,7 @@ router.get('/token-stats', authenticateToken, async (req, res) => {
 
 router.get('/agent-stats', authenticateToken, async (req, res) => {
   try {
-    const days = parseInt(req.query.days) || 30;
+    const days = sanitizeDays(req.query.days);
 
     const [agentStats] = await pool.execute(`
       SELECT 
@@ -422,7 +422,7 @@ router.get('/agent-stats', authenticateToken, async (req, res) => {
 
 router.get('/tool-stats', authenticateToken, async (req, res) => {
   try {
-    const days = parseInt(req.query.days) || 30;
+    const days = sanitizeDays(req.query.days);
 
     const [toolStats] = await pool.execute(`
       SELECT 
@@ -516,7 +516,7 @@ router.get('/tool-stats', authenticateToken, async (req, res) => {
 
 router.get('/agent-tool-overview', authenticateToken, async (req, res) => {
   try {
-    const days = parseInt(req.query.days) || 30;
+    const days = sanitizeDays(req.query.days);
 
     const [agentOverview] = await pool.execute(`
       SELECT 
@@ -588,10 +588,28 @@ router.get('/agent-tool-overview', authenticateToken, async (req, res) => {
 
 const ADMIN_ROLES = ['管理员', 'admin', 'Administrator'];
 
+function sanitizeDays(days) {
+  const d = parseInt(days) || 30;
+  return Math.max(1, Math.min(365, d));
+}
+
+function sanitizeLimit(limit, max = 500) {
+  const l = parseInt(limit) || 100;
+  return Math.max(1, Math.min(max, l));
+}
+
 router.get('/request-logs', authenticateToken, async (req, res) => {
   try {
     const { page = 1, pageSize = 20, triggerType, status, keyword, startDate, endDate } = req.query;
     const isAdminUser = ADMIN_ROLES.includes(req.user.role);
+
+    const DATE_REGEX = /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$/;
+    if (startDate && !DATE_REGEX.test(startDate)) {
+      return res.status(400).json({ success: false, message: 'startDate格式无效' });
+    }
+    if (endDate && !DATE_REGEX.test(endDate)) {
+      return res.status(400).json({ success: false, message: 'endDate格式无效' });
+    }
 
     let whereConditions = [];
     let params = [];

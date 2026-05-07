@@ -139,6 +139,14 @@ function createForumConfirmModal() {
         .forum-confirm-btn.confirm:hover {
             background: #1557b0;
         }
+
+        [data-theme="dark"] .forum-confirm-content { background: #1e293b; }
+        [data-theme="dark"] .forum-confirm-header { border-bottom-color: #334155; }
+        [data-theme="dark"] .forum-confirm-header h3 { color: #e2e8f0; }
+        [data-theme="dark"] .forum-confirm-body p { color: #94a3b8; }
+        [data-theme="dark"] .forum-confirm-footer { border-top-color: #334155; }
+        [data-theme="dark"] .forum-confirm-btn.cancel { background: #334155; color: #94a3b8; border-color: #475569; }
+        [data-theme="dark"] .forum-confirm-btn.cancel:hover { background: #475569; }
     `;
     
     document.head.appendChild(style);

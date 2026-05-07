@@ -347,9 +347,9 @@ ${materialContent.slice(0, 6000)}
 
   async callAI(aiConfig, systemPrompt, userPrompt, userId) {
     const axios = require('axios');
-    const { getUserAITimeoutConfig, getAIGenerationParams, getSceneParams } = require('./aiService');
+    const { getUserAITimeoutConfig, getUserAIGenerationParams, getSceneParams } = require('./aiService');
     const timeoutConfig = await getUserAITimeoutConfig(userId);
-    const genParams = await getAIGenerationParams();
+    const genParams = await getUserAIGenerationParams(userId);
     const sceneParams = getSceneParams(genParams, 'scene_case_generation');
     const apiKey = aiConfig.api_key;
     const apiUrl = aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';

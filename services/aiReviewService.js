@@ -8,6 +8,21 @@ const llmResponseParser = require('./llmResponseParser');
 const logger = require('./logger');
 const PQueue = require('p-queue').default;
 
+function _formatDateTime(dateStr) {
+    if (!dateStr) return '-';
+    try {
+        const date = new Date(dateStr);
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        return `${year}/${month}/${day} ${hours}:${minutes}`;
+    } catch (e) {
+        return dateStr;
+    }
+}
+
 const MAX_CONCURRENT = 3;
 const ORPHAN_THRESHOLD_MINUTES = 30;
 const HEARTBEAT_INTERVAL_MS = 60000;
@@ -282,11 +297,6 @@ class AIReviewService {
 
             await queue.onIdle();
 
-            if (heartbeatTimer) {
-                clearInterval(heartbeatTimer);
-                heartbeatTimer = null;
-            }
-
             let approvedCount = 0;
             let rejectedCount = 0;
             let modifiedCount = 0;
@@ -304,17 +314,19 @@ class AIReviewService {
             if (useReflectionPipeline) {
                 try {
                     const [roundsResult] = await pool.execute(
-                        'SELECT reflection_history FROM ai_review_results WHERE review_task_id = ? AND reflection_history IS NOT NULL LIMIT 1',
+                        'SELECT reflection_history FROM ai_review_results WHERE review_task_id = ? AND reflection_history IS NOT NULL',
                         [reviewTaskId]
                     );
-                    if (roundsResult.length > 0) {
-                        const hist = typeof roundsResult[0].reflection_history === 'string'
-                            ? JSON.parse(roundsResult[0].reflection_history)
-                            : roundsResult[0].reflection_history;
-                        if (Array.isArray(hist)) {
-                            totalReflectionRounds = hist.length;
+                    let maxRounds = 0;
+                    for (const row of roundsResult) {
+                        const hist = typeof row.reflection_history === 'string'
+                            ? JSON.parse(row.reflection_history)
+                            : row.reflection_history;
+                        if (Array.isArray(hist) && hist.length > maxRounds) {
+                            maxRounds = hist.length;
                         }
                     }
+                    totalReflectionRounds = maxRounds;
                 } catch (e) {
                     totalReflectionRounds = rules.length;
                 }
@@ -349,7 +361,7 @@ class AIReviewService {
                         modifiedCount,
                         needsHumanCount,
                         finalStatus,
-                        completedAt: new Date().toISOString()
+                        completedAt: _formatDateTime(new Date())
                     });
                 }
             } catch (socketError) {
@@ -385,7 +397,7 @@ class AIReviewService {
                         needsHumanCount,
                         failedRuleInfo,
                         historyPreview,
-                        completedAt: new Date().toLocaleString('zh-CN'),
+                        completedAt: _formatDateTime(new Date()),
                         reviewLink: (process.env.APP_URL || 'http://localhost:3000') + '/#/ai-generation/review'
                     });
 
@@ -401,7 +413,7 @@ class AIReviewService {
                             needsHumanCount,
                             failedRuleInfo,
                             historyPreview,
-                            completedAt: new Date().toLocaleString('zh-CN'),
+                            completedAt: _formatDateTime(new Date()),
                             reviewLink: (process.env.APP_URL || 'http://localhost:3000') + '/#/ai-generation/review'
                         }).catch(e => logger.warn('熔断通知评审人邮件发送失败', { reviewerId: reviewer.reviewer_id, error: e.message }));
                     }
@@ -413,7 +425,7 @@ class AIReviewService {
                         approvedCount,
                         rejectedCount,
                         modifiedCount,
-                        completedAt: new Date().toLocaleString('zh-CN'),
+                        completedAt: _formatDateTime(new Date()),
                         memoryContribution,
                         reviewLink: (process.env.APP_URL || 'http://localhost:3000') + '/#/ai-generation/review'
                     });
@@ -429,10 +441,6 @@ class AIReviewService {
             }
 
         } catch (error) {
-            if (heartbeatTimer) {
-                clearInterval(heartbeatTimer);
-            }
-
             try {
                 await pool.execute(`
                     UPDATE ai_review_tasks
@@ -444,6 +452,11 @@ class AIReviewService {
             }
 
             logger.error('AI评审任务执行失败', { reviewTaskId, error: error.message });
+        } finally {
+            if (heartbeatTimer) {
+                clearInterval(heartbeatTimer);
+                heartbeatTimer = null;
+            }
         }
     }
 
@@ -477,8 +490,9 @@ class AIReviewService {
                 params.push(filters.userDecision);
             }
             if (filters.search) {
+                const escapedSearch = filters.search.replace(/%/g, '\\%').replace(/_/g, '\\_');
                 sql += ' AND (t.name LIKE ? OR r.ai_comment LIKE ?)';
-                params.push(`%${filters.search}%`, `%${filters.search}%`);
+                params.push(`%${escapedSearch}%`, `%${escapedSearch}%`);
             }
 
             sql += ' ORDER BY r.created_at ASC';
@@ -492,6 +506,11 @@ class AIReviewService {
     }
 
     async decideReviewResult(reviewTaskId, tempCaseId, decision, userId, userComment, userModifiedContent) {
+        const VALID_DECISIONS = ['accepted', 'rejected', 'modified_accepted'];
+        if (!VALID_DECISIONS.includes(decision)) {
+            return { success: false, error: '无效的决策类型' };
+        }
+
         const connection = await pool.getConnection();
 
         try {
@@ -579,7 +598,7 @@ class AIReviewService {
                         agentName,
                         decision: decisionLabel[decision] || decision,
                         userComment: userComment || '',
-                        decidedAt: new Date().toLocaleString('zh-CN'),
+                        decidedAt: _formatDateTime(new Date()),
                         reviewLink: (process.env.APP_URL || 'http://localhost:3000') + '/#/ai-generation/review'
                     });
                 }
@@ -600,6 +619,10 @@ class AIReviewService {
     async batchDecide(reviewTaskId, decisions, userId) {
         if (!decisions || decisions.length === 0) {
             return { success: true, processedCount: 0 };
+        }
+
+        if (decisions.length > 200) {
+            return { success: false, error: '单次批量决策不能超过200条' };
         }
 
         let processedCount = 0;

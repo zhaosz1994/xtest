@@ -30,6 +30,8 @@ class DatabaseMigrator {
     this.registerAISubAgentPlatformV2Migration();
     this.registerKnowledgeLibraryIdMigration();
     this.registerCaseGenerationAgentIdMigration();
+    this.registerUserAIGenerationParamsMigration();
+    this.registerUserAISceneParamsMigration();
     
     logger.info('[数据库迁移] 开始检查...');
     logger.info('数据库自动迁移检查...');
@@ -577,6 +579,56 @@ class DatabaseMigrator {
       } else {
         return { status: 'error', message: '无法添加字段: ai_case_generation_tasks.agent_id' };
       }
+    });
+  }
+
+  registerUserAIGenerationParamsMigration() {
+    this.registerMigration('users_ai_generation_params', async () => {
+      logger.info('检查 users 表 ai_generation_params 字段...');
+
+      const exists = await this.columnExists('users', 'ai_generation_params');
+
+      if (exists) {
+        logger.info('字段存在', { field: 'ai_generation_params' });
+        return { status: 'ok', message: 'ai_generation_params 字段已存在' };
+      }
+
+      logger.info('缺失字段，正在添加', { field: 'ai_generation_params' });
+      const added = await this.addColumnSafe('users', 'ai_generation_params', "JSON DEFAULT NULL COMMENT '用户AI生成参数配置(温度、Token等)'");
+
+      if (added === true) {
+        logger.info('已添加字段', { field: 'ai_generation_params' });
+        return { status: 'fixed', message: '已添加 ai_generation_params 字段' };
+      } else if (added === false) {
+        return { status: 'error', message: '无法添加字段: ai_generation_params' };
+      }
+
+      return { status: 'ok', message: '无需修复' };
+    });
+  }
+
+  registerUserAISceneParamsMigration() {
+    this.registerMigration('users_ai_scene_params', async () => {
+      logger.info('检查 users 表 ai_scene_params 字段...');
+
+      const exists = await this.columnExists('users', 'ai_scene_params');
+
+      if (exists) {
+        logger.info('字段存在', { field: 'ai_scene_params' });
+        return { status: 'ok', message: 'ai_scene_params 字段已存在' };
+      }
+
+      logger.info('缺失字段，正在添加', { field: 'ai_scene_params' });
+      const added = await this.addColumnSafe('users', 'ai_scene_params', "JSON DEFAULT NULL COMMENT '用户AI场景参数配置(数据分析、用例生成等场景)'");
+
+      if (added === true) {
+        logger.info('已添加字段', { field: 'ai_scene_params' });
+        return { status: 'fixed', message: '已添加 ai_scene_params 字段' };
+      } else if (added === false) {
+        return { status: 'error', message: '无法添加字段: ai_scene_params' };
+      }
+
+      return { status: 'ok', message: '无需修复' };
     });
   }
 }

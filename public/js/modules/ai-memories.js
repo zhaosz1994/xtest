@@ -48,6 +48,21 @@ function aimemInjectStyles() {
         .aimem-stats-footer { margin-top: 8px; font-size: 12px; color: #909399; text-align: center; }
         .aimem-stats-empty, .aimem-stats-error { text-align: center; padding: 12px; color: #909399; font-size: 13px; }
         .aimem-content-placeholder { text-align: center; padding: 40px 0; color: #909399; font-size: 13px; }
+
+        [data-theme="dark"] .aimem-tree-node-content:hover { background: rgba(96, 165, 250, 0.15); }
+        [data-theme="dark"] .aimem-tree-node-content.aimem-tree-active { background: rgba(96, 165, 250, 0.2); }
+        [data-theme="dark"] .aimem-tree-badge { color: #6e7681; }
+        [data-theme="dark"] .aimem-tree-prefix { color: #6e7681; }
+        [data-theme="dark"] .aimem-tree-loading, [data-theme="dark"] .aimem-tree-empty, [data-theme="dark"] .aimem-tree-error { color: #6e7681; }
+        [data-theme="dark"] .aimem-content-loading, [data-theme="dark"] .aimem-content-empty, [data-theme="dark"] .aimem-content-error { color: #6e7681; }
+        [data-theme="dark"] .aimem-content-view pre { background: #1c2128; }
+        [data-theme="dark"] .aimem-stats-card { background: #1e293b; border-color: #334155; }
+        [data-theme="dark"] .aimem-stats-card-value { color: #e2e8f0; }
+        [data-theme="dark"] .aimem-stats-card-label { color: #6e7681; }
+        [data-theme="dark"] .aimem-stats-total { background: rgba(96, 165, 250, 0.1); }
+        [data-theme="dark"] .aimem-stats-footer { color: #6e7681; }
+        [data-theme="dark"] .aimem-stats-empty, [data-theme="dark"] .aimem-stats-error { color: #6e7681; }
+        [data-theme="dark"] .aimem-content-placeholder { color: #6e7681; }
     `;
     document.head.appendChild(style);
 }

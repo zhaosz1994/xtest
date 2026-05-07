@@ -2592,3 +2592,129 @@ body.ai-skill-modal-resizing {
     color: #6366f1;
     font-weight: 600;
 }
+
+/* ===== AI Import Optimize Styles (ai-imp- prefix) ===== */
+
+.ai-imp-source-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+    margin-left: 6px;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.ai-imp-source-badge.ai-imp-ai-generation {
+    background: #ede9fe;
+    color: #6d28d9;
+}
+
+.ai-imp-source-badge.ai-imp-import-optimize {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+
+.ai-imp-compare-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    min-height: 0;
+}
+
+.ai-imp-compare-panel {
+    border: 1px solid var(--ai-border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #fff;
+}
+
+.ai-imp-compare-panel-header {
+    padding: 10px 16px;
+    background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+    border-bottom: 1px solid var(--ai-border);
+    font-size: 13px;
+    font-weight: 600;
+    color: #334155;
+}
+
+.ai-imp-compare-field {
+    padding: 10px 16px;
+    border-bottom: 1px solid #f1f5f9;
+    transition: background 0.15s;
+}
+
+.ai-imp-compare-field:last-child {
+    border-bottom: none;
+}
+
+.ai-imp-compare-field.changed {
+    background: #fefce8;
+}
+
+.ai-imp-compare-field-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: #64748b;
+    margin-bottom: 4px;
+}
+
+.ai-imp-compare-field-value {
+    font-size: 13px;
+    color: #1e293b;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.ai-imp-merge-modal {
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.15), 0 4px 20px rgba(0, 0, 0, 0.08);
+    width: min(680px, 90vw);
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    animation: ai-skill-modal-in 0.25s ease;
+}
+
+.ai-imp-merge-modal-header {
+    padding: 20px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    border-radius: 16px 16px 0 0;
+    flex-shrink: 0;
+}
+
+.ai-imp-merge-modal-header h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #fff;
+    margin: 0;
+}
+
+.ai-imp-merge-modal-body {
+    padding: 24px 28px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.ai-imp-merge-modal-footer {
+    padding: 16px 28px;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.ai-imp-merge-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    overflow: hidden;
+}

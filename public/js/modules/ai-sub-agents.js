@@ -409,7 +409,7 @@ function saBuildEditModalHtml() {
                         <option value="">-- \u52A0\u8F7D\u4E2D --</option>
                     </select>
                 </div>
-                <div class="sa-form-section-title" style="margin-top:16px;padding-bottom:8px;border-bottom:1px solid #e2e8f0;font-size:13px;font-weight:600;color:#475569;">\u{1F3A7} LLM \u53C2\u6570\u914D\u7F6E</div>
+                <div class="sa-form-section-title" style="margin-top:16px;padding-bottom:8px;border-bottom:1px solid var(--color-border-primary, #e2e8f0);font-size:13px;font-weight:600;color:var(--color-text-secondary, #475569);">\u{1F3A7} LLM \u53C2\u6570\u914D\u7F6E</div>
                 <div class="sa-form-row">
                     <div class="sa-form-group">
                         <label>\u6E29\u5EA6 (Temperature)</label>
@@ -929,6 +929,58 @@ function saInjectStyles() {
         [data-theme="dark"] .wf-note-badge { color: #a5b4fc; background: #334155; border-color: #475569; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
         [data-theme="dark"] .wf-note-line-l { background: linear-gradient(90deg, transparent, #475569); }
         [data-theme="dark"] .wf-note-line-r { background: linear-gradient(270deg, transparent, #475569); }
+
+        [data-theme="dark"] .sa-confirm-box { background: #1e293b; }
+        [data-theme="dark"] .sa-confirm-header { border-bottom-color: #334155; }
+        [data-theme="dark"] .sa-confirm-header h3 { color: #e2e8f0; }
+        [data-theme="dark"] .sa-confirm-body p { color: #94a3b8; }
+        [data-theme="dark"] .sa-confirm-footer { border-top-color: #334155; }
+        [data-theme="dark"] .sa-confirm-btn.cancel { background: #334155; color: #94a3b8; }
+        [data-theme="dark"] .sa-confirm-btn.cancel:hover { background: #475569; }
+        [data-theme="dark"] .sa-modal { background: #1e293b; }
+        [data-theme="dark"] .sa-modal-header { border-bottom-color: #334155; }
+        [data-theme="dark"] .sa-modal-header h3 { color: #e2e8f0; }
+        [data-theme="dark"] .sa-modal-close { color: #94a3b8; }
+        [data-theme="dark"] .sa-modal-close:hover { background: #334155; color: #e2e8f0; }
+        [data-theme="dark"] .sa-modal-tabs { border-bottom-color: #334155; }
+        [data-theme="dark"] .sa-modal-tab { color: #94a3b8; }
+        [data-theme="dark"] .sa-modal-tab:hover { color: #e2e8f0; }
+        [data-theme="dark"] .sa-modal-tab.active { color: #818cf8; border-bottom-color: #818cf8; }
+        [data-theme="dark"] .sa-modal-footer { border-top-color: #334155; }
+        [data-theme="dark"] .sa-form-group label { color: #94a3b8; }
+        [data-theme="dark"] .sa-input, [data-theme="dark"] .sa-select, [data-theme="dark"] .sa-textarea { border-color: #334155; background: #0f172a; color: #e2e8f0; }
+        [data-theme="dark"] .sa-input:focus, [data-theme="dark"] .sa-select:focus, [data-theme="dark"] .sa-textarea:focus { border-color: #818cf8; box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.1); }
+        [data-theme="dark"] .sa-btn-ghost { color: #94a3b8; }
+        [data-theme="dark"] .sa-btn-ghost:hover { background: #334155; }
+        [data-theme="dark"] .sa-table th { color: #94a3b8; border-bottom-color: #475569; background: #1e293b; }
+        [data-theme="dark"] .sa-table td { color: #c9d1d9; border-bottom-color: #21262d; }
+        [data-theme="dark"] .sa-table tr:hover td { background: #1e293b; }
+        [data-theme="dark"] .sa-badge-default { background: #334155; color: #94a3b8; }
+        [data-theme="dark"] .sa-table-wrapper { border-color: #334155; }
+        [data-theme="dark"] .sa-toggle-slider { background: #475569; }
+        [data-theme="dark"] .sa-toggle-slider:before { background: #e2e8f0; }
+        [data-theme="dark"] .sa-md-preview-pane { border-color: #334155; }
+        [data-theme="dark"] .sa-md-editor-toolbar, [data-theme="dark"] .sa-md-preview-toolbar { background: #1e293b; border-bottom-color: #334155; color: #94a3b8; }
+        [data-theme="dark"] .sa-md-textarea { border-color: #334155; background: #0f172a; color: #e2e8f0; }
+        [data-theme="dark"] .sa-transfer-panel { border-color: #334155; }
+        [data-theme="dark"] .sa-transfer-panel-header { background: #1e293b; border-bottom-color: #334155; color: #94a3b8; }
+        [data-theme="dark"] .sa-transfer-item { color: #c9d1d9; }
+        [data-theme="dark"] .sa-transfer-item:hover { background: #334155; }
+        [data-theme="dark"] .sa-transfer-action-btn { background: #1e293b; border-color: #334155; color: #94a3b8; }
+        [data-theme="dark"] .sa-transfer-search { border-bottom-color: #334155; }
+        [data-theme="dark"] .sa-transfer-search input { border-color: #334155; background: #0f172a; color: #e2e8f0; }
+        [data-theme="dark"] .sa-refdocs-header span { color: #c9d1d9; }
+        [data-theme="dark"] .sa-refdocs-list { border-color: #334155; }
+        [data-theme="dark"] .sa-refdoc-item { border-bottom-color: #21262d; }
+        [data-theme="dark"] .sa-refdoc-item .sa-refdoc-name { color: #c9d1d9; }
+        [data-theme="dark"] .sa-list-header h3 { color: #e2e8f0; }
+        [data-theme="dark"] .sa-memory-stats { color: #94a3b8; }
+        [data-theme="dark"] .wf-spinner { border-color: #334155; }
+        [data-theme="dark"] .wf-var-val { color: #94a3b8; }
+        [data-theme="dark"] .wf-tool-meta { color: #94a3b8; }
+        [data-theme="dark"] .wf-tool-tables { color: #94a3b8; }
+        [data-theme="dark"] .wf-loop-arrow { color: #94a3b8; }
+        [data-theme="dark"] .wf-rule-filename { color: #94a3b8; }
     `;
     document.head.appendChild(style);
 }
@@ -969,7 +1021,7 @@ async function loadSubAgentsList() {
     const tbody = document.getElementById('saAgentListBody');
     if (!tbody) return;
 
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px;color:#94a3b8;">\u52A0\u8F7D\u4E2D...</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px;color:${ThemeService.getColor('textMuted')};">\u52A0\u8F7D\u4E2D...</td></tr>`;
 
     try {
         const result = await apiRequest('/ai-sub-agents/list');
@@ -1648,20 +1700,21 @@ function saCreateInputDialog(title, fields) {
     dialogEl.className = 'sa-confirm-modal';
     dialogEl.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:99999;';
 
+    const c = ThemeService.getColors();
     let fieldsHtml = fields.map(f => `
         <div style="margin-bottom:12px;">
-            <label style="display:block;margin-bottom:4px;font-size:13px;font-weight:500;color:#475569;">${saEscapeHtml(f.label)}</label>
+            <label style="display:block;margin-bottom:4px;font-size:13px;font-weight:500;color:${c.textSecondary};">${saEscapeHtml(f.label)}</label>
         </div>
     `).join('');
 
     dialogEl.innerHTML = `
-        <div style="background:#fff;border-radius:12px;width:640px;max-width:90%;box-shadow:0 4px 20px rgba(0,0,0,0.15);animation:sa-confirm-in 0.2s ease;">
-            <div style="padding:20px 24px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;gap:12px;">
+        <div style="background:${c.bgSurface};border-radius:12px;width:640px;max-width:90%;box-shadow:0 4px 20px rgba(0,0,0,0.15);animation:sa-confirm-in 0.2s ease;">
+            <div style="padding:20px 24px;border-bottom:1px solid ${c.border};display:flex;align-items:center;gap:12px;">
                 <span style="font-size:24px;">\u270F\uFE0F</span>
-                <h3 style="margin:0;font-size:16px;color:#1e293b;">${saEscapeHtml(title)}</h3>
+                <h3 style="margin:0;font-size:16px;color:${c.textPrimary};">${saEscapeHtml(title)}</h3>
             </div>
             <div style="padding:24px;max-height:60vh;overflow-y:auto;" id="saInputDialogFields"></div>
-            <div style="padding:16px 24px;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:12px;">
+            <div style="padding:16px 24px;border-top:1px solid ${c.border};display:flex;justify-content:flex-end;gap:12px;">
                 <button class="sa-btn sa-btn-ghost" id="saInputDialogCancel">\u53D6\u6D88</button>
                 <button class="sa-btn sa-btn-primary" id="saInputDialogOk">\u786E\u8BA4</button>
             </div>
@@ -1673,14 +1726,15 @@ function saCreateInputDialog(title, fields) {
     const fieldsContainer = document.getElementById('saInputDialogFields');
     fields.forEach(f => {
         const label = document.createElement('label');
-        label.style.cssText = 'display:block;margin-bottom:6px;font-size:13px;font-weight:500;color:#475569;';
+        const c = ThemeService.getColors();
+        label.style.cssText = `display:block;margin-bottom:6px;font-size:13px;font-weight:500;color:${c.textSecondary};`;
         label.textContent = f.label;
         fieldsContainer.appendChild(label);
         
         if (f.input.tagName === 'TEXTAREA') {
-            f.input.style.cssText = 'width:100%;padding:12px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none;box-sizing:border-box;margin-bottom:16px;font-family:\'SF Mono\',\'Fira Code\',monospace;line-height:1.6;resize:vertical;min-height:200px;';
+            f.input.style.cssText = `width:100%;padding:12px;border:1px solid ${c.border};border-radius:8px;font-size:14px;outline:none;box-sizing:border-box;margin-bottom:16px;font-family:'SF Mono','Fira Code',monospace;line-height:1.6;resize:vertical;min-height:200px;background:${c.inputBg};color:${c.textPrimary};`;
         } else {
-            f.input.style.cssText = 'width:100%;padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none;box-sizing:border-box;margin-bottom:16px;';
+            f.input.style.cssText = `width:100%;padding:8px 12px;border:1px solid ${c.border};border-radius:8px;font-size:14px;outline:none;box-sizing:border-box;margin-bottom:16px;background:${c.inputBg};color:${c.textPrimary};`;
         }
         fieldsContainer.appendChild(f.input);
     });

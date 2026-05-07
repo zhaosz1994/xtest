@@ -158,7 +158,8 @@ router.post('/create', authenticateToken, async (req, res) => {
 
 /**
  * PUT /update/:toolName - 更新工具
- * 只有创建者或管理员可以更新
+ * 内置工具(is_system=1): 只有管理员可以更新
+ * 用户自建工具: 只有创建者可以更新
  */
 router.put('/update/:toolName', authenticateToken, async (req, res) => {
   try {
@@ -166,7 +167,6 @@ router.put('/update/:toolName', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     const admin = isAdmin(req.user);
 
-    // 查找工具
     const [rows] = await pool.execute(
       'SELECT * FROM ai_custom_tools WHERE tool_name = ?',
       [toolName]
@@ -178,12 +178,16 @@ router.put('/update/:toolName', authenticateToken, async (req, res) => {
 
     const tool = rows[0];
 
-    // 权限校验: 只有创建者或管理员可以更新
-    if (!admin && tool.creator_id !== userId) {
-      return res.json({ success: false, message: '无权更新该工具' });
+    if (tool.is_system === 1) {
+      if (!admin) {
+        return res.json({ success: false, message: '内置工具只有管理员可以编辑' });
+      }
+    } else {
+      if (tool.creator_id !== userId) {
+        return res.json({ success: false, message: '无权更新该工具' });
+      }
     }
 
-    // 构建动态更新字段
     const allowedFields = [
       'display_name', 'description', 'language', 'code_content',
       'input_schema', 'is_public', 'timeout_ms', 'max_memory_mb',
@@ -197,12 +201,10 @@ router.put('/update/:toolName', authenticateToken, async (req, res) => {
       if (req.body[field] !== undefined) {
         let value = req.body[field];
 
-        // JSON 字段序列化
         if ((field === 'input_schema' || field === 'allowed_tables') && typeof value === 'object') {
           value = JSON.stringify(value);
         }
 
-        // 数值字段转换
         if (field === 'is_public') {
           value = Number(value);
         }
@@ -217,11 +219,6 @@ router.put('/update/:toolName', authenticateToken, async (req, res) => {
 
     if (updates.length === 0) {
       return res.json({ success: false, message: '没有需要更新的字段' });
-    }
-
-    // 非管理员不能修改 is_public 为非公开（如果原来是系统工具）
-    if (!admin && tool.is_system === 1) {
-      return res.json({ success: false, message: '无权修改系统工具' });
     }
 
     updates.push('updater_id = ?');
@@ -243,16 +240,15 @@ router.put('/update/:toolName', authenticateToken, async (req, res) => {
 
 /**
  * DELETE /:toolName - 删除工具
- * 系统工具(is_system=1)非管理员不能删除
- * 只有创建者或管理员可以删除
+ * 内置工具(is_system=1): 只有 username 为 'admin' 的用户可以删除
+ * 用户自建工具: 只有创建者可以删除
  */
 router.delete('/:toolName', authenticateToken, async (req, res) => {
   try {
     const { toolName } = req.params;
     const userId = req.user.id;
-    const admin = isAdmin(req.user);
+    const username = req.user.username;
 
-    // 查找工具
     const [rows] = await pool.execute(
       'SELECT * FROM ai_custom_tools WHERE tool_name = ?',
       [toolName]
@@ -264,14 +260,14 @@ router.delete('/:toolName', authenticateToken, async (req, res) => {
 
     const tool = rows[0];
 
-    // 系统工具非管理员不能删除
-    if (tool.is_system === 1 && !admin) {
-      return res.json({ success: false, message: '系统工具无法删除' });
-    }
-
-    // 权限校验: 只有创建者或管理员可以删除
-    if (!admin && tool.creator_id !== userId) {
-      return res.json({ success: false, message: '无权删除该工具' });
+    if (tool.is_system === 1) {
+      if (username !== 'admin') {
+        return res.json({ success: false, message: '内置工具只有 admin 用户可以删除' });
+      }
+    } else {
+      if (tool.creator_id !== userId) {
+        return res.json({ success: false, message: '无权删除该工具' });
+      }
     }
 
     await pool.execute(

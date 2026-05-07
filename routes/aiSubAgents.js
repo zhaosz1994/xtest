@@ -312,6 +312,18 @@ router.post('/create', authenticateToken, async (req, res) => {
       return res.json({ success: false, message: '代理编码和显示名称为必填项' });
     }
 
+    if (!/^[a-zA-Z][a-zA-Z0-9_]{1,49}$/.test(agent_code)) {
+      return res.json({ success: false, message: '代理编码只能包含字母、数字和下划线，且以字母开头，长度2-50' });
+    }
+
+    if (display_name.length > 100) {
+      return res.json({ success: false, message: '显示名称不能超过100个字符' });
+    }
+
+    if (description && description.length > 2000) {
+      return res.json({ success: false, message: '描述不能超过2000个字符' });
+    }
+
     await connection.beginTransaction();
 
     // 检查agent_code是否已存在
@@ -359,6 +371,7 @@ router.post('/create', authenticateToken, async (req, res) => {
 
     // 处理配置文件：支持对象格式 { soul, user, tools, checklist, examples } 和数组格式
     const filesToInsert = [];
+    const MAX_CONFIG_FILE_SIZE = 100000;
 
     if (configFiles && typeof configFiles === 'object' && !Array.isArray(configFiles)) {
       // 对象格式：{ soul: '...', user: '...', tools: '...', checklist: '...', examples: '...' }
@@ -402,6 +415,10 @@ router.post('/create', authenticateToken, async (req, res) => {
 
     // 插入配置文件
     for (const cf of filesToInsert) {
+      if (cf.content && cf.content.length > MAX_CONFIG_FILE_SIZE) {
+        await connection.rollback();
+        return res.json({ success: false, message: `配置文件"${cf.file_name}"内容过大（最大${MAX_CONFIG_FILE_SIZE / 1000}KB）` });
+      }
       await connection.execute(
         `INSERT INTO ai_sub_agent_config_files
           (agent_id, file_type, file_name, content, description, is_required, sort_order, version, created_by)
@@ -441,6 +458,10 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
   try {
     connection = await pool.getConnection();
     const { id } = req.params;
+    const agentId = parseInt(id);
+    if (isNaN(agentId) || agentId <= 0) {
+      return res.json({ success: false, message: '无效的代理ID' });
+    }
     const userId = req.user.id;
     const userIsAdmin = isAdmin(req.user);
 
@@ -454,7 +475,7 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
     // 查找当前代理
     const [agents] = await connection.execute(
       'SELECT * FROM ai_sub_agents WHERE id = ?',
-      [id]
+      [agentId]
     );
 
     if (agents.length === 0) {
@@ -1036,7 +1057,7 @@ router.get('/workflow/:agentCode', authenticateToken, async (req, res) => {
     try {
       const aiConfig = await aiService.getUserAIConfig(userId);
       if (aiConfig) {
-        const genParams = await aiService.getAIGenerationParams();
+        const genParams = await aiService.getUserAIGenerationParams(userId);
         const sceneParams = aiService.getSceneParams(genParams, 'scene_case_generation');
         const effectiveModel = agent.llm_model || aiConfig.model_name || 'deepseek-chat';
         const effectiveTemperature = agent.llm_temperature != null ? parseFloat(agent.llm_temperature) : sceneParams.temperature;

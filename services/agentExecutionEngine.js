@@ -1,5 +1,5 @@
 const pool = require('../db');
-const { getUserAIConfig, getUserAITimeoutConfig, getAIGenerationParams, getSceneParams } = require('./aiService');
+const { getUserAIConfig, getUserAITimeoutConfig, getUserAIGenerationParams, getSceneParams } = require('./aiService');
 const sandboxExecutor = require('./sandboxExecutor');
 const llmResponseParser = require('./llmResponseParser');
 const diffGenerator = require('./diffGenerator');
@@ -24,6 +24,7 @@ class AgentExecutionEngine {
      */
     async executeAgent(agentCode, userId, variables, context) {
         const startTime = Date.now();
+        let aiConfig = null;
 
         try {
             // 1. 通过Override引擎解析代理（私有覆盖 > 系统默认）
@@ -99,7 +100,7 @@ class AgentExecutionEngine {
             }
 
             // 7. 获取AI配置
-            const aiConfig = await getUserAIConfig(userId);
+            aiConfig = await getUserAIConfig(userId);
             if (!aiConfig) {
                 return {
                     success: false,
@@ -112,7 +113,7 @@ class AgentExecutionEngine {
             }
 
             // 8. 调用LLM
-            let llmResult = await this._callLLM(systemPrompt, userPrompt, tools, aiConfig);
+            let llmResult = await this._callLLM(systemPrompt, userPrompt, tools, aiConfig, userId);
 
             // 9. 处理工具调用（Agentic Loop，最多5轮）
             const toolCallsLog = [];
@@ -149,7 +150,8 @@ class AgentExecutionEngine {
                     llmResult.tool_calls,
                     toolResults,
                     tools,
-                    aiConfig
+                    aiConfig,
+                    userId
                 );
 
                 totalPromptTokens += llmResult.usage?.prompt_tokens || 0;
@@ -238,6 +240,10 @@ class AgentExecutionEngine {
                 toolCallsLog,
                 memoryContribution,
                 executionTimeMs,
+                promptTokens: totalPromptTokens,
+                completionTokens: totalCompletionTokens,
+                totalTokens: totalTokensAccum,
+                modelName: aiConfig.model_name || null,
                 agentId: agent.id,
                 agentConfig: {
                     maxRetries: agent.max_retries || 3,
@@ -548,15 +554,16 @@ class AgentExecutionEngine {
      * @param {string} userPrompt - 用户提示词
      * @param {Array} tools - Function Calling工具列表
      * @param {Object} aiConfig - AI配置
+     * @param {number} userId - 用户ID
      * @returns {Object} { content, tool_calls }
      */
-    async _callLLM(systemPrompt, userPrompt, tools, aiConfig) {
+    async _callLLM(systemPrompt, userPrompt, tools, aiConfig, userId, sceneName = 'scene_case_generation') {
         const apiKey = aiConfig.api_key;
         const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
         const model = aiConfig.model_name || 'deepseek-chat';
 
-        const genParams = await getAIGenerationParams();
-        const sceneParams = getSceneParams(genParams, 'scene_case_generation');
+        const genParams = await getUserAIGenerationParams(userId);
+        const sceneParams = getSceneParams(genParams, sceneName);
 
         const messages = [
             { role: 'system', content: systemPrompt },
@@ -595,13 +602,32 @@ class AgentExecutionEngine {
 
         const timeoutConfig = await getUserAITimeoutConfig(aiConfig.user_id);
 
-        const response = await axios.post(apiUrl, requestBody, {
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            timeout: timeoutConfig.generalAITask || genParams.request_timeout || 120000
-        });
+        let response;
+        try {
+            response = await axios.post(apiUrl, requestBody, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                timeout: timeoutConfig.generalAITask || genParams.request_timeout || 120000
+            });
+        } catch (axiosError) {
+            if (axiosError.response) {
+                const status = axiosError.response.status;
+                const errorBody = axiosError.response.data;
+                if (status === 401) {
+                    throw new Error('AI API认证失败，请检查API Key配置');
+                } else if (status === 429) {
+                    throw new Error('AI API请求频率超限，请稍后重试');
+                } else if (status === 400) {
+                    const errMsg = typeof errorBody === 'object' ? (errorBody.error?.message || JSON.stringify(errorBody)) : String(errorBody);
+                    throw new Error(`AI API请求参数错误: ${errMsg}`);
+                } else {
+                    throw new Error(`AI API请求失败(HTTP ${status}): ${axiosError.message}`);
+                }
+            }
+            throw axiosError;
+        }
 
         const choice = response.data?.choices?.[0];
         if (!choice) {
@@ -630,15 +656,16 @@ class AgentExecutionEngine {
      * @param {Array} toolResults - 工具执行结果
      * @param {Array} tools - 工具定义
      * @param {Object} aiConfig - AI配置
+     * @param {number} userId - 用户ID
      * @returns {Object} { content, tool_calls }
      */
-    async _callLLMWithToolResults(systemPrompt, userPrompt, toolCalls, toolResults, tools, aiConfig) {
+    async _callLLMWithToolResults(systemPrompt, userPrompt, toolCalls, toolResults, tools, aiConfig, userId, sceneName = 'scene_case_generation') {
         const apiKey = aiConfig.api_key;
         const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
         const model = aiConfig.model_name || 'deepseek-chat';
 
-        const genParams = await getAIGenerationParams();
-        const sceneParams = getSceneParams(genParams, 'scene_case_generation');
+        const genParams = await getUserAIGenerationParams(userId);
+        const sceneParams = getSceneParams(genParams, sceneName);
 
         const messages = [
             { role: 'system', content: systemPrompt },
@@ -671,13 +698,32 @@ class AgentExecutionEngine {
 
         const timeoutConfig = await getUserAITimeoutConfig(aiConfig.user_id);
 
-        const response = await axios.post(apiUrl, requestBody, {
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            timeout: timeoutConfig.generalAITask || 120000
-        });
+        let response;
+        try {
+            response = await axios.post(apiUrl, requestBody, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                timeout: timeoutConfig.generalAITask || 120000
+            });
+        } catch (axiosError) {
+            if (axiosError.response) {
+                const status = axiosError.response.status;
+                const errorBody = axiosError.response.data;
+                if (status === 401) {
+                    throw new Error('AI API认证失败，请检查API Key配置');
+                } else if (status === 429) {
+                    throw new Error('AI API请求频率超限，请稍后重试');
+                } else if (status === 400) {
+                    const errMsg = typeof errorBody === 'object' ? (errorBody.error?.message || JSON.stringify(errorBody)) : String(errorBody);
+                    throw new Error(`AI API请求参数错误: ${errMsg}`);
+                } else {
+                    throw new Error(`AI API请求失败(HTTP ${status}): ${axiosError.message}`);
+                }
+            }
+            throw axiosError;
+        }
 
         const choice = response.data?.choices?.[0];
         if (!choice) {

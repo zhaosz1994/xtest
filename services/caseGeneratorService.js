@@ -176,15 +176,40 @@ class CaseGeneratorService {
     const response = await this.callAI(aiConfig, systemPrompt, userPrompt, config, task.user_id, task.library_id, task.module_id);
 
     const content = response.choices?.[0]?.message?.content || '';
+    const usage = response.usage || {};
     
     logger.info('AI返回内容', { 
       chunkId: chunk.id,
       contentLength: content.length,
-      contentPreview: content.substring(0, 500),
-      fullContent: content
+      contentPreview: content.substring(0, 500)
     });
     
     const cases = this.parseAIResponse(content);
+    
+    if (cases.length === 0 && content.length > 0) {
+      logger.warn('AI返回内容解析失败，未生成有效用例', {
+        chunkId: chunk.id,
+        contentLength: content.length,
+        contentPreview: content.substring(0, 200)
+      });
+      
+      aiRequestLogger.logFailure({
+        userId: task.user_id,
+        triggerType: 'generation',
+        triggerSource: 'case_generator',
+        triggerSourceName: 'AI生成测试用例',
+        systemPrompt,
+        userPrompt,
+        aiResponse: content,
+        promptTokens: usage.prompt_tokens || 0,
+        completionTokens: usage.completion_tokens || 0,
+        totalTokens: usage.total_tokens || 0,
+        modelName: aiConfig.model_name || config?.model || 'deepseek-chat',
+        errorMessage: 'AI返回内容无法解析为有效的测试用例JSON格式',
+        libraryId: task.library_id,
+        moduleId: task.module_id
+      });
+    }
     
     return cases;
   }
@@ -286,9 +311,9 @@ ${chunk.chunk_content}
 
   async callAI(aiConfig, systemPrompt, userPrompt, config, userId, libraryId = null, moduleId = null) {
     const axios = require('axios');
-    const { getUserAITimeoutConfig, getAIGenerationParams, getSceneParams } = require('./aiService');
+    const { getUserAITimeoutConfig, getUserAIGenerationParams, getSceneParams } = require('./aiService');
     const timeoutConfig = await getUserAITimeoutConfig(userId);
-    const genParams = await getAIGenerationParams();
+    const genParams = await getUserAIGenerationParams(userId);
     const sceneParams = getSceneParams(genParams, 'scene_case_generation');
     const apiKey = aiConfig.api_key;
     const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
@@ -578,8 +603,8 @@ ${chunk.chunk_content}
       JOIN modules m ON t.module_id = m.id
       WHERE t.user_id = ?
       ORDER BY t.created_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `, [userId]);
+      LIMIT ? OFFSET ?
+    `, [userId, limit, offset]);
 
     const [countResult] = await pool.execute(`
       SELECT COUNT(*) as total FROM ai_case_generation_tasks WHERE user_id = ?

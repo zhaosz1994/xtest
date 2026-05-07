@@ -37,13 +37,13 @@ const ForumToast = {
         `;
         
         if (type === 'success') {
-            toast.style.backgroundColor = '#28a745';
+            toast.style.backgroundColor = 'var(--color-success, #28a745)';
         } else if (type === 'error') {
-            toast.style.backgroundColor = '#dc3545';
+            toast.style.backgroundColor = 'var(--color-danger, #dc3545)';
         } else if (type === 'warning') {
-            toast.style.backgroundColor = '#f39c12';
+            toast.style.backgroundColor = 'var(--color-warning, #f39c12)';
         } else if (type === 'info') {
-            toast.style.backgroundColor = '#1a73e8';
+            toast.style.backgroundColor = 'var(--color-info, #1a73e8)';
         }
         
         toast.textContent = message;
@@ -140,7 +140,7 @@ function createConfirmModal() {
         }
         
         .forum-confirm-content {
-            background: #fff;
+            background: var(--color-bg-elevated, #fff);
             border-radius: 8px;
             width: 400px;
             max-width: 90%;
@@ -161,7 +161,7 @@ function createConfirmModal() {
         
         .forum-confirm-header {
             padding: 20px 24px;
-            border-bottom: 1px solid #f0f0f0;
+            border-bottom: 1px solid var(--color-border-primary, #f0f0f0);
             display: flex;
             align-items: center;
             gap: 12px;
@@ -174,7 +174,7 @@ function createConfirmModal() {
         .forum-confirm-header h3 {
             margin: 0;
             font-size: 16px;
-            color: #1a1a1a;
+            color: var(--color-text-primary, #1a1a1a);
         }
         
         .forum-confirm-body {
@@ -184,14 +184,14 @@ function createConfirmModal() {
         .forum-confirm-body p {
             margin: 0;
             font-size: 14px;
-            color: #666;
+            color: var(--color-text-secondary, #666);
             line-height: 1.6;
             white-space: pre-wrap;
         }
         
         .forum-confirm-footer {
             padding: 16px 24px;
-            border-top: 1px solid #f0f0f0;
+            border-top: 1px solid var(--color-border-primary, #f0f0f0);
             display: flex;
             justify-content: flex-end;
             gap: 12px;
@@ -207,13 +207,13 @@ function createConfirmModal() {
         }
         
         .forum-confirm-btn.cancel {
-            background: #f5f5f5;
-            color: #666;
-            border: 1px solid #ddd;
+            background: var(--color-bg-tertiary, #f5f5f5);
+            color: var(--color-text-secondary, #666);
+            border: 1px solid var(--color-border-primary, #ddd);
         }
         
         .forum-confirm-btn.cancel:hover {
-            background: #e8e8e8;
+            background: var(--color-border-secondary, #e8e8e8);
         }
         
         .forum-confirm-btn.confirm {

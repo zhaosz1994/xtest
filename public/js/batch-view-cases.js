@@ -877,7 +877,7 @@
         if (!hint) return;
         const count = batchData.length;
         hint.textContent = `共 ${count} 条`;
-        hint.style.color = count >= MAX_ROWS ? '#ff4d4f' : '#999';
+        hint.style.color = count >= MAX_ROWS ? '#ff4d4f' : ThemeService.getColor('textMuted');
     }
 
     function handleTableInput(event) {
@@ -1432,7 +1432,7 @@
         if (selectedCountEl) selectedCountEl.textContent = drawerSelectedProjects.length;
 
         if (filteredProjects.length === 0) {
-            listEl.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px; color: #909399;">暂无项目</td></tr>';
+            listEl.innerHTML = `<tr><td colspan="6" style="text-align: center; padding: 20px; color: ${ThemeService.getColor('textMuted')};">暂无项目</td></tr>`;
             return;
         }
 
@@ -1457,7 +1457,7 @@
                         ${escapeHtml(project.name || '未命名项目')}
                     </td>
                     <td class="pa-col-owner">
-                        <span class="pa-owner-text">${escapeHtml(displayOwner) || '<span style="color:#bbb">继承行负责人</span>'}</span>
+                        <span class="pa-owner-text">${escapeHtml(displayOwner) || '<span style="color:var(--color-text-tertiary, #bbb)">继承行负责人</span>'}</span>
                     </td>
                     <td class="pa-col-progress">
                         <select class="form-select pa-select" name="progress-${project.id}">
@@ -2353,7 +2353,7 @@
                     <h3>批量设置默认值</h3>
                 </div>
                 <div class="modal-body">
-                    <div style="margin-bottom:12px; font-size:13px; color:#666;">留空的字段将保持原值不变。</div>
+                    <div style="margin-bottom:12px; font-size:13px; color:var(--color-text-secondary, #666);">留空的字段将保持原值不变。</div>
                     <div class="bulk-field-row">
                         <label>优先级</label>
                         <select id="bulk-priority" class="bulk-select">

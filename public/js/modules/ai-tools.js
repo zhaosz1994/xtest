@@ -85,6 +85,19 @@ function renderAIToolsTable(tools) {
         return;
     }
 
+    const currentUser = window.currentUser || (function() {
+        try {
+            const userStr = localStorage.getItem('currentUser');
+            return userStr ? JSON.parse(userStr) : null;
+        } catch (e) {
+            return null;
+        }
+    })();
+
+    const isAdminUser = currentUser && ['管理员', 'admin', 'Administrator'].includes(currentUser.role);
+    const isAdminUsername = currentUser && currentUser.username === 'admin';
+    const currentUserId = currentUser ? currentUser.id : null;
+
     tableBody.innerHTML = tools.map(tool => {
         const langBadge = tool.language === 'python'
             ? '<span class="aitools-badge aitools-badge-python">Python</span>'
@@ -97,6 +110,30 @@ function renderAIToolsTable(tools) {
             ? '<span class="aitools-status aitools-status-on">启用</span>'
             : '<span class="aitools-status aitools-status-off">禁用</span>';
 
+        const isSystem = tool.is_system === 1;
+        const isCreator = tool.creator_id === currentUserId;
+
+        let showEdit = false;
+        let showDelete = false;
+
+        if (isSystem) {
+            showEdit = isAdminUser;
+            showDelete = isAdminUsername;
+        } else {
+            showEdit = isCreator;
+            showDelete = isCreator;
+        }
+
+        const editBtn = showEdit
+            ? `<button class="aitools-action-btn aitools-btn-edit" data-tool-name="${escapeHtml(tool.tool_name)}" title="编辑">编辑</button>`
+            : '';
+
+        const deleteBtn = showDelete
+            ? `<button class="aitools-action-btn aitools-btn-delete" data-tool-name="${escapeHtml(tool.tool_name)}" title="删除">删除</button>`
+            : '';
+
+        const testBtn = `<button class="aitools-action-btn aitools-btn-test" data-tool-name="${escapeHtml(tool.tool_name)}" title="测试运行">测试</button>`;
+
         return `
         <tr data-tool-name="${escapeHtml(tool.tool_name)}">
             <td class="aitools-col-name" title="${escapeHtml(tool.tool_name)}">${escapeHtml(tool.tool_name)}</td>
@@ -105,9 +142,9 @@ function renderAIToolsTable(tools) {
             <td><span class="${publicClass}">${publicIcon}</span></td>
             <td>${enabledHtml}</td>
             <td class="aitools-col-actions">
-                <button class="aitools-action-btn aitools-btn-edit" data-tool-name="${escapeHtml(tool.tool_name)}" title="编辑">编辑</button>
-                <button class="aitools-action-btn aitools-btn-delete" data-tool-name="${escapeHtml(tool.tool_name)}" title="删除">删除</button>
-                <button class="aitools-action-btn aitools-btn-test" data-tool-name="${escapeHtml(tool.tool_name)}" title="测试运行">测试</button>
+                ${editBtn}
+                ${deleteBtn}
+                ${testBtn}
             </td>
         </tr>`;
     }).join('');
@@ -836,6 +873,31 @@ function ensureAIToolsModal() {
             transition: background 0.15s;
         }
         .aitools-btn-save:hover { background: #4f46e5; }
+
+        [data-theme="dark"] .aitools-modal { background: #1e293b; }
+        [data-theme="dark"] .aitools-modal-header { border-bottom-color: #334155; }
+        [data-theme="dark"] .aitools-modal-header h3 { color: #e2e8f0; }
+        [data-theme="dark"] .aitools-modal-close { color: #94a3b8; }
+        [data-theme="dark"] .aitools-modal-close:hover { background: #334155; color: #e2e8f0; }
+        [data-theme="dark"] .aitools-form-group label { color: #94a3b8; }
+        [data-theme="dark"] .aitools-form-group input,
+        [data-theme="dark"] .aitools-form-group textarea,
+        [data-theme="dark"] .aitools-form-group select { border-color: #334155; background: #0f172a; color: #e2e8f0; }
+        [data-theme="dark"] .aitools-form-group input:focus,
+        [data-theme="dark"] .aitools-form-group textarea:focus { border-color: #818cf8; box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.1); }
+        [data-theme="dark"] .aitools-form-group input[readonly] { background: #1e293b; color: #94a3b8; }
+        [data-theme="dark"] .aitools-toggle-row label { color: #94a3b8; }
+        [data-theme="dark"] .aitools-section-label { color: #94a3b8; }
+        [data-theme="dark"] .aitools-section-title { color: #94a3b8; }
+        [data-theme="dark"] .aitools-code-editor { background: #0f172a; border-color: #334155; color: #e2e8f0; }
+        [data-theme="dark"] .aitools-schema-editor { background: #0f172a; border-color: #334155; color: #e2e8f0; }
+        [data-theme="dark"] .aitools-schema-name { color: #e2e8f0; }
+        [data-theme="dark"] .aitools-schema-optional { background: #334155; color: #94a3b8; }
+        [data-theme="dark"] .aitools-test-params { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+        [data-theme="dark"] .aitools-test-result { background: #1e293b; border-color: #334155; color: #94a3b8; }
+        [data-theme="dark"] .aitools-btn-cancel { background: #334155; border-color: #475569; color: #94a3b8; }
+        [data-theme="dark"] .aitools-btn-cancel:hover { background: #475569; }
+        [data-theme="dark"] .aitools-status-off { background: #334155; color: #94a3b8; }
     `;
     document.head.appendChild(style);
 

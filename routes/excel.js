@@ -812,6 +812,7 @@ router.post('/import/execute', async (req, res) => {
     const skippedRows = [];
     const duplicateRows = [];
     const errors = [];
+    const importedCaseIds = [];
     
     const casesToInsert = [];
     const batchSize = 100;
@@ -1035,6 +1036,10 @@ router.post('/import/execute', async (req, res) => {
         batchCaseIds
       );
       
+      insertedRows.forEach(dbRow => {
+        importedCaseIds.push(dbRow.id);
+      });
+
       // 构造M2M的批量插入数据
       const envInserts = [];
       const phaseInserts = [];
@@ -1100,10 +1105,13 @@ router.post('/import/execute', async (req, res) => {
     
     await connection.commit();
     
+    const import_batch_id = 'IMP-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
+
     res.json({
       success: true,
       message: `导入完成: 成功${successCount}条, 跳过${skipCount}条`,
       data: {
+        import_batch_id,
         successCount,
         skipCount,
         duplicateCount,
@@ -1111,7 +1119,8 @@ router.post('/import/execute', async (req, res) => {
         emptyModuleCount,
         skippedRows,
         duplicateRows,
-        errors: errors.slice(0, 20)
+        errors: errors.slice(0, 20),
+        imported_case_ids: importedCaseIds
       }
     });
     

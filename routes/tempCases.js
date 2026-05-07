@@ -7,15 +7,23 @@ const pool = require('../db');
 const logger = require('../services/logger');
 
 async function checkTaskAccess(taskId, userId, userRole) {
-  const [tasks] = await pool.execute(`
+  // 先检查 ai_case_generation_tasks
+  let [tasks] = await pool.execute(`
     SELECT user_id FROM ai_case_generation_tasks WHERE task_id = ?
   `, [taskId]);
+
+  if (tasks.length === 0) {
+    // 未找到，再检查 ai_import_optimize_tasks
+    [tasks] = await pool.execute(`
+      SELECT user_id FROM ai_import_optimize_tasks WHERE task_id = ?
+    `, [taskId]);
+  }
 
   if (tasks.length === 0) {
     return { allowed: false, reason: '任务不存在' };
   }
 
-  if (tasks[0].user_id === userId || userRole === 'admin') {
+  if (tasks[0].user_id === userId || userRole === 'admin' || userRole === '管理员' || userRole === 'Administrator') {
     return { allowed: true };
   }
 
@@ -46,14 +54,14 @@ async function checkBatchAccess(tempCaseIds, userId, userRole) {
 router.get('/list/:taskId', authenticateToken, async (req, res) => {
   try {
     const { taskId } = req.params;
-    const { status, isDuplicate, level1Name, search, page, pageSize } = req.query;
+    const { status, isDuplicate, level1Name, search, sourceType, page, pageSize } = req.query;
 
     const access = await checkTaskAccess(taskId, req.user.id, req.user.role);
     if (!access.allowed) {
       return res.status(403).json({ success: false, message: access.reason });
     }
 
-    let sql = `SELECT tc.*, m.name as module_name, cl.name as library_name FROM temp_test_cases tc LEFT JOIN modules m ON tc.module_id = m.id LEFT JOIN case_libraries cl ON m.library_id = cl.id WHERE tc.task_id = ?`;
+    let sql = `SELECT tc.*, m.name as module_name, cl.name as library_name, mcm.optimization_notes FROM temp_test_cases tc LEFT JOIN modules m ON tc.module_id = m.id LEFT JOIN case_libraries cl ON m.library_id = cl.id LEFT JOIN ai_import_case_mapping mcm ON mcm.temp_case_id = tc.temp_case_id WHERE tc.task_id = ?`;
     let countSql = `SELECT COUNT(*) as total FROM temp_test_cases WHERE task_id = ?`;
     const params = [taskId];
     const countParams = [taskId];
@@ -81,6 +89,12 @@ router.get('/list/:taskId', authenticateToken, async (req, res) => {
       countSql += ` AND (name LIKE ? OR purpose LIKE ?)`;
       params.push(`%${search}%`, `%${search}%`);
       countParams.push(`%${search}%`, `%${search}%`);
+    }
+    if (sourceType) {
+      sql += ` AND tc.source_type = ?`;
+      countSql += ` AND source_type = ?`;
+      params.push(sourceType);
+      countParams.push(sourceType);
     }
 
     const [countResult] = await pool.execute(countSql, countParams);
@@ -432,16 +446,25 @@ router.get('/level1-groups/:taskId', authenticateToken, async (req, res) => {
 
 router.get('/all-active', authenticateToken, async (req, res) => {
   try {
-    const { status, isDuplicate, search, page, pageSize } = req.query;
+    const { status, isDuplicate, search, sourceType, page, pageSize } = req.query;
     const userId = req.user.id;
     const userRole = req.user.role;
 
-    let taskWhere = `(t.user_id = ? OR ? = 'admin') AND t.status = 'completed' AND (t.expires_at IS NULL OR t.expires_at > NOW())`;
+    let taskWhere = `(t.user_id = ? OR ? IN ('admin', '管理员', 'Administrator')) AND t.status = 'completed' AND (t.expires_at IS NULL OR t.expires_at > NOW())`;
     const taskParams = [userId, userRole];
 
-    const [tasks] = await pool.execute(`
+    const [genTasks] = await pool.execute(`
       SELECT task_id, library_id FROM ai_case_generation_tasks t WHERE ${taskWhere}
     `, taskParams);
+
+    const optWhere = `(t.user_id = ? OR ? IN ('admin', '管理员', 'Administrator')) AND t.status = 'completed' AND t.completed_at > DATE_SUB(NOW(), INTERVAL 7 DAY)`;
+    const optParams = [userId, userRole];
+
+    const [optTasks] = await pool.execute(`
+      SELECT task_id, library_id FROM ai_import_optimize_tasks t WHERE ${optWhere}
+    `, optParams);
+
+    const tasks = [...genTasks, ...optTasks];
 
     if (tasks.length === 0) {
       return res.json({ success: true, data: { cases: [], total: 0, page: 1, pageSize: 50, stats: { total: 0, pending: 0, approved: 0, rejected: 0, merged: 0, duplicate: 0 } } });
@@ -467,6 +490,10 @@ router.get('/all-active', authenticateToken, async (req, res) => {
       whereClause += ` AND (tc.name LIKE ? OR tc.purpose LIKE ?)`;
       params.push(`%${search}%`, `%${search}%`);
     }
+    if (sourceType) {
+      whereClause += ` AND tc.source_type = ?`;
+      params.push(sourceType);
+    }
 
     let countSql = `SELECT COUNT(*) as total FROM temp_test_cases tc ${whereClause}`;
     const [countResult] = await pool.execute(countSql, params);
@@ -477,7 +504,7 @@ router.get('/all-active', authenticateToken, async (req, res) => {
     const offset = (currentPage - 1) * currentPageSize;
 
     const [cases] = await pool.execute(
-      `SELECT tc.*, m.name as module_name, cl.name as library_name FROM temp_test_cases tc LEFT JOIN modules m ON tc.module_id = m.id LEFT JOIN case_libraries cl ON m.library_id = cl.id ${whereClause} ORDER BY tc.created_at ASC LIMIT ${currentPageSize} OFFSET ${offset}`,
+      `SELECT tc.*, m.name as module_name, cl.name as library_name, mcm.optimization_notes FROM temp_test_cases tc LEFT JOIN modules m ON tc.module_id = m.id LEFT JOIN case_libraries cl ON m.library_id = cl.id LEFT JOIN ai_import_case_mapping mcm ON mcm.temp_case_id = tc.temp_case_id ${whereClause} ORDER BY tc.created_at ASC LIMIT ${currentPageSize} OFFSET ${offset}`,
       params
     );
 
@@ -503,6 +530,45 @@ router.get('/all-active', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     logger.error('[tempCases] /all-active error:', { error: error.message });
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.get('/formal-case/:caseId', authenticateToken, async (req, res) => {
+  try {
+    const { caseId } = req.params;
+
+    const [cases] = await pool.execute(`
+      SELECT tc.id, tc.name, tc.priority, tc.type, tc.precondition, tc.purpose, tc.steps, tc.expected, tc.key_config, tc.remark,
+             tc.module_id, tc.level1_name, tc.created_at, tc.updated_at, m.library_id
+      FROM test_cases tc
+      LEFT JOIN modules m ON tc.module_id = m.id
+      WHERE tc.id = ? AND tc.is_deleted = 0
+    `, [caseId]);
+
+    if (cases.length === 0) {
+      return res.status(404).json({ success: false, message: '正式用例不存在' });
+    }
+
+    const formalCase = cases[0];
+    const libraryId = formalCase.library_id;
+    const userRole = req.user.role;
+    const isAdmin = userRole === 'admin' || userRole === '管理员' || userRole === 'Administrator';
+
+    if (!isAdmin && libraryId) {
+      const [libraries] = await pool.execute(
+        `SELECT id FROM case_libraries WHERE id = ? AND (creator_id = ? OR id IN (SELECT library_id FROM library_members WHERE user_id = ?))`,
+        [libraryId, req.user.id, req.user.id]
+      );
+      if (libraries.length === 0) {
+        return res.status(403).json({ success: false, message: '您没有权限查看此用例' });
+      }
+    }
+
+    delete formalCase.library_id;
+    res.json({ success: true, data: formalCase });
+  } catch (error) {
+    logger.error('[tempCases] /formal-case error:', { error: error.message });
     res.status(500).json({ success: false, message: error.message });
   }
 });

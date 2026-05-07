@@ -141,12 +141,18 @@ function aiGetAuthHeaders() {
 }
 
 async function aiApiGet(url) {
+    if (typeof apiRequest === 'function') {
+        return apiRequest(url, { method: 'GET' });
+    }
     const res = await fetch(AI_API_BASE + url, { headers: aiGetAuthHeaders() });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
 }
 
 async function aiApiPost(url, data) {
+    if (typeof apiRequest === 'function') {
+        return apiRequest(url, { method: 'POST', body: JSON.stringify(data) });
+    }
     const res = await fetch(AI_API_BASE + url, {
         method: 'POST',
         headers: aiGetAuthHeaders(),
@@ -157,6 +163,9 @@ async function aiApiPost(url, data) {
 }
 
 async function aiApiPut(url, data) {
+    if (typeof apiRequest === 'function') {
+        return apiRequest(url, { method: 'PUT', body: JSON.stringify(data) });
+    }
     const res = await fetch(AI_API_BASE + url, {
         method: 'PUT',
         headers: aiGetAuthHeaders(),
@@ -167,6 +176,9 @@ async function aiApiPut(url, data) {
 }
 
 async function aiApiDelete(url) {
+    if (typeof apiRequest === 'function') {
+        return apiRequest(url, { method: 'DELETE' });
+    }
     const res = await fetch(AI_API_BASE + url, {
         method: 'DELETE',
         headers: aiGetAuthHeaders()
@@ -199,6 +211,9 @@ function aiNotify(message, type = 'info') {
 }
 
 function aiShowConfirmMessage(message) {
+    if (typeof showConfirmMessage === 'function') {
+        return showConfirmMessage(message);
+    }
     return new Promise((resolve) => {
         let modal = document.getElementById('ai-confirm-modal');
         if (!modal) {
@@ -218,7 +233,7 @@ function aiShowConfirmMessage(message) {
                     z-index: 99999;
                 }
                 .ai-confirm-content {
-                    background: #fff;
+                    background: var(--color-bg-elevated, #fff);
                     border-radius: 12px;
                     width: 400px;
                     max-width: 90%;
@@ -231,18 +246,18 @@ function aiShowConfirmMessage(message) {
                 }
                 .ai-confirm-header {
                     padding: 20px 24px;
-                    border-bottom: 1px solid #e2e8f0;
+                    border-bottom: 1px solid var(--color-border-primary, #e2e8f0);
                     display: flex;
                     align-items: center;
                     gap: 12px;
                 }
                 .ai-confirm-icon { font-size: 24px; }
-                .ai-confirm-header h3 { margin: 0; font-size: 16px; color: #1e293b; }
+                .ai-confirm-header h3 { margin: 0; font-size: 16px; color: var(--color-text-primary, #1e293b); }
                 .ai-confirm-body { padding: 24px; }
-                .ai-confirm-body p { margin: 0; font-size: 14px; color: #64748b; line-height: 1.6; }
+                .ai-confirm-body p { margin: 0; font-size: 14px; color: var(--color-text-secondary, #64748b); line-height: 1.6; }
                 .ai-confirm-footer {
                     padding: 16px 24px;
-                    border-top: 1px solid #e2e8f0;
+                    border-top: 1px solid var(--color-border-primary, #e2e8f0);
                     display: flex;
                     justify-content: flex-end;
                     gap: 12px;
@@ -255,8 +270,8 @@ function aiShowConfirmMessage(message) {
                     border: none;
                     transition: all 0.2s;
                 }
-                .ai-confirm-btn.cancel { background: #f1f5f9; color: #64748b; }
-                .ai-confirm-btn.cancel:hover { background: #e2e8f0; }
+                .ai-confirm-btn.cancel { background: var(--color-bg-tertiary, #f1f5f9); color: var(--color-text-secondary, #64748b); }
+                .ai-confirm-btn.cancel:hover { background: var(--color-border-primary, #e2e8f0); }
                 .ai-confirm-btn.confirm { background: #6366f1; color: #fff; }
                 .ai-confirm-btn.confirm:hover { background: #4f46e5; }
             `;
@@ -299,6 +314,9 @@ function aiShowConfirmMessage(message) {
 }
 
 function showPromptModal(message, defaultValue = '') {
+    if (typeof window.promptModal === 'function') {
+        return window.promptModal(message, defaultValue);
+    }
     return new Promise((resolve) => {
         let modal = document.getElementById('ai-prompt-modal');
         if (!modal) {
@@ -318,7 +336,7 @@ function showPromptModal(message, defaultValue = '') {
                     z-index: 99999;
                 }
                 .ai-prompt-content {
-                    background: #fff;
+                    background: var(--color-bg-elevated, #fff);
                     border-radius: 12px;
                     width: 450px;
                     max-width: 90%;
@@ -327,28 +345,30 @@ function showPromptModal(message, defaultValue = '') {
                 }
                 .ai-prompt-header {
                     padding: 20px 24px;
-                    border-bottom: 1px solid #e2e8f0;
+                    border-bottom: 1px solid var(--color-border-primary, #e2e8f0);
                     display: flex;
                     align-items: center;
                     gap: 12px;
                 }
                 .ai-prompt-icon { font-size: 24px; }
-                .ai-prompt-header h3 { margin: 0; font-size: 16px; color: #1e293b; }
+                .ai-prompt-header h3 { margin: 0; font-size: 16px; color: var(--color-text-primary, #1e293b); }
                 .ai-prompt-body { padding: 24px; }
-                .ai-prompt-body p { margin: 0 0 12px; font-size: 14px; color: #64748b; }
+                .ai-prompt-body p { margin: 0 0 12px; font-size: 14px; color: var(--color-text-secondary, #64748b); }
                 .ai-prompt-input {
                     width: 100%;
                     padding: 10px 12px;
-                    border: 1px solid #e2e8f0;
+                    border: 1px solid var(--color-border-primary, #e2e8f0);
                     border-radius: 8px;
                     font-size: 14px;
                     outline: none;
                     box-sizing: border-box;
+                    background: var(--color-bg-primary, #fff);
+                    color: var(--color-text-primary, #1e293b);
                 }
                 .ai-prompt-input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1); }
                 .ai-prompt-footer {
                     padding: 16px 24px;
-                    border-top: 1px solid #e2e8f0;
+                    border-top: 1px solid var(--color-border-primary, #e2e8f0);
                     display: flex;
                     justify-content: flex-end;
                     gap: 12px;
@@ -361,8 +381,8 @@ function showPromptModal(message, defaultValue = '') {
                     border: none;
                     transition: all 0.2s;
                 }
-                .ai-prompt-btn.cancel { background: #f1f5f9; color: #64748b; }
-                .ai-prompt-btn.cancel:hover { background: #e2e8f0; }
+                .ai-prompt-btn.cancel { background: var(--color-bg-tertiary, #f1f5f9); color: var(--color-text-secondary, #64748b); }
+                .ai-prompt-btn.cancel:hover { background: var(--color-border-primary, #e2e8f0); }
                 .ai-prompt-btn.confirm { background: #6366f1; color: #fff; }
                 .ai-prompt-btn.confirm:hover { background: #4f46e5; }
             `;
@@ -686,11 +706,25 @@ async function loadAILevel1Points() {
             const points = res.data || [];
             const container = document.getElementById('existingLevel1List');
             container.innerHTML = points.map(p =>
-                `<div class="ai-checkbox-item" data-name="${aiEscapeHtml(p.name).toLowerCase()}" onclick="toggleLevel1Item(this, ${p.id})">
-                    <input type="checkbox" value="${p.id}" onchange="event.stopPropagation(); updateLevel1Count()">
+                `<div class="ai-checkbox-item" data-name="${aiEscapeHtml(p.name).toLowerCase()}" data-level1-id="${p.id}">
+                    <input type="checkbox" class="ai-level1-checkbox" value="${p.id}">
                     <span>${aiEscapeHtml(p.name)} (${p.case_count}个用例)</span>
                 </div>`
             ).join('');
+
+            container.querySelectorAll('.ai-checkbox-item').forEach(item => {
+                item.addEventListener('click', function(e) {
+                    if (e.target.classList.contains('ai-level1-checkbox')) return;
+                    const id = parseInt(this.dataset.level1Id);
+                    toggleLevel1Item(this, id);
+                });
+            });
+            container.querySelectorAll('.ai-level1-checkbox').forEach(cb => {
+                cb.addEventListener('change', function(e) {
+                    e.stopPropagation();
+                    updateLevel1Count();
+                });
+            });
             
             document.getElementById('level1TotalCount').textContent = `共: ${points.length}`;
             updateLevel1Count();
@@ -833,7 +867,7 @@ async function showMergeModal() {
                 const label = document.createElement('label');
                 label.className = 'ai-checkbox-item';
                 label.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;transition:background .15s;';
-                label.onmouseover = function() { this.style.background = '#eef2ff'; };
+                label.onmouseover = function() { this.style.background = ThemeService.isDarkMode() ? 'rgba(99, 102, 241, 0.15)' : '#eef2ff'; };
                 label.onmouseout = function() { this.style.background = ''; };
                 label.innerHTML = `<input type="checkbox" value="${aiEscapeHtml(username)}" style="width:16px;height:16px;accent-color:var(--ai-primary);cursor:pointer;"><span style="font-size:14px;">${aiEscapeHtml(username)}</span>`;
                 reviewerList.appendChild(label);
@@ -975,20 +1009,24 @@ async function createTask() {
 }
 
 function showConfirmDialog(title, message, confirmText = '确认', cancelText = '取消') {
+    if (typeof showConfirmMessage === 'function') {
+        return showConfirmMessage(`${title}\n${message}`);
+    }
     return new Promise((resolve) => {
         const overlay = document.createElement('div');
         overlay.className = 'ai-modal-overlay show';
         overlay.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 10000; display: flex; align-items: center; justify-content: center;';
         
         const dialog = document.createElement('div');
-        dialog.style.cssText = 'background: white; border-radius: 8px; padding: 24px; max-width: 500px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);';
+        const c = ThemeService.getColors();
+        dialog.style.cssText = `background: ${c.bgSurface}; border-radius: 8px; padding: 24px; max-width: 500px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);`;
         
         dialog.innerHTML = `
-            <h3 style="margin: 0 0 16px 0; font-size: 18px; color: #1f2937;">${title}</h3>
-            <p style="margin: 0 0 24px 0; color: #6b7280; line-height: 1.6; white-space: pre-wrap;">${message}</p>
+            <h3 style="margin: 0 0 16px 0; font-size: 18px; color: ${c.textPrimary};">${title}</h3>
+            <p style="margin: 0 0 24px 0; color: ${c.textSecondary}; line-height: 1.6; white-space: pre-wrap;">${message}</p>
             <div style="display: flex; gap: 12px; justify-content: flex-end;">
-                <button class="btn-cancel" style="padding: 8px 16px; border: 1px solid #d1d5db; background: white; border-radius: 6px; cursor: pointer; color: #6b7280;">${cancelText}</button>
-                <button class="btn-confirm" style="padding: 8px 16px; border: none; background: #3b82f6; color: white; border-radius: 6px; cursor: pointer;">${confirmText}</button>
+                <button class="btn-cancel" style="padding: 8px 16px; border: 1px solid ${c.border}; background: ${c.bgElevated}; border-radius: 6px; cursor: pointer; color: ${c.textSecondary};">${cancelText}</button>
+                <button class="btn-confirm" style="padding: 8px 16px; border: none; background: ${c.primary}; color: white; border-radius: 6px; cursor: pointer;">${confirmText}</button>
             </div>
         `;
         
@@ -1224,7 +1262,7 @@ function renderKnowledgeTree(tree, container = null) {
             if (node.type === 'library') {
                 const childCount = countFiles(node.children);
                 return `<div class="ai-knowledge-group" id="group-library-${node.id}">
-                    <div class="ai-knowledge-group-header" onclick="toggleKnowledgeGroup('library-${node.id}')">
+                    <div class="ai-knowledge-group-header" data-toggle-group="library-${node.id}">
                         <span><span class="group-icon">📚</span>${aiEscapeHtml(node.name)}<span class="group-count">${childCount} 个文件</span></span>
                         <span class="expand-icon">▼</span>
                     </div>
@@ -1233,7 +1271,7 @@ function renderKnowledgeTree(tree, container = null) {
             } else if (node.type === 'module') {
                 const childCount = countFiles(node.children);
                 return `<div class="ai-knowledge-group" id="group-module-${node.id}">
-                    <div class="ai-knowledge-group-header" onclick="toggleKnowledgeGroup('module-${node.id}')">
+                    <div class="ai-knowledge-group-header" data-toggle-group="module-${node.id}">
                         <span><span class="group-icon">📦</span>${aiEscapeHtml(node.name)}<span class="group-count">${childCount} 个文件</span></span>
                         <span class="expand-icon">▼</span>
                     </div>
@@ -1242,7 +1280,7 @@ function renderKnowledgeTree(tree, container = null) {
             } else if (node.type === 'folder') {
                 const childCount = countFiles(node.children);
                 return `<div class="ai-knowledge-group" id="group-folder-${node.id}">
-                    <div class="ai-knowledge-group-header" onclick="toggleKnowledgeGroup('folder-${node.id}')">
+                    <div class="ai-knowledge-group-header" data-toggle-group="folder-${node.id}">
                         <span><span class="group-icon">📁</span>${aiEscapeHtml(node.name)}<span class="group-count">${childCount} 个文件</span></span>
                         <span class="expand-icon">▼</span>
                     </div>
@@ -1252,6 +1290,12 @@ function renderKnowledgeTree(tree, container = null) {
                 return renderKnowledgeRow(node);
             }
         }).join('');
+
+        el.querySelectorAll('[data-toggle-group]').forEach(header => {
+            header.addEventListener('click', function() {
+                toggleKnowledgeGroup(this.dataset.toggleGroup);
+            });
+        });
 
         tree.filter(n => n.type === 'library' && n.children).forEach(lib => {
             const libEl = document.getElementById('library-' + lib.id);
@@ -1288,10 +1332,10 @@ function renderKnowledgeList(items, container) {
     if (modules.length > 0 || folders.length > 0 || files.length > 0) {
         html = `<div class="ai-knowledge-list-header">
             <div class="col col-checkbox"></div>
-            <div class="col sortable ${knowledgeSortColumn === 'name' ? (knowledgeSortDirection === 'asc' ? 'sort-asc' : 'sort-desc') : ''}" onclick="sortKnowledgeList('name')">名称</div>
-            <div class="col sortable ${knowledgeSortColumn === 'type' ? (knowledgeSortDirection === 'asc' ? 'sort-asc' : 'sort-desc') : ''}" onclick="sortKnowledgeList('type')">类型</div>
-            <div class="col sortable ${knowledgeSortColumn === 'size' ? (knowledgeSortDirection === 'asc' ? 'sort-asc' : 'sort-desc') : ''}" onclick="sortKnowledgeList('size')">大小</div>
-            <div class="col sortable ${knowledgeSortColumn === 'status' ? (knowledgeSortDirection === 'asc' ? 'sort-asc' : 'sort-desc') : ''}" onclick="sortKnowledgeList('status')">状态</div>
+            <div class="col sortable ${knowledgeSortColumn === 'name' ? (knowledgeSortDirection === 'asc' ? 'sort-asc' : 'sort-desc') : ''}" data-sort-col="name">名称</div>
+            <div class="col sortable ${knowledgeSortColumn === 'type' ? (knowledgeSortDirection === 'asc' ? 'sort-asc' : 'sort-desc') : ''}" data-sort-col="type">类型</div>
+            <div class="col sortable ${knowledgeSortColumn === 'size' ? (knowledgeSortDirection === 'asc' ? 'sort-asc' : 'sort-desc') : ''}" data-sort-col="size">大小</div>
+            <div class="col sortable ${knowledgeSortColumn === 'status' ? (knowledgeSortDirection === 'asc' ? 'sort-asc' : 'sort-desc') : ''}" data-sort-col="status">状态</div>
             <div class="col">操作</div>
         </div>
         <div class="ai-knowledge-list-body">`;
@@ -1299,7 +1343,7 @@ function renderKnowledgeList(items, container) {
 
     modules.forEach(mod => {
         const childCount = countFiles(mod.children);
-        html += `<div class="ai-knowledge-row folder-row" onclick="toggleKnowledgeGroup('module-${mod.id}')">
+        html += `<div class="ai-knowledge-row folder-row" data-toggle-group="module-${mod.id}">
             <div class="col-checkbox"></div>
             <div class="col-name">
                 <span class="file-icon">📦</span>
@@ -1316,7 +1360,7 @@ function renderKnowledgeList(items, container) {
 
     folders.forEach(folder => {
         const childCount = countFiles(folder.children);
-        html += `<div class="ai-knowledge-row folder-row" onclick="toggleKnowledgeGroup('folder-${folder.id}')">
+        html += `<div class="ai-knowledge-row folder-row" data-toggle-group="folder-${folder.id}">
             <div class="col-checkbox"></div>
             <div class="col-name">
                 <span class="file-icon">📁</span>
@@ -1327,7 +1371,7 @@ function renderKnowledgeList(items, container) {
             <div class="col-size">-</div>
             <div class="col-status">-</div>
             <div class="col-actions">
-                <button class="action-btn" onclick="event.stopPropagation();deleteKnowledgeFile(${folder.id})" title="删除">🗑️</button>
+                <button class="action-btn" data-delete-folder="${folder.id}" title="删除">🗑️</button>
             </div>
         </div>
         <div class="ai-knowledge-list" id="folder-${folder.id}" style="display:none;margin-left:16px;margin-top:4px;margin-bottom:4px;"></div>`;
@@ -1342,6 +1386,57 @@ function renderKnowledgeList(items, container) {
         html += '</div>';
     }
     container.innerHTML = html;
+
+    container.querySelectorAll('[data-sort-col]').forEach(col => {
+        col.addEventListener('click', function() {
+            sortKnowledgeList(this.dataset.sortCol);
+        });
+    });
+
+    container.querySelectorAll('.folder-row[data-toggle-group]').forEach(row => {
+        row.addEventListener('click', function() {
+            toggleKnowledgeGroup(this.dataset.toggleGroup);
+        });
+    });
+
+    container.querySelectorAll('[data-delete-folder]').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            deleteKnowledgeFile(parseInt(this.dataset.deleteFolder));
+        });
+    });
+
+    container.querySelectorAll('.ai-file-checkbox').forEach(cb => {
+        cb.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const fileId = parseInt(this.dataset.fileId);
+            toggleFileSelection(fileId);
+            updateFileRowSelection(fileId);
+        });
+    });
+
+    container.querySelectorAll('.ai-file-name-toggle').forEach(name => {
+        name.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const fileId = parseInt(this.dataset.fileId);
+            toggleFileSelection(fileId);
+            updateFileRowSelection(fileId);
+        });
+    });
+
+    container.querySelectorAll('.ai-view-file-btn').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            viewFileContent(parseInt(this.dataset.fileId));
+        });
+    });
+
+    container.querySelectorAll('.ai-delete-file-btn').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            deleteKnowledgeFile(parseInt(this.dataset.fileId));
+        });
+    });
 
     modules.forEach(mod => {
         if (mod.children && mod.children.length > 0) {
@@ -1367,9 +1462,9 @@ function renderKnowledgeRow(file) {
 
     return `<div class="ai-knowledge-row ${isSelected ? 'selected' : ''}" data-file-id="${file.id}" data-name="${aiEscapeHtml(file.name).toLowerCase()}" data-type="${fileType}" data-size="${file.fileSize || file.file_size || 0}" data-status="${file.parseStatus || file.parse_status || ''}">
         <div class="col-checkbox">
-            <input type="checkbox" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation();toggleFileSelection(${file.id});updateFileRowSelection(${file.id});">
+            <input type="checkbox" class="ai-file-checkbox" ${isSelected ? 'checked' : ''} data-file-id="${file.id}">
         </div>
-        <div class="col-name" onclick="event.stopPropagation();toggleFileSelection(${file.id});updateFileRowSelection(${file.id});">
+        <div class="col-name ai-file-name-toggle" data-file-id="${file.id}">
             <span class="file-icon">${icon}</span>
             <span class="file-name">${aiEscapeHtml(file.name)}</span>
         </div>
@@ -1377,8 +1472,8 @@ function renderKnowledgeRow(file) {
         <div class="col-size">${fileSize}</div>
         <div class="col-status">${statusBadge}</div>
         <div class="col-actions">
-            <button class="action-btn" onclick="event.stopPropagation();viewFileContent(${file.id})" title="查看">👁️</button>
-            <button class="action-btn" onclick="event.stopPropagation();deleteKnowledgeFile(${file.id})" title="删除">🗑️</button>
+            <button class="action-btn ai-view-file-btn" data-file-id="${file.id}" title="查看">👁️</button>
+            <button class="action-btn ai-delete-file-btn" data-file-id="${file.id}" title="删除">🗑️</button>
         </div>
     </div>`;
 }
@@ -1564,6 +1659,10 @@ async function handleFileUpload() {
 
         try {
             const token = localStorage.getItem('authToken') || localStorage.getItem('token');
+            if (!token) {
+                aiNotify('请先登录', 'error');
+                continue;
+            }
             const res = await fetch(AI_API_BASE + '/api/knowledge/upload', {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}` },
@@ -1625,6 +1724,10 @@ async function resolveConflict() {
 
     try {
         const token = localStorage.getItem('authToken') || localStorage.getItem('token');
+        if (!token) {
+            aiNotify('请先登录', 'error');
+            return;
+        }
         const res = await fetch(AI_API_BASE + '/api/knowledge/upload', {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}` },
@@ -1727,12 +1830,14 @@ async function loadTempCasesPage() {
         const search = document.getElementById('caseSearch').value;
         const statusFilter = document.getElementById('statusFilter').value;
         const duplicateFilter = document.getElementById('duplicateFilter').value;
+        const sourceTypeFilter = document.getElementById('sourceTypeFilter').value;
 
         let params = new URLSearchParams();
         params.set('pageSize', '9999');
         if (search) params.set('search', search);
         if (statusFilter) params.set('status', statusFilter);
         if (duplicateFilter !== '') params.set('isDuplicate', duplicateFilter);
+        if (sourceTypeFilter) params.set('sourceType', sourceTypeFilter);
 
         let res;
         if (filterValue === 'all') {
@@ -1924,6 +2029,9 @@ function renderCaseTable(cases) {
                     const visible = libExpanded && modExpanded && l1Expanded;
                     const purposeText = c.purpose ? aiEscapeHtml(c.purpose.length > 80 ? c.purpose.substring(0, 80) + '...' : c.purpose) : '-';
                     const timeText = aiFormatDateTime(c.created_at);
+                    const sourceBadge = c.source_type === 'import_optimize'
+                        ? '<span class="ai-imp-source-badge ai-imp-import-optimize">导入优化</span>'
+                        : '<span class="ai-imp-source-badge ai-imp-ai-generation">AI生成</span>';
 
                     rows += `<tr class="ai-tree-case-row ${visible ? '' : 'ai-tree-row-hidden'}" data-lib="${aiEscapeHtml(libName)}" data-module="${aiEscapeHtml(modName)}" data-level1="${aiEscapeHtml(level1Name)}" data-type="case" data-case-id="${aiEscapeHtml(c.temp_case_id)}" data-l1-key="${aiEscapeHtml(l1Key)}" data-mod-key="${aiEscapeHtml(modKey)}">
                         <td class="col-checkbox"><input type="checkbox" class="ai-tree-checkbox" ${checked} data-case-check="${aiEscapeHtml(c.temp_case_id)}"></td>
@@ -1932,7 +2040,8 @@ function renderCaseTable(cases) {
                                 <span class="ai-tree-indent"></span>
                                 <span class="ai-tree-indent"></span>
                                 <span class="ai-tree-indent"></span>
-                                <a href="javascript:void(0)" class="ai-tree-case-name" data-view-case="${aiEscapeHtml(c.temp_case_id)}">${aiEscapeHtml(c.name)}</a>
+                                <a href="javascript:void(0)" class="ai-tree-case-name" data-view-case="${aiEscapeHtml(c.temp_case_id)}" data-source-type="${aiEscapeHtml(c.source_type || 'ai_generation')}">${aiEscapeHtml(c.name)}</a>
+                                ${sourceBadge}
                             </div>
                         </td>
                         <td class="col-purpose" title="${aiEscapeHtml(c.purpose || '')}">${purposeText}</td>
@@ -2345,12 +2454,18 @@ function updateParentCheckboxes() {
 function updateSelectedCount() {
     const countEl = document.getElementById('selectedCountBadge');
     const clearBtn = document.getElementById('clearSelectionBtn');
+    const overwriteMergeBtn = document.getElementById('overwriteMergeBtn');
     if (countEl) {
         countEl.textContent = selectedCases.size;
         countEl.style.display = selectedCases.size > 0 ? 'inline-flex' : 'none';
     }
     if (clearBtn) {
         clearBtn.style.display = selectedCases.size > 0 ? 'inline-flex' : 'none';
+    }
+    // 覆盖合并按钮：仅当选中的用例中包含 import_optimize 类型时显示
+    if (overwriteMergeBtn) {
+        const hasImportOptimize = allTempCases.some(c => selectedCases.has(c.temp_case_id) && c.source_type === 'import_optimize');
+        overwriteMergeBtn.style.display = hasImportOptimize ? 'inline-flex' : 'none';
     }
 }
 
@@ -2359,6 +2474,13 @@ async function viewCaseDetail(tempCaseId) {
         const res = await aiApiGet(`/api/temp-cases/detail/${tempCaseId}`);
         if (res.success) {
             const c = res.data;
+
+            // import_optimize 类型用例显示对比视图
+            if (c.source_type === 'import_optimize' && c.formal_case_id) {
+                await showCompareView(tempCaseId, c);
+                return;
+            }
+
             document.getElementById('caseDetailBody').innerHTML = `
                 <div class="ai-form-group"><label>用例名称</label><p>${aiEscapeHtml(c.name)}</p></div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
@@ -2367,8 +2489,8 @@ async function viewCaseDetail(tempCaseId) {
                 </div>
                 <div class="ai-form-group"><label>前置条件</label><p>${aiEscapeHtml(c.precondition) || '无'}</p></div>
                 <div class="ai-form-group"><label>测试目的</label><p>${aiEscapeHtml(c.purpose) || '无'}</p></div>
-                <div class="ai-form-group"><label>测试步骤</label><pre style="white-space:pre-wrap;background:#f8fafc;padding:12px;border-radius:8px;">${aiEscapeHtml(c.steps)}</pre></div>
-                <div class="ai-form-group"><label>预期结果</label><pre style="white-space:pre-wrap;background:#f8fafc;padding:12px;border-radius:8px;">${aiEscapeHtml(c.expected)}</pre></div>
+                <div class="ai-form-group"><label>测试步骤</label><pre style="white-space:pre-wrap;background:var(--color-bg-secondary, #f8fafc);padding:12px;border-radius:8px;">${aiEscapeHtml(c.steps)}</pre></div>
+                <div class="ai-form-group"><label>预期结果</label><pre style="white-space:pre-wrap;background:var(--color-bg-secondary, #f8fafc);padding:12px;border-radius:8px;">${aiEscapeHtml(c.expected)}</pre></div>
                 ${c.is_duplicate ? `<div class="ai-form-group"><label>查重信息</label><p>相似度: ${aiEscapeHtml(c.duplicate_score)}% ${c.duplicate_with_case_id ? `(与正式用例#${aiEscapeHtml(c.duplicate_with_case_id)}重复)` : ''}</p></div>` : ''}
             `;
             
@@ -2392,6 +2514,278 @@ async function viewCaseDetail(tempCaseId) {
             document.getElementById('caseDetailModal').classList.add('open');
         }
     } catch (e) {}
+}
+
+async function showCompareView(tempCaseId, tempCase) {
+    try {
+        const formalRes = await aiApiGet(`/api/temp-cases/formal-case/${tempCase.formal_case_id}`);
+        if (!formalRes.success) {
+            aiNotify('无法加载原始正式用例', 'error');
+            return;
+        }
+        const formalCase = formalRes.data;
+
+        let fieldChanges = {};
+        if (tempCase.field_changes) {
+            try {
+                fieldChanges = typeof tempCase.field_changes === 'string'
+                    ? JSON.parse(tempCase.field_changes)
+                    : tempCase.field_changes;
+            } catch (e) { fieldChanges = {}; }
+        }
+
+        const compareFields = [
+            { key: 'name', label: '用例名称' },
+            { key: 'priority', label: '优先级' },
+            { key: 'type', label: '类型' },
+            { key: 'precondition', label: '前置条件' },
+            { key: 'purpose', label: '测试目的' },
+            { key: 'steps', label: '测试步骤' },
+            { key: 'expected', label: '预期结果' },
+            { key: 'key_config', label: '关键配置' },
+            { key: 'remark', label: '备注' }
+        ];
+
+        const changedCount = Object.keys(fieldChanges).filter(k => k !== '_optimization_notes').length;
+        const optimizationNotes = tempCase.optimization_notes || '';
+
+        let leftHtml = '';
+        let rightHtml = '';
+        for (const field of compareFields) {
+            const oldVal = formalCase[field.key] || '';
+            const newVal = tempCase[field.key] || '';
+            const isChanged = fieldChanges.hasOwnProperty(field.key);
+            const changedClass = isChanged ? ' changed' : '';
+            const changeTag = isChanged ? ' <span style="color:#d97706;font-size:11px;">(已变更)</span>' : '';
+
+            leftHtml += `
+                <div class="ai-imp-compare-field${changedClass}">
+                    <div class="ai-imp-compare-field-label">${aiEscapeHtml(field.label)}${changeTag}</div>
+                    <div class="ai-imp-compare-field-value"><pre style="white-space:pre-wrap;margin:0;font-size:13px;">${aiEscapeHtml(oldVal) || '<span style="color:#94a3b8;">(空)</span>'}</pre></div>
+                </div>
+            `;
+            rightHtml += `
+                <div class="ai-imp-compare-field${changedClass}">
+                    <div class="ai-imp-compare-field-label">${aiEscapeHtml(field.label)}${changeTag}</div>
+                    <div class="ai-imp-compare-field-value"><pre style="white-space:pre-wrap;margin:0;font-size:13px;">${aiEscapeHtml(newVal) || '<span style="color:#94a3b8;">(空)</span>'}</pre></div>
+                </div>
+            `;
+        }
+
+        document.getElementById('caseDetailBody').innerHTML = `
+            <div style="margin-bottom:16px;display:flex;align-items:center;gap:8px;">
+                <span class="ai-imp-source-badge ai-imp-import-optimize">导入优化</span>
+                <span style="font-size:14px;color:var(--ai-text-secondary);">共 ${changedCount} 个字段变更</span>
+            </div>
+            <div class="ai-imp-compare-container">
+                <div class="ai-imp-compare-panel">
+                    <div class="ai-imp-compare-panel-header">原始用例 (ID: ${aiEscapeHtml(String(formalCase.id))})</div>
+                    ${leftHtml}
+                </div>
+                <div class="ai-imp-compare-panel">
+                    <div class="ai-imp-compare-panel-header">AI优化版本</div>
+                    ${rightHtml}
+                </div>
+            </div>
+            ${optimizationNotes ? `
+                <div style="margin-top:16px;padding:12px 16px;background:var(--color-warning-bg, #fffbeb);border:1px solid var(--color-warning, #fde68a);border-radius:8px;">
+                    <div style="font-size:13px;font-weight:600;color:var(--color-warning, #92400e);margin-bottom:4px;">优化说明</div>
+                    <div style="font-size:13px;color:var(--color-text-secondary, #78350f);line-height:1.6;">${aiEscapeHtml(optimizationNotes)}</div>
+                </div>
+            ` : ''}
+        `;
+
+        const saveBtn = document.getElementById('caseDetailSaveBtn');
+        saveBtn.style.display = 'none';
+
+        const footer = document.querySelector('#caseDetailModal .ai-modal-footer');
+        // 清除之前的按钮
+        const oldEditBtn = document.getElementById('caseDetailEditBtn');
+        if (oldEditBtn) oldEditBtn.remove();
+        const oldRejectBtn = document.getElementById('caseDetailRejectBtn');
+        if (oldRejectBtn) oldRejectBtn.remove();
+        const oldAcceptEditBtn = document.getElementById('caseDetailAcceptEditBtn');
+        if (oldAcceptEditBtn) oldAcceptEditBtn.remove();
+        const oldAcceptOverwriteBtn = document.getElementById('caseDetailAcceptOverwriteBtn');
+        if (oldAcceptOverwriteBtn) oldAcceptOverwriteBtn.remove();
+
+        // 拒绝按钮
+        const rejectBtn = document.createElement('button');
+        rejectBtn.id = 'caseDetailRejectBtn';
+        rejectBtn.className = 'ai-btn ai-btn-danger';
+        rejectBtn.textContent = '拒绝';
+        rejectBtn.addEventListener('click', async function() {
+            if (!(await aiShowConfirmMessage('确定要拒绝此优化用例吗？'))) return;
+            try {
+                await aiApiPost('/api/temp-cases/batch-reject', { tempCaseIds: [tempCaseId] });
+                aiNotify('已拒绝', 'success');
+                aiCloseAllModals();
+                loadTempCases();
+            } catch (e) { aiNotify('操作失败', 'error'); }
+        });
+        footer.insertBefore(rejectBtn, saveBtn);
+
+        // 编辑并接受按钮
+        const acceptEditBtn = document.createElement('button');
+        acceptEditBtn.id = 'caseDetailAcceptEditBtn';
+        acceptEditBtn.className = 'ai-btn ai-btn-outline';
+        acceptEditBtn.textContent = '编辑并接受';
+        acceptEditBtn.addEventListener('click', function() {
+            editCaseDetail(tempCaseId);
+        });
+        footer.insertBefore(acceptEditBtn, saveBtn);
+
+        // 接受并覆盖按钮
+        const acceptOverwriteBtn = document.createElement('button');
+        acceptOverwriteBtn.id = 'caseDetailAcceptOverwriteBtn';
+        acceptOverwriteBtn.className = 'ai-btn ai-btn-primary';
+        acceptOverwriteBtn.textContent = '接受并覆盖';
+        acceptOverwriteBtn.addEventListener('click', async function() {
+            if (!(await aiShowConfirmMessage('确定要用AI优化版本覆盖原始正式用例吗？此操作不可撤销。'))) return;
+            try {
+                const res = await aiApiPost('/api/ai-import/merge-with-overwrite', {
+                    temp_case_ids: [tempCaseId],
+                    overwrite_mode: 'smart'
+                });
+                if (res.success) {
+                    aiNotify(`覆盖合并成功，共合并 ${res.data.merged_count} 个用例`, 'success');
+                    aiCloseAllModals();
+                    loadTempCases();
+                } else {
+                    aiNotify(res.message || '覆盖合并失败', 'error');
+                }
+            } catch (e) { aiNotify('操作失败', 'error'); }
+        });
+        footer.insertBefore(acceptOverwriteBtn, saveBtn);
+
+        initCaseDetailDragResize();
+        document.getElementById('aiGenOverlay').classList.add('show');
+        document.getElementById('caseDetailModal').classList.add('open');
+    } catch (e) {
+        aiNotify('加载对比视图失败', 'error');
+    }
+}
+
+function showOverwriteMergeModal() {
+    const importOptimizeCases = allTempCases.filter(c => selectedCases.has(c.temp_case_id) && c.source_type === 'import_optimize' && c.formal_case_id);
+    if (importOptimizeCases.length === 0) {
+        aiNotify('请选择导入优化类型的用例', 'warning');
+        return;
+    }
+
+    // 创建模态框
+    let modal = document.getElementById('ai-imp-merge-modal');
+    if (modal) modal.remove();
+
+    modal = document.createElement('div');
+    modal.id = 'ai-imp-merge-modal';
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:99999;';
+
+    let caseRowsHtml = '';
+    importOptimizeCases.forEach(c => {
+        let changeSummary = '';
+        try {
+            const changes = typeof c.field_changes === 'string' ? JSON.parse(c.field_changes) : (c.field_changes || {});
+            const changeKeys = Object.keys(changes).filter(k => k !== '_optimization_notes');
+            changeSummary = changeKeys.map(k => aiEscapeHtml(k)).join(', ') || '无变更';
+        } catch (e) {
+            changeSummary = '无法解析';
+        }
+        caseRowsHtml += `
+            <tr>
+                <td style="padding:8px 12px;border-bottom:1px solid var(--color-border-primary, #e2e8f0);font-size:13px;">${aiEscapeHtml(c.name)}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid var(--color-border-primary, #e2e8f0);font-size:13px;">${changeSummary}</td>
+            </tr>
+        `;
+    });
+
+    modal.innerHTML = `
+        <div class="ai-imp-merge-modal">
+            <div class="ai-imp-merge-modal-header">
+                <h3>覆盖合并到正式库</h3>
+                <button class="ai-close-btn" id="aiImpMergeCloseBtn">&times;</button>
+            </div>
+            <div class="ai-imp-merge-modal-body">
+                <div style="margin-bottom:16px;">
+                    <p style="font-size:14px;color:var(--color-text-secondary, #475569);margin-bottom:12px;">以下 <strong>${importOptimizeCases.length}</strong> 个导入优化用例将覆盖合并到正式用例库：</p>
+                    <table class="ai-imp-merge-table">
+                        <thead>
+                            <tr>
+                                <th style="padding:8px 12px;text-align:left;font-size:12px;font-weight:600;color:var(--color-text-secondary, #64748b);background:var(--color-bg-secondary, #f8fafc);border-bottom:1px solid var(--color-border-primary, #e2e8f0);">用例名称</th>
+                                <th style="padding:8px 12px;text-align:left;font-size:12px;font-weight:600;color:var(--color-text-secondary, #64748b);background:var(--color-bg-secondary, #f8fafc);border-bottom:1px solid var(--color-border-primary, #e2e8f0);">变更字段</th>
+                            </tr>
+                        </thead>
+                        <tbody>${caseRowsHtml}</tbody>
+                    </table>
+                </div>
+                <div style="margin-bottom:16px;">
+                    <label style="display:block;font-size:14px;font-weight:500;margin-bottom:8px;color:var(--color-text-primary, #1e293b);">覆盖模式</label>
+                    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                        <label class="ai-radio-item active" data-merge-mode="smart">
+                            <input type="radio" name="overwriteMode" value="smart" checked style="accent-color:var(--ai-primary);">
+                            <span><strong>智能覆盖</strong> - 仅覆盖AI变更的字段</span>
+                        </label>
+                        <label class="ai-radio-item" data-merge-mode="full">
+                            <input type="radio" name="overwriteMode" value="full" style="accent-color:var(--ai-primary);">
+                            <span><strong>完全覆盖</strong> - 用AI版本覆盖所有字段</span>
+                        </label>
+                        <label class="ai-radio-item" data-merge-mode="partial">
+                            <input type="radio" name="overwriteMode" value="partial" style="accent-color:var(--ai-primary);">
+                            <span><strong>部分覆盖</strong> - 覆盖所有变更字段(含手动指定)</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="ai-imp-merge-modal-footer">
+                <button class="ai-btn ai-btn-ghost" id="aiImpMergeCancelBtn">取消</button>
+                <button class="ai-btn ai-btn-primary" id="aiImpMergeConfirmBtn">确认覆盖合并</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // 事件绑定
+    document.getElementById('aiImpMergeCloseBtn').addEventListener('click', function() {
+        modal.remove();
+    });
+    document.getElementById('aiImpMergeCancelBtn').addEventListener('click', function() {
+        modal.remove();
+    });
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) modal.remove();
+    });
+
+    // 覆盖模式单选切换样式
+    modal.querySelectorAll('input[name="overwriteMode"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            modal.querySelectorAll('.ai-radio-item').forEach(item => item.classList.remove('active'));
+            this.closest('.ai-radio-item').classList.add('active');
+        });
+    });
+
+    document.getElementById('aiImpMergeConfirmBtn').addEventListener('click', async function() {
+        const overwriteMode = modal.querySelector('input[name="overwriteMode"]:checked').value;
+        const tempCaseIds = importOptimizeCases.map(c => c.temp_case_id);
+
+        try {
+            const res = await aiApiPost('/api/ai-import/merge-with-overwrite', {
+                temp_case_ids: tempCaseIds,
+                overwrite_mode: overwriteMode
+            });
+            if (res.success) {
+                aiNotify(`覆盖合并成功，共合并 ${res.data.merged_count} 个用例${res.data.failed_count > 0 ? '，失败 ' + res.data.failed_count + ' 个' : ''}`, 'success');
+                modal.remove();
+                selectedCases.clear();
+                updateSelectedCount();
+                loadTempCases();
+            } else {
+                aiNotify(res.message || '覆盖合并失败', 'error');
+            }
+        } catch (e) {
+            aiNotify('覆盖合并操作失败', 'error');
+        }
+    });
 }
 
 async function editCaseDetail(tempCaseId) {
@@ -2541,7 +2935,7 @@ async function loadBatchEditOptions() {
             projectsRes.projects.forEach(project => {
                 const label = document.createElement('label');
                 label.className = 'ai-checkbox-item';
-                label.innerHTML = `<input type="checkbox" value="${project.id}"> ${aiEscapeHtml(project.name)}`;
+                label.innerHTML = `<input type="checkbox" value="${parseInt(project.id) || 0}"> ${aiEscapeHtml(project.name)}`;
                 projectList.appendChild(label);
             });
         }
@@ -2899,6 +3293,7 @@ async function loadTaskHistoryPage(page) {
 }
 window.loadTaskHistoryPage = loadTaskHistoryPage;
 window.loadTempCasesPage = loadTempCasesPage;
+window.showOverwriteMergeModal = showOverwriteMergeModal;
 
 function viewTaskResult(taskId) {
     closeTaskHistoryModal();
@@ -3078,7 +3473,7 @@ async function viewAgentDetail(agentId, agentCode) {
                 const moduleCount = (memoryStats.module && memoryStats.module.count) || 0;
                 const totalChars = memoryStats.totalChars || 0;
                 document.getElementById('agentViewMemory').innerHTML =
-                    `<span style="color:#16a34a;">✅ 已启用</span> — 全局: ${globalCount}条 | 用例库: ${libraryCount}条 | 模块: ${moduleCount}条 | 共 ${totalChars} 字符`;
+                    `<span style="color:${ThemeService.isDarkMode() ? '#34d399' : '#16a34a'};">✅ 已启用</span> — 全局: ${globalCount}条 | 用例库: ${libraryCount}条 | 模块: ${moduleCount}条 | 共 ${totalChars} 字符`;
             } else {
                 document.getElementById('agentViewMemory').innerHTML = '<span style="color:#94a3b8;">⏸️ 未启用</span>';
             }
@@ -3087,7 +3482,7 @@ async function viewAgentDetail(agentId, agentCode) {
             configSection.innerHTML = '';
             if (configFiles.length > 0) {
                 const sectionTitle = document.createElement('div');
-                sectionTitle.style.cssText = 'margin-top:12px;margin-bottom:8px;font-weight:600;font-size:14px;color:var(--ai-text, #1e293b);';
+                sectionTitle.style.cssText = `margin-top:12px;margin-bottom:8px;font-weight:600;font-size:14px;color:var(--ai-text, ${ThemeService.getColor('textPrimary')});`;
                 sectionTitle.textContent = '配置文件';
                 configSection.appendChild(sectionTitle);
                 configFiles.forEach(f => {
@@ -3115,7 +3510,8 @@ async function viewAgentDetail(agentId, agentCode) {
                     pre.textContent = preview;
                     if (needEllipsis) {
                         const ellipsis = document.createElement('span');
-                        ellipsis.style.cssText = 'position:sticky;bottom:0;display:block;text-align:center;background:linear-gradient(transparent,#f8fafc 70%);padding:12px 0 0;color:var(--ai-text-secondary, #64748b);font-size:12px;cursor:pointer;';
+                        const c = ThemeService.getColors();
+                        ellipsis.style.cssText = `position:sticky;bottom:0;display:block;text-align:center;background:linear-gradient(transparent,${c.bgSurface} 70%);padding:12px 0 0;color:var(--ai-text-secondary, ${c.textSecondary});font-size:12px;cursor:pointer;`;
                         ellipsis.textContent = '...点击下方前往配置中心查看完整内容';
                         pre.appendChild(ellipsis);
                     }

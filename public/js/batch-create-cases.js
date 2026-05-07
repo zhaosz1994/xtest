@@ -1218,7 +1218,7 @@
         if (!hint) return;
         const count = batchData.length;
         hint.textContent = `共 ${count} 条`;
-        hint.style.color = count >= MAX_ROWS ? '#ff4d4f' : '#999';
+        hint.style.color = count >= MAX_ROWS ? '#ff4d4f' : ThemeService.getColor('textMuted');
     }
 
     function handleTableInput(event) {
@@ -1547,7 +1547,7 @@
         if (selectedCountEl) selectedCountEl.textContent = drawerSelectedProjects.length;
 
         if (filteredProjects.length === 0) {
-            listEl.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px; color: #909399;">暂无项目</td></tr>';
+            listEl.innerHTML = `<tr><td colspan="6" style="text-align: center; padding: 20px; color: ${ThemeService.getColor('textMuted')};">暂无项目</td></tr>`;
             return;
         }
 
@@ -1573,7 +1573,7 @@
                         ${escapeHtml(project.name || '未命名项目')}
                     </td>
                     <td class="pa-col-owner">
-                        <span class="pa-owner-text">${escapeHtml(displayOwner) || '<span style="color:#bbb">继承行负责人</span>'}</span>
+                        <span class="pa-owner-text">${escapeHtml(displayOwner) || '<span style="color:var(--color-text-tertiary, #bbb)">继承行负责人</span>'}</span>
                     </td>
                     <td class="pa-col-progress">
                         <select class="form-select pa-select" name="progress-${project.id}">
@@ -2202,7 +2202,7 @@
                     <h3>批量设置默认值</h3>
                 </div>
                 <div class="modal-body">
-                    <div style="margin-bottom:12px; font-size:13px; color:#666;">留空的字段将保持原值不变。</div>
+                    <div style="margin-bottom:12px; font-size:13px; color:var(--color-text-secondary, #666);">留空的字段将保持原值不变。</div>
                     <div class="bulk-field-row">
                         <label>优先级</label>
                         <select id="bulk-priority" class="bulk-select">
@@ -2532,7 +2532,7 @@
                         </select>
                     </div>
                     <div class="location-field-row">
-                        <label class="location-field-label">一级测试点 <span style="color:#999;">(可选)</span></label>
+                        <label class="location-field-label">一级测试点 <span style="color:var(--color-text-tertiary, #999);">(可选)</span></label>
                         <select id="location-level1-select" class="location-select" disabled>
                             <option value="">请选择一级测试点</option>
                         </select>
@@ -2996,8 +2996,8 @@
                         </tbody>
                     </table>
                 </div>
-                <div class="modal-footer" style="padding: 16px; display: flex; justify-content: flex-end; gap: 12px; background: #fff;">
-                    <span id="clone-selection-hint" style="margin-right: auto; align-self: center; font-size: 13px; color: #64748b;">未选择待克隆的源用例</span>
+                <div class="modal-footer" style="padding: 16px; display: flex; justify-content: flex-end; gap: 12px; background: var(--color-bg-elevated, #fff);">
+                    <span id="clone-selection-hint" style="margin-right: auto; align-self: center; font-size: 13px; color: var(--color-text-secondary, #64748b);">未选择待克隆的源用例</span>
                     <button class="btn btn-secondary" id="clone-cancel-btn">取消</button>
                     <button class="btn btn-primary" id="clone-confirm-btn" disabled>确认克隆至下一行</button>
                 </div>
@@ -3128,7 +3128,7 @@
 
     window.fetchCloneCases = async function() {
         const tbody = document.getElementById('clone-cases-tbody');
-        if (tbody) tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 40px; color: #94a3b8;">加载中，可能包含大量用例...</td></tr>';
+        if (tbody) tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding: 40px; color: ${ThemeService.getColor('textMuted')};">加载中，可能包含大量用例...</td></tr>`;
         
         const libId = document.getElementById('clone-lib-select').value;
         const modId = document.getElementById('clone-mod-select').value;
@@ -3161,7 +3161,7 @@
         }
 
         if (!filtered || filtered.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 40px; color: #94a3b8;">未匹配到相应的测试用例记录</td></tr>';
+            tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding: 40px; color: ${ThemeService.getColor('textMuted')};">未匹配到相应的测试用例记录</td></tr>`;
             window.selectCloneCase(null);
             return;
         }
@@ -3175,7 +3175,7 @@
                 </td>
                 <td style="font-size:12px;">
                     <span style="color:#0ea5e9;">${escapeHtml(c.priority)}</span><br>
-                    <span style="color:#64748b;">${escapeHtml(c.type)}</span> / <span style="color:#64748b;">${escapeHtml(c.method || 'manual')}</span>
+                    <span style="color:var(--color-text-secondary, #64748b);">${escapeHtml(c.type)}</span> / <span style="color:var(--color-text-secondary, #64748b);">${escapeHtml(c.method || 'manual')}</span>
                 </td>
                 <td style="font-size:12px;">${escapeHtml(c.creator)}</td>
             </tr>
@@ -3200,7 +3200,7 @@
             }
             btn.disabled = false;
             const targetCase = currentCloneCasesList.find(c => String(c.id) === String(id));
-            hint.innerHTML = `即将克隆新模板：<strong style="color:#0f172a;">${escapeHtml(targetCase.name)}</strong>`;
+            hint.innerHTML = `即将克隆新模板：<strong style="color:${ThemeService.getColor('textPrimary')};">${escapeHtml(targetCase.name)}</strong>`;
         } else {
             btn.disabled = true;
             hint.textContent = '请选中列表中你需要克隆的测试用例底板';

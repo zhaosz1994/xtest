@@ -27,6 +27,71 @@ const ThemeService = {
         }
     },
 
+    darkColors: {
+        bg: '#0d1117',
+        bgSurface: '#161b22',
+        bgElevated: '#1c2128',
+        bgHover: '#21262d',
+        textPrimary: '#e6edf3',
+        textSecondary: '#8b949e',
+        textMuted: '#6e7681',
+        border: '#30363d',
+        borderLight: '#21262d',
+        primary: '#58a6ff',
+        primaryHover: '#388bfd',
+        success: '#34d399',
+        warning: '#fbbf24',
+        danger: '#f87171',
+        info: '#60a5fa',
+        successBg: 'rgba(52, 211, 153, 0.15)',
+        warningBg: 'rgba(251, 191, 36, 0.15)',
+        dangerBg: 'rgba(248, 113, 113, 0.15)',
+        infoBg: 'rgba(96, 165, 250, 0.15)',
+        inputBg: '#0d1117',
+        inputBorder: '#30363d',
+        inputFocusBorder: '#58a6ff',
+        overlay: 'rgba(0, 0, 0, 0.7)'
+    },
+
+    lightColors: {
+        bg: '#ffffff',
+        bgSurface: '#f8fafc',
+        bgElevated: '#ffffff',
+        bgHover: '#f1f5f9',
+        textPrimary: '#1e293b',
+        textSecondary: '#64748b',
+        textMuted: '#94a3b8',
+        border: '#e2e8f0',
+        borderLight: '#f1f5f9',
+        primary: '#3b82f6',
+        primaryHover: '#2563eb',
+        success: '#10b981',
+        warning: '#f59e0b',
+        danger: '#ef4444',
+        info: '#3b82f6',
+        successBg: '#d1fae5',
+        warningBg: '#fef3c7',
+        dangerBg: '#fee2e2',
+        infoBg: '#dbeafe',
+        inputBg: '#ffffff',
+        inputBorder: '#e2e8f0',
+        inputFocusBorder: '#3b82f6',
+        overlay: 'rgba(0, 0, 0, 0.5)'
+    },
+
+    isDarkMode() {
+        return this.currentTheme === 'dark';
+    },
+
+    getColor(key) {
+        const palette = this.isDarkMode() ? this.darkColors : this.lightColors;
+        return palette[key] || this.lightColors[key] || '';
+    },
+
+    getColors() {
+        return this.isDarkMode() ? this.darkColors : this.lightColors;
+    },
+
     init() {
         const savedTheme = StorageService.getPreference('theme', 'light');
         this.setTheme(savedTheme);

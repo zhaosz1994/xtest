@@ -1,7 +1,7 @@
 const Router = {
     routes: {
-        'workspace': { section: 'workspace', title: '我的工作台', requiresAuth: true },
-        'dashboard': { section: 'dashboard', title: '测试管理', requiresAuth: true },
+        'workspace': { section: 'workspace', title: '工作台', requiresAuth: true },
+        'dashboard': { section: 'dashboard', title: '数据面板', requiresAuth: true },
         'cases': { section: 'cases', title: '用例库', requiresAuth: true },
         'testplans': { section: 'testplans', title: '测试计划', requiresAuth: true },
         'reports': { section: 'reports', title: '测试报告', requiresAuth: true },

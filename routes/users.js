@@ -49,7 +49,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     );
 
     // 记录登录日志
-    await logActivity(user.id, user.username, user.role, '用户登录', `用户 ${user.username} 登录系统${rememberMe ? '（记住登录）' : ''}`, 'user', user.id, ipAddress, userAgent);
+    await logActivity(user.id, user.username, user.role, '用户登录', `用户 ${user.username} 登录系统`, 'user', user.id, ipAddress, userAgent);
 
     res.json({ 
       success: true,
@@ -478,12 +478,11 @@ router.delete('/delete/:id', authenticateToken, requireAdmin, async (req, res) =
       return res.status(400).json({ success: false, message: '系统管理员账户不允许删除' });
     }
     
-    await pool.execute('UPDATE users SET status = ? WHERE id = ?', ['disabled', id]);
+    await pool.execute('DELETE FROM users WHERE id = ?', [id]);
 
-    // 记录操作日志
-    await logActivity(currentUser.id, currentUser.username, currentUser.role, '禁用用户', `管理员 ${currentUser.username} 禁用了用户 ${users[0].username}`, 'user', parseInt(id), ipAddress, userAgent);
+    await logActivity(currentUser.id, currentUser.username, currentUser.role, '删除用户', `管理员 ${currentUser.username} 删除了用户 ${users[0].username}`, 'user', parseInt(id), ipAddress, userAgent);
 
-    res.json({ success: true, message: '用户已禁用' });
+    res.json({ success: true, message: '用户删除成功' });
   } catch (error) {
     logger.error('删除用户错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
@@ -525,18 +524,28 @@ router.post('/update', authenticateToken, requireAdmin, async (req, res) => {
 // 删除用户（需要管理员权限）- 兼容客户端调用方式
 router.post('/delete', authenticateToken, requireAdmin, async (req, res) => {
   const { username } = req.body;
+  const currentUser = req.user;
+  const ipAddress = req.ip || req.connection.remoteAddress;
+  const userAgent = req.get('User-Agent');
 
   try {
     if (username && username.toLowerCase() === 'admin') {
-      return res.status(400).json({ success: false, message: '系统管理员账户不允许禁用' });
+      return res.status(400).json({ success: false, message: '系统管理员账户不允许删除' });
     }
 
-    const [result] = await pool.execute('UPDATE users SET status = ? WHERE username = ?', ['disabled', username]);
-    if (result.affectedRows === 0) {
+    const [users] = await pool.execute('SELECT id, username FROM users WHERE username = ?', [username]);
+    if (users.length === 0) {
       return res.status(404).json({ success: false, message: '用户不存在' });
     }
-    
-    res.json({ success: true, message: '用户已禁用' });
+
+    const targetUser = users[0];
+
+    await pool.execute('DELETE FROM users WHERE id = ?', [targetUser.id]);
+
+    await logActivity(currentUser.id, currentUser.username, currentUser.role, '删除用户',
+      `管理员 ${currentUser.username} 删除了用户 ${targetUser.username}`, 'user', targetUser.id, ipAddress, userAgent);
+
+    res.json({ success: true, message: '用户删除成功' });
   } catch (error) {
     logger.error('删除用户错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
@@ -722,6 +731,230 @@ router.put('/ai-timeout-config', authenticateToken, async (req, res) => {
     res.json({ success: true, message: 'AI超时配置已更新', data: updatedConfig });
   } catch (error) {
     logger.error('更新用户AI超时配置错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+router.get('/ai-generation-params', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { getUserAIGenerationParams, getAIGenerationParams } = require('../services/aiService');
+    
+    const userParams = await getUserAIGenerationParams(userId);
+    const globalParams = await getAIGenerationParams();
+    
+    const [users] = await pool.execute(
+      'SELECT ai_generation_params, ai_scene_params FROM users WHERE id = ?',
+      [userId]
+    );
+    
+    const user = users.length > 0 ? users[0] : null;
+    const userGenParams = user?.ai_generation_params 
+      ? (typeof user.ai_generation_params === 'string' ? JSON.parse(user.ai_generation_params) : user.ai_generation_params)
+      : {};
+    const userSceneParams = user?.ai_scene_params
+      ? (typeof user.ai_scene_params === 'string' ? JSON.parse(user.ai_scene_params) : user.ai_scene_params)
+      : {};
+    
+    res.json({
+      success: true,
+      data: {
+        global: globalParams,
+        user: {
+          generation: userGenParams,
+          scene: userSceneParams
+        },
+        effective: userParams
+      }
+    });
+  } catch (error) {
+    logger.error('获取用户AI生成参数错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+router.put('/ai-generation-params', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { generationParams, sceneParams } = req.body;
+    
+    const updates = [];
+    const values = [];
+    
+    if (generationParams !== undefined) {
+      const validKeys = ['temperature', 'max_tokens', 'top_p', 'frequency_penalty', 'presence_penalty',
+                        'tool_choice', 'response_format', 'request_timeout', 'max_retries', 'ai_rate_limit', 'seed'];
+      
+      const [existingRows] = await pool.execute(
+        'SELECT ai_generation_params FROM users WHERE id = ?',
+        [userId]
+      );
+      const existingGenParams = existingRows.length > 0 && existingRows[0].ai_generation_params
+        ? (typeof existingRows[0].ai_generation_params === 'string' ? JSON.parse(existingRows[0].ai_generation_params) : existingRows[0].ai_generation_params)
+        : {};
+      
+      const mergedParams = { ...existingGenParams };
+      
+      for (const key of validKeys) {
+        if (generationParams[key] !== undefined) {
+          if (key === 'temperature' || key === 'top_p' || key === 'frequency_penalty' || key === 'presence_penalty') {
+            const val = parseFloat(generationParams[key]);
+            if (isNaN(val)) continue;
+            if (key === 'temperature' && (val < 0 || val > 2)) {
+              return res.status(400).json({ success: false, message: 'temperature 必须在 0-2 之间' });
+            }
+            if (key === 'top_p' && (val < 0 || val > 1)) {
+              return res.status(400).json({ success: false, message: 'top_p 必须在 0-1 之间' });
+            }
+            if (key === 'frequency_penalty' && (val < -2 || val > 2)) {
+              return res.status(400).json({ success: false, message: 'frequency_penalty 必须在 -2 到 2 之间' });
+            }
+            if (key === 'presence_penalty' && (val < -2 || val > 2)) {
+              return res.status(400).json({ success: false, message: 'presence_penalty 必须在 -2 到 2 之间' });
+            }
+            mergedParams[key] = val;
+          } else if (key === 'max_tokens' || key === 'request_timeout' || key === 'max_retries' || key === 'ai_rate_limit') {
+            const val = parseInt(generationParams[key]);
+            if (isNaN(val) || val < 0) continue;
+            if (key === 'max_tokens' && val > 128000) {
+              return res.status(400).json({ success: false, message: 'max_tokens 不能超过 128000' });
+            }
+            if (key === 'request_timeout' && val > 600000) {
+              return res.status(400).json({ success: false, message: 'request_timeout 不能超过 600000ms' });
+            }
+            mergedParams[key] = val;
+          } else if (key === 'seed') {
+            if (generationParams[key] === '' || generationParams[key] === null) {
+              delete mergedParams[key];
+            } else {
+              const val = parseInt(generationParams[key]);
+              if (isNaN(val)) continue;
+              mergedParams[key] = val;
+            }
+          } else if (key === 'tool_choice') {
+            const validChoices = ['auto', 'none', 'required'];
+            if (!validChoices.includes(generationParams[key])) {
+              return res.status(400).json({ success: false, message: 'tool_choice 必须是 auto, none 或 required' });
+            }
+            mergedParams[key] = generationParams[key];
+          } else if (key === 'response_format') {
+            const validFormats = ['text', 'json_object'];
+            if (!validFormats.includes(generationParams[key])) {
+              return res.status(400).json({ success: false, message: 'response_format 必须是 text 或 json_object' });
+            }
+            mergedParams[key] = generationParams[key];
+          }
+        }
+      }
+      
+      updates.push('ai_generation_params = ?');
+      values.push(Object.keys(mergedParams).length > 0 ? JSON.stringify(mergedParams) : null);
+    }
+    
+    if (sceneParams !== undefined) {
+      const validScenes = ['scene_data_analysis', 'scene_case_generation', 'scene_report_analysis', 'scene_memory_distillation'];
+      
+      const [existingSceneRows] = await pool.execute(
+        'SELECT ai_scene_params FROM users WHERE id = ?',
+        [userId]
+      );
+      const existingSceneParams = existingSceneRows.length > 0 && existingSceneRows[0].ai_scene_params
+        ? (typeof existingSceneRows[0].ai_scene_params === 'string' ? JSON.parse(existingSceneRows[0].ai_scene_params) : existingSceneRows[0].ai_scene_params)
+        : {};
+      
+      const mergedSceneParams = { ...existingSceneParams };
+      
+      for (const sceneKey of validScenes) {
+        if (sceneParams[sceneKey] !== undefined) {
+          const scene = sceneParams[sceneKey];
+          if (typeof scene !== 'object' || scene === null) continue;
+          
+          const existingScene = mergedSceneParams[sceneKey] || {};
+          const mergedScene = { ...existingScene };
+          
+          if (scene.temperature !== undefined) {
+            const val = parseFloat(scene.temperature);
+            if (!isNaN(val) && val >= 0 && val <= 2) {
+              mergedScene.temperature = val;
+            }
+          }
+          if (scene.max_tokens !== undefined) {
+            const val = parseInt(scene.max_tokens);
+            if (!isNaN(val) && val > 0 && val <= 128000) {
+              mergedScene.max_tokens = val;
+            }
+          }
+          if (scene.max_context_rounds !== undefined) {
+            const val = parseInt(scene.max_context_rounds);
+            if (!isNaN(val) && val > 0 && val <= 100) {
+              mergedScene.max_context_rounds = val;
+            }
+          }
+          
+          if (Object.keys(mergedScene).length > 0) {
+            mergedSceneParams[sceneKey] = mergedScene;
+          }
+        }
+      }
+      
+      updates.push('ai_scene_params = ?');
+      values.push(Object.keys(mergedSceneParams).length > 0 ? JSON.stringify(mergedSceneParams) : null);
+    }
+    
+    if (updates.length === 0) {
+      return res.status(400).json({ success: false, message: '没有有效的配置参数' });
+    }
+    
+    updates.push('updated_at = NOW()');
+    values.push(userId);
+    
+    await pool.execute(
+      `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
+      values
+    );
+    
+    const { getUserAIGenerationParams, invalidateAIConfigCache } = require('../services/aiService');
+    invalidateAIConfigCache(userId);
+    const updatedParams = await getUserAIGenerationParams(userId);
+    
+    res.json({ success: true, message: 'AI生成参数已更新', data: updatedParams });
+  } catch (error) {
+    logger.error('更新用户AI生成参数错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+router.delete('/ai-generation-params', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { type } = req.query;
+    
+    if (type === 'generation') {
+      await pool.execute(
+        'UPDATE users SET ai_generation_params = NULL, updated_at = NOW() WHERE id = ?',
+        [userId]
+      );
+    } else if (type === 'scene') {
+      await pool.execute(
+        'UPDATE users SET ai_scene_params = NULL, updated_at = NOW() WHERE id = ?',
+        [userId]
+      );
+    } else if (type === 'all') {
+      await pool.execute(
+        'UPDATE users SET ai_generation_params = NULL, ai_scene_params = NULL, updated_at = NOW() WHERE id = ?',
+        [userId]
+      );
+    } else {
+      return res.status(400).json({ success: false, message: '无效的重置类型' });
+    }
+    
+    const { getUserAIGenerationParams, invalidateAIConfigCache } = require('../services/aiService');
+    invalidateAIConfigCache(userId);
+    const updatedParams = await getUserAIGenerationParams(userId);
+    
+    res.json({ success: true, message: 'AI生成参数已重置', data: updatedParams });
+  } catch (error) {
+    logger.error('重置用户AI生成参数错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });

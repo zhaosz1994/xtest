@@ -1,5 +1,5 @@
 const pool = require('../db');
-const { getUserAIConfig, getUserAITimeoutConfig, getAIGenerationParams, getSceneParams } = require('./aiService');
+const { getUserAIConfig, getUserAITimeoutConfig, getUserAIGenerationParams, getSceneParams } = require('./aiService');
 const logger = require('./logger');
 const aiRequestLogger = require('./aiRequestLogger');
 const axios = require('axios');
@@ -334,9 +334,9 @@ class MemoryEngine {
 
             const [existing] = await pool.execute(
                 `SELECT id FROM ai_sub_agent_memories 
-                 WHERE agent_id = ? AND (library_id = ? OR (library_id IS NULL AND ? IS NULL))
-                 AND (module_id = ? OR (module_id IS NULL AND ? IS NULL))`,
-                [agentId, libVal, libVal, modVal, modVal]
+                 WHERE agent_id = ? AND ((library_id = ? AND ? IS NOT NULL) OR (library_id IS NULL AND ? IS NULL))
+                 AND ((module_id = ? AND ? IS NOT NULL) OR (module_id IS NULL AND ? IS NULL))`,
+                [agentId, libVal, libVal, libVal, modVal, modVal, modVal]
             );
 
             if (existing.length > 0) {
@@ -387,16 +387,16 @@ class MemoryEngine {
             }
 
             // 3. 调用蒸馏Agent
-            const distilledContent = await this._callDistillerAgent(memory.content, null, aiConfig);
+            const distilledContent = await this._callDistillerAgent(memory.content, null, aiConfig, userId);
 
             // 4. 更新记忆
             const charCount = distilledContent ? distilledContent.length : 0;
             await pool.execute(`
                 UPDATE ai_sub_agent_memories
                 SET content = ?, char_count = ?, last_distilled_at = NOW()
-                WHERE agent_id = ? AND (library_id = ? OR (library_id IS NULL AND ? IS NULL))
-                AND (module_id = ? OR (module_id IS NULL AND ? IS NULL))
-            `, [distilledContent, charCount, agentId, libraryId, libraryId, moduleId, moduleId]);
+                WHERE agent_id = ? AND ((library_id = ? AND ? IS NOT NULL) OR (library_id IS NULL AND ? IS NULL))
+                AND ((module_id = ? AND ? IS NOT NULL) OR (module_id IS NULL AND ? IS NULL))
+            `, [distilledContent, charCount, agentId, libraryId, libraryId, libraryId, moduleId, moduleId, moduleId]);
 
             logger.info('记忆蒸馏完成', { agentId, libraryId, moduleId, originalChars: memory.char_count, distilledChars: charCount });
 
@@ -444,7 +444,7 @@ class MemoryEngine {
 
             // 4. 调用蒸馏Agent合并用户修正
             const userDiff = diffSummary || JSON.stringify(diffDetail);
-            const distilledContent = await this._callDistillerAgent(currentMemory, userDiff, aiConfig);
+            const distilledContent = await this._callDistillerAgent(currentMemory, userDiff, aiConfig, userId);
 
             // 5. Upsert记忆
             const result = await this.updateMemory(agentId, libraryId, moduleId, distilledContent);
@@ -544,9 +544,10 @@ class MemoryEngine {
      * @param {string} currentMemory - 当前记忆内容
      * @param {string|null} userDiff - 用户修正差异（为null时为主动蒸馏）
      * @param {Object} aiConfig - AI配置
+     * @param {number} userId - 用户ID
      * @returns {string} 蒸馏后的内容（最多500字符）
      */
-    async _callDistillerAgent(currentMemory, userDiff, aiConfig) {
+    async _callDistillerAgent(currentMemory, userDiff, aiConfig, userId) {
         const apiKey = aiConfig.api_key;
         const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
         const model = aiConfig.model_name || 'deepseek-chat';
@@ -579,8 +580,8 @@ ${currentMemory || '(空)'}
 请精炼压缩以上记忆内容，保留关键信息，删除冗余。`;
         }
 
-        const timeoutConfig = await getUserAITimeoutConfig(aiConfig.user_id);
-        const genParams = await getAIGenerationParams();
+        const timeoutConfig = await getUserAITimeoutConfig(userId);
+        const genParams = await getUserAIGenerationParams(userId);
         const sceneParams = getSceneParams(genParams, 'scene_memory_distillation');
 
         try {

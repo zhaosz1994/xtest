@@ -2240,7 +2240,7 @@
                         ${rlIsAdmin ? `<td>${escapeHtml(log.username || '用户' + log.user_id)}</td>` : ''}
                         <td><span class="trigger-type-badge ${escapeHtml(log.trigger_type)}">${escapeHtml(typeLabel)}</span></td>
                         <td>${escapeHtml(sourceDisplay)}</td>
-                        <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#666;">${promptPreview}</td>
+                        <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--color-text-secondary, #666);">${promptPreview}</td>
                         <td title="提示词: ${log.prompt_tokens || 0} | 完成: ${log.completion_tokens || 0}">${tokenDisplay}</td>
                         <td>${log.execution_time_ms ? (log.execution_time_ms >= 1000 ? (log.execution_time_ms / 1000).toFixed(1) + 's' : log.execution_time_ms + 'ms') : '-'}</td>
                         <td style="font-size:12px;">${escapeHtml(log.model_name || '-')}</td>
@@ -2310,7 +2310,7 @@
                         <span>提示词Token: <strong>${(log.prompt_tokens || 0).toLocaleString()}</strong></span>
                         <span>完成Token: <strong>${(log.completion_tokens || 0).toLocaleString()}</strong></span>
                         <span>总计: <strong>${(log.total_tokens || 0).toLocaleString()}</strong></span>
-                        <span style="color:#999;">(${promptRatio}% Prompt / ${compRatio}% Comp)</span>
+                        <span style="color:var(--color-text-tertiary, #999);">(${promptRatio}% Prompt / ${compRatio}% Comp)</span>
                     </div>
                     <div class="rl-detail-token-bar">
                         <div class="rl-detail-token-bar-fill" style="width:${promptRatio}%;"></div>

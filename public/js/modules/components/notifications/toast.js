@@ -7,13 +7,14 @@ function showLoading(message = '加载中...') {
         left: 0;
         width: 100%;
         height: 100%;
-        background: rgba(255, 255, 255, 0.8);
+        background: var(--color-bg-overlay, rgba(255, 255, 255, 0.8));
         display: flex;
         justify-content: center;
         align-items: center;
         z-index: 10000;
         font-size: 18px;
         font-weight: bold;
+        color: var(--color-text-primary, #333);
     `;
     loadingElement.textContent = message;
     document.body.appendChild(loadingElement);
@@ -33,7 +34,7 @@ function showSuccessMessage(message) {
         position: fixed;
         top: 20px;
         right: 20px;
-        background: #10b981;
+        background: var(--color-success, #10b981);
         color: white;
         padding: 12px 24px;
         border-radius: 8px;
@@ -57,7 +58,7 @@ function showErrorMessage(message) {
         position: fixed;
         top: 20px;
         right: 20px;
-        background: #ef4444;
+        background: var(--color-danger, #ef4444);
         color: white;
         padding: 12px 24px;
         border-radius: 8px;
@@ -77,10 +78,10 @@ function showErrorMessage(message) {
 
 function showToast(message, type = 'info') {
     const colors = {
-        info: '#3b82f6',
-        success: '#10b981',
-        warning: '#f59e0b',
-        error: '#ef4444'
+        info: 'var(--color-info, #3b82f6)',
+        success: 'var(--color-success, #10b981)',
+        warning: 'var(--color-warning, #f59e0b)',
+        error: 'var(--color-danger, #ef4444)'
     };
     
     const toast = document.createElement('div');
@@ -136,7 +137,7 @@ function showNetworkError(message) {
         top: 0;
         left: 0;
         right: 0;
-        background: #ef4444;
+        background: var(--color-danger, #ef4444);
         color: white;
         padding: 12px 20px;
         z-index: 10002;

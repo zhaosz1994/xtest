@@ -93,8 +93,6 @@ class AutoMigration {
                 
                 await this.recordMigration(migrationName);
                 
-                connection.release();
-                
                 if (errors.length > 0 && successCount === 0) {
                     logger.error(`迁移执行失败: ${migrationName}`, { 
                         errors: errors.map(e => e.error).join('; ')
@@ -111,8 +109,9 @@ class AutoMigration {
                 return { success: true, migrationName };
                 
             } catch (error) {
-                connection.release();
                 throw error;
+            } finally {
+                connection.release();
             }
             
         } catch (error) {
@@ -126,16 +125,14 @@ class AutoMigration {
             'ER_DUP_FIELDNAME',
             'ER_DUP_KEYNAME',
             'ER_DUP_ENTRY',
-            'ER_TABLE_EXISTS_ERROR',
-            'ER_BAD_FIELD_ERROR'
+            'ER_TABLE_EXISTS_ERROR'
         ];
         
         const ignorableMessages = [
             'Duplicate column name',
             'Duplicate key name',
             'Duplicate entry',
-            'Table.*already exists',
-            'Unknown column'
+            'Table.*already exists'
         ];
         
         if (ignorableCodes.includes(error.code)) {
@@ -350,7 +347,9 @@ class AutoMigration {
             'ai_generation_system': ['module_knowledge_files', 'ai_material_chunks', 'ai_case_generation_tasks', 'temp_test_cases'],
             'add_library_id_to_knowledge_files': ['module_knowledge_files'],
             'add_ai_agent_tool_usage_logs': ['ai_agent_tool_usage_logs'],
-            'add_ai_operation_logs': ['ai_operation_logs']
+            'add_ai_operation_logs': ['ai_operation_logs'],
+            'add_ai_import_optimize': ['ai_import_optimize_tasks', 'ai_import_optimize_batches', 'ai_import_case_mapping'],
+            'fix_ai_import_optimize_agent': ['ai_sub_agents']
         };
 
         const tablesToCheck = migrationTableChecks[migrationName];
@@ -383,6 +382,7 @@ class AutoMigration {
             { name: 'seed_default_rule_config_files', fn: () => this.seedDefaultRuleConfigFiles() },
             { name: 'seed_ai_generation_params', fn: () => this.seedAIGenerationParams() },
             { name: 'ensure_builtin_sub_agents', fn: () => this.ensureBuiltinSubAgents() },
+            { name: 'ensure_case_import_optimizer_agent', fn: () => this.ensureCaseImportOptimizerAgent() },
         ];
 
         for (const migration of dataMigrations) {
@@ -994,15 +994,7 @@ class AutoMigration {
                 }
 
                 if (!existingMap.has('rule')) {
-                    const customRule = this._getCustomRuleTemplate(agent.agent_code, agent.category);
-                    if (customRule) {
-                        await pool.execute(
-                            `INSERT INTO ai_sub_agent_config_files (agent_id, file_type, file_name, content, description, is_required, sort_order, version)
-                             VALUES (?, 'rule', 'Rule.md', ?, '评审/校验规则文件', 0, 6, 1)`,
-                            [agent.id, customRule]
-                        );
-                        inserted++;
-                    }
+                    continue;
                 }
             }
 
@@ -1479,6 +1471,95 @@ ${description || '你是一名AI助手，专门协助测试团队完成各类任
             }
 
             return { success: true, detail: detail || '所有内置智能体已存在，无需操作' };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    async ensureCaseImportOptimizerAgent() {
+        try {
+            const agentsExists = await this.checkTableExists('ai_sub_agents');
+            if (!agentsExists) {
+                return { success: true, detail: 'ai_sub_agents 表不存在，跳过' };
+            }
+
+            const configFilesExists = await this.checkTableExists('ai_sub_agent_config_files');
+            if (!configFilesExists) {
+                return { success: true, detail: 'ai_sub_agent_config_files 表不存在，跳过' };
+            }
+
+            const [existing] = await pool.query(
+                'SELECT id FROM ai_sub_agents WHERE agent_code = ? AND is_system = 1 LIMIT 1',
+                ['case_import_optimizer']
+            );
+
+            let agentId;
+            let detail = '';
+
+            if (existing.length === 0) {
+                const [result] = await pool.execute(
+                    `INSERT INTO ai_sub_agents
+                        (agent_code, display_name, description, category, agent_type, is_system, allow_qa, is_enabled, visibility, memory_enabled,
+                         llm_temperature, llm_max_tokens, max_retries, timeout_seconds, sort_order)
+                     VALUES (?, ?, ?, ?, 'analyzer', 1, 0, 1, 'public', 0, 0.30, 4096, 2, 180, 50)`,
+                    ['case_import_optimizer', '用例导入优化专家', '对导入的测试用例进行规范化补全，包括补全测试目的、前置条件、详细步骤、预期结果，规范化测试类型和优先级', '用例评审']
+                );
+                agentId = result.insertId;
+                detail += '插入 case_import_optimizer 智能体; ';
+            } else {
+                agentId = existing[0].id;
+                detail += 'case_import_optimizer 智能体已存在; ';
+            }
+
+            const configFiles = [
+                {
+                    file_type: 'soul',
+                    file_name: 'soul.md',
+                    content: '# 用例导入优化专家\n\n## 身份\n你是一位资深的测试用例质量审核专家，专注于对导入的测试用例进行规范化补全和优化。\n\n## 核心原则\n1. **保留优先**：用户原始填写的内容优先保留，仅补全缺失或明显不规范的字段\n2. **最小改动**：不做过度润色，保持用户的原始表达风格\n3. **规范对齐**：测试类型、优先级等枚举字段必须严格对齐系统字典\n4. **逻辑一致**：补全的内容必须与已有字段逻辑一致，不能矛盾\n5. **可执行性**：测试步骤必须具备可执行性，预期结果必须可验证\n\n## 输出格式\n严格输出 JSON 数组，每个元素对应一条优化后的用例，包含所有字段（包括未修改的字段）。\n\n## 禁止事项\n- 禁止删除用户已有的有效内容\n- 禁止修改用例名称（除非明显错别字）\n- 禁止凭空编造与用例无关的步骤\n- 禁止输出非 JSON 格式的内容',
+                    sort_order: 1
+                },
+                {
+                    file_type: 'user',
+                    file_name: 'user.md',
+                    content: '## 任务\n请对以下导入的测试用例进行规范化优化。\n\n## 系统字典\n- 优先级选项：{{priorities}}\n- 测试类型选项：{{test_types}}\n- 测试阶段选项：{{test_phases}}\n- 测试方式选项：{{test_methods}}\n- 测试环境选项：{{environments}}\n\n## 待优化用例（批次 {{batch_index}}/{{total_batches}}）\n```json\n{{cases_json}}\n```\n\n## 优化要求\n1. 如果 `purpose`（测试目的）为空，根据用例名称和步骤推断补全\n2. 如果 `precondition`（前置条件）为空，根据步骤内容推断补全\n3. 如果 `steps`（测试步骤）过于简略（少于3步或每步少于10字），补充详细操作步骤\n4. 如果 `expected`（预期结果）过于简略，补充可验证的预期结果\n5. 如果 `priority`（优先级）为空或不在系统字典中，根据用例影响范围推断\n6. 如果 `type`（测试类型）不在系统字典中，映射到最接近的系统类型\n7. 如果 `key_config`（关键配置）为空且步骤涉及配置，补充关键配置说明\n\n## 输出格式\n```json\n[\n  {\n    "original_index": 0,\n    "name": "用例名称（保留原文）",\n    "priority": "高|中|低（必须为系统字典值）",\n    "type": "功能测试|性能测试|...（必须为系统字典值）",\n    "precondition": "补全后的前置条件",\n    "purpose": "补全后的测试目的",\n    "steps": "补全后的测试步骤",\n    "expected": "补全后的预期结果",\n    "key_config": "补全后的关键配置（如无则为空字符串）",\n    "remark": "备注（保留原文）",\n    "optimization_notes": "简述做了哪些优化"\n  }\n]\n```',
+                    sort_order: 2
+                },
+                {
+                    file_type: 'tools',
+                    file_name: 'tools.md',
+                    content: '## 可用工具\n\n### lookup_test_types\n查询系统中的测试类型字典，用于校验和映射测试类型。\n\n### lookup_priorities\n查询系统中的优先级字典，用于校验和映射优先级。\n\n### lookup_similar_cases\n根据用例名称搜索相似用例，参考已有用例的写法风格。',
+                    sort_order: 3
+                },
+                {
+                    file_type: 'rule',
+                    file_name: 'rule.md',
+                    content: '## 评审规则链\n\n### Rule 1: 字段完整性检查\n- 检查所有必填字段（name, steps, expected）是否非空\n- 检查建议填写字段（purpose, precondition, priority）是否非空\n- 如有空字段，要求补全\n\n### Rule 2: 枚举值合规检查\n- priority 必须在系统字典值中\n- type 必须在系统字典值中\n- 如不合规，要求修正\n\n### Rule 3: 内容质量检查\n- steps 至少包含 2 个步骤\n- expected 必须可验证\n- purpose 不应为用例名称的简单重复\n- 如不合规，要求优化\n\n### Rule 4: 改动幅度检查\n- 对比原始用例和优化后用例\n- name 字段改动率不超过 20%\n- 已有有效内容的字段改动率不超过 30%\n- 如改动过大，要求回退到更保守的版本',
+                    sort_order: 4
+                },
+                {
+                    file_type: 'checklist',
+                    file_name: 'checklist.md',
+                    content: '## 输出检查清单\n\n- [ ] 输出为合法 JSON 数组\n- [ ] 每条用例包含 original_index 字段\n- [ ] priority 值在系统字典中\n- [ ] type 值在系统字典中\n- [ ] purpose 非空\n- [ ] precondition 非空\n- [ ] steps 至少 2 步\n- [ ] expected 非空且可验证\n- [ ] name 与原始名称差异不超过 20%\n- [ ] 每条用例包含 optimization_notes',
+                    sort_order: 5
+                }
+            ];
+
+            for (const cf of configFiles) {
+                const [existingFile] = await pool.query(
+                    'SELECT id FROM ai_sub_agent_config_files WHERE agent_id = ? AND file_type = ? LIMIT 1',
+                    [agentId, cf.file_type]
+                );
+
+                if (existingFile.length === 0) {
+                    await pool.execute(
+                        'INSERT INTO ai_sub_agent_config_files (agent_id, file_type, file_name, content, sort_order) VALUES (?, ?, ?, ?, ?)',
+                        [agentId, cf.file_type, cf.file_name, cf.content, cf.sort_order]
+                    );
+                    detail += `插入 ${cf.file_type} 配置文件; `;
+                }
+            }
+
+            return { success: true, detail: detail || 'case_import_optimizer 智能体配置完整，无需操作' };
         } catch (error) {
             return { success: false, error: error.message };
         }

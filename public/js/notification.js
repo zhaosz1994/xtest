@@ -41,7 +41,7 @@ const NotificationManager = {
                 <button class="mark-all-read-btn" id="mark-all-read-btn">全部已读</button>
             </div>
             <div class="notification-list" id="notification-list">
-                <div style="padding: 20px; text-align: center; color: #999; font-size: 13px;">加载中...</div>
+                <div style="padding: 20px; text-align: center; color: var(--color-text-tertiary, #999); font-size: 13px;">加载中...</div>
             </div>
             <div class="notification-footer">
                 <button class="view-all-notifications-btn" id="view-all-notifications-btn">进入消息中心</button>
@@ -161,12 +161,12 @@ const NotificationManager = {
         const listEl = document.getElementById('notification-list');
         if (!listEl) return;
         
-        listEl.innerHTML = '<div style="padding: 20px; text-align: center; color: #999; font-size: 13px;">加载中...</div>';
+        listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: ${ThemeService.getColor('textMuted')}; font-size: 13px;">加载中...</div>`;
         
         try {
             const res = await this.fetchWithAuth('/api/notifications/list?page=1&pageSize=10');
             if (!res) {
-                listEl.innerHTML = '<div style="padding: 20px; text-align: center; color: #999; font-size: 13px;">请先登录</div>';
+                listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: ${ThemeService.getColor('textMuted')}; font-size: 13px;">请先登录</div>`;
                 return;
             }
             const data = await res.json();
@@ -174,7 +174,7 @@ const NotificationManager = {
             if (data.success && data.notifications && data.notifications.length > 0) {
                 listEl.innerHTML = data.notifications.map(notif => this.renderNotificationItem(notif)).join('');
             } else {
-                listEl.innerHTML = '<div style="padding: 30px 20px; text-align: center; color: #999; font-size: 13px;">暂无新通知</div>';
+                listEl.innerHTML = `<div style="padding: 30px 20px; text-align: center; color: ${ThemeService.getColor('textMuted')}; font-size: 13px;">暂无新通知</div>`;
             }
         } catch (e) {
             console.error('[通知系统] 加载失败:', e);
@@ -218,19 +218,19 @@ const NotificationManager = {
         const content = notif.content || notif.content_preview || '';
         const isAINotif = notif.type === 'ai_key_config_complete' || notif.type === 'ai_overview_complete' || notif.type === 'system';
         const titleHtml = isAINotif
-            ? `<span style="color: #333;">${this.escapeHtml(actionText)}</span>`
+            ? `<span style="color: var(--color-text-primary, #333);">${this.escapeHtml(actionText)}</span>`
             : `<strong>${this.escapeHtml(notif.sender_name || '某人')}</strong> ${actionText}`;
         
         return `
-            <a href="${link}" class="notification-item ${isReadClass}" data-id="${notif.id}" style="display: block; padding: 12px 16px; border-bottom: 1px solid #f0f0f0; text-decoration: none; color: inherit;">
+            <a href="${link}" class="notification-item ${isReadClass}" data-id="${notif.id}" style="display: block; padding: 12px 16px; border-bottom: 1px solid var(--color-border-primary, #f0f0f0); text-decoration: none; color: inherit;">
                 <div style="display: flex; gap: 10px;">
                     <div style="font-size: 18px;">${icon}</div>
                     <div style="flex: 1; min-width: 0;">
-                        <div style="font-size: 13px; color: #333; margin-bottom: 4px;">
+                        <div style="font-size: 13px; color: var(--color-text-primary, #333); margin-bottom: 4px;">
                             ${titleHtml}
                         </div>
-                        ${content ? `<div style="font-size: 12px; color: #666; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">"${this.escapeHtml(content)}"</div>` : ''}
-                        <div style="font-size: 11px; color: #999; margin-top: 6px;">${date}</div>
+                        ${content ? `<div style="font-size: 12px; color: var(--color-text-secondary, #666); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">"${this.escapeHtml(content)}"</div>` : ''}
+                        <div style="font-size: 11px; color: var(--color-text-tertiary, #999); margin-top: 6px;">${date}</div>
                     </div>
                     ${!notif.is_read ? '<div class="unread-dot" style="width: 8px; height: 8px; background: #007bff; border-radius: 50%; align-self: center;"></div>' : ''}
                 </div>

@@ -1,5 +1,5 @@
 const pool = require('../db');
-const { getUserAIConfig, getUserAITimeoutConfig, getAIGenerationParams, getSceneParams } = require('./aiService');
+const { getUserAIConfig, getUserAITimeoutConfig, getUserAIGenerationParams, getSceneParams } = require('./aiService');
 const llmResponseParser = require('./llmResponseParser');
 const logger = require('./logger');
 const aiRequestLogger = require('./aiRequestLogger');
@@ -18,7 +18,7 @@ class ReflectionPipeline {
             throw new Error('未配置AI模型，请先在设置中配置AI模型');
         }
 
-        const genParams = await getAIGenerationParams();
+        const genParams = await getUserAIGenerationParams(context.userId);
         const sceneParams = getSceneParams(genParams, 'scene_case_generation');
 
         const agentConfig = await this.loadAgentConfig(agentId);
@@ -63,7 +63,23 @@ class ReflectionPipeline {
                             text: '[规则' + rule.sort_order + '] 通过: ' + (result.summary || '')
                         });
                     } else {
-                        currentDraft = result.revised_draft || currentDraft;
+                        if (result.revised_draft) {
+                            currentDraft = result.revised_draft;
+                        } else {
+                            logger.warn('反思管道：规则未通过且LLM未提供修正草稿，跳过剩余重试', {
+                                agentId,
+                                ruleSortOrder: rule.sort_order,
+                                retries
+                            });
+                            reviewHistory.push({
+                                type: 'retry',
+                                rule_sort_order: rule.sort_order,
+                                retry_count: retries + 1,
+                                summary: result.summary || 'LLM未提供修正草稿',
+                                text: '[规则' + rule.sort_order + '] LLM未提供修正草稿，终止重试'
+                            });
+                            break;
+                        }
                         retries++;
                         reviewHistory.push({
                             type: 'retry',
@@ -75,7 +91,6 @@ class ReflectionPipeline {
                     }
                 } catch (err) {
                     retries++;
-                    totalRounds++;
                     reviewHistory.push({
                         type: 'error',
                         rule_sort_order: rule.sort_order,

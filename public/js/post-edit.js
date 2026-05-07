@@ -167,8 +167,8 @@ function initVditor() {
                             return {
                                 value: displayName,
                                 html: `<div style="display:flex;align-items:center;gap:6px;">
-                                    <div style="width:20px;height:20px;border-radius:50%;background:#e5e7eb;display:flex;align-items:center;justify-content:center;font-size:10px;">${displayName.charAt(0).toUpperCase()}</div>
-                                    <span>${escapeHtml(displayName)} <small style="color:#666">${escapeHtml(realName)}</small></span>
+                                    <div style="width:20px;height:20px;border-radius:50%;background:var(--color-bg-tertiary, #e5e7eb);display:flex;align-items:center;justify-content:center;font-size:10px;">${displayName.charAt(0).toUpperCase()}</div>
+                                    <span>${escapeHtml(displayName)} <small style="color:var(--color-text-secondary, #666)">${escapeHtml(realName)}</small></span>
                                 </div>`
                             };
                         });

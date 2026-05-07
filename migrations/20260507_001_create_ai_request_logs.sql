@@ -26,5 +26,6 @@ CREATE TABLE IF NOT EXISTS ai_request_logs (
   INDEX idx_status (status),
   INDEX idx_created_at (created_at),
   INDEX idx_trigger_source (trigger_source),
-  INDEX idx_composite_query (user_id, trigger_type, created_at)
+  INDEX idx_composite_query (user_id, trigger_type, created_at),
+  INDEX idx_project_library_module (project_id, library_id, module_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI请求日志表-记录所有AI触发的Prompt和响应';

@@ -212,7 +212,7 @@ class Level1PointsList {
                     <div class="test-cases-list" data-id="${point.id}">
                         <div class="loading-state" style="padding: 20px; text-align: center;">
                             <div class="loading-spinner"></div>
-                            <p style="margin: 12px 0 0; font-size: 13px; color: #64748b;">加载测试用例...</p>
+                            <p style="margin: 12px 0 0; font-size: 13px; color: var(--color-text-secondary, #64748b);">加载测试用例...</p>
                         </div>
                     </div>
                 </div>
@@ -230,7 +230,7 @@ class Level1PointsList {
         
         document.querySelectorAll('.level1-item-header').forEach(header => {
             header.addEventListener('click', (e) => {
-                if (!e.target.closest('.level1-action-btn')) {
+                if (!e.target.closest('.level1-action-btn') && !e.target.closest('.ai-task-batch-checkbox-cell')) {
                     const id = header.closest('.level1-item').dataset.id;
                     this.toggleExpand(id);
                 }
@@ -281,7 +281,7 @@ class Level1PointsList {
             listContainer.innerHTML = `
                 <div class="loading-state" style="padding: 20px; text-align: center;">
                     <div class="loading-spinner"></div>
-                    <p style="margin: 12px 0 0; font-size: 13px; color: #64748b;">加载测试用例...</p>
+                    <p style="margin: 12px 0 0; font-size: 13px; color: var(--color-text-secondary, #64748b);">加载测试用例...</p>
                 </div>
             `;
             

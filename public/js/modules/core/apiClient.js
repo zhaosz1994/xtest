@@ -46,6 +46,8 @@ const apiCache = {
     }
 };
 
+let _authExpiredHandling = false;
+
 async function handleApiResponse(response) {
     try {
         const contentType = response.headers.get('content-type');
@@ -124,6 +126,29 @@ async function apiRequest(endpoint, options = {}) {
         });
 
         if (!response.ok) {
+            if (response.status === 401) {
+                if (authToken) {
+                    authToken = null;
+                    currentUser = null;
+                    localStorage.removeItem('authToken');
+                    localStorage.removeItem('currentUser');
+                }
+
+                if (!_authExpiredHandling) {
+                    _authExpiredHandling = true;
+                    showNetworkError('请先登录');
+
+                    setTimeout(() => {
+                        if (typeof showLoginSection === 'function') {
+                            showLoginSection();
+                        }
+                        _authExpiredHandling = false;
+                    }, 1500);
+                }
+
+                return { success: false, message: '请先登录', _authExpired: true };
+            }
+
             if (response.status === 403 && !skipRetry && authToken) {
                 const refreshed = await refreshToken();
                 

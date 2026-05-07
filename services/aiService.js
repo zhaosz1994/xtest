@@ -2,7 +2,10 @@ const pool = require('../db');
 const logger = require('./logger');
 
 const _aiConfigCache = new Map();
-const AI_CONFIG_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const AI_CONFIG_CACHE_TTL = 5 * 60 * 1000;
+
+const _userGenParamsCache = new Map();
+const USER_GEN_PARAMS_CACHE_TTL = 2 * 60 * 1000;
 
 function _getCacheKey(userId, modelId) {
     return `${userId}:${modelId || 'default'}`;
@@ -25,6 +28,25 @@ function _setCachedConfig(key, config) {
         _aiConfigCache.delete(firstKey);
     }
     _aiConfigCache.set(key, { config, time: Date.now() });
+}
+
+function _getCachedUserGenParams(userId) {
+    const entry = _userGenParamsCache.get(userId);
+    if (entry && Date.now() - entry.time < USER_GEN_PARAMS_CACHE_TTL) {
+        return entry.params;
+    }
+    if (entry) {
+        _userGenParamsCache.delete(userId);
+    }
+    return null;
+}
+
+function _setCachedUserGenParams(userId, params) {
+    if (_userGenParamsCache.size > 500) {
+        const firstKey = _userGenParamsCache.keys().next().value;
+        _userGenParamsCache.delete(firstKey);
+    }
+    _userGenParamsCache.set(userId, { params, time: Date.now() });
 }
 
 const AI_TIMEOUT_DEFAULTS = {
@@ -131,6 +153,7 @@ function invalidateAIConfigCache(userId, modelId) {
   if (userId) {
     _aiConfigCache.delete(_getCacheKey(userId, modelId));
     _aiConfigCache.delete(_getCacheKey(userId, null));
+    _userGenParamsCache.delete(userId);
   }
   _aiConfigCache.delete('system_default');
   _genParamsCache = null;
@@ -155,6 +178,39 @@ const GEN_PARAMS_DEFAULTS = {
 };
 
 let _genParamsCache = null;
+let _userGenParamsColumnExists = null;
+
+async function _checkUserGenParamsColumnsExist() {
+  if (_userGenParamsColumnExists !== null) {
+    return _userGenParamsColumnExists;
+  }
+  try {
+    const [columns] = await pool.query(`
+      SELECT COUNT(*) as count
+      FROM information_schema.columns
+      WHERE table_schema = DATABASE()
+        AND table_name = 'users'
+        AND column_name IN ('ai_generation_params', 'ai_scene_params')
+    `);
+    _userGenParamsColumnExists = columns[0].count >= 2;
+    return _userGenParamsColumnExists;
+  } catch (error) {
+    logger.warn('检查用户AI配置字段是否存在失败', { error: error.message });
+    _userGenParamsColumnExists = false;
+    return false;
+  }
+}
+
+function _deepCloneGenParams(params) {
+  const result = { ...params };
+  const sceneKeys = ['scene_data_analysis', 'scene_case_generation', 'scene_report_analysis', 'scene_memory_distillation'];
+  for (const key of sceneKeys) {
+    if (result[key] && typeof result[key] === 'object') {
+      result[key] = { ...result[key] };
+    }
+  }
+  return result;
+}
 
 async function getAIGenerationParams() {
   if (_genParamsCache) return _genParamsCache;
@@ -220,7 +276,91 @@ async function getAIGenerationParams() {
     return result;
   } catch (error) {
     logger.error('获取AI生成参数错误', { error: error.message });
-    return { ...GEN_PARAMS_DEFAULTS };
+    return _deepCloneGenParams(GEN_PARAMS_DEFAULTS);
+  }
+}
+
+async function getUserAIGenerationParams(userId) {
+  if (!userId) {
+    return await getAIGenerationParams();
+  }
+
+  const cached = _getCachedUserGenParams(userId);
+  if (cached !== null) return cached;
+
+  try {
+    const columnsExist = await _checkUserGenParamsColumnsExist();
+    if (!columnsExist) {
+      const globalParams = await getAIGenerationParams();
+      _setCachedUserGenParams(userId, globalParams);
+      return globalParams;
+    }
+
+    const [users] = await pool.execute(
+      'SELECT ai_generation_params, ai_scene_params FROM users WHERE id = ?',
+      [userId]
+    );
+
+    if (users.length === 0) {
+      const globalParams = await getAIGenerationParams();
+      _setCachedUserGenParams(userId, globalParams);
+      return globalParams;
+    }
+
+    const user = users[0];
+    const globalParams = await getAIGenerationParams();
+
+    if (!user.ai_generation_params && !user.ai_scene_params) {
+      _setCachedUserGenParams(userId, globalParams);
+      return globalParams;
+    }
+
+    const userGenParams = user.ai_generation_params
+      ? (typeof user.ai_generation_params === 'string' ? JSON.parse(user.ai_generation_params) : user.ai_generation_params)
+      : {};
+
+    const userSceneParams = user.ai_scene_params
+      ? (typeof user.ai_scene_params === 'string' ? JSON.parse(user.ai_scene_params) : user.ai_scene_params)
+      : {};
+
+    const result = _deepCloneGenParams(globalParams);
+
+    const paramKeys = ['temperature', 'max_tokens', 'top_p', 'frequency_penalty', 'presence_penalty',
+                       'tool_choice', 'response_format', 'request_timeout', 'max_retries', 'ai_rate_limit', 'seed'];
+
+    for (const key of paramKeys) {
+      if (userGenParams[key] !== undefined && userGenParams[key] !== null && userGenParams[key] !== '') {
+        result[key] = userGenParams[key];
+      }
+    }
+
+    const sceneKeys = ['scene_data_analysis', 'scene_case_generation', 'scene_report_analysis', 'scene_memory_distillation'];
+    for (const sceneKey of sceneKeys) {
+      if (userSceneParams[sceneKey]) {
+        result[sceneKey] = {
+          ...globalParams[sceneKey],
+          ...userSceneParams[sceneKey]
+        };
+      }
+    }
+
+    for (const key of ['temperature', 'top_p', 'frequency_penalty', 'presence_penalty']) {
+      if (result[key] !== undefined) result[key] = parseFloat(result[key]);
+    }
+    for (const key of ['max_tokens', 'request_timeout', 'max_retries', 'ai_rate_limit']) {
+      if (result[key] !== undefined) result[key] = parseInt(result[key]);
+    }
+    if (result.seed === '' || result.seed === null || result.seed === undefined) {
+      result.seed = null;
+    } else {
+      result.seed = parseInt(result.seed);
+    }
+
+    _setCachedUserGenParams(userId, result);
+    return result;
+  } catch (error) {
+    logger.error('获取用户AI生成参数错误', { error: error.message, userId });
+    return await getAIGenerationParams();
   }
 }
 
@@ -243,5 +383,6 @@ module.exports = {
   getAITimeoutDefaults,
   invalidateAIConfigCache,
   getAIGenerationParams,
+  getUserAIGenerationParams,
   getSceneParams
 };

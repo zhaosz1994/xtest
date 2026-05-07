@@ -5,8 +5,8 @@ class AIRequestLogger {
   constructor() {
     this.buffer = [];
     this.flushInterval = 5000;
-    this.maxBufferSize = 50;
-    this.MAX_BUFFER_SIZE = 200;
+    this.flushThreshold = 50;
+    this.bufferHardCap = 200;
     this.MAX_RECORDS = 1000;
     this.cleanInterval = 3600000;
     this._flushing = false;
@@ -58,17 +58,17 @@ class AIRequestLogger {
       created_at: new Date()
     };
 
-    if (this.buffer.length >= this.MAX_BUFFER_SIZE) {
+    if (this.buffer.length >= this.bufferHardCap) {
       logger.warn('AI请求日志缓冲区已满，丢弃最旧的日志', {
         bufferSize: this.buffer.length,
-        maxBufferSize: this.MAX_BUFFER_SIZE
+        maxBufferSize: this.bufferHardCap
       });
       this.buffer.shift();
     }
 
     this.buffer.push(logEntry);
 
-    if (this.buffer.length >= this.maxBufferSize) {
+    if (this.buffer.length >= this.flushThreshold) {
       const flushResult = await this.flush();
       if (flushResult) {
         logger.info('AI请求日志', {
@@ -189,10 +189,10 @@ class AIRequestLogger {
             SELECT id FROM (
               SELECT id FROM ai_request_logs 
               ORDER BY created_at DESC, id DESC
-              LIMIT ${this.MAX_RECORDS}
+              LIMIT ?
             ) AS keep_ids
           )
-        `);
+        `, [this.MAX_RECORDS]);
         logger.info('AI请求日志滚动清理完成', {
           beforeCount: count,
           maxRecords: this.MAX_RECORDS
@@ -219,7 +219,11 @@ class AIRequestLogger {
 
 const aiRequestLogger = new AIRequestLogger();
 
+let isShuttingDown = false;
 function handleShutdownSignal() {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
   const timeout = setTimeout(() => {
     logger.warn('AI请求日志flush超时，强制退出');
     process.exit(1);
@@ -227,10 +231,10 @@ function handleShutdownSignal() {
 
   aiRequestLogger.flush().then(() => {
     clearTimeout(timeout);
-    process.exit(0);
-  }).catch(() => {
+    logger.info('AI请求日志已安全flush');
+  }).catch((err) => {
     clearTimeout(timeout);
-    process.exit(1);
+    logger.error('AI请求日志flush失败', { error: err.message });
   });
 }
 

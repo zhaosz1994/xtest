@@ -1099,12 +1099,12 @@ async function loadDetailPreview(fileId, ext) {
     try {
         const res = await klApiGet(`/api/knowledge/preview/${fileId}`);
         if (!res || !res.success) {
-            container.innerHTML = '<p style="color:#94a3b8;text-align:center;padding:20px;">预览加载失败</p>';
+            container.innerHTML = `<p style="color:${ThemeService.getColor('textMuted')};text-align:center;padding:20px;">预览加载失败</p>`;
             return;
         }
         const data = res.data;
         if (data.type === 'image') {
-            container.innerHTML = `<img src="${klEscapeHtml(data.url || '')}" style="max-width:100%;border-radius:6px;" onerror="this.outerHTML='<p style=\\'color:#94a3b8;text-align:center;padding:20px;\\'>图片加载失败</p>'">`;
+            container.innerHTML = `<img src="${klEscapeHtml(data.url || '')}" style="max-width:100%;border-radius:6px;" onerror="this.outerHTML='<p style=\\'color:${ThemeService.getColor('textMuted')};text-align:center;padding:20px;\\'>图片加载失败</p>'">`;
         } else if (data.type === 'pdf') {
             const pdfUrl = data.url || '';
             const token = localStorage.getItem('authToken') || localStorage.getItem('token');
@@ -1115,7 +1115,7 @@ async function loadDetailPreview(fileId, ext) {
                 container.innerHTML = `<iframe src="${blobUrl}" style="width:100%;height:400px;border:none;border-radius:6px;"></iframe>`;
                 setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
             } else {
-                container.innerHTML = '<p style="color:#94a3b8;text-align:center;padding:20px;">PDF加载失败</p>';
+                container.innerHTML = `<p style="color:${ThemeService.getColor('textMuted')};text-align:center;padding:20px;">PDF加载失败</p>`;
             }
         } else if (data.type === 'excel') {
             const sheets = data.sheets || [];
@@ -1159,10 +1159,10 @@ async function loadDetailPreview(fileId, ext) {
         } else if (data.type === 'text') {
             container.innerHTML = `<pre style="white-space:pre-wrap;font-size:12px;">${klEscapeHtml(data.content || '')}</pre>`;
         } else {
-            container.innerHTML = '<p style="color:#94a3b8;text-align:center;padding:20px;">该类型暂不支持预览</p>';
+            container.innerHTML = `<p style="color:${ThemeService.getColor('textMuted')};text-align:center;padding:20px;">该类型暂不支持预览</p>`;
         }
     } catch (e) {
-        container.innerHTML = '<p style="color:#94a3b8;text-align:center;padding:20px;">预览加载失败</p>';
+        container.innerHTML = `<p style="color:${ThemeService.getColor('textMuted')};text-align:center;padding:20px;">预览加载失败</p>`;
     }
 }
 
@@ -1538,7 +1538,8 @@ async function klHandleFileUpload(files) {
         if (progressContainer) {
             const errorEl = document.createElement('div');
             errorEl.className = 'kl-upload-error-message';
-            errorEl.style.cssText = 'color:#ef4444;padding:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;margin-top:8px;';
+            const c = ThemeService.getColors();
+            errorEl.style.cssText = `color:${c.danger};padding:12px;background:${c.dangerBg};border:1px solid ${c.danger}33;border-radius:6px;margin-top:8px;`;
             errorEl.innerHTML = '<strong>⚠️ 上传失败</strong><br>请先在上方选择目标模块后再点击上传';
             progressContainer.appendChild(errorEl);
         }
@@ -1691,9 +1692,10 @@ async function klHandleFileUpload(files) {
     summaryEl.className = 'kl-upload-summary';
     const summaryType = failCount > 0 ? (successCount > 0 ? 'partial' : 'error') : 'success';
     const summaryIcon = summaryType === 'success' ? '✅' : summaryType === 'partial' ? '⚠️' : '❌';
-    const summaryBg = summaryType === 'success' ? '#f0fdf4' : summaryType === 'partial' ? '#fffbeb' : '#fef2f2';
-    const summaryBorder = summaryType === 'success' ? '#bbf7d0' : summaryType === 'partial' ? '#fde68a' : '#fecaca';
-    const summaryColor = summaryType === 'success' ? '#166534' : summaryType === 'partial' ? '#92400e' : '#991b1b';
+    const c = ThemeService.getColors();
+    const summaryBg = summaryType === 'success' ? c.successBg : summaryType === 'partial' ? c.warningBg : c.dangerBg;
+    const summaryBorder = summaryType === 'success' ? `${c.success}44` : summaryType === 'partial' ? `${c.warning}44` : `${c.danger}44`;
+    const summaryColor = summaryType === 'success' ? c.success : summaryType === 'partial' ? c.warning : c.danger;
     summaryEl.style.cssText = `margin-top:12px;padding:12px 16px;background:${summaryBg};border:1px solid ${summaryBorder};border-radius:8px;color:${summaryColor};`;
     summaryEl.innerHTML = `
         <div style="display:flex;align-items:center;justify-content:space-between;">
