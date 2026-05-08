@@ -70,7 +70,9 @@
         .ai-task-panel-actions { display:flex;gap:8px;align-items:center; }
         .ai-task-header-btn { padding:6px 12px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;font-size:13px; }
         .ai-task-close-btn { border:none;background:#f3f4f6;font-size:16px; }
-        .ai-task-stats-cards { padding:16px 24px;display:grid;grid-template-columns:repeat(5,1fr);gap:10px; }
+        .ai-task-stats-cards { padding:12px 24px 16px; }
+        .ai-task-stats-scope { font-size:11px;color:#9ca3af;padding:0 4px 6px;text-align:right; }
+        .ai-task-stats-cards .ai-task-stat-cards-grid { display:grid;grid-template-columns:repeat(6,1fr);gap:10px; }
         .ai-task-stat-card { background:#f9fafb;border-radius:8px;padding:12px 8px;text-align:center; }
         .ai-task-stat-value { font-size:22px;font-weight:700; }
         .ai-task-stat-label { font-size:11px;color:#6b7280;margin-top:4px; }
@@ -99,8 +101,11 @@
         .ai-task-progress-fill { height:100%;border-radius:4px;transition:width 0.5s ease; }
         .ai-task-progress-text { font-size:12px;color:#6b7280;min-width:40px;text-align:right; }
         .ai-task-progress-msg { margin-top:8px;font-size:12px;color:#9ca3af; }
-        .ai-task-stats-detail { display:flex;gap:16px;flex-wrap:wrap; }
-        .ai-task-stats-row { display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid #f3f4f6;font-size:14px; }
+        .ai-task-stats-detail { display:flex;gap:16px;flex-direction:column; }
+        .ai-task-stats-section { background:#f9fafb;border-radius:8px;padding:12px 16px; }
+        .ai-task-stats-section-title { font-size:13px;font-weight:600;color:#374151;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #e5e7eb; }
+        .ai-task-stats-row { display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f3f4f6;font-size:14px; }
+        .ai-task-stats-row:last-child { border-bottom:none; }
         .ai-task-stats-row span:first-child { color:#6b7280; }
         .ai-task-stats-row span:last-child { font-weight:600;color:#1f2937; }
 

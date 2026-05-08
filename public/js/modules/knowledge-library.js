@@ -1,15 +1,15 @@
 /**
  * Knowledge Library Module
  */
-let klInitialized = false;
+let klEventListenersInitialized = false;
 
 function initKnowledgeLibrary() {
-    if (klInitialized) return;
-    klInitialized = true;
-    initKLEventListeners();
+    if (!klEventListenersInitialized) {
+        klEventListenersInitialized = true;
+        initKLEventListeners();
+    }
     if (checkKLLoginStatus()) {
         loadKLLibraries();
-    } else {
     }
 }
 

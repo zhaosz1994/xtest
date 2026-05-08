@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticateToken, requireAdmin } = require('../middleware');
+const { authenticateToken, requireAdmin, isAdmin } = require('../middleware');
 const pool = require('../db');
 const logger = require('../services/logger');
 const unifiedTaskService = require('../services/unifiedTaskService');
@@ -51,8 +51,8 @@ router.post('/create', authenticateToken, async (req, res) => {
 
 router.get('/running', authenticateToken, async (req, res) => {
   try {
-    const isAdmin = req.user.role === 'admin';
-    const tasks = isAdmin
+    const isAdminUser = isAdmin(req.user);
+    const tasks = isAdminUser
       ? await unifiedTaskService.getAllRunningTasks()
       : await unifiedTaskService.getRunningTasks(req.user.id);
 
@@ -94,7 +94,11 @@ router.get('/stats', authenticateToken, async (req, res) => {
   try {
     const { days } = req.query;
     const parsedDays = Math.min(Math.max(parseInt(days) || 7, 1), 90);
-    const stats = await unifiedTaskService.getStats(parsedDays);
+    const isAdminUser = isAdmin(req.user);
+    const userId = isAdminUser ? null : req.user.id;
+    const stats = await unifiedTaskService.getStats(parsedDays, userId);
+    stats.isAdmin = isAdminUser;
+    stats.days = parsedDays;
     res.json({ success: true, data: stats });
   } catch (error) {
     logger.error('获取任务统计失败', { error: error.message });

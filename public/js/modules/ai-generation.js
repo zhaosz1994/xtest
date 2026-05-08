@@ -35,7 +35,7 @@ function restoreTabFromHash() {
     switchTab('generate');
 }
 
-const AI_API_BASE = '';
+const AI_API_BASE = '/api';
 let aiCurrentModuleId = null;
 let aiCurrentLibraryId = null;
 let aiCurrentParentId = null;
@@ -473,7 +473,7 @@ async function loadModules() {
     const prefillModuleId = urlParams.get('moduleId');
 
     try {
-        const res = await aiApiGet('/api/libraries/list');
+        const res = await aiApiGet('/libraries/list');
         if (res.success) {
             const libSelect = document.getElementById('librarySelect');
             const libraries = res.libraries || res.data || [];
@@ -507,7 +507,7 @@ async function loadModules() {
 async function loadModulesByLibrary(libraryId) {
     if (!libraryId) return;
     try {
-        const res = await aiApiPost('/api/modules/list', { libraryId: parseInt(libraryId), page: 1, pageSize: 100 });
+        const res = await aiApiPost('/modules/list', { libraryId: parseInt(libraryId), page: 1, pageSize: 100 });
         const select = document.getElementById('moduleSelect');
         select.innerHTML = '<option value="">请选择模块</option>';
         if (res.success) {
@@ -553,7 +553,7 @@ async function onModuleChange() {
 async function loadKnowledgeFiles() {
     if (!aiCurrentModuleId) return;
     try {
-        const res = await aiApiGet(`/api/knowledge/files/${aiCurrentModuleId}`);
+        const res = await aiApiGet(`/knowledge/files/${aiCurrentModuleId}`);
         if (res.success) {
             renderFileList(res.data);
         }
@@ -701,7 +701,7 @@ function toggleFileSelectAll() {
 async function loadAILevel1Points() {
     if (!aiCurrentModuleId) return;
     try {
-        const res = await aiApiGet(`/api/ai-generation/level1-points/${aiCurrentModuleId}`);
+        const res = await aiApiGet(`/ai-generation/level1-points/${aiCurrentModuleId}`);
         if (res.success) {
             const points = res.data || [];
             const container = document.getElementById('existingLevel1List');
@@ -780,7 +780,7 @@ function deselectAllLevel1() {
 
 async function loadAgents() {
     try {
-        const res = await aiApiGet('/api/ai-sub-agents/list?category=test_generation&is_enabled=true');
+        const res = await aiApiGet('/ai-sub-agents/list?category=test_generation&is_enabled=true');
         const select = document.getElementById('agentSelect');
         if (res.success && res.data && res.data.length > 0) {
             select.innerHTML = '';
@@ -844,8 +844,8 @@ async function showMergeModal() {
 
     try {
         const [usersRes, librariesRes] = await Promise.all([
-            aiApiGet('/api/users/usernames'),
-            aiApiGet('/api/libraries/list')
+            aiApiGet('/users/usernames'),
+            aiApiGet('/libraries/list')
         ]);
 
         const mergeLibSelect = document.getElementById('mergeLibrarySelect');
@@ -952,7 +952,7 @@ async function createTask() {
     const selectedFiles = Array.from(aiSelectedFiles);
     
     try {
-        const statusRes = await aiApiGet(`/api/ai-generation/check-chunks-status/${aiCurrentModuleId}?fileIds=${selectedFiles.join(',')}`);
+        const statusRes = await aiApiGet(`/ai-generation/check-chunks-status/${aiCurrentModuleId}?fileIds=${selectedFiles.join(',')}`);
         if (statusRes.success && !statusRes.data.hasPendingChunks && statusRes.data.total > 0) {
             const confirmed = await showConfirmDialog(
                 '所选文件的所有文本块已处理完成',
@@ -965,7 +965,7 @@ async function createTask() {
                 return;
             }
             
-            const resetRes = await aiApiPost('/api/ai-generation/reset-chunks', {
+            const resetRes = await aiApiPost('/ai-generation/reset-chunks', {
                 moduleId: aiCurrentModuleId,
                 fileIds: selectedFiles
             });
@@ -994,7 +994,7 @@ async function createTask() {
     };
 
     try {
-        const res = await aiApiPost('/api/ai-generation/create', data);
+        const res = await aiApiPost('/ai-generation/create', data);
         if (res.success) {
             aiCurrentTaskId = res.data.taskId;
             aiNotify('任务创建成功！', 'success');
@@ -1076,7 +1076,7 @@ function startProgressPolling(taskId) {
     if (aiProgressInterval) clearInterval(aiProgressInterval);
     aiProgressInterval = setInterval(async () => {
         try {
-            const res = await aiApiGet(`/api/ai-generation/task/${taskId}`);
+            const res = await aiApiGet(`/ai-generation/task/${taskId}`);
             if (res.success) {
                 updateProgressUI(res.data);
                 if (['completed', 'failed', 'cancelled'].includes(res.data.status)) {
@@ -1151,7 +1151,7 @@ function closeProgressModal() {
 async function cancelTask() {
     if (!aiCurrentTaskId) return;
     try {
-        const res = await aiApiPost(`/api/ai-generation/cancel/${aiCurrentTaskId}`);
+        const res = await aiApiPost(`/ai-generation/cancel/${aiCurrentTaskId}`);
         if (res.success) {
             aiNotify('任务已取消', 'info');
             closeProgressModal();
@@ -1234,12 +1234,12 @@ async function loadKnowledgeTree() {
     try {
         let tree;
         if (aiCurrentModuleId) {
-            const res = await aiApiGet(`/api/knowledge/tree/${aiCurrentModuleId}`);
+            const res = await aiApiGet(`/knowledge/tree/${aiCurrentModuleId}`);
             if (res.success) {
                 tree = res.data;
             }
         } else {
-            const res = await aiApiGet('/api/knowledge/global-tree');
+            const res = await aiApiGet('/knowledge/global-tree');
             if (res.success) {
                 tree = res.data;
             }
@@ -1630,7 +1630,7 @@ async function confirmCreateFolder() {
         return;
     }
     try {
-        await aiApiPost('/api/knowledge/folder', { moduleId: aiCurrentModuleId, parentId: aiCurrentParentId || null, name });
+        await aiApiPost('/knowledge/folder', { moduleId: aiCurrentModuleId, parentId: aiCurrentParentId || null, name });
         closeCreateFolderModal();
         loadKnowledgeTree();
         aiNotify('文件夹创建成功', 'success');
@@ -1663,7 +1663,7 @@ async function handleFileUpload() {
                 aiNotify('请先登录', 'error');
                 continue;
             }
-            const res = await fetch(AI_API_BASE + '/api/knowledge/upload', {
+            const res = await fetch(AI_API_BASE + '/knowledge/upload', {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}` },
                 body: formData
@@ -1728,7 +1728,7 @@ async function resolveConflict() {
             aiNotify('请先登录', 'error');
             return;
         }
-        const res = await fetch(AI_API_BASE + '/api/knowledge/upload', {
+        const res = await fetch(AI_API_BASE + '/knowledge/upload', {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}` },
             body: formData
@@ -1750,7 +1750,7 @@ async function resolveConflict() {
 
 async function viewFileContent(fileId) {
     try {
-        const res = await aiApiGet(`/api/knowledge/file/content/${fileId}`);
+        const res = await aiApiGet(`/knowledge/file/content/${fileId}`);
         if (res.success) {
             document.getElementById('fileContentTitle').textContent = `📄 ${res.data.name}`;
             if (res.data.type === 'binary' || res.data.content === null) {
@@ -1780,7 +1780,7 @@ async function deleteKnowledgeFile(fileId) {
         if (!moduleId) { aiNotify('请先选择模块', 'warning'); return; }
         const params = new URLSearchParams();
         params.set('moduleId', moduleId);
-        await aiApiDelete(`/api/knowledge/file/${fileId}?${params.toString()}`);
+        await aiApiDelete(`/knowledge/file/${fileId}?${params.toString()}`);
         aiSelectedFiles.delete(fileId);
         loadKnowledgeTree();
         loadKnowledgeFiles();
@@ -1795,7 +1795,7 @@ function confirmFileSelection() {
 
 async function loadTaskFilter() {
     try {
-        const res = await aiApiGet('/api/ai-generation/tasks?limit=50');
+        const res = await aiApiGet('/ai-generation/tasks?limit=50');
         if (res.success) {
             const select = document.getElementById('taskFilter');
             const prevValue = select.value;
@@ -1841,9 +1841,9 @@ async function loadTempCasesPage() {
 
         let res;
         if (filterValue === 'all') {
-            res = await aiApiGet(`/api/temp-cases/all-active?${params.toString()}`);
+            res = await aiApiGet(`/temp-cases/all-active?${params.toString()}`);
         } else {
-            res = await aiApiGet(`/api/temp-cases/list/${filterValue}?${params.toString()}`);
+            res = await aiApiGet(`/temp-cases/list/${filterValue}?${params.toString()}`);
         }
         if (res.success) {
             allTempCases = res.data.cases || [];
@@ -2471,7 +2471,7 @@ function updateSelectedCount() {
 
 async function viewCaseDetail(tempCaseId) {
     try {
-        const res = await aiApiGet(`/api/temp-cases/detail/${tempCaseId}`);
+        const res = await aiApiGet(`/temp-cases/detail/${tempCaseId}`);
         if (res.success) {
             const c = res.data;
 
@@ -2518,7 +2518,7 @@ async function viewCaseDetail(tempCaseId) {
 
 async function showCompareView(tempCaseId, tempCase) {
     try {
-        const formalRes = await aiApiGet(`/api/temp-cases/formal-case/${tempCase.formal_case_id}`);
+        const formalRes = await aiApiGet(`/temp-cases/formal-case/${tempCase.formal_case_id}`);
         if (!formalRes.success) {
             aiNotify('无法加载原始正式用例', 'error');
             return;
@@ -2617,7 +2617,7 @@ async function showCompareView(tempCaseId, tempCase) {
         rejectBtn.addEventListener('click', async function() {
             if (!(await aiShowConfirmMessage('确定要拒绝此优化用例吗？'))) return;
             try {
-                await aiApiPost('/api/temp-cases/batch-reject', { tempCaseIds: [tempCaseId] });
+                await aiApiPost('/temp-cases/batch-reject', { tempCaseIds: [tempCaseId] });
                 aiNotify('已拒绝', 'success');
                 aiCloseAllModals();
                 loadTempCases();
@@ -2643,7 +2643,7 @@ async function showCompareView(tempCaseId, tempCase) {
         acceptOverwriteBtn.addEventListener('click', async function() {
             if (!(await aiShowConfirmMessage('确定要用AI优化版本覆盖原始正式用例吗？此操作不可撤销。'))) return;
             try {
-                const res = await aiApiPost('/api/ai-import/merge-with-overwrite', {
+                const res = await aiApiPost('/ai-import/merge-with-overwrite', {
                     temp_case_ids: [tempCaseId],
                     overwrite_mode: 'smart'
                 });
@@ -2769,7 +2769,7 @@ function showOverwriteMergeModal() {
         const tempCaseIds = importOptimizeCases.map(c => c.temp_case_id);
 
         try {
-            const res = await aiApiPost('/api/ai-import/merge-with-overwrite', {
+            const res = await aiApiPost('/ai-import/merge-with-overwrite', {
                 temp_case_ids: tempCaseIds,
                 overwrite_mode: overwriteMode
             });
@@ -2790,7 +2790,7 @@ function showOverwriteMergeModal() {
 
 async function editCaseDetail(tempCaseId) {
     try {
-        const res = await aiApiGet(`/api/temp-cases/detail/${tempCaseId}`);
+        const res = await aiApiGet(`/temp-cases/detail/${tempCaseId}`);
         if (res.success) {
             const c = res.data;
             document.getElementById('caseDetailBody').innerHTML = `
@@ -2836,7 +2836,7 @@ async function saveCaseDetail() {
     };
 
     try {
-        await aiApiPut(`/api/temp-cases/update/${tempCaseId}`, updates);
+        await aiApiPut(`/temp-cases/update/${tempCaseId}`, updates);
         aiNotify('保存成功', 'success');
         closeCaseDetailModal();
         loadTempCases();
@@ -2897,7 +2897,7 @@ function initCaseDetailDragResize() {
 async function deleteCase(tempCaseId) {
     if (!(await aiShowConfirmMessage('确定要删除此用例吗？'))) return;
     try {
-        await aiApiPost('/api/temp-cases/batch-delete', { tempCaseIds: [tempCaseId] });
+        await aiApiPost('/temp-cases/batch-delete', { tempCaseIds: [tempCaseId] });
         aiNotify('删除成功', 'success');
         loadTempCases();
     } catch (e) {}
@@ -2914,8 +2914,8 @@ async function batchEdit() {
 async function loadBatchEditOptions() {
     try {
         const [usersRes, projectsRes] = await Promise.all([
-            aiApiGet('/api/users/usernames'),
-            aiApiGet('/api/projects/list')
+            aiApiGet('/users/usernames'),
+            aiApiGet('/projects/list')
         ]);
         
         const ownerSelect = document.getElementById('batchOwner');
@@ -2968,7 +2968,7 @@ async function saveBatchEdit() {
     if (selectedMethods.length > 0) updates.methods = selectedMethods;
 
     try {
-        await aiApiPost('/api/temp-cases/batch-edit', {
+        await aiApiPost('/temp-cases/batch-edit', {
             tempCaseIds: Array.from(selectedCases),
             updates
         });
@@ -2981,7 +2981,7 @@ async function saveBatchEdit() {
 async function batchApprove() {
     if (selectedCases.size === 0) { aiNotify('请先选择用例', 'warning'); return; }
     try {
-        await aiApiPost('/api/temp-cases/batch-approve', { tempCaseIds: Array.from(selectedCases) });
+        await aiApiPost('/temp-cases/batch-approve', { tempCaseIds: Array.from(selectedCases) });
         aiNotify('批量批准成功', 'success');
         selectedCases.clear();
         updateSelectedCount();
@@ -2992,7 +2992,7 @@ async function batchApprove() {
 async function batchReject() {
     if (selectedCases.size === 0) { aiNotify('请先选择用例', 'warning'); return; }
     try {
-        await aiApiPost('/api/temp-cases/batch-reject', { tempCaseIds: Array.from(selectedCases) });
+        await aiApiPost('/temp-cases/batch-reject', { tempCaseIds: Array.from(selectedCases) });
         aiNotify('批量拒绝成功', 'success');
         selectedCases.clear();
         updateSelectedCount();
@@ -3004,7 +3004,7 @@ async function batchDelete() {
     if (selectedCases.size === 0) { aiNotify('请先选择用例', 'warning'); return; }
     if (!(await aiShowConfirmMessage(`确定要删除 ${selectedCases.size} 个用例吗？`))) return;
     try {
-        await aiApiPost('/api/temp-cases/batch-delete', { tempCaseIds: Array.from(selectedCases) });
+        await aiApiPost('/temp-cases/batch-delete', { tempCaseIds: Array.from(selectedCases) });
         aiNotify('批量删除成功', 'success');
         selectedCases.clear();
         updateSelectedCount();
@@ -3029,7 +3029,7 @@ async function executeMerge() {
     try {
         let res;
         if (currentMergeMode === 'direct') {
-            res = await aiApiPost('/api/temp-cases/batch-merge', {
+            res = await aiApiPost('/temp-cases/batch-merge', {
                 tempCaseIds: Array.from(selectedCases),
                 taskId: taskId && taskId !== 'all' ? taskId : undefined,
                 defaultOwner: '',
@@ -3045,7 +3045,7 @@ async function executeMerge() {
             }
 
             const tid = taskId && taskId !== 'all' ? taskId : 'batch';
-            res = await aiApiPost(`/api/temp-cases/submit-review/${tid}`, {
+            res = await aiApiPost(`/temp-cases/submit-review/${tid}`, {
                 tempCaseIds: Array.from(selectedCases),
                 taskId: taskId && taskId !== 'all' ? taskId : undefined,
                 libraryId: mergeLibraryId || undefined,
@@ -3084,7 +3084,7 @@ async function loadReviewPage(page) {
     if (page !== undefined) reviewPage = page;
     try {
         const offset = (reviewPage - 1) * reviewPageSize;
-        const res = await aiApiGet(`/api/temp-cases/pending-review?limit=${reviewPageSize}&offset=${offset}`);
+        const res = await aiApiGet(`/temp-cases/pending-review?limit=${reviewPageSize}&offset=${offset}`);
         if (res.success) {
             const container = document.getElementById('reviewList');
             const tasks = res.data || [];
@@ -3121,7 +3121,7 @@ window.loadReviewPage = loadReviewPage;
 
 async function startReview(taskId) {
     try {
-        const res = await aiApiGet(`/api/temp-cases/list/${taskId}?status=approved&review_status=pending`);
+        const res = await aiApiGet(`/temp-cases/list/${taskId}?status=approved&review_status=pending`);
         if (res.success) {
             const cases = res.data.cases || [];
             if (cases.length === 0) {
@@ -3143,7 +3143,7 @@ async function startReview(taskId) {
                 });
             }
 
-            const result = await aiApiPost(`/api/temp-cases/review/${taskId}`, { reviews });
+            const result = await aiApiPost(`/temp-cases/review/${taskId}`, { reviews });
             if (result.success) {
                 aiNotify(`评审完成: 通过${result.data.approved}个, 拒绝${result.data.rejected}个`, 'success');
                 loadReviewList();
@@ -3169,7 +3169,7 @@ async function executeCrawl() {
 
     try {
         aiNotify('正在爬取网页...', 'info');
-        const res = await aiApiPost('/api/knowledge/crawl', {
+        const res = await aiApiPost('/knowledge/crawl', {
             url,
             moduleId: aiCurrentModuleId,
             username: document.getElementById('aiCrawlUsername').value || undefined,
@@ -3241,7 +3241,7 @@ async function loadTaskHistoryPage(page) {
     if (page !== undefined) taskHistoryPage = page;
     try {
         const offset = (taskHistoryPage - 1) * taskHistoryPageSize;
-        const res = await aiApiGet(`/api/ai-generation/tasks?limit=${taskHistoryPageSize}&offset=${offset}`);
+        const res = await aiApiGet(`/ai-generation/tasks?limit=${taskHistoryPageSize}&offset=${offset}`);
         if (res.success) {
             const tbody = document.getElementById('taskHistoryBody');
             const tasks = res.data.tasks || [];
@@ -3302,7 +3302,7 @@ function viewTaskResult(taskId) {
 
 async function retryTask(taskId) {
     try {
-        const res = await aiApiPost(`/api/ai-generation/retry/${taskId}`);
+        const res = await aiApiPost(`/ai-generation/retry/${taskId}`);
         if (res.success) {
             aiNotify('任务已重新提交', 'success');
             showTaskHistory();
@@ -3373,7 +3373,7 @@ function initAgentsDragResize() {
 
 async function showAgentsViewer() {
     try {
-        const res = await aiApiGet('/api/ai-sub-agents/list?category=test_generation');
+        const res = await aiApiGet('/ai-sub-agents/list?category=test_generation');
         if (res.success) {
             renderAgentsList(res.data || []);
             document.getElementById('agentViewPanel').style.display = 'none';
@@ -3440,7 +3440,7 @@ function renderAgentsList(agents) {
 
 async function viewAgentDetail(agentId, agentCode) {
     try {
-        const res = await aiApiGet(`/api/ai-sub-agents/detail/${encodeURIComponent(agentCode)}`);
+        const res = await aiApiGet(`/ai-sub-agents/detail/${encodeURIComponent(agentCode)}`);
         if (res.success) {
             const agent = res.data.agent;
             const configFiles = res.data.configFiles || [];

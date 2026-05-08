@@ -303,7 +303,10 @@ class UnifiedTaskService {
     return tasks;
   }
 
-  async getStats(days = 7) {
+  async getStats(days = 7, userId = null) {
+    const userFilter = userId ? ' AND user_id = ?' : '';
+    const userParams = userId ? [userId] : [];
+
     const [statsResult] = await pool.execute(
       `SELECT
          COUNT(*) as total,
@@ -313,8 +316,8 @@ class UnifiedTaskService {
          SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
          SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
        FROM ai_unified_tasks
-       WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)`,
-      [days]
+       WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)${userFilter}`,
+      [days, ...userParams]
     );
 
     const [tokenStats] = await pool.execute(
@@ -322,39 +325,66 @@ class UnifiedTaskService {
          SUM(total_tokens) as totalTokens,
          COUNT(DISTINCT user_id) as activeUsers
        FROM ai_unified_tasks
-       WHERE status = 'completed' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)`,
-      [days]
+       WHERE status = 'completed' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)${userId ? ' AND user_id = ?' : ''}`,
+      [days, ...userParams]
     );
 
     const [avgTime] = await pool.execute(
       `SELECT AVG(TIMESTAMPDIFF(SECOND, started_at, completed_at)) as avgDuration
        FROM ai_unified_tasks
        WHERE status = 'completed' AND started_at IS NOT NULL AND completed_at IS NOT NULL
-         AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)`,
-      [days]
+         AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)${userFilter}`,
+      [days, ...userParams]
+    );
+
+    const [typeBreakdown] = await pool.execute(
+      `SELECT
+         task_type,
+         COUNT(*) as count,
+         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completedCount,
+         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failedCount
+       FROM ai_unified_tasks
+       WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)${userFilter}
+       GROUP BY task_type`,
+      [days, ...userParams]
     );
 
     const stats = statsResult[0] || {};
     const tokens = tokenStats[0] || {};
     const duration = avgTime[0] || {};
 
-    const totalCompleted = stats.completed || 0;
-    const totalFailed = stats.failed || 0;
-    const completionRate = (totalCompleted + totalFailed) > 0
+    const totalCompleted = Number(stats.completed) || 0;
+    const totalFailed = Number(stats.failed) || 0;
+    const totalAll = Number(stats.total) || 0;
+    const completionRate = totalAll > 0
+      ? (((totalCompleted + totalFailed) / totalAll) * 100).toFixed(1)
+      : '0.0';
+    const successRate = (totalCompleted + totalFailed) > 0
       ? ((totalCompleted / (totalCompleted + totalFailed)) * 100).toFixed(1)
       : '0.0';
 
+    const typeStats = {};
+    (typeBreakdown || []).forEach(function(row) {
+      typeStats[row.task_type] = {
+        count: Number(row.count) || 0,
+        completed: Number(row.completedCount) || 0,
+        failed: Number(row.failedCount) || 0
+      };
+    });
+
     return {
-      total: stats.total || 0,
-      processing: stats.processing || 0,
-      pending: stats.pending || 0,
+      total: totalAll,
+      processing: Number(stats.processing) || 0,
+      pending: Number(stats.pending) || 0,
       completed: totalCompleted,
       failed: totalFailed,
-      cancelled: stats.cancelled || 0,
+      cancelled: Number(stats.cancelled) || 0,
       completionRate,
-      avgDuration: Math.round(duration.avgDuration || 0),
-      totalTokens: tokens.totalTokens || 0,
-      activeUsers: tokens.activeUsers || 0
+      successRate,
+      avgDuration: Math.round(Number(duration.avgDuration) || 0),
+      totalTokens: Number(tokens.totalTokens) || 0,
+      activeUsers: Number(tokens.activeUsers) || 0,
+      typeStats
     };
   }
 

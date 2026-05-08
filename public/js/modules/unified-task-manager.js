@@ -656,7 +656,7 @@
 
     var self = this;
     apiRequest('/ai-tasks/stats', { useCache: false }).then(function(data) {
-      if (data.success) {
+      if (data && data.success) {
         var runningCount = (data.data.processing || 0) + (data.data.pending || 0);
         if (runningCount > 0) {
           badge.textContent = runningCount;
@@ -665,7 +665,9 @@
           badge.style.display = 'none';
         }
       }
-    }).catch(function() {});
+    }).catch(function(err) {
+      console.warn('[AI任务中心] 更新角标失败:', err);
+    });
   };
 
   window.unifiedTaskManager = new UnifiedTaskManager();
@@ -701,7 +703,7 @@
         '<button class="ai-task-tab" data-tab="stats" onclick="window.switchAITaskTab(\'stats\')">统计</button>' +
       '</div>' +
       '<div class="ai-task-panel-content">' +
-        '<div id="ai-task-tab-running" class="ai-task-tab-content"></div>' +
+        '<div id="ai-task-tab-running" class="ai-task-tab-content" style="display:block;"></div>' +
         '<div id="ai-task-tab-stats" class="ai-task-tab-content" style="display:none;"></div>' +
       '</div>' +
       '<div class="ai-task-panel-footer">' +
@@ -782,15 +784,25 @@
   };
 
   function loadRunningTasks() {
-    if (typeof authToken === 'undefined' || !authToken) return;
+    if (typeof authToken === 'undefined' || !authToken) {
+      console.warn('[AI任务中心] authToken未定义，跳过加载运行中任务');
+      return;
+    }
     apiRequest('/ai-tasks/running', { useCache: false }).then(function(response) {
-      if (response.success && response.data) {
+      console.log('[AI任务中心] 运行中任务响应:', response);
+      if (response && response.success && response.data) {
         renderRunningTasks(response.data);
         var countEl = document.getElementById('ai-task-running-count');
         if (countEl) countEl.textContent = response.data.length;
+      } else {
+        console.warn('[AI任务中心] 运行中任务响应异常:', response);
+        var container = document.getElementById('ai-task-tab-running');
+        if (container) {
+          container.innerHTML = '<div class="ai-task-empty"><div class="ai-task-empty-icon">⚠️</div><div class="ai-task-empty-text">加载失败</div><div class="ai-task-empty-sub">' + ((response && response.message) || '未知错误') + '</div></div>';
+        }
       }
     }).catch(function(error) {
-      console.error('加载运行中任务失败:', error);
+      console.error('[AI任务中心] 加载运行中任务失败:', error);
     });
   }
 
@@ -810,20 +822,28 @@
     var container = document.getElementById('ai-task-stats-cards');
     if (!container) return;
 
+    var daysLabel = stats.days ? '最近' + stats.days + '天' : '最近7天';
+    var scopeLabel = stats.isAdmin ? '（全局）' : '（我的）';
+
     var cards = [
       { label: '总任务', value: stats.total, color: '#6366f1' },
       { label: '处理中', value: stats.processing, color: '#f59e0b' },
       { label: '排队中', value: stats.pending, color: '#3b82f6' },
       { label: '已完成', value: stats.completed, color: '#10b981' },
-      { label: '失败', value: stats.failed, color: '#ef4444' }
+      { label: '失败', value: stats.failed, color: '#ef4444' },
+      { label: '已取消', value: stats.cancelled, color: '#9ca3af' }
     ];
 
-    container.innerHTML = cards.map(function(card) {
-      return '<div class="ai-task-stat-card" style="border-top:3px solid ' + card.color + ';">' +
-        '<div class="ai-task-stat-value" style="color:' + card.color + ';">' + card.value + '</div>' +
-        '<div class="ai-task-stat-label">' + card.label + '</div>' +
+    container.innerHTML =
+      '<div class="ai-task-stats-scope">' + daysLabel + scopeLabel + '</div>' +
+      '<div class="ai-task-stat-cards-grid">' +
+      cards.map(function(card) {
+        return '<div class="ai-task-stat-card" style="border-top:3px solid ' + card.color + ';">' +
+          '<div class="ai-task-stat-value" style="color:' + card.color + ';">' + card.value + '</div>' +
+          '<div class="ai-task-stat-label">' + card.label + '</div>' +
+        '</div>';
+      }).join('') +
       '</div>';
-    }).join('');
   }
 
   function renderRunningTasks(tasks) {
@@ -874,13 +894,66 @@
     var container = document.getElementById('ai-task-tab-stats');
     if (!container) return;
 
+    var typeConfig = {
+      'overview_generation': { icon: '📝', label: '概述生成', color: '#3b82f6' },
+      'key_config_generation': { icon: '🔧', label: '关键配置', color: '#8b5cf6' },
+      'case_generation': { icon: '🧪', label: '用例生成', color: '#10b981' },
+      'report_generation': { icon: '📊', label: '报告生成', color: '#f59e0b' }
+    };
+
+    var typeBreakdownHTML = '';
+    if (stats.typeStats) {
+      var typeEntries = Object.entries(stats.typeStats);
+      if (typeEntries.length > 0) {
+        typeBreakdownHTML = '<div class="ai-task-stats-section"><div class="ai-task-stats-section-title">任务类型分布</div>';
+        typeEntries.forEach(function(entry) {
+          var taskType = entry[0];
+          var typeData = entry[1];
+          var tc = typeConfig[taskType] || { icon: '❓', label: taskType, color: '#6b7280' };
+          var typeSuccessRate = (typeData.completed + typeData.failed) > 0
+            ? ((typeData.completed / (typeData.completed + typeData.failed)) * 100).toFixed(1)
+            : '0.0';
+          typeBreakdownHTML +=
+            '<div class="ai-task-stats-row">' +
+              '<span style="display:flex;align-items:center;gap:4px;">' +
+                '<span>' + tc.icon + '</span>' +
+                '<span>' + tc.label + '</span>' +
+              '</span>' +
+              '<span style="display:flex;align-items:center;gap:8px;">' +
+                '<span style="color:#6366f1;font-weight:600;">' + typeData.count + '</span>' +
+                '<span style="font-size:11px;color:#10b981;">✓' + typeData.completed + '</span>' +
+                '<span style="font-size:11px;color:#ef4444;">✗' + typeData.failed + '</span>' +
+                '<span style="font-size:11px;color:#9ca3af;">' + typeSuccessRate + '%</span>' +
+              '</span>' +
+            '</div>';
+        });
+        typeBreakdownHTML += '</div>';
+      }
+    }
+
     container.innerHTML =
       '<div class="ai-task-stats-detail">' +
-        '<div class="ai-task-stats-row"><span>完成率</span><span>' + stats.completionRate + '%</span></div>' +
-        '<div class="ai-task-stats-row"><span>平均耗时</span><span>' + stats.avgDuration + 's</span></div>' +
-        '<div class="ai-task-stats-row"><span>Token消耗</span><span>' + (stats.totalTokens || 0).toLocaleString() + '</span></div>' +
-        '<div class="ai-task-stats-row"><span>活跃用户</span><span>' + stats.activeUsers + '人</span></div>' +
+        '<div class="ai-task-stats-section">' +
+          '<div class="ai-task-stats-section-title">总体指标</div>' +
+          '<div class="ai-task-stats-row"><span>完成率</span><span>' + stats.completionRate + '%</span></div>' +
+          '<div class="ai-task-stats-row"><span>成功率</span><span>' + stats.successRate + '%</span></div>' +
+          '<div class="ai-task-stats-row"><span>平均耗时</span><span>' + formatDuration(stats.avgDuration) + '</span></div>' +
+          '<div class="ai-task-stats-row"><span>Token消耗</span><span>' + (stats.totalTokens || 0).toLocaleString() + '</span></div>' +
+          (stats.isAdmin ? '<div class="ai-task-stats-row"><span>活跃用户</span><span>' + stats.activeUsers + '人</span></div>' : '') +
+        '</div>' +
+        typeBreakdownHTML +
       '</div>';
+  }
+
+  function formatDuration(seconds) {
+    if (!seconds || seconds === 0) return '0s';
+    if (seconds < 60) return seconds + 's';
+    var min = Math.floor(seconds / 60);
+    var sec = seconds % 60;
+    if (min < 60) return min + 'm' + (sec > 0 ? sec + 's' : '');
+    var hr = Math.floor(min / 60);
+    min = min % 60;
+    return hr + 'h' + (min > 0 ? min + 'm' : '');
   }
 
   window.switchAITaskTab = function(tab) {
