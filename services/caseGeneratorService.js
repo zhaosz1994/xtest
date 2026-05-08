@@ -79,7 +79,19 @@ class CaseGeneratorService {
 
     const agentPrompt = await this.loadAgentPrompt(task.agent_id);
 
-    for (const chunk of chunks) {
+    const { getSceneParams, getUserAIGenerationParams } = require('./aiService');
+    const genParams = await getUserAIGenerationParams(task.user_id);
+    const sceneParams = getSceneParams(genParams, 'scene_case_generation');
+    const contextChars = config.max_context_chars ?? sceneParams.max_context_chars ?? 1000;
+
+    for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+      const chunk = chunks[chunkIdx];
+      const prevChunk = chunkIdx > 0 ? chunks[chunkIdx - 1] : null;
+      const nextChunk = chunkIdx < chunks.length - 1 ? chunks[chunkIdx + 1] : null;
+
+      const prevContext = prevChunk ? prevChunk.chunk_content.slice(-contextChars) : null;
+      const nextContext = nextChunk ? nextChunk.chunk_content.slice(0, contextChars) : null;
+
       await this.apiQueue.add(async () => {
         try {
           await pool.execute(`
@@ -88,7 +100,7 @@ class CaseGeneratorService {
             WHERE id = ?
           `, [chunk.id]);
 
-          const cases = await this.generateCasesFromChunk(chunk, task, config, agentPrompt);
+          const cases = await this.generateCasesFromChunk(chunk, task, config, agentPrompt, { prevContext, nextContext });
 
           if (cases.length > 0) {
             await this.saveTempCases(taskId, task.module_id, chunk.id, cases, task.library_id);
@@ -157,11 +169,11 @@ class CaseGeneratorService {
     };
   }
 
-  async generateCasesFromChunk(chunk, task, config, agentPrompt) {
+  async generateCasesFromChunk(chunk, task, config, agentPrompt, chunkContext = {}) {
     const systemPrompt = agentPrompt?.system || this.getDefaultSystemPrompt();
     const userPrompt = agentPrompt?.userTemplate 
-      ? this.applyTemplate(agentPrompt.userTemplate, chunk, task, config)
-      : this.buildPrompt(chunk, task, config);
+      ? this.applyTemplate(agentPrompt.userTemplate, chunk, task, config, chunkContext)
+      : this.buildPrompt(chunk, task, config, chunkContext);
 
     logger.debug('生成用例Prompt', {
       chunkId: chunk.id,
@@ -192,7 +204,21 @@ class CaseGeneratorService {
         contentLength: content.length,
         contentPreview: content.substring(0, 200)
       });
-      
+
+      const executionTimeMs = Date.now() - (this._lastAIStartTime || Date.now());
+
+      aiAuditLogger.logFailure({
+        userId: task.user_id,
+        skillName: 'AI生成测试用例',
+        operationType: 'GENERATE',
+        executionTimeMs,
+        promptTokens: usage.prompt_tokens || 0,
+        completionTokens: usage.completion_tokens || 0,
+        totalTokens: usage.total_tokens || 0,
+        modelName: aiConfig.model_name || config?.model || 'deepseek-chat',
+        errorMessage: 'AI返回内容无法解析为有效的测试用例JSON格式'
+      });
+
       aiRequestLogger.logFailure({
         userId: task.user_id,
         triggerType: 'generation',
@@ -232,20 +258,31 @@ class CaseGeneratorService {
 5. 仅根据提供的材料内容生成，不要臆测`;
   }
 
-  buildPrompt(chunk, task, config) {
+  buildPrompt(chunk, task, config, chunkContext = {}) {
     const caseLimit = config.caseCountLimit || 20;
+
+    let contextSection = '';
+    if (chunkContext.prevContext || chunkContext.nextContext) {
+      contextSection = '\n## 相邻片段上下文（仅供理解当前片段的语义衔接，不要为上下文内容生成用例）\n';
+      if (chunkContext.prevContext) {
+        contextSection += `### 前一片段尾部:\n...${chunkContext.prevContext}\n\n`;
+      }
+      if (chunkContext.nextContext) {
+        contextSection += `### 后一片段头部:\n${chunkContext.nextContext}...\n\n`;
+      }
+    }
+
     return `## 模块背景
 模块名称: ${task.module_name}
 模块描述: ${task.module_desc || task.module_name || '无'}
-
-## 当前材料片段
+${contextSection}## 当前材料片段
 文件: ${chunk.file_name}
 片段序号: ${chunk.chunk_index + 1}
 内容:
 ${chunk.chunk_content}
 
 ## 生成要求
-1. 仅根据当前片段内容生成测试用例
+1. 主要根据当前片段内容生成测试用例，结合上下文理解语义
 2. 如果片段内容不足以生成完整用例，可以跳过
 3. 用例名称要能体现测试点
 4. 测试步骤要具体可执行
@@ -273,7 +310,7 @@ ${chunk.chunk_content}
 \`\`\``;
   }
 
-  applyTemplate(template, chunk, task, config) {
+  applyTemplate(template, chunk, task, config, chunkContext = {}) {
     const moduleDesc = task.module_desc || task.module_name || '无';
     const focusAreas = (config.focusAreas || []).join(', ');
     const caseLimit = config.caseCountLimit || 20;
@@ -282,6 +319,21 @@ ${chunk.chunk_content}
     context += `模块描述: ${moduleDesc}\n`;
     if (focusAreas) {
       context += `重点关注: ${focusAreas}\n`;
+    }
+
+    let prevContextStr = '';
+    if (chunkContext.prevContext) {
+      prevContextStr = `前一片段尾部:\n...${chunkContext.prevContext}`;
+    }
+    let nextContextStr = '';
+    if (chunkContext.nextContext) {
+      nextContextStr = `后一片段头部:\n${chunkContext.nextContext}...`;
+    }
+    let adjacentContext = '';
+    if (prevContextStr || nextContextStr) {
+      adjacentContext = '相邻片段上下文（仅供理解语义衔接，不要为上下文内容生成用例）:\n';
+      if (prevContextStr) adjacentContext += prevContextStr + '\n';
+      if (nextContextStr) adjacentContext += nextContextStr + '\n';
     }
     
     const result = template
@@ -292,6 +344,9 @@ ${chunk.chunk_content}
       .replace(/\{\{case_count_limit\}\}/g, caseLimit)
       .replace(/\{\{focus_areas\}\}/g, focusAreas)
       .replace(/\{\{existing_case_style\}\}/g, config.existingCaseStyle || '无')
+      .replace(/\{\{prev_context\}\}/g, prevContextStr)
+      .replace(/\{\{next_context\}\}/g, nextContextStr)
+      .replace(/\{\{adjacent_context\}\}/g, adjacentContext)
       .replace(/\{\{context\}\}/g, context);
     
     logger.debug('模板替换完成', {
@@ -328,7 +383,10 @@ ${chunk.chunk_content}
     const effectiveTemp = config?.temperature ?? sceneParams.temperature;
     const effectiveMaxTokens = config?.max_tokens ?? sceneParams.max_tokens;
 
+    const effectiveTimeout = timeoutConfig.generalAITask || genParams.request_timeout || 120000;
+
     const startTime = Date.now();
+    this._lastAIStartTime = startTime;
     try {
       const requestBody = {
         model: model,
@@ -337,7 +395,8 @@ ${chunk.chunk_content}
           { role: 'user', content: userPrompt }
         ],
         temperature: effectiveTemp,
-        max_tokens: effectiveMaxTokens
+        max_tokens: effectiveMaxTokens,
+        timeout: effectiveTimeout / 1000
       };
 
       if (genParams.top_p !== undefined && genParams.top_p !== 1.0) {
@@ -355,7 +414,7 @@ ${chunk.chunk_content}
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
         },
-        timeout: timeoutConfig.generalAITask || genParams.request_timeout
+        timeout: effectiveTimeout + 10000
       });
 
       const executionTimeMs = Date.now() - startTime;
@@ -603,8 +662,8 @@ ${chunk.chunk_content}
       JOIN modules m ON t.module_id = m.id
       WHERE t.user_id = ?
       ORDER BY t.created_at DESC
-      LIMIT ? OFFSET ?
-    `, [userId, limit, offset]);
+      LIMIT ${limit} OFFSET ${offset}
+    `, [userId]);
 
     const [countResult] = await pool.execute(`
       SELECT COUNT(*) as total FROM ai_case_generation_tasks WHERE user_id = ?

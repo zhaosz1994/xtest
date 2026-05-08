@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS `ai_unified_tasks` (
   `id` int NOT NULL AUTO_INCREMENT,
   `task_id` varchar(50) NOT NULL COMMENT '任务唯一标识',
-  `task_type` enum('case_generation', 'overview_generation', 'key_config_generation', 'report_generation', 'other')
+  `task_type` enum('case_generation', 'overview_generation', 'key_config_generation', 'report_generation', 'import_optimize', 'other')
     NOT NULL COMMENT '任务类型',
   `user_id` int NOT NULL COMMENT '用户ID',
   `username` varchar(50) DEFAULT NULL COMMENT '用户名',

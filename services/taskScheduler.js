@@ -4,6 +4,8 @@ const cron = require('node-cron');
 const logger = require('./logger');
 const unifiedTaskService = require('./unifiedTaskService');
 const caseGenerationAdapter = require('./adapters/caseGenerationAdapter');
+const reportGenerationAdapter = require('./adapters/reportGenerationAdapter');
+const importOptimizeAdapter = require('./adapters/importOptimizeAdapter');
 const importOptimizeService = require('./importOptimizeService');
 
 class TaskScheduler {
@@ -38,6 +40,10 @@ class TaskScheduler {
 
     this.cronJobs.push(cron.schedule('*/15 * * * * *', () => {
       this.pollAndProcessImportOptimizeTasks();
+    }));
+
+    this.cronJobs.push(cron.schedule('*/30 * * * * *', () => {
+      this.syncLegacyTasksToUnified();
     }));
 
     this.cronJobs.push(cron.schedule('0 * * * *', () => {
@@ -78,7 +84,7 @@ class TaskScheduler {
 
   async recoverInterruptedOverviewTasks() {
     try {
-      await unifiedTaskService.recoverInterruptedTasks(['overview_generation', 'key_config_generation']);
+      await unifiedTaskService.recoverInterruptedTasks(['overview_generation', 'key_config_generation', 'case_generation', 'report_generation', 'import_optimize']);
     } catch (error) {
       logger.error('恢复中断概述/关键配置任务失败', { error: error.message });
     }
@@ -368,6 +374,53 @@ class TaskScheduler {
       await unifiedTaskService.cleanupCompletedTasks(7);
     } catch (error) {
       logger.error('清理统一任务失败', { error: error.message });
+    }
+  }
+
+  async syncLegacyTasksToUnified() {
+    try {
+      const [processingCases] = await pool.execute(
+        `SELECT task_id FROM ai_case_generation_tasks WHERE status IN ('pending', 'processing') LIMIT 50`
+      );
+      for (const row of processingCases) {
+        try {
+          await caseGenerationAdapter.syncToUnifiedTask(row.task_id);
+        } catch (e) {
+          // ignore individual sync errors
+        }
+      }
+    } catch (error) {
+      logger.error('同步用例生成任务进度到统一任务表失败', { error: error.message });
+    }
+
+    try {
+      const [processingReports] = await pool.execute(
+        `SELECT id FROM report_jobs WHERE status IN ('pending', 'processing') LIMIT 50`
+      );
+      for (const row of processingReports) {
+        try {
+          await reportGenerationAdapter.syncToUnifiedTask(row.id);
+        } catch (e) {
+          // ignore individual sync errors
+        }
+      }
+    } catch (error) {
+      logger.error('同步报告生成任务进度到统一任务表失败', { error: error.message });
+    }
+
+    try {
+      const [processingImports] = await pool.execute(
+        `SELECT task_id FROM ai_import_optimize_tasks WHERE status IN ('pending', 'processing') LIMIT 50`
+      );
+      for (const row of processingImports) {
+        try {
+          await importOptimizeAdapter.syncToUnifiedTask(row.task_id);
+        } catch (e) {
+          // ignore individual sync errors
+        }
+      }
+    } catch (error) {
+      logger.error('同步导入优化任务进度到统一任务表失败', { error: error.message });
     }
   }
 

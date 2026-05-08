@@ -7,6 +7,7 @@ const { getUserAIConfig, getUserAITimeoutConfig, getUserAIGenerationParams, getS
 const { logActivity } = require('./history');
 const logger = require('../services/logger');
 const aiAuditLogger = require('../services/aiAuditLogger');
+const reportGenerationAdapter = require('../services/adapters/reportGenerationAdapter');
 require('dotenv').config();
 
 // 获取测试报告列表（支持分页）
@@ -919,6 +920,12 @@ router.post('/async-generate', authenticateToken, async (req, res) => {
       message: '任务已创建',
       config: { dimension, targetId, template, splitOptions, reportName, reportDesc, enableAI }
     });
+
+    try {
+      await reportGenerationAdapter.syncToUnifiedTask(jobId);
+    } catch (syncErr) {
+      logger.error('同步报告生成任务到统一任务表失败', { error: syncErr.message, jobId });
+    }
     
     processAsyncJob(jobId, req.body, req.user.id, req.user.username).catch(async (err) => {
       logger.error('异步任务执行错误', { error: err.message, jobId });
@@ -927,6 +934,11 @@ router.post('/async-generate', authenticateToken, async (req, res) => {
         error: err.message,
         progress: 100
       });
+      try {
+        await reportGenerationAdapter.syncToUnifiedTask(jobId);
+      } catch (syncErr2) {
+        logger.error('同步失败报告任务到统一任务表失败', { error: syncErr2.message, jobId });
+      }
     });
     
     res.json({
@@ -1140,6 +1152,12 @@ async function processAsyncJob(jobId, config, userId, username) {
       message: '报告生成完成',
       reportId: reportId
     });
+
+    try {
+      await reportGenerationAdapter.syncToUnifiedTask(jobId);
+    } catch (syncErr) {
+      logger.error('同步完成报告任务到统一任务表失败', { error: syncErr.message, jobId });
+    }
     
     logger.info(`[报告生成] 任务 ${jobId} 完成, 报告ID: ${reportId}`);
     
@@ -1156,6 +1174,12 @@ async function processAsyncJob(jobId, config, userId, username) {
       error: error.message,
       progress: 100
     });
+
+    try {
+      await reportGenerationAdapter.syncToUnifiedTask(jobId);
+    } catch (syncErr) {
+      logger.error('同步失败报告任务到统一任务表失败', { error: syncErr.message, jobId });
+    }
     
     // 更新报告状态为失败
     if (reportId) {

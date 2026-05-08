@@ -1588,7 +1588,7 @@ ${description || '你是一名AI助手，专门协助测试团队完成各类任
 
             const sceneParams = [
                 { key: 'scene_data_analysis', value: '{"temperature":"0.3","max_tokens":"2000","max_context_rounds":"10"}', desc: '数据分析助手场景参数' },
-                { key: 'scene_case_generation', value: '{"temperature":"0.7","max_tokens":"4000"}', desc: '用例生成场景参数' },
+                { key: 'scene_case_generation', value: '{"temperature":"0.7","max_tokens":"4000","max_context_chars":"1000"}', desc: '用例生成场景参数' },
                 { key: 'scene_report_analysis', value: '{"temperature":"0.3","max_tokens":"2000"}', desc: '报告分析场景参数' },
                 { key: 'scene_memory_distillation', value: '{"temperature":"0.3","max_tokens":"800"}', desc: '记忆蒸馏场景参数' }
             ];
@@ -1618,6 +1618,25 @@ ${description || '你是一名AI助手，专门协助测试团队完成各类任
                         logger.warn(`插入AI生成参数 ${param.key} 失败: ${err.message}`);
                     }
                 }
+            }
+
+            try {
+                const [existingScene] = await pool.query(
+                    "SELECT config_value FROM ai_config WHERE config_key = 'scene_case_generation'"
+                );
+                if (existingScene.length > 0) {
+                    const currentVal = JSON.parse(existingScene[0].config_value || '{}');
+                    if (currentVal.max_context_chars === undefined) {
+                        currentVal.max_context_chars = '1000';
+                        await pool.execute(
+                            "UPDATE ai_config SET config_value = ? WHERE config_key = 'scene_case_generation'",
+                            [JSON.stringify(currentVal)]
+                        );
+                        logger.info('已为scene_case_generation补充max_context_chars参数');
+                    }
+                }
+            } catch (updateErr) {
+                logger.warn('更新scene_case_generation参数失败: ' + updateErr.message);
             }
 
             return { success: true, detail: `插入 ${inserted} 条, 跳过 ${skipped} 条` };

@@ -890,6 +890,12 @@ router.put('/ai-generation-params', authenticateToken, async (req, res) => {
               mergedScene.max_context_rounds = val;
             }
           }
+          if (scene.max_context_chars !== undefined) {
+            const val = parseInt(scene.max_context_chars);
+            if (!isNaN(val) && val >= 0 && val <= 10000) {
+              mergedScene.max_context_chars = val;
+            }
+          }
           
           if (Object.keys(mergedScene).length > 0) {
             mergedSceneParams[sceneKey] = mergedScene;

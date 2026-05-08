@@ -859,7 +859,8 @@
       'overview_generation': { icon: '📝', label: '概述生成', color: '#3b82f6' },
       'key_config_generation': { icon: '🔧', label: '关键配置', color: '#8b5cf6' },
       'case_generation': { icon: '🧪', label: '用例生成', color: '#10b981' },
-      'report_generation': { icon: '📊', label: '报告生成', color: '#f59e0b' }
+      'report_generation': { icon: '📊', label: '报告生成', color: '#f59e0b' },
+      'import_optimize': { icon: '✨', label: '导入优化', color: '#ec4899' }
     };
 
     container.innerHTML = tasks.map(function(task) {
@@ -898,7 +899,8 @@
       'overview_generation': { icon: '📝', label: '概述生成', color: '#3b82f6' },
       'key_config_generation': { icon: '🔧', label: '关键配置', color: '#8b5cf6' },
       'case_generation': { icon: '🧪', label: '用例生成', color: '#10b981' },
-      'report_generation': { icon: '📊', label: '报告生成', color: '#f59e0b' }
+      'report_generation': { icon: '📊', label: '报告生成', color: '#f59e0b' },
+      'import_optimize': { icon: '✨', label: '导入优化', color: '#ec4899' }
     };
 
     var typeBreakdownHTML = '';

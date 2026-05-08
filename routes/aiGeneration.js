@@ -42,6 +42,13 @@ router.post('/create', authenticateToken, async (req, res) => {
       focusAreas
     });
 
+    try {
+      const caseGenerationAdapter = require('../services/adapters/caseGenerationAdapter');
+      await caseGenerationAdapter.syncToUnifiedTask(result.taskId);
+    } catch (syncErr) {
+      logger.error('同步用例生成任务到统一任务表失败', { error: syncErr.message, taskId: result.taskId });
+    }
+
     res.json({ success: true, data: result });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

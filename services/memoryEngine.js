@@ -583,6 +583,7 @@ ${currentMemory || '(空)'}
         const timeoutConfig = await getUserAITimeoutConfig(userId);
         const genParams = await getUserAIGenerationParams(userId);
         const sceneParams = getSceneParams(genParams, 'scene_memory_distillation');
+        const effectiveTimeout = timeoutConfig.generalAITask || genParams.request_timeout || 120000;
 
         try {
             const response = await axios.post(apiUrl, {
@@ -592,13 +593,14 @@ ${currentMemory || '(空)'}
                     { role: 'user', content: userPrompt }
                 ],
                 temperature: sceneParams.temperature,
-                max_tokens: sceneParams.max_tokens
+                max_tokens: sceneParams.max_tokens,
+                timeout: effectiveTimeout / 1000
             }, {
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${apiKey}`
                 },
-                timeout: timeoutConfig.generalAITask || genParams.request_timeout || 120000
+                timeout: effectiveTimeout + 10000
             });
 
             const content = response.data?.choices?.[0]?.message?.content || '';

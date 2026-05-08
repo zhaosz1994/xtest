@@ -273,6 +273,13 @@ class ImportOptimizeService {
         logger.info('AI导入优化任务完成', { taskId, optimizedCases, failedCases });
       }
 
+      try {
+        const importOptimizeAdapter = require('./adapters/importOptimizeAdapter');
+        await importOptimizeAdapter.syncToUnifiedTask(taskId);
+      } catch (syncErr) {
+        logger.error('同步导入优化任务状态到统一任务表失败', { error: syncErr.message, taskId });
+      }
+
     } catch (error) {
       logger.error('AI导入优化任务处理失败', { taskId, error: error.message });
 
@@ -280,6 +287,13 @@ class ImportOptimizeService {
         `UPDATE ai_import_optimize_tasks SET status = 'failed', error_message = ?, completed_at = NOW() WHERE task_id = ?`,
         [error.message.substring(0, 500), taskId]
       );
+
+      try {
+        const importOptimizeAdapter = require('./adapters/importOptimizeAdapter');
+        await importOptimizeAdapter.syncToUnifiedTask(taskId);
+      } catch (syncErr) {
+        logger.error('同步失败导入优化任务状态到统一任务表失败', { error: syncErr.message, taskId });
+      }
     }
   }
 

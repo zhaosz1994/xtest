@@ -490,6 +490,7 @@
         .trigger-type-badge.agent { background: #fff3e0; color: #e65100; }
         .trigger-type-badge.memory_refine { background: #fce4ec; color: #c62828; }
         .trigger-type-badge.reflection { background: #efebe9; color: #4e342e; }
+        .trigger-type-badge.import_optimize { background: #fce4ec; color: #ad1457; }
 
         .rl-detail-info-grid {
             display: grid;
@@ -723,6 +724,7 @@
                         <option value="agent">Agent执行</option>
                         <option value="memory_refine">记忆提炼</option>
                         <option value="reflection">反思管道</option>
+                        <option value="import_optimize">导入优化</option>
                     </select>
                     <label>状态:</label>
                     <select id="rl-status">
@@ -2086,7 +2088,8 @@
             'qa': 'AI问答',
             'agent': 'Agent执行',
             'memory_refine': '记忆提炼',
-            'reflection': '反思管道'
+            'reflection': '反思管道',
+            'import_optimize': '导入优化'
         };
 
         document.addEventListener('DOMContentLoaded', () => {

@@ -601,6 +601,8 @@ class AgentExecutionEngine {
         }
 
         const timeoutConfig = await getUserAITimeoutConfig(aiConfig.user_id);
+        const effectiveTimeout = timeoutConfig.generalAITask || genParams.request_timeout || 120000;
+        requestBody.timeout = effectiveTimeout / 1000;
 
         let response;
         try {
@@ -609,7 +611,7 @@ class AgentExecutionEngine {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${apiKey}`
                 },
-                timeout: timeoutConfig.generalAITask || genParams.request_timeout || 120000
+                timeout: effectiveTimeout + 10000
             });
         } catch (axiosError) {
             if (axiosError.response) {
@@ -697,6 +699,8 @@ class AgentExecutionEngine {
         };
 
         const timeoutConfig = await getUserAITimeoutConfig(aiConfig.user_id);
+        const effectiveTimeout = timeoutConfig.generalAITask || genParams.request_timeout || 120000;
+        requestBody.timeout = effectiveTimeout / 1000;
 
         let response;
         try {
@@ -705,7 +709,7 @@ class AgentExecutionEngine {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${apiKey}`
                 },
-                timeout: timeoutConfig.generalAITask || 120000
+                timeout: effectiveTimeout + 10000
             });
         } catch (axiosError) {
             if (axiosError.response) {

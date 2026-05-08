@@ -170,49 +170,158 @@ class FileParserService {
     return text;
   }
 
+  _findStructuralBreakPoints(text, minPosition) {
+    const breakPoints = [];
+    const lines = text.split('\n');
+    let charPos = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineStart = charPos;
+      const lineEnd = charPos + line.length;
+
+      if (/^#{1,6}\s/.test(line) && lineStart > minPosition) {
+        breakPoints.push({ pos: lineStart, priority: 100, type: 'heading' });
+      }
+
+      if (/^```/.test(line)) {
+        if (lineStart > minPosition) {
+          breakPoints.push({ pos: lineStart, priority: 95, type: 'code_block' });
+        }
+        if (i + 1 < lines.length) {
+          const nextLineStart = lineEnd + 1;
+          if (nextLineStart > minPosition && nextLineStart < text.length) {
+            breakPoints.push({ pos: nextLineStart, priority: 94, type: 'code_block_end' });
+          }
+        }
+      }
+
+      if (/^\|.*\|/.test(line) && i > 0 && !/^\|.*\|/.test(lines[i - 1] || '') && lineStart > minPosition) {
+        breakPoints.push({ pos: lineStart, priority: 80, type: 'table_start' });
+      }
+
+      if (/^(\s*[-*+]\s|\s*\d+\.\s)/.test(line) && i > 0 && !/^(\s*[-*+]\s|\s*\d+\.\s)/.test(lines[i - 1] || '') && lineStart > minPosition) {
+        breakPoints.push({ pos: lineStart, priority: 70, type: 'list_start' });
+      }
+
+      charPos = lineEnd + 1;
+    }
+
+    return breakPoints;
+  }
+
   chunkContent(content, options = {}) {
     const { chunkSize = 2000, overlap = 200, minChunkSize = 100 } = options;
     const chunks = [];
     let index = 0;
     let position = 0;
+    const headingStack = [];
 
     while (position < content.length) {
       const oldPosition = position;
       let endPosition = Math.min(position + chunkSize, content.length);
-      let chunkContent = content.slice(position, endPosition);
+      let chunkText = content.slice(position, endPosition);
 
       if (endPosition < content.length) {
-        const breakPoints = [
-          chunkContent.lastIndexOf('。\n'),
-          chunkContent.lastIndexOf('。\r\n'),
-          chunkContent.lastIndexOf('。'),
-          chunkContent.lastIndexOf('\n\n'),
-          chunkContent.lastIndexOf('\n'),
-          chunkContent.lastIndexOf('.')
-        ].filter(bp => bp > minChunkSize);
+        const structuralBreaks = this._findStructuralBreakPoints(chunkText, minChunkSize);
 
-        if (breakPoints.length > 0) {
-          const breakPoint = Math.max(...breakPoints);
-          chunkContent = chunkContent.slice(0, breakPoint + 1);
+        const paragraphBreaks = [
+          chunkText.lastIndexOf('\n\n'),
+          chunkText.lastIndexOf('\r\n\r\n')
+        ].filter(bp => bp > minChunkSize).map(bp => ({ pos: bp, priority: 60, type: 'paragraph' }));
+
+        const sentenceBreaks = [
+          chunkText.lastIndexOf('。\n'),
+          chunkText.lastIndexOf('。\r\n'),
+          chunkText.lastIndexOf('！\n'),
+          chunkText.lastIndexOf('？\n'),
+          chunkText.lastIndexOf('。'),
+          chunkText.lastIndexOf('！'),
+          chunkText.lastIndexOf('？'),
+          chunkText.lastIndexOf(';\n'),
+          chunkText.lastIndexOf(';\r\n'),
+          chunkText.lastIndexOf('.\n'),
+          chunkText.lastIndexOf('.\r\n')
+        ].filter(bp => bp > minChunkSize).map(bp => ({ pos: bp, priority: 30, type: 'sentence' }));
+
+        const lineBreaks = [
+          chunkText.lastIndexOf('\n')
+        ].filter(bp => bp > minChunkSize).map(bp => ({ pos: bp, priority: 10, type: 'line' }));
+
+        const allBreaks = [...structuralBreaks, ...paragraphBreaks, ...sentenceBreaks, ...lineBreaks];
+
+        if (allBreaks.length > 0) {
+          allBreaks.sort((a, b) => {
+            if (b.priority !== a.priority) return b.priority - a.priority;
+            return b.pos - a.pos;
+          });
+
+          const bestBreak = allBreaks[0];
+          let breakPos = bestBreak.pos;
+
+          if (bestBreak.type === 'sentence' || bestBreak.type === 'line') {
+            const betterStructural = structuralBreaks.find(b => b.pos >= breakPos - 100 && b.pos <= breakPos + 100);
+            if (betterStructural) {
+              breakPos = betterStructural.pos;
+            }
+          }
+
+          if (bestBreak.type === 'sentence') {
+            const betterParagraph = paragraphBreaks.find(b => b.pos >= breakPos - 200 && b.pos <= breakPos);
+            if (betterParagraph) {
+              breakPos = betterParagraph.pos;
+            }
+          }
+
+          chunkText = chunkText.slice(0, breakPos + 1);
         }
       }
 
-      const trimmed = chunkContent.trim();
+      const trimmed = chunkText.trim();
       if (trimmed.length >= minChunkSize || (chunks.length === 0 && trimmed.length > 0)) {
+        const headingContext = this._extractHeadingContext(content, position);
+        let finalContent = trimmed;
+        if (headingContext && headingContext !== this._lastHeadingContext) {
+          finalContent = `[当前所属章节: ${headingContext}]\n\n${trimmed}`;
+          this._lastHeadingContext = headingContext;
+        }
+
         chunks.push({
           chunkIndex: index,
-          chunkContent: trimmed,
-          tokenCount: this.estimateTokens(trimmed),
-          charCount: trimmed.length
+          chunkContent: finalContent,
+          tokenCount: this.estimateTokens(finalContent),
+          charCount: finalContent.length
         });
         index++;
       }
 
-      position += chunkContent.length - overlap;
-      if (position <= oldPosition) position = oldPosition + Math.min(chunkContent.length, minChunkSize);
+      position += chunkText.length - overlap;
+      if (position <= oldPosition) position = oldPosition + Math.min(chunkText.length, minChunkSize);
     }
 
+    this._lastHeadingContext = null;
     return chunks;
+  }
+
+  _extractHeadingContext(content, position) {
+    const textBefore = content.slice(0, position);
+    const lines = textBefore.split('\n');
+    const headings = [];
+
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const match = lines[i].match(/^(#{1,6})\s+(.+)/);
+      if (match) {
+        const level = match[1].length;
+        const title = match[2].trim();
+        headings.unshift({ level, title });
+        if (level === 1) break;
+      }
+    }
+
+    if (headings.length === 0) return null;
+
+    headings.sort((a, b) => a.level - b.level);
+    return headings.map(h => h.title).join(' > ');
   }
 
   estimateTokens(text) {

@@ -155,7 +155,8 @@ class ReflectionPipeline {
             messages: messages,
             temperature: effectiveTemperature,
             max_tokens: effectiveMaxTokens,
-            response_format: { type: 'json_object' }
+            response_format: { type: 'json_object' },
+            timeout: timeout / 1000
         };
 
         const startTime = Date.now();
@@ -166,7 +167,7 @@ class ReflectionPipeline {
                     'Content-Type': 'application/json',
                     'Authorization': 'Bearer ' + apiKey
                 },
-                timeout: timeout
+                timeout: timeout + 10000
             });
 
             const choice = response.data?.choices?.[0];

@@ -354,6 +354,7 @@ ${materialContent.slice(0, 6000)}
     const apiKey = aiConfig.api_key;
     const apiUrl = aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
     const model = aiConfig.model_name || 'deepseek-chat';
+    const effectiveTimeout = timeoutConfig.generalAITask || genParams.request_timeout || 120000;
 
     const response = await axios.post(apiUrl, {
       model: model,
@@ -362,13 +363,14 @@ ${materialContent.slice(0, 6000)}
         { role: 'user', content: userPrompt }
       ],
       temperature: sceneParams.temperature,
-      max_tokens: sceneParams.max_tokens
+      max_tokens: sceneParams.max_tokens,
+      timeout: effectiveTimeout / 1000
     }, {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
-      timeout: timeoutConfig.generalAITask || genParams.request_timeout
+      timeout: effectiveTimeout + 10000
     });
 
     return response.data;

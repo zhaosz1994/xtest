@@ -5,6 +5,8 @@ const pool = require('../db');
 const logger = require('../services/logger');
 const unifiedTaskService = require('../services/unifiedTaskService');
 const caseGenerationAdapter = require('../services/adapters/caseGenerationAdapter');
+const reportGenerationAdapter = require('../services/adapters/reportGenerationAdapter');
+const importOptimizeAdapter = require('../services/adapters/importOptimizeAdapter');
 
 router.post('/create', authenticateToken, async (req, res) => {
   try {
@@ -18,7 +20,7 @@ router.post('/create', authenticateToken, async (req, res) => {
       return res.status(400).json({ success: false, message: '缺少目标信息' });
     }
 
-    if (!['overview_generation', 'key_config_generation'].includes(taskType)) {
+    if (!['overview_generation', 'key_config_generation', 'case_generation', 'report_generation', 'import_optimize'].includes(taskType)) {
       return res.status(400).json({ success: false, message: '不支持的任务类型' });
     }
 
@@ -68,6 +70,28 @@ router.get('/running', authenticateToken, async (req, res) => {
           }
         } catch (e) {
           logger.error('获取用例生成详细进度失败', { taskId: task.task_id, error: e.message });
+        }
+      }
+
+      if (task.task_type === 'report_generation') {
+        try {
+          const detail = await reportGenerationAdapter.getDetailedProgress(task.task_id);
+          if (detail) {
+            enriched.stageDetail = detail;
+          }
+        } catch (e) {
+          logger.error('获取报告生成详细进度失败', { taskId: task.task_id, error: e.message });
+        }
+      }
+
+      if (task.task_type === 'import_optimize') {
+        try {
+          const detail = await importOptimizeAdapter.getDetailedProgress(task.task_id);
+          if (detail) {
+            enriched.stageDetail = detail;
+          }
+        } catch (e) {
+          logger.error('获取导入优化详细进度失败', { taskId: task.task_id, error: e.message });
         }
       }
 

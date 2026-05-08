@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticateToken } = require('../middleware');
 const importOptimizeService = require('../services/importOptimizeService');
+const importOptimizeAdapter = require('../services/adapters/importOptimizeAdapter');
 const logger = require('../services/logger');
 
 router.post('/optimize', authenticateToken, async (req, res) => {
@@ -27,6 +28,14 @@ router.post('/optimize', authenticateToken, async (req, res) => {
       username: req.user.username,
       import_batch_id: import_batch_id || null
     });
+
+    if (result.success && result.data && result.data.task_id) {
+      try {
+        await importOptimizeAdapter.syncToUnifiedTask(result.data.task_id);
+      } catch (syncErr) {
+        logger.error('同步导入优化任务到统一任务表失败', { error: syncErr.message, taskId: result.data.task_id });
+      }
+    }
 
     res.json(result);
   } catch (error) {

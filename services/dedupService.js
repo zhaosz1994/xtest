@@ -236,15 +236,17 @@ class DedupService {
     try {
       const axios = require('axios');
       const timeoutConfig = await aiService.getUserAITimeoutConfig(userId);
+      const effectiveTimeout = timeoutConfig.generalAITask || 120000;
       const response = await axios.post(embeddingUrl, {
         model: aiConfig.embedding_model || 'text-embedding-v3',
-        input: text.slice(0, 8000)
+        input: text.slice(0, 8000),
+        timeout: effectiveTimeout / 1000
       }, {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${aiConfig.api_key}`
         },
-        timeout: timeoutConfig.generalAITask
+        timeout: effectiveTimeout + 10000
       });
 
       return response.data?.data?.[0]?.embedding || null;

@@ -87,6 +87,7 @@ class KeyConfigGenerationHandler extends BaseTaskHandler {
       const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
       const model = aiConfig.model_name || 'deepseek-chat';
       usedModel = model;
+      const effectiveTimeout = timeoutConfig.generalAITask || genParams.request_timeout || 120000;
 
       const startTime = Date.now();
       try {
@@ -97,13 +98,14 @@ class KeyConfigGenerationHandler extends BaseTaskHandler {
             { role: 'user', content: userPrompt }
           ],
           temperature: sceneParams.temperature,
-          max_tokens: sceneParams.max_tokens
+          max_tokens: sceneParams.max_tokens,
+          timeout: effectiveTimeout / 1000
         }, {
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${aiConfig.api_key}`
           },
-          timeout: timeoutConfig.generalAITask || genParams.request_timeout
+          timeout: effectiveTimeout + 10000
         });
 
         keyConfig = response.data?.choices?.[0]?.message?.content?.trim() || '';

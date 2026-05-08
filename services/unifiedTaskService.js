@@ -15,6 +15,21 @@ class UnifiedTaskService {
     } catch (error) {
       logger.error('注册任务处理器失败', { error: error.message });
     }
+    try {
+      this.taskHandlers.set('case_generation', require('./handlers/caseGenerationHandler'));
+    } catch (error) {
+      logger.error('注册用例生成处理器失败', { error: error.message });
+    }
+    try {
+      this.taskHandlers.set('report_generation', require('./handlers/reportGenerationHandler'));
+    } catch (error) {
+      logger.error('注册报告生成处理器失败', { error: error.message });
+    }
+    try {
+      this.taskHandlers.set('import_optimize', require('./handlers/importOptimizeHandler'));
+    } catch (error) {
+      logger.error('注册导入优化处理器失败', { error: error.message });
+    }
   }
 
   async createTask(taskType, userId, username, targetInfo, config = {}) {
@@ -81,7 +96,8 @@ class UnifiedTaskService {
       'case_generation': 'case',
       'overview_generation': 'ov',
       'key_config_generation': 'kc',
-      'report_generation': 'rpt'
+      'report_generation': 'rpt',
+      'import_optimize': 'impopt'
     };
     return prefixes[taskType] || 'task';
   }
@@ -426,7 +442,7 @@ class UnifiedTaskService {
     }
   }
 
-  async recoverInterruptedTasks(taskTypes = ['overview_generation', 'key_config_generation']) {
+  async recoverInterruptedTasks(taskTypes = ['overview_generation', 'key_config_generation', 'case_generation', 'report_generation', 'import_optimize']) {
     try {
       const placeholders = taskTypes.map(() => '?').join(',');
       const [result] = await pool.execute(
