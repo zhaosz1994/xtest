@@ -255,10 +255,17 @@ class TaskScheduler {
         await level1PointService.generateLevel1Points(taskId, task.module_id);
       }
 
-      await caseGeneratorService.executeMapPhase(taskId);
+      const mapResult = await caseGeneratorService.executeMapPhase(taskId);
+
+      if (mapResult.skipped) {
+        logger.warn('Map阶段被跳过，任务可能已在运行中', { taskId });
+        return;
+      }
 
       const taskAfterMap = await caseGeneratorService.getTaskStatus(taskId);
       if (taskAfterMap && taskAfterMap.status === 'cancelled') return;
+
+      const hasFailedChunks = mapResult.failedChunks > 0;
 
       await dedupService.executeReducePhase(taskId);
 
@@ -268,15 +275,39 @@ class TaskScheduler {
         await level1PointService.assignExistingLevel1ToCases(taskId, config.selectedLevel1Ids[0]);
       }
 
-      await pool.execute(`
-        UPDATE ai_case_generation_tasks 
-        SET status = 'completed', 
-            stage = 'finished',
-            progress = 100,
-            progress_message = '任务完成',
-            completed_at = NOW()
-        WHERE task_id = ?
-      `, [taskId]);
+      if (hasFailedChunks) {
+        const [countResult] = await pool.execute(`
+          SELECT COUNT(*) as total FROM temp_test_cases WHERE task_id = ?
+        `, [taskId]);
+        const totalCases = countResult[0].total;
+
+        await pool.execute(`
+          UPDATE ai_case_generation_tasks 
+          SET status = 'partial_completed', 
+              stage = 'finished',
+              progress = 100,
+              progress_message = ?,
+              total_cases = ?,
+              completed_at = NOW()
+          WHERE task_id = ?
+        `, [`任务部分完成：成功${mapResult.completedChunks}块，失败${mapResult.failedChunks}块，生成${totalCases}条用例`, totalCases, taskId]);
+      } else {
+        const [countResult] = await pool.execute(`
+          SELECT COUNT(*) as total FROM temp_test_cases WHERE task_id = ?
+        `, [taskId]);
+        const totalCases = countResult[0].total;
+
+        await pool.execute(`
+          UPDATE ai_case_generation_tasks 
+          SET status = 'completed', 
+              stage = 'finished',
+              progress = 100,
+              progress_message = '任务完成',
+              total_cases = ?,
+              completed_at = NOW()
+          WHERE task_id = ?
+        `, [totalCases, taskId]);
+      }
 
       try {
         await caseGenerationAdapter.syncToUnifiedTask(taskId);
@@ -290,7 +321,7 @@ class TaskScheduler {
         logger.error('发送邮件通知失败', { error: emailError.message });
       }
 
-      logger.info('任务完成', { taskId });
+      logger.info('任务完成', { taskId, status: hasFailedChunks ? 'partial_completed' : 'completed' });
 
     } catch (error) {
       const errorMsg = error.message || error.toString() || '未知错误（error对象为空）';
@@ -343,7 +374,7 @@ class TaskScheduler {
         FROM ai_case_generation_tasks t
         LEFT JOIN temp_test_cases tc ON t.task_id = tc.task_id AND tc.status != 'merged'
         LEFT JOIN temp_level1_points tl ON t.task_id = tl.task_id AND tl.status != 'merged'
-        WHERE t.status = 'completed'
+        WHERE t.status IN ('completed', 'partial_completed')
           AND t.completed_at < DATE_SUB(NOW(), INTERVAL 3 DAY)
           AND tc.id IS NULL
           AND tl.id IS NULL

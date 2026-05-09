@@ -2848,7 +2848,7 @@ app.get('/api/ai-models/list', authenticateToken, async (req, res) => {
     } else {
       query = `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, created_by, created_at, updated_at 
                FROM ai_models 
-               WHERE user_id = ?
+               WHERE user_id = ? OR user_id IS NULL
                ORDER BY is_default DESC, created_at ASC`;
       params = [currentUserId];
     }
@@ -3318,7 +3318,11 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
           
           try {
             const { executeSkillCode } = require('./routes/aiSkills');
-            const result = await executeSkillCode(toolName, args);
+            const result = await executeSkillCode(toolName, args, {
+              userId: currentUserId,
+              username: currentUsername,
+              userRole: currentUserRole
+            });
             
             // 检查是否为报告生成类型的技能
             if (result && result.type === 'report_generation') {
@@ -3542,7 +3546,11 @@ ${result.instructions}
             
             try {
               const { executeSkillCode } = require('./routes/aiSkills');
-              toolResult = await executeSkillCode(toolName, args);
+              toolResult = await executeSkillCode(toolName, args, {
+                userId: currentUserId,
+                username: currentUsername,
+                userRole: currentUserRole
+              });
             } catch (skillError) {
               logger.error(`执行技能 ${toolName} 错误:`, { error: skillError.message });
               toolResult = { error: '技能执行错误: ' + skillError.message };
@@ -8839,12 +8847,14 @@ async function ensureAITablesExist() {
         \`module_id\` int NOT NULL,
         \`library_id\` int DEFAULT NULL,
         \`user_id\` int NOT NULL,
-        \`status\` enum('pending','processing','completed','failed','cancelled') DEFAULT 'pending',
+        \`status\` enum('pending','processing','completed','partial_completed','failed','cancelled') DEFAULT 'pending',
         \`stage\` enum('init','chunking','mapping','reducing','finished') DEFAULT 'init',
         \`progress\` int DEFAULT 0,
         \`progress_message\` varchar(500) DEFAULT NULL,
         \`total_chunks\` int DEFAULT 0,
         \`processed_chunks\` int DEFAULT 0,
+        \`completed_chunks\` int DEFAULT 0,
+        \`failed_chunks\` int DEFAULT 0,
         \`total_cases\` int DEFAULT 0,
         \`config\` json DEFAULT NULL,
         \`selected_files\` json DEFAULT NULL,
@@ -9208,6 +9218,48 @@ async function ensureAITablesExist() {
       } catch (err) {
         logger.warn(`   添加字段 level1_points.summary 失败: ${err.message}`);
       }
+    }
+  }
+
+  // 11. 检查并添加 ai_operation_logs 缺失的字段
+  const aiOpLogsTable = await tableExists('ai_operation_logs');
+  if (aiOpLogsTable) {
+    const aiOpLogsFields = [
+      { name: 'prompt_tokens', def: "INT DEFAULT 0 COMMENT '提示词token数'" },
+      { name: 'completion_tokens', def: "INT DEFAULT 0 COMMENT '完成token数'" },
+      { name: 'total_tokens', def: "INT DEFAULT 0 COMMENT '总token数'" },
+      { name: 'model_name', def: "VARCHAR(100) COMMENT '使用的AI模型名称'" }
+    ];
+
+    for (const field of aiOpLogsFields) {
+      const exists = await columnExists('ai_operation_logs', field.name);
+      if (!exists) {
+        try {
+          await pool.query(`ALTER TABLE ai_operation_logs ADD COLUMN \`${field.name}\` ${field.def}`);
+          logger.info(`   已添加字段: ai_operation_logs.${field.name}`);
+          missingColumns.push(`ai_operation_logs.${field.name}`);
+          fixedCount++;
+        } catch (err) {
+          logger.warn(`   添加字段 ai_operation_logs.${field.name} 失败: ${err.message}`);
+        }
+      }
+    }
+
+    // 添加索引(如果不存在)
+    try {
+      const [indexExists] = await pool.query(`
+        SELECT COUNT(*) as count 
+        FROM information_schema.statistics 
+        WHERE table_schema = DATABASE() 
+          AND table_name = 'ai_operation_logs' 
+          AND index_name = 'idx_ai_logs_total_tokens'
+      `);
+      if (indexExists[0].count === 0) {
+        await pool.query("CREATE INDEX idx_ai_logs_total_tokens ON ai_operation_logs(total_tokens)");
+        logger.info('   已添加索引: ai_operation_logs.idx_ai_logs_total_tokens');
+      }
+    } catch (err) {
+      logger.warn(`   添加索引失败: ${err.message}`);
     }
   }
 

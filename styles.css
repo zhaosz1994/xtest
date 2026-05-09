@@ -10789,6 +10789,14 @@ body.floating-panel-resizing * {
     margin-bottom: 0;
 }
 
+.task-item.task-failed {
+    border-left: 3px solid #ef4444;
+}
+
+.task-item.task-partial {
+    border-left: 3px solid #f59e0b;
+}
+
 .task-info {
     flex: 1;
 }

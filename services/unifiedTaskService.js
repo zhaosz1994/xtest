@@ -131,7 +131,7 @@ class UnifiedTaskService {
     }
 
     if (filters.status) {
-      const validStatuses = ['pending', 'processing', 'completed', 'failed', 'cancelled'];
+      const validStatuses = ['pending', 'processing', 'completed', 'partial_completed', 'failed', 'cancelled'];
       const statuses = filters.status.split(',').filter(s => validStatuses.includes(s.trim()));
       if (statuses.length > 0) {
         const placeholders = statuses.map(() => '?').join(',');
@@ -157,7 +157,7 @@ class UnifiedTaskService {
       logger.info('任务已取消，跳过执行', { taskId });
       return;
     }
-    if (task.status === 'completed') {
+    if (task.status === 'completed' || task.status === 'partial_completed') {
       logger.warn('任务已完成，跳过重复执行', { taskId });
       return;
     }
@@ -174,14 +174,16 @@ class UnifiedTaskService {
     }
 
     try {
-      // 仅当任务状态为pending时才更新为processing（调度器已处理的则跳过）
       if (task.status === 'pending') {
         await this.updateTaskStatus(taskId, 'processing', 0, '任务开始处理');
       }
 
       const result = await handler.execute(task);
 
-      await this.updateTaskStatus(taskId, 'completed', 100, '任务完成', result);
+      const finalStatus = (typeof result === 'object' && result.status === 'partial_completed') ? 'partial_completed' : 'completed';
+      const finalMessage = (typeof result === 'object' && result.message) ? result.message : '任务完成';
+
+      await this.updateTaskStatus(taskId, finalStatus, 100, finalMessage, typeof result === 'object' ? result : null);
 
       this.notifyTaskComplete(task, result, true);
 
@@ -207,7 +209,7 @@ class UnifiedTaskService {
 
       if (status === 'processing') {
         updates.push('started_at = NOW()');
-      } else if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+      } else if (status === 'completed' || status === 'partial_completed' || status === 'failed' || status === 'cancelled') {
         updates.push('completed_at = NOW()');
       }
 
@@ -329,6 +331,7 @@ class UnifiedTaskService {
          SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) as processing,
          SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
          SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+         SUM(CASE WHEN status = 'partial_completed' THEN 1 ELSE 0 END) as partial_completed,
          SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
          SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
        FROM ai_unified_tasks
@@ -341,14 +344,14 @@ class UnifiedTaskService {
          SUM(total_tokens) as totalTokens,
          COUNT(DISTINCT user_id) as activeUsers
        FROM ai_unified_tasks
-       WHERE status = 'completed' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)${userId ? ' AND user_id = ?' : ''}`,
+       WHERE status IN ('completed', 'partial_completed') AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)${userId ? ' AND user_id = ?' : ''}`,
       [days, ...userParams]
     );
 
     const [avgTime] = await pool.execute(
       `SELECT AVG(TIMESTAMPDIFF(SECOND, started_at, completed_at)) as avgDuration
        FROM ai_unified_tasks
-       WHERE status = 'completed' AND started_at IS NOT NULL AND completed_at IS NOT NULL
+       WHERE status IN ('completed', 'partial_completed') AND started_at IS NOT NULL AND completed_at IS NOT NULL
          AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)${userFilter}`,
       [days, ...userParams]
     );
@@ -357,7 +360,7 @@ class UnifiedTaskService {
       `SELECT
          task_type,
          COUNT(*) as count,
-         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completedCount,
+         SUM(CASE WHEN status IN ('completed', 'partial_completed') THEN 1 ELSE 0 END) as completedCount,
          SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failedCount
        FROM ai_unified_tasks
        WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)${userFilter}
@@ -370,13 +373,14 @@ class UnifiedTaskService {
     const duration = avgTime[0] || {};
 
     const totalCompleted = Number(stats.completed) || 0;
+    const totalPartialCompleted = Number(stats.partial_completed) || 0;
     const totalFailed = Number(stats.failed) || 0;
     const totalAll = Number(stats.total) || 0;
     const completionRate = totalAll > 0
-      ? (((totalCompleted + totalFailed) / totalAll) * 100).toFixed(1)
+      ? (((totalCompleted + totalPartialCompleted + totalFailed) / totalAll) * 100).toFixed(1)
       : '0.0';
-    const successRate = (totalCompleted + totalFailed) > 0
-      ? ((totalCompleted / (totalCompleted + totalFailed)) * 100).toFixed(1)
+    const successRate = (totalCompleted + totalPartialCompleted + totalFailed) > 0
+      ? (((totalCompleted + totalPartialCompleted) / (totalCompleted + totalPartialCompleted + totalFailed)) * 100).toFixed(1)
       : '0.0';
 
     const typeStats = {};
@@ -393,6 +397,7 @@ class UnifiedTaskService {
       processing: Number(stats.processing) || 0,
       pending: Number(stats.pending) || 0,
       completed: totalCompleted,
+      partialCompleted: totalPartialCompleted,
       failed: totalFailed,
       cancelled: Number(stats.cancelled) || 0,
       completionRate,
@@ -414,7 +419,7 @@ class UnifiedTaskService {
          COUNT(*) as taskCount,
          COUNT(DISTINCT user_id) as userCount
        FROM ai_unified_tasks
-       WHERE status = 'completed' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+       WHERE status IN ('completed', 'partial_completed') AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
        GROUP BY DATE(created_at)
        ORDER BY date ASC`,
       [days]
@@ -427,7 +432,7 @@ class UnifiedTaskService {
     try {
       const [result] = await pool.execute(
         `DELETE FROM ai_unified_tasks
-         WHERE status IN ('completed', 'failed', 'cancelled')
+         WHERE status IN ('completed', 'partial_completed', 'failed', 'cancelled')
            AND completed_at < DATE_SUB(NOW(), INTERVAL ? DAY)`,
         [retentionDays]
       );

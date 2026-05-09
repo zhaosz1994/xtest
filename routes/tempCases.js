@@ -133,6 +133,11 @@ router.get('/list/:taskId', authenticateToken, async (req, res) => {
       if (row.is_duplicate === 1) stats.duplicate += row.count;
     }
 
+    const [taskInfo] = await pool.execute(`
+      SELECT status, completed_chunks, failed_chunks, total_cases, total_chunks
+      FROM ai_case_generation_tasks WHERE task_id = ?
+    `, [taskId]).catch(() => [[]]);
+
     res.json({
       success: true,
       data: {
@@ -140,7 +145,8 @@ router.get('/list/:taskId', authenticateToken, async (req, res) => {
         total,
         page: currentPage,
         pageSize: currentPageSize,
-        stats
+        stats,
+        taskStatus: taskInfo[0] || null
       }
     });
   } catch (error) {
@@ -450,7 +456,7 @@ router.get('/all-active', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     const userRole = req.user.role;
 
-    let taskWhere = `(t.user_id = ? OR ? IN ('admin', '管理员', 'Administrator')) AND t.status = 'completed' AND (t.expires_at IS NULL OR t.expires_at > NOW())`;
+    let taskWhere = `(t.user_id = ? OR ? IN ('admin', '管理员', 'Administrator')) AND t.status IN ('completed', 'partial_completed') AND (t.expires_at IS NULL OR t.expires_at > NOW())`;
     const taskParams = [userId, userRole];
 
     const [genTasks] = await pool.execute(`

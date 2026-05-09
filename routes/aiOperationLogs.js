@@ -30,8 +30,8 @@ router.get('/recent', authenticateToken, async (req, res) => {
         created_at
       FROM ai_operation_logs
       ORDER BY created_at DESC
-      LIMIT ?
-    `, [limit]);
+      LIMIT ${limit}
+    `);
     
     res.json({
       success: true,
@@ -73,8 +73,8 @@ router.get('/failed', authenticateToken, async (req, res) => {
       FROM ai_operation_logs
       WHERE status = 'failed'
       ORDER BY created_at DESC
-      LIMIT ?
-    `, [limit]);
+      LIMIT ${limit}
+    `);
     
     res.json({
       success: true,

@@ -11,7 +11,7 @@ INSERT IGNORE INTO ai_config (config_key, config_value, description) VALUES
 ('ai_rate_limit', '10', 'AI速率限制(次/分钟)'),
 ('seed', '', '随机种子(留空则随机)'),
 ('scene_data_analysis', '{"temperature":"0.3","max_tokens":"2000","max_context_rounds":"10"}', '数据分析助手场景参数'),
-('scene_case_generation', '{"temperature":"0.7","max_tokens":"4000"}', '用例生成场景参数'),
+('scene_case_generation', '{"temperature":"0.7","max_tokens":"4000","retry_interval":"30"}', '用例生成场景参数'),
 ('scene_report_analysis', '{"temperature":"0.3","max_tokens":"2000","tool_choice":"function"}', '报告分析场景参数'),
 ('scene_memory_distillation', '{"temperature":"0.3","max_tokens":"800"}', '记忆蒸馏场景参数'),
 ('scene_code_review', '{"temperature":"0.3","max_tokens":"4000"}', '代码审查场景参数');

@@ -20,12 +20,18 @@ class CaseGenerationHandler extends BaseTaskHandler {
       await level1PointService.generateLevel1Points(taskId, task.target_id);
     }
 
-    await caseGeneratorService.executeMapPhase(taskId);
+    const mapResult = await caseGeneratorService.executeMapPhase(taskId);
+
+    if (mapResult.skipped) {
+      return { status: 'completed', message: '任务已在运行中' };
+    }
 
     const taskAfterMap = await caseGeneratorService.getTaskStatus(taskId);
     if (taskAfterMap && taskAfterMap.status === 'cancelled') {
-      return '任务已取消';
+      return { status: 'completed', message: '任务已取消' };
     }
+
+    const hasFailedChunks = mapResult.failedChunks > 0;
 
     await dedupService.executeReducePhase(taskId);
 
@@ -35,19 +41,45 @@ class CaseGenerationHandler extends BaseTaskHandler {
       await level1PointService.assignExistingLevel1ToCases(taskId, config.selectedLevel1Ids[0]);
     }
 
-    await pool.execute(`
-      UPDATE ai_case_generation_tasks 
-      SET status = 'completed', 
-          stage = 'finished',
-          progress = 100,
-          progress_message = '任务完成',
-          completed_at = NOW()
-      WHERE task_id = ?
-    `, [taskId]);
+    if (hasFailedChunks) {
+      const [countResult] = await pool.execute(`
+        SELECT COUNT(*) as total FROM temp_test_cases WHERE task_id = ?
+      `, [taskId]);
+      const totalCases = countResult[0].total;
 
-    logger.info('用例生成完成(handler)', { taskId });
+      await pool.execute(`
+        UPDATE ai_case_generation_tasks 
+        SET status = 'partial_completed', 
+            stage = 'finished',
+            progress = 100,
+            progress_message = ?,
+            total_cases = ?,
+            completed_at = NOW()
+        WHERE task_id = ?
+      `, [`任务部分完成：成功${mapResult.completedChunks}块，失败${mapResult.failedChunks}块，生成${totalCases}条用例`, totalCases, taskId]);
 
-    return '用例生成完成';
+      logger.info('用例生成部分完成(handler)', { taskId, completedChunks: mapResult.completedChunks, failedChunks: mapResult.failedChunks });
+      return { status: 'partial_completed', message: '用例生成部分完成' };
+    } else {
+      const [countResult] = await pool.execute(`
+        SELECT COUNT(*) as total FROM temp_test_cases WHERE task_id = ?
+      `, [taskId]);
+      const totalCases = countResult[0].total;
+
+      await pool.execute(`
+        UPDATE ai_case_generation_tasks 
+        SET status = 'completed', 
+            stage = 'finished',
+            progress = 100,
+            progress_message = '任务完成',
+            total_cases = ?,
+            completed_at = NOW()
+        WHERE task_id = ?
+      `, [totalCases, taskId]);
+
+      logger.info('用例生成完成(handler)', { taskId });
+      return { status: 'completed', message: '用例生成完成' };
+    }
   }
 }
 

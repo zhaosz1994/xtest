@@ -589,7 +589,7 @@
   UnifiedTaskManager.prototype.updateOverviewUI = function(taskInfo, status, result) {
     var targetId = taskInfo.target_id || taskInfo.targetId;
 
-    if (status === 'completed' && result) {
+    if ((status === 'completed' || status === 'partial_completed') && result) {
       var textarea = document.getElementById('edit-level1-point-summary');
       if (textarea) {
         var finalSummary = result;
@@ -621,7 +621,7 @@
   };
 
   UnifiedTaskManager.prototype.updateKeyConfigUI = function(taskInfo, status, result) {
-    if (status === 'completed' && result) {
+    if ((status === 'completed' || status === 'partial_completed') && result) {
       var keyConfigField = document.getElementById('drawer-testcase-key-config') || document.getElementById('detail-case-key-config');
       if (keyConfigField) {
         var appendMode = false;
@@ -865,7 +865,8 @@
 
     container.innerHTML = tasks.map(function(task) {
       var tc = typeConfig[task.task_type] || { icon: '❓', label: '未知', color: '#6b7280' };
-      var statusText = task.status === 'processing' ? '生成中...' : '排队中...';
+      var statusTextMap = { processing: '生成中...', pending: '排队中...', completed: '已完成', partial_completed: '部分完成', failed: '失败', cancelled: '已取消' };
+      var statusText = statusTextMap[task.status] || '排队中...';
       var isPending = task.status === 'pending';
       var safeTaskId = (task.task_id || '').replace(/[^a-zA-Z0-9_\-]/g, '');
       var safeTargetName = (task.target_name || '未知目标').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

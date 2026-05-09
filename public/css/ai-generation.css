@@ -649,11 +649,30 @@ body.ai-modal-resizing * { user-select: none; }
 .ai-status-failed { background: #fee2e2; color: #991b1b; }
 .ai-status-processing { background: #dbeafe; color: #1e40af; }
 .ai-status-completed { background: #d1fae5; color: #065f46; }
+.ai-status-partial_completed { background: #fef3c7; color: #92400e; }
 .ai-status-cancelled { background: #f1f5f9; color: #64748b; }
 .ai-status-approved { background: #d1fae5; color: #065f46; }
 .ai-status-rejected { background: #fee2e2; color: #991b1b; }
 .ai-status-merged { background: #e0e7ff; color: #3730a3; }
 .ai-status-duplicate { background: #fef3c7; color: #92400e; }
+
+.ai-partial-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #fffbeb;
+  border: 1px solid #fbbf24;
+  border-radius: 8px;
+  margin: 8px 0;
+  font-size: 13px;
+  color: #92400e;
+}
+
+.ai-partial-warning-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
 
 .ai-progress-bar {
   width: 100%;

@@ -316,9 +316,14 @@ function renderAIOverviewComplete(d) {
 
 function renderAIGenerationComplete(d) {
     const base = emailBase('🤖 AI测试用例生成完成', '#6366f1');
-    const statusIcon = d.status === 'completed' ? '✅' : '❌';
-    const statusText = d.status === 'completed' ? '成功' : '失败';
-    const statusColor = d.status === 'completed' ? '#16a34a' : '#dc3545';
+    let statusIcon, statusText, statusColor;
+    if (d.status === 'completed') {
+        statusIcon = '✅'; statusText = '成功'; statusColor = '#16a34a';
+    } else if (d.status === 'partial_completed') {
+        statusIcon = '⚠️'; statusText = '部分完成'; statusColor = '#d97706';
+    } else {
+        statusIcon = '❌'; statusText = '失败'; statusColor = '#dc3545';
+    }
     
     return `${base.header}<p>尊敬的 <strong>${d.username || ''}</strong>，您好！</p><p>您的AI测试用例生成任务已完成：</p>${infoBox(`<h3 style="margin:0 0 10px;color:#4338ca;">任务ID: ${d.taskId || ''}</h3><p style="margin:5px 0;"><strong>模块名称：</strong>${d.moduleName || ''}</p><p style="margin:5px 0;"><strong>生成状态：</strong><span style="color:${statusColor};font-weight:bold;">${statusIcon} ${statusText}</span></p><p style="margin:5px 0;"><strong>生成用例数：</strong>${d.totalCases || 0} 个</p>${d.duplicateCount > 0 ? `<p style="margin:5px 0;"><strong>去重数量：</strong>${d.duplicateCount} 个</p>` : ''}`)}<p>请前往系统查看生成的测试用例，并进行审核和合并操作。</p>${actionButton('查看测试用例', `${APP_URL}/?action=ai_generation&taskId=${d.taskId}`, '#6366f1')}${base.footer}`;
 }

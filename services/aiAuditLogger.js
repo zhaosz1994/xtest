@@ -10,9 +10,24 @@ class AIAuditLogger {
   }
 
   async log(data) {
+    let username = data.username || null;
+    if (!username && data.userId) {
+      try {
+        const [users] = await pool.execute(
+          'SELECT username FROM users WHERE id = ?',
+          [data.userId]
+        );
+        if (users.length > 0) {
+          username = users[0].username;
+        }
+      } catch (error) {
+        logger.warn('查询用户名失败', { userId: data.userId, error: error.message });
+      }
+    }
+
     const logEntry = {
       user_id: data.userId,
-      username: data.username || null,
+      username: username,
       skill_name: data.skillName,
       skill_id: data.skillId || null,
       operation_type: data.operationType || 'SELECT',

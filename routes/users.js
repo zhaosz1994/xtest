@@ -897,6 +897,13 @@ router.put('/ai-generation-params', authenticateToken, async (req, res) => {
             }
           }
           
+          if (scene.retry_interval !== undefined) {
+            const val = parseInt(scene.retry_interval);
+            if (!isNaN(val) && val >= 5 && val <= 300) {
+              mergedScene.retry_interval = val;
+            }
+          }
+          
           if (Object.keys(mergedScene).length > 0) {
             mergedSceneParams[sceneKey] = mergedScene;
           }

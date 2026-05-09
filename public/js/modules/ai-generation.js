@@ -1079,7 +1079,7 @@ function startProgressPolling(taskId) {
             const res = await aiApiGet(`/ai-generation/task/${taskId}`);
             if (res.success) {
                 updateProgressUI(res.data);
-                if (['completed', 'failed', 'cancelled'].includes(res.data.status)) {
+                if (['completed', 'partial_completed', 'failed', 'cancelled'].includes(res.data.status)) {
                     clearInterval(aiProgressInterval);
                     aiProgressInterval = null;
                 }
@@ -1128,6 +1128,17 @@ function updateProgressUI(task) {
             closeProgressModal();
             switchTab('preview', { taskId: task.task_id });
         }, 1500);
+    } else if (task.status === 'partial_completed') {
+        document.getElementById('stage5').className = 'ai-stage-icon ai-stage-done';
+        document.getElementById('stage5').textContent = '✓';
+        const failedInfo = task.failed_chunks ? `（${task.failed_chunks}个文本块处理失败）` : '';
+        aiNotify(`任务部分完成${failedInfo}，已生成用例可在预览中查看`, 'warning');
+        clearInterval(aiProgressInterval);
+        aiProgressInterval = null;
+        setTimeout(() => {
+            closeProgressModal();
+            switchTab('preview', { taskId: task.task_id });
+        }, 2000);
     } else if (task.status === 'failed') {
         const errorMsg = task.error_message || task.progress_message || '未知错误（请查看服务器日志）';
         const errorDetail = task.error_stack ? `\n\n详细堆栈:\n${task.error_stack.substring(0, 500)}` : '';
@@ -1801,9 +1812,19 @@ async function loadTaskFilter() {
             const prevValue = select.value;
             select.innerHTML = '<option value="all">全部未合并用例</option>';
             (res.data.tasks || []).forEach(t => {
+                const statusLabels = {
+                    pending: '等待中',
+                    processing: '处理中',
+                    completed: '已完成',
+                    partial_completed: '部分完成',
+                    failed: '失败',
+                    cancelled: '已取消'
+                };
                 const opt = document.createElement('option');
                 opt.value = t.task_id;
-                opt.textContent = `${t.task_id} - ${t.module_name} (${t.status})`;
+                const statusLabel = statusLabels[t.status] || t.status;
+                const caseInfo = t.total_cases ? ` ${t.total_cases}条用例` : '';
+                opt.textContent = `${t.task_id} - ${t.module_name} (${statusLabel}${caseInfo})`;
                 select.appendChild(opt);
             });
             if (prevValue) {
@@ -1851,8 +1872,79 @@ async function loadTempCasesPage() {
             renderCaseStats(res.data.stats);
             renderCaseTable(allTempCases);
             updateSelectedCount();
+            renderPartialCompletedWarningFromData(filterValue, res.data.taskStatus);
         }
     } catch (e) {}
+}
+
+function renderPartialCompletedWarningFromData(filterValue, taskStatus) {
+    const warningContainer = document.getElementById('partialCompletedWarning');
+    if (!warningContainer) return;
+
+    if (filterValue === 'all' || !taskStatus) {
+        warningContainer.style.display = 'none';
+        return;
+    }
+
+    if (taskStatus.status === 'partial_completed') {
+        const completedChunks = taskStatus.completed_chunks || 0;
+        const failedChunks = taskStatus.failed_chunks || 0;
+        const totalCases = taskStatus.total_cases || 0;
+        warningContainer.innerHTML = `
+            <div class="ai-partial-warning">
+                <span class="ai-partial-warning-icon">⚠️</span>
+                <span>此任务部分完成：成功${completedChunks}块，失败${failedChunks}块，已生成${totalCases}条用例。失败的文本块可点击"重试"重新生成。</span>
+                <button class="ai-btn ai-btn-sm ai-btn-warning" id="partialRetryBtn" data-task-id="${aiEscapeHtml(filterValue)}">重试失败块</button>
+            </div>
+        `;
+        warningContainer.style.display = 'block';
+        const retryBtn = document.getElementById('partialRetryBtn');
+        if (retryBtn) {
+            retryBtn.addEventListener('click', function() {
+                retryTaskAndRefresh(this.dataset.taskId);
+            });
+        }
+    } else {
+        warningContainer.style.display = 'none';
+    }
+}
+
+async function renderPartialCompletedWarning(filterValue) {
+    const warningContainer = document.getElementById('partialCompletedWarning');
+    if (!warningContainer) return;
+
+    if (filterValue === 'all') {
+        warningContainer.style.display = 'none';
+        return;
+    }
+
+    try {
+        const taskRes = await aiApiGet(`/ai-generation/task/${filterValue}`);
+        if (taskRes.success && taskRes.data.status === 'partial_completed') {
+            const task = taskRes.data;
+            const completedChunks = task.completed_chunks || 0;
+            const failedChunks = task.failed_chunks || 0;
+            const totalCases = task.total_cases || 0;
+            warningContainer.innerHTML = `
+                <div class="ai-partial-warning">
+                    <span class="ai-partial-warning-icon">⚠️</span>
+                    <span>此任务部分完成：成功${completedChunks}块，失败${failedChunks}块，已生成${totalCases}条用例。失败的文本块可点击"重试"重新生成。</span>
+                    <button class="ai-btn ai-btn-sm ai-btn-warning" id="partialRetryBtn" data-task-id="${aiEscapeHtml(filterValue)}">重试失败块</button>
+                </div>
+            `;
+            warningContainer.style.display = 'block';
+            const retryBtn = document.getElementById('partialRetryBtn');
+            if (retryBtn) {
+                retryBtn.addEventListener('click', function() {
+                    retryTask(this.dataset.taskId);
+                });
+            }
+        } else {
+            warningContainer.style.display = 'none';
+        }
+    } catch (e) {
+        warningContainer.style.display = 'none';
+    }
 }
 
 function renderCaseStats(stats) {
@@ -3252,11 +3344,20 @@ async function loadTaskHistoryPage(page) {
             } else {
                 tbody.innerHTML = '';
                 tasks.forEach(t => {
+                    const statusLabels = {
+                        pending: '等待中',
+                        processing: '处理中',
+                        completed: '已完成',
+                        partial_completed: '部分完成',
+                        failed: '失败',
+                        cancelled: '已取消'
+                    };
+                    const statusLabel = statusLabels[t.status] || t.status;
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
                         <td>${aiEscapeHtml(t.task_id)}</td>
                         <td>${aiEscapeHtml(t.module_name)}</td>
-                        <td><span class="ai-status-badge ai-status-${aiEscapeHtml(t.status)}">${aiEscapeHtml(t.status)}</span></td>
+                        <td><span class="ai-status-badge ai-status-${aiEscapeHtml(t.status)}">${aiEscapeHtml(statusLabel)}</span></td>
                         <td>${t.total_cases || 0}</td>
                         <td>${aiFormatDateTime(t.created_at)}</td>
                     `;
@@ -3267,7 +3368,7 @@ async function loadTaskHistoryPage(page) {
                     viewB.dataset.taskId = t.task_id;
                     viewB.addEventListener('click', function() { viewTaskResult(this.dataset.taskId); });
                     opsCell.appendChild(viewB);
-                    if (t.status === 'failed') {
+                    if (t.status === 'failed' || t.status === 'partial_completed') {
                         const retryB = document.createElement('button');
                         retryB.className = 'ai-btn ai-btn-sm ai-btn-warning';
                         retryB.textContent = '重试';
@@ -3311,6 +3412,28 @@ async function retryTask(taskId) {
         }
     } catch (e) {
         console.error('[AI Generation] retryTask error:', e);
+        aiNotify('重试任务失败，请检查网络连接', 'error');
+    }
+}
+
+async function retryTaskAndRefresh(taskId) {
+    try {
+        const res = await aiApiPost(`/ai-generation/retry/${taskId}`);
+        if (res.success) {
+            aiNotify('任务已重新提交，请稍候...', 'success');
+            const warningContainer = document.getElementById('partialCompletedWarning');
+            if (warningContainer) warningContainer.style.display = 'none';
+            await loadTaskFilter();
+            const taskFilter = document.getElementById('taskFilter');
+            if (taskFilter) {
+                taskFilter.value = taskId;
+                await loadTempCasesPage();
+            }
+        } else {
+            aiNotify(res.message || '重试任务失败', 'error');
+        }
+    } catch (e) {
+        console.error('[AI Generation] retryTaskAndRefresh error:', e);
         aiNotify('重试任务失败，请检查网络连接', 'error');
     }
 }

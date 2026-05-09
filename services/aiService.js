@@ -172,7 +172,7 @@ const GEN_PARAMS_DEFAULTS = {
   ai_rate_limit: 10,
   seed: null,
   scene_data_analysis: { temperature: 0.3, max_tokens: 2000, max_context_rounds: 10 },
-  scene_case_generation: { temperature: 0.7, max_tokens: 4000, max_context_chars: 1000 },
+  scene_case_generation: { temperature: 0.7, max_tokens: 4000, max_context_chars: 1000, retry_interval: 30 },
   scene_report_analysis: { temperature: 0.3, max_tokens: 2000 },
   scene_memory_distillation: { temperature: 0.3, max_tokens: 800 }
 };
@@ -370,6 +370,7 @@ function getSceneParams(globalParams, sceneKey) {
     temperature: scene.temperature !== undefined ? scene.temperature : globalParams.temperature,
     max_tokens: scene.max_tokens !== undefined ? scene.max_tokens : globalParams.max_tokens,
     max_context_chars: scene.max_context_chars !== undefined ? scene.max_context_chars : 1000,
+    retry_interval: scene.retry_interval !== undefined ? scene.retry_interval : 30,
     top_p: globalParams.top_p,
     frequency_penalty: globalParams.frequency_penalty,
     presence_penalty: globalParams.presence_penalty,

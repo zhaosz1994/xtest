@@ -9,7 +9,10 @@ class CaseGenerationAdapter {
   async syncToUnifiedTask(originalTaskId) {
     try {
       const [origTasks] = await pool.execute(
-        'SELECT * FROM ai_case_generation_tasks WHERE task_id = ?',
+        `SELECT t.*, u.username
+         FROM ai_case_generation_tasks t
+         LEFT JOIN users u ON t.user_id = u.id
+         WHERE t.task_id = ?`,
         [originalTaskId]
       );
 
@@ -21,6 +24,7 @@ class CaseGenerationAdapter {
         'pending': 'pending',
         'processing': 'processing',
         'completed': 'completed',
+        'partial_completed': 'partial_completed',
         'failed': 'failed',
         'cancelled': 'cancelled'
       };
@@ -41,10 +45,11 @@ class CaseGenerationAdapter {
            status = VALUES(status),
            progress = VALUES(progress),
            progress_message = VALUES(progress_message),
+           username = VALUES(username),
            started_at = VALUES(started_at),
            completed_at = VALUES(completed_at)`,
         [
-          orig.task_id, this.taskType, orig.user_id, null,
+          orig.task_id, this.taskType, orig.user_id, orig.username || null,
           orig.module_id, moduleName[0]?.name || null, unifiedStatus, orig.progress,
           orig.progress_message,
           JSON.stringify({ originalTaskTable: true, stage: orig.stage }),
@@ -62,7 +67,7 @@ class CaseGenerationAdapter {
   async getDetailedProgress(taskId) {
     try {
       const [tasks] = await pool.execute(
-        'SELECT stage, total_chunks, processed_chunks, total_cases, duplicate_count FROM ai_case_generation_tasks WHERE task_id = ?',
+        'SELECT stage, total_chunks, processed_chunks, completed_chunks, failed_chunks, total_cases, duplicate_count FROM ai_case_generation_tasks WHERE task_id = ?',
         [taskId]
       );
 
@@ -82,6 +87,8 @@ class CaseGenerationAdapter {
         stageMessage: stageMessages[task.stage] || task.stage,
         totalChunks: task.total_chunks,
         processedChunks: task.processed_chunks,
+        completedChunks: task.completed_chunks,
+        failedChunks: task.failed_chunks,
         totalCases: task.total_cases,
         duplicateCount: task.duplicate_count
       };

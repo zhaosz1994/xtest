@@ -5122,8 +5122,12 @@ async function initModuleData() {
             window.dataEventListenersInitialized = true;
         }
 
-        // 自动加载当前用例库的所有一级测试点
-        await loadAllLevel1Points();
+        // 智能加载一级测试点：如果已有模块选择，保持当前选择；否则加载全部
+        if (selectedModuleId && window.currentModule) {
+            await loadLevel1Points(selectedModuleId);
+        } else {
+            await loadAllLevel1Points();
+        }
     } catch (error) {
         logger.error('初始化模块数据错误:', error);
         // 没有默认模块数据，只显示"所有用例"
@@ -5142,7 +5146,11 @@ async function initModuleData() {
         loadNavPreferences();
 
         // 即使出错也尝试加载所有一级测试点
-        await loadAllLevel1Points();
+        if (selectedModuleId && window.currentModule) {
+            await loadLevel1Points(selectedModuleId);
+        } else {
+            await loadAllLevel1Points();
+        }
     } finally {
         // 隐藏加载状态
         const moduleSection = document.querySelector('.case-nav-section');
@@ -5156,7 +5164,8 @@ async function initModuleData() {
 // 初始化模块搜索功能
 function initModuleSearch() {
     const searchInput = document.querySelector('.case-nav-section .search-input');
-    if (searchInput) {
+    if (searchInput && !searchInput._moduleSearchBound) {
+        searchInput._moduleSearchBound = true;
         searchInput.addEventListener('input', debounce(async function () {
             const searchTerm = this.value.toLowerCase().trim();
             await filterModules(searchTerm);
@@ -5334,12 +5343,12 @@ function updateModuleDisplay() {
 
     // 保存当前选中状态
     const activeItem = caseNavList.querySelector('.case-nav-item.active');
-    const activeName = activeItem ? activeItem.querySelector('.case-nav-name').textContent : '所有用例';
+    const activeName = activeItem ? activeItem.querySelector('.case-nav-name').textContent.trim() : '所有用例';
 
     // 清空现有模块（只保留"所有用例"）
     const items = caseNavList.querySelectorAll('.case-nav-item');
     items.forEach(item => {
-        const itemName = item.querySelector('.case-nav-name').textContent;
+        const itemName = item.querySelector('.case-nav-name').textContent.trim();
         if (itemName !== '所有用例') {
             item.remove();
         }
@@ -5352,23 +5361,27 @@ function updateModuleDisplay() {
         allCasesItem.className = 'case-nav-item active';
         allCasesItem.innerHTML = '<span class="case-nav-name">所有用例</span>';
         caseNavList.appendChild(allCasesItem);
-    } else {
-        // 确保"所有用例"是活跃状态
-        allCasesItem.classList.add('active');
     }
 
-    // 为"所有用例"项添加点击事件
-    allCasesItem.addEventListener('click', function () {
-        // 移除其他项的活跃状态
-        caseNavList.querySelectorAll('.case-nav-item').forEach(item => {
-            item.classList.remove('active');
-        });
-        // 添加当前项的活跃状态
-        this.classList.add('active');
+    // 为"所有用例"项添加点击事件（先移除旧的，避免重复绑定）
+    if (!allCasesItem._allCasesClickBound) {
+        allCasesItem._allCasesClickBound = true;
+        allCasesItem.addEventListener('click', function () {
+            // 移除其他项的活跃状态
+            caseNavList.querySelectorAll('.case-nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            // 添加当前项的活跃状态
+            this.classList.add('active');
 
-        // 加载当前用例库下的所有一级测试用例
-        loadAllLevel1Points();
-    });
+            // 重置模块选择
+            selectedModuleId = null;
+            window.currentModule = null;
+
+            // 加载当前用例库下的所有一级测试用例
+            loadAllLevel1Points();
+        });
+    }
 
     // 计算分页
     const totalPages = Math.ceil(moduleList.length / modulesPerPage);
@@ -5414,7 +5427,7 @@ function updateModuleDisplay() {
 
     // 恢复活跃状态
     caseNavList.querySelectorAll('.case-nav-item').forEach(item => {
-        const itemName = item.querySelector('.case-nav-name').textContent;
+        const itemName = item.querySelector('.case-nav-name').textContent.trim();
         if (itemName === activeName) {
             item.classList.add('active');
         }
@@ -5527,9 +5540,11 @@ function updateModulePagination(totalPages) {
 
 // 初始化模块操作按钮
 function initModuleActionButtons() {
-    // 添加样式
-    const style = document.createElement('style');
-    style.textContent = `
+    // 添加样式（只添加一次）
+    if (!document.getElementById('module-action-buttons-style')) {
+        const style = document.createElement('style');
+        style.id = 'module-action-buttons-style';
+        style.textContent = `
         .case-nav-item {
             position: relative;
             padding: 8px 16px;
@@ -5610,7 +5625,8 @@ function initModuleActionButtons() {
             background: none;
         }
     `;
-    document.head.appendChild(style);
+        document.head.appendChild(style);
+    }
 
     // 添加模块操作按钮事件
     const actionButtons = document.querySelectorAll('.module-action-btn');
@@ -8434,14 +8450,18 @@ function updateFloatingPanelContent(testItems) {
 
 // 清空一级测试点显示
 function clearLevel1PointsDisplay() {
-    const caseListBody = document.getElementById('case-list-body');
-    if (!caseListBody) return;
-
-    caseListBody.innerHTML = `
-        <tr>
-            <td colspan="5" class="no-data">请选择左侧功能模块</td>
-        </tr>
-    `;
+    // 清空一级测试点列表
+    const level1List = document.getElementById('level1-list');
+    if (level1List) {
+        level1List.innerHTML = `
+            <div class="level1-empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                </svg>
+                <span class="level1-empty-state-text">请选择左侧功能模块</span>
+            </div>
+        `;
+    }
 
     // 隐藏分页控件
     const paginationContainer = document.getElementById('level1-pagination');
@@ -25243,7 +25263,7 @@ async function saveAIModel() {
             apiCache.delete(`/ai-models/get?modelId=${modelId}`);
             await renderAIModelsList();
             aiModelsCache = [];
-            await loadAvailableModels(true);
+            await loadAIAssistantModels(true);
         } else {
             showErrorMessage(response.message || '保存失败');
         }
@@ -25274,7 +25294,7 @@ async function deleteAIModel(modelId) {
             apiCache.delete(`/ai-models/get?modelId=${modelId}`);
             await renderAIModelsList();
             aiModelsCache = [];
-            await loadAvailableModels(true);
+            await loadAIAssistantModels(true);
         } else {
             showErrorMessage(response.message || '删除失败');
         }
@@ -25301,7 +25321,7 @@ async function setDefaultAIModel(modelId) {
             apiCache.deleteByPrefix('/ai-models/');
             await renderAIModelsList();
             aiModelsCache = [];
-            await loadAvailableModels(true);
+            await loadAIAssistantModels(true);
         } else {
             showErrorMessage(response.message || '设置失败');
         }
@@ -25530,11 +25550,15 @@ async function loadAIConfigAndModels() {
                 return;
             }
         }
-
-        // 加载可用的AI模型列表
-        await loadAvailableModels();
     } catch (error) {
-        logger.error('加载AI配置失败:', error);
+        logger.error('[AI助手] 加载AI配置失败:', error);
+    }
+
+    // 无论配置加载是否成功，都尝试加载模型列表
+    try {
+        await loadAIAssistantModels();
+    } catch (error) {
+        logger.error('[AI助手] 加载AI模型列表失败:', error);
     }
 }
 
@@ -25544,20 +25568,28 @@ async function preloadAIModels() {
         const response = await apiRequest('/ai-models/list');
         if (response.success && response.models) {
             aiModelsCache = response.models;
+        } else {
+            aiModelsCache = [];
+            logger.warn('[AI模型] 预加载返回无模型数据，请在配置中心添加AI模型');
         }
     } catch (error) {
         logger.error('[AI模型] 预加载失败:', error);
+        aiModelsCache = [];
     }
 }
 
-// 加载可用的AI模型列表
-async function loadAvailableModels(forceRefresh = false) {
+// 加载AI助手模型列表
+async function loadAIAssistantModels(forceRefresh = false) {
     const modelSelect = document.getElementById('ai-model-select');
-    if (!modelSelect) return;
+    const modelSelectHeader = document.getElementById('ai-model-select-header');
+    if (!modelSelect && !modelSelectHeader) {
+        logger.warn('[AI模型] 未找到模型选择器元素');
+        return;
+    }
 
     try {
         let models;
-        
+
         // 如果强制刷新或缓存为空，则从服务器加载
         if (forceRefresh || !aiModelsCache || aiModelsCache.length === 0) {
             const response = await apiRequest('/ai-models/list');
@@ -25570,24 +25602,32 @@ async function loadAvailableModels(forceRefresh = false) {
             models = aiModelsCache;
         }
 
+        let optionsHtml = '';
         if (models && models.length > 0) {
             // 只显示启用的模型
             const enabledModels = models.filter(m => m.is_enabled);
 
             if (enabledModels.length === 0) {
-                modelSelect.innerHTML = '<option value="">暂无可用模型</option>';
-                return;
+                optionsHtml = '<option value="">暂无可用模型（请在配置中心添加并启用AI模型）</option>';
+            } else {
+                optionsHtml = enabledModels.map(model =>
+                    `<option value="${model.model_id}" ${model.is_default ? 'selected' : ''}>
+                        ${model.name} ${model.is_default ? '(默认)' : ''}
+                    </option>`
+                ).join('');
             }
-
-            modelSelect.innerHTML = enabledModels.map(model =>
-                `<option value="${model.model_id}" ${model.is_default ? 'selected' : ''}>
-                    ${model.name} ${model.is_default ? '(默认)' : ''}
-                </option>`
-            ).join('');
+        } else {
+            optionsHtml = '<option value="">暂无可用模型（请在配置中心添加AI模型）</option>';
         }
+
+        // 更新所有模型选择器
+        if (modelSelect) modelSelect.innerHTML = optionsHtml;
+        if (modelSelectHeader) modelSelectHeader.innerHTML = optionsHtml;
     } catch (error) {
-        logger.error('加载AI模型列表错误:', error);
-        modelSelect.innerHTML = '<option value="">加载失败</option>';
+        logger.error('[AI模型] 加载AI模型列表错误:', error);
+        const errorHtml = '<option value="">加载失败</option>';
+        if (modelSelect) modelSelect.innerHTML = errorHtml;
+        if (modelSelectHeader) modelSelectHeader.innerHTML = errorHtml;
     }
 }
 
@@ -26342,15 +26382,17 @@ function findIdByName(configKey, name) {
 async function loadAIModelsForFilter() {
     try {
         const response = await apiRequest('/ai-models/list');
-        const modelSelect = document.getElementById('ai-model-select');
+        const modelSelect = document.getElementById('ai-model-select-header');
 
         if (response.success && response.models) {
             const defaultModel = response.models.find(m => m.is_default);
-            modelSelect.innerHTML = '<option value="">默认模型</option>' +
-                response.models
-                    .filter(m => m.is_enabled)
-                    .map(m => `<option value="${m.model_id}" ${m.is_default ? 'selected' : ''}>${m.name}</option>`)
-                    .join('');
+            if (modelSelect) {
+                modelSelect.innerHTML = '<option value="">默认模型</option>' +
+                    response.models
+                        .filter(m => m.is_enabled)
+                        .map(m => `<option value="${m.model_id}" ${m.is_default ? 'selected' : ''}>${m.name}</option>`)
+                        .join('');
+            }
         }
     } catch (error) {
         logger.error('加载AI模型列表失败:', error);
@@ -27823,7 +27865,7 @@ async function handleAIFilter() {
         return;
     }
 
-    const modelId = document.getElementById('ai-model-select').value;
+    const modelId = (document.getElementById('ai-model-select-header') || document.getElementById('ai-model-select')).value;
     const btn = document.getElementById('ai-filter-btn');
     const btnText = btn.querySelector('.btn-text');
     const btnSpinner = btn.querySelector('.btn-spinner');
@@ -29528,7 +29570,7 @@ function renderAsyncTasks() {
         const estimatedTime = calculateEstimatedTime(task);
         
         return `
-        <div class="task-item ${task.status === 'failed' ? 'task-failed' : ''}" data-task-id="${task.id}">
+        <div class="task-item ${task.status === 'failed' ? 'task-failed' : task.status === 'partial_completed' ? 'task-partial' : ''}" data-task-id="${task.id}">
             <div class="task-info">
                 <div class="task-name">${task.name}</div>
                 <div class="task-progress">
@@ -29552,7 +29594,7 @@ function renderAsyncTasks() {
                     </button>
                 </div>
             ` : ''}
-            ${task.status === 'completed' && task.reportId ? `
+            ${(task.status === 'completed' || task.status === 'partial_completed') && task.reportId ? `
                 <div class="task-actions">
                     <button class="task-view-btn" onclick="viewReportDetail(${task.reportId})" title="查看报告">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
@@ -29573,6 +29615,9 @@ function getProgressStage(progress, status) {
     }
     if (status === 'completed') {
         return { icon: '✅', text: '已完成' };
+    }
+    if (status === 'partial_completed') {
+        return { icon: '⚠️', text: '部分完成' };
     }
     if (status === 'cancelled') {
         return { icon: '⏹️', text: '已取消' };
@@ -29618,6 +29663,7 @@ function getTaskStatusText(status) {
         'pending': '等待中',
         'processing': '处理中',
         'completed': '已完成',
+        'partial_completed': '部分完成',
         'failed': '失败',
         'cancelled': '已取消'
     };
@@ -29653,10 +29699,10 @@ function startTaskPolling(taskId, jobId) {
                 
                 updateAsyncTask(taskId, {
                     progress: progress,
-                    status: status === 'completed' ? '已完成' : status === 'failed' ? '失败' : status === 'processing' ? '处理中...' : status
+                    status: status === 'completed' ? '已完成' : status === 'partial_completed' ? '部分完成' : status === 'failed' ? '失败' : status === 'processing' ? '处理中...' : status
                 });
 
-                if (progress >= 100 || status === 'completed') {
+                if (progress >= 100 || status === 'completed' || status === 'partial_completed') {
                     clearInterval(pollInterval);
 
                     updateAsyncTask(taskId, {
@@ -32036,7 +32082,7 @@ function startAiOptimizePolling(taskId) {
                 updateAiOptimizeProgress(result.data);
 
                 // 任务完成、失败或取消时停止轮询
-                if (result.data.status === 'completed' || result.data.status === 'failed' || result.data.status === 'cancelled') {
+                if (result.data.status === 'completed' || result.data.status === 'partial_completed' || result.data.status === 'failed' || result.data.status === 'cancelled') {
                     stopAiOptimizePolling();
                 }
             } else {
@@ -32079,7 +32125,7 @@ function updateAiOptimizeProgress(data) {
             const total = data.total_batches || 0;
             if (progressText) progressText.textContent = '正在优化 ' + processed + '/' + total + ' 批次...';
         }
-    } else if (data.status === 'completed') {
+    } else if (data.status === 'completed' || data.status === 'partial_completed') {
         // 完成
         if (progressEl) progressEl.style.display = 'none';
         if (resultFailEl) resultFailEl.style.display = 'none';

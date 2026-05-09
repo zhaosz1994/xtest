@@ -14,7 +14,7 @@ class CaseGeneratorService {
   async executeMapPhase(taskId) {
     if (this.runningTasks.has(taskId)) {
       logger.debug('executeMapPhase 任务已在运行中，跳过', { taskId });
-      return;
+      return { completedChunks: 0, failedChunks: 0, totalChunks: 0, skipped: true };
     }
     this.runningTasks.add(taskId);
     logger.debug('executeMapPhase 开始处理任务', { taskId });
@@ -22,16 +22,18 @@ class CaseGeneratorService {
     try {
     const [tasks] = await pool.execute(`
       SELECT t.*, m.name as module_name,
-        l.name as library_name
+        l.name as library_name,
+        u.username
       FROM ai_case_generation_tasks t
       JOIN modules m ON t.module_id = m.id
       LEFT JOIN case_libraries l ON t.library_id = l.id
+      LEFT JOIN users u ON t.user_id = u.id
       WHERE t.task_id = ?
     `, [taskId]);
 
     if (tasks.length === 0) {
       logger.debug('executeMapPhase 任务不存在', { taskId });
-      return;
+      return { completedChunks: 0, failedChunks: 0, totalChunks: 0, skipped: true };
     }
 
     const task = tasks[0];
@@ -70,10 +72,12 @@ class CaseGeneratorService {
         SET total_cases = 0, progress = 100, progress_message = '无可用文本块'
         WHERE task_id = ?
       `, [taskId]);
-      return;
+      return { completedChunks: 0, failedChunks: 0, totalChunks: 0, skipped: true };
     }
 
     let processedCount = 0;
+    let completedChunks = 0;
+    let failedChunks = 0;
 
     const config = task.config ? (typeof task.config === 'string' ? JSON.parse(task.config) : task.config) : {};
 
@@ -84,6 +88,9 @@ class CaseGeneratorService {
     const sceneParams = getSceneParams(genParams, 'scene_case_generation');
     const contextChars = config.max_context_chars ?? sceneParams.max_context_chars ?? 1000;
 
+    const maxRetries = parseInt(process.env.CHUNK_MAX_RETRIES) || 3;
+    const retryInterval = (sceneParams.retry_interval !== undefined ? sceneParams.retry_interval : 30) * 1000;
+
     for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
       const chunk = chunks[chunkIdx];
       const prevChunk = chunkIdx > 0 ? chunks[chunkIdx - 1] : null;
@@ -93,44 +100,71 @@ class CaseGeneratorService {
       const nextContext = nextChunk ? nextChunk.chunk_content.slice(0, contextChars) : null;
 
       await this.apiQueue.add(async () => {
-        try {
-          await pool.execute(`
-            UPDATE ai_material_chunks 
-            SET status = 'processing'
-            WHERE id = ?
-          `, [chunk.id]);
+        let chunkSuccess = false;
+        let lastError = null;
+        let actualRetryCount = 0;
 
-          const cases = await this.generateCasesFromChunk(chunk, task, config, agentPrompt, { prevContext, nextContext });
+        for (let retry = 0; retry < maxRetries; retry++) {
+          try {
+            await pool.execute(`
+              UPDATE ai_material_chunks 
+              SET status = 'processing'
+              WHERE id = ? AND status IN ('pending', 'failed')
+            `, [chunk.id]);
 
-          if (cases.length > 0) {
-            await this.saveTempCases(taskId, task.module_id, chunk.id, cases, task.library_id);
+            const cases = await this.generateCasesFromChunk(chunk, task, config, agentPrompt, { prevContext, nextContext });
+
+            await pool.execute(`DELETE FROM temp_test_cases WHERE task_id = ? AND chunk_id = ?`, [taskId, chunk.id]);
+
+            if (cases.length > 0) {
+              await this.saveTempCases(taskId, task.module_id, chunk.id, cases, task.library_id);
+            }
+
+            await pool.execute(`
+              UPDATE ai_material_chunks 
+              SET status = 'completed', generated_cases = ?, processed_at = NOW(), retry_count = ?
+              WHERE id = ?
+            `, [cases.length, retry, chunk.id]);
+
+            chunkSuccess = true;
+            actualRetryCount = retry;
+            break;
+          } catch (error) {
+            lastError = error;
+            if (retry < maxRetries - 1) {
+              logger.warn('chunk处理失败，准备重试', {
+                chunkId: chunk.id,
+                taskId,
+                retry: retry + 1,
+                maxRetries,
+                retryIntervalMs: retryInterval,
+                error: error.message
+              });
+              await new Promise(resolve => setTimeout(resolve, retryInterval));
+            }
           }
+        }
 
-          await pool.execute(`
-            UPDATE ai_material_chunks 
-            SET status = 'completed', generated_cases = ?, processed_at = NOW()
-            WHERE id = ?
-          `, [cases.length, chunk.id]);
-
-          processedCount++;
-          await this.updateProgressFromDB(taskId, processedCount, chunks.length);
-
-        } catch (error) {
-          const errorMsg = error.message || error.toString() || '未知错误';
-          logger.error('处理chunk失败', { 
-            chunkId: chunk.id, 
-            taskId, 
+        if (!chunkSuccess) {
+          const errorMsg = lastError ? (lastError.message || lastError.toString() || '未知错误') : '重试耗尽';
+          logger.error('处理chunk失败（重试耗尽）', {
+            chunkId: chunk.id,
+            taskId,
             error: errorMsg,
-            stack: error.stack
+            maxRetries
           });
           await pool.execute(`
             UPDATE ai_material_chunks 
-            SET status = 'failed', error_message = ?, retry_count = retry_count + 1
+            SET status = 'failed', error_message = ?, retry_count = ?
             WHERE id = ?
-          `, [errorMsg, chunk.id]);
-          processedCount++;
-          await this.updateProgressFromDB(taskId, processedCount, chunks.length);
+          `, [errorMsg.substring(0, 500), maxRetries, chunk.id]);
+          failedChunks++;
+        } else {
+          completedChunks++;
         }
+
+        processedCount++;
+        await this.updateProgressFromDB(taskId, processedCount, chunks.length);
       });
     }
 
@@ -141,11 +175,29 @@ class CaseGeneratorService {
     `, [taskId]);
     const totalCases = countResult[0].total;
 
+    let progressMessage;
+    if (failedChunks === 0) {
+      progressMessage = `用例生成完成：共${chunks.length}块，成功${completedChunks}块`;
+    } else {
+      progressMessage = `用例生成完成（部分成功）：共${chunks.length}块，成功${completedChunks}块，失败${failedChunks}块`;
+    }
+
     await pool.execute(`
       UPDATE ai_case_generation_tasks 
-      SET total_cases = ?
+      SET total_cases = ?, progress_message = ?,
+          completed_chunks = ?, failed_chunks = ?
       WHERE task_id = ?
-    `, [totalCases, taskId]);
+    `, [totalCases, progressMessage, completedChunks, failedChunks, taskId]);
+
+    logger.info('executeMapPhase 完成', {
+      taskId,
+      totalChunks: chunks.length,
+      completedChunks,
+      failedChunks,
+      totalCases
+    });
+
+    return { completedChunks, failedChunks, totalChunks: chunks.length };
     } finally {
       this.runningTasks.delete(taskId);
     }
@@ -185,7 +237,7 @@ class CaseGeneratorService {
 
     const aiConfig = await this.getAIConfig(task.user_id);
 
-    const response = await this.callAI(aiConfig, systemPrompt, userPrompt, config, task.user_id, task.library_id, task.module_id);
+    const response = await this.callAI(aiConfig, systemPrompt, userPrompt, config, task.user_id, task.username, task.library_id, task.module_id);
 
     const content = response.choices?.[0]?.message?.content || '';
     const usage = response.usage || {};
@@ -209,6 +261,7 @@ class CaseGeneratorService {
 
       aiAuditLogger.logFailure({
         userId: task.user_id,
+        username: task.username,
         skillName: 'AI生成测试用例',
         operationType: 'GENERATE',
         executionTimeMs,
@@ -364,7 +417,7 @@ ${chunk.chunk_content}
     return aiService.getUserAIConfig(userId);
   }
 
-  async callAI(aiConfig, systemPrompt, userPrompt, config, userId, libraryId = null, moduleId = null) {
+  async callAI(aiConfig, systemPrompt, userPrompt, config, userId, username = null, libraryId = null, moduleId = null) {
     const axios = require('axios');
     const { getUserAITimeoutConfig, getUserAIGenerationParams, getSceneParams } = require('./aiService');
     const timeoutConfig = await getUserAITimeoutConfig(userId);
@@ -433,6 +486,7 @@ ${chunk.chunk_content}
 
       aiAuditLogger.logSuccess({
         userId,
+        username,
         skillName: 'AI生成测试用例',
         operationType: 'GENERATE',
         executionTimeMs,
@@ -493,6 +547,7 @@ ${chunk.chunk_content}
 
       aiAuditLogger.logFailure({
         userId,
+        username,
         skillName: 'AI生成测试用例',
         operationType: 'GENERATE',
         executionTimeMs,
@@ -534,7 +589,31 @@ ${chunk.chunk_content}
           error: error.message,
           content: jsonMatch[1].substring(0, 200)
         });
-        return [];
+      }
+    }
+
+    const truncatedMatch = content.match(/```json\s*([\s\S]+)/);
+    if (truncatedMatch) {
+      let jsonStr = truncatedMatch[1].replace(/\s*```\s*$/, '');
+      logger.debug('尝试解析截断的JSON代码块', { length: jsonStr.length });
+      try {
+        const parsed = JSON.parse(jsonStr);
+        const cases = parsed.cases || [];
+        logger.info('截断JSON代码块解析成功', { casesCount: cases.length });
+        return cases;
+      } catch (error) {
+        logger.debug('截断JSON直接解析失败，尝试修复', { error: error.message });
+        const repaired = this.tryRepairTruncatedJSON(jsonStr);
+        if (repaired) {
+          try {
+            const parsed = JSON.parse(repaired);
+            const cases = parsed.cases || [];
+            logger.info('修复后JSON解析成功', { casesCount: cases.length });
+            return cases;
+          } catch (repairError) {
+            logger.error('修复后JSON解析仍失败', { error: repairError.message });
+          }
+        }
       }
     }
 
@@ -550,6 +629,48 @@ ${chunk.chunk_content}
         contentPreview: content.substring(0, 200)
       });
       return [];
+    }
+  }
+
+  tryRepairTruncatedJSON(jsonStr) {
+    let str = jsonStr.trimEnd();
+    str = str.replace(/,\s*$/, '');
+
+    let openBraces = 0;
+    let openBrackets = 0;
+    let inString = false;
+    let escape = false;
+
+    for (let i = 0; i < str.length; i++) {
+      const ch = str[i];
+      if (escape) { escape = false; continue; }
+      if (ch === '\\') { escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === '{') openBraces++;
+      if (ch === '}') openBraces--;
+      if (ch === '[') openBrackets++;
+      if (ch === ']') openBrackets--;
+    }
+
+    if (inString) {
+      str += '"';
+    }
+
+    while (openBrackets > 0) {
+      str += ']';
+      openBrackets--;
+    }
+    while (openBraces > 0) {
+      str += '}';
+      openBraces--;
+    }
+
+    try {
+      JSON.parse(str);
+      return str;
+    } catch (e) {
+      return null;
     }
   }
 
@@ -694,7 +815,10 @@ ${chunk.chunk_content}
     if (tasks.length === 0) return false;
 
     const task = tasks[0];
-    if (task.status !== 'failed') return false;
+    if (task.status !== 'failed' && task.status !== 'partial_completed') return false;
+
+    await pool.execute(`DELETE FROM temp_test_cases WHERE task_id = ? AND status != 'merged'`, [taskId]);
+    await pool.execute(`DELETE FROM temp_level1_points WHERE task_id = ? AND status != 'merged'`, [taskId]);
 
     await pool.execute(`
       UPDATE ai_case_generation_tasks 
@@ -704,6 +828,8 @@ ${chunk.chunk_content}
           processed_chunks = 0,
           total_cases = 0,
           total_chunks = 0,
+          completed_chunks = 0,
+          failed_chunks = 0,
           progress_message = '等待重试...',
           error_message = NULL,
           error_stack = NULL,
@@ -715,19 +841,37 @@ ${chunk.chunk_content}
     const selectedFiles = typeof task.selected_files === 'string' 
       ? JSON.parse(task.selected_files || '[]') 
       : (task.selected_files || []);
-    if (selectedFiles.length > 0) {
-      const placeholders = selectedFiles.map(() => '?').join(',');
-      await pool.execute(`
-        UPDATE ai_material_chunks 
-        SET status = 'pending', error_message = NULL
-        WHERE file_id IN (${placeholders}) AND status = 'failed'
-      `, selectedFiles);
+
+    if (task.status === 'partial_completed') {
+      if (selectedFiles.length > 0) {
+        const placeholders = selectedFiles.map(() => '?').join(',');
+        await pool.execute(`
+          UPDATE ai_material_chunks 
+          SET status = 'pending', error_message = NULL, generated_cases = 0
+          WHERE file_id IN (${placeholders})
+        `, selectedFiles);
+      } else {
+        await pool.execute(`
+          UPDATE ai_material_chunks 
+          SET status = 'pending', error_message = NULL, generated_cases = 0
+          WHERE module_id = ?
+        `, [task.module_id]);
+      }
     } else {
-      await pool.execute(`
-        UPDATE ai_material_chunks 
-        SET status = 'pending', error_message = NULL
-        WHERE module_id = ? AND status = 'failed'
-      `, [task.module_id]);
+      if (selectedFiles.length > 0) {
+        const placeholders = selectedFiles.map(() => '?').join(',');
+        await pool.execute(`
+          UPDATE ai_material_chunks 
+          SET status = 'pending', error_message = NULL
+          WHERE file_id IN (${placeholders}) AND status = 'failed'
+        `, selectedFiles);
+      } else {
+        await pool.execute(`
+          UPDATE ai_material_chunks 
+          SET status = 'pending', error_message = NULL
+          WHERE module_id = ? AND status = 'failed'
+        `, [task.module_id]);
+      }
     }
 
     return true;
