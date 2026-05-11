@@ -3860,13 +3860,14 @@
                                             <th>API端点</th>
                                             <th>状态</th>
                                             <th>默认</th>
+                                            <th>公开状态</th>
                                             <th>所有者</th>
                                             <th>操作</th>
                                         </tr>
                                     </thead>
                                     <tbody id="ai-models-config-body">
                                         <tr>
-                                            <td colspan="7" class="no-data">暂无AI模型配置</td>
+                                            <td colspan="8" class="no-data">暂无AI模型配置</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -4098,6 +4099,19 @@
                                                 <option value="true">启用</option>
                                                 <option value="false">禁用</option>
                                             </select>
+                                        </div>
+                                    </div>
+                                    <div class="form-row" id="ai-model-public-row" style="display: none;">
+                                        <div class="form-group">
+                                            <label>公开模型</label>
+                                            <select id="ai-model-public-select">
+                                                <option value="false">否（仅自己可见）</option>
+                                                <option value="true">是（所有用户可见）</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group">
+                                            <label></label>
+                                            <p style="font-size: 12px; color: #666; margin: 0;">公开后，其他用户可以使用此模型</p>
                                         </div>
                                     </div>
                                     <div class="form-row">
@@ -4900,6 +4914,20 @@ return rows[0];'></textarea>
                             <input type="number" id="similarityThreshold" class="ai-input" value="85" min="50" max="100">
                         </div>
 
+                        <div class="ai-form-group">
+                            <label>文本切分策略</label>
+                            <select id="chunkingStrategy" class="ai-input">
+                                <option value="structure_aware">结构感知切分（默认）</option>
+                                <option value="semantic">语义切分（Embedding辅助）</option>
+                                <option value="parent_child">父子切分（大块+小块）</option>
+                                <option value="semantic_parent_child">语义+父子切分（推荐）</option>
+                            </select>
+                            <small style="color:var(--ai-text-secondary);margin-top:4px;display:block;">
+                                语义切分：用Embedding向量找语义边界，避免切断完整概念<br>
+                                父子切分：存大块+小块，检索小块、返回大块上下文
+                            </small>
+                        </div>
+
                         <button class="ai-btn ai-btn-primary" style="width:100%;justify-content:center;padding:12px;" onclick="createTask()">
                             🤖 开始生成测试用例
                         </button>
@@ -4913,6 +4941,7 @@ return rows[0];'></textarea>
                 <select id="taskFilter" class="ai-filter-select" onchange="loadTempCases()">
                     <option value="all">全部未合并用例</option>
                 </select>
+                <button class="ai-btn ai-btn-sm ai-btn-ghost" id="cleanupEmptyTasksBtn" title="清理没有未处理用例的空任务">🗑️ 清理空任务</button>
                 <input type="text" id="caseSearch" class="ai-search-input" placeholder="搜索用例..." oninput="filterCases()">
                 <select id="statusFilter" class="ai-filter-select" onchange="filterCases()">
                     <option value="">全部状态</option>

@@ -343,7 +343,13 @@ router.get('/file/content/:fileId', authenticateToken, async (req, res) => {
 router.post('/reparse/:fileId', authenticateToken, async (req, res) => {
   try {
     const { fileId } = req.params;
-    const result = await fileParserService.reparseFile(parseInt(fileId));
+    const { chunkingStrategy } = req.body || {};
+    const options = {};
+    if (chunkingStrategy && ['structure_aware', 'semantic', 'parent_child', 'semantic_parent_child'].includes(chunkingStrategy)) {
+      options.chunkingStrategy = chunkingStrategy;
+      options.userId = req.user?.id || null;
+    }
+    const result = await fileParserService.reparseFile(parseInt(fileId), options);
     res.json({ success: true, data: result });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

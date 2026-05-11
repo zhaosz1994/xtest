@@ -39,7 +39,7 @@ class FileParserService {
     }
   }
 
-  async parseAndChunk(fileId) {
+  async parseAndChunk(fileId, options = {}) {
     const [files] = await pool.execute(`
       SELECT f.*, COALESCE(m.name, '用例库文件') as module_name
       FROM module_knowledge_files f
@@ -50,6 +50,7 @@ class FileParserService {
     if (files.length === 0) return;
 
     const file = files[0];
+    const chunkingStrategy = options.chunkingStrategy || file.chunking_strategy || 'structure_aware';
 
     await this.retryOnDeadlock(async () => {
       await pool.execute(`
@@ -85,26 +86,45 @@ class FileParserService {
         throw new Error('文件内容为空');
       }
 
-      const chunks = this.chunkContent(content, {
-        chunkSize: 2000,
-        overlap: 200,
-        minChunkSize: 100
-      });
+      const chunkingResult = await this._applyChunkingStrategy(content, chunkingStrategy, options);
 
-      await this.saveChunks(fileId, file.module_id, chunks, file.library_id);
+      if (chunkingResult.parentChild) {
+        const chunkingService = require('./chunkingService');
+        const saveResult = await chunkingService.saveParentChildChunks(
+          fileId, file.module_id, chunkingResult.parentChild, file.library_id
+        );
 
-      await this.retryOnDeadlock(async () => {
-        await pool.execute(`
-          UPDATE module_knowledge_files 
-          SET parse_status = 'parsed', 
-              chunk_count = ?,
-              total_tokens = ?,
-              parsed_at = NOW()
-          WHERE id = ?
-        `, [chunks.length, chunks.reduce((sum, c) => sum + c.tokenCount, 0), fileId]);
-      }, `更新文件解析完成状态[fileId=${fileId}]`);
+        await this.retryOnDeadlock(async () => {
+          await pool.execute(`
+            UPDATE module_knowledge_files 
+            SET parse_status = 'parsed', 
+                chunk_count = ?,
+                total_tokens = ?,
+                chunking_strategy = ?,
+                parsed_at = NOW()
+            WHERE id = ?
+          `, [saveResult.totalChunks, saveResult.totalTokens || 0, chunkingStrategy, fileId]);
+        }, `更新文件解析完成状态[fileId=${fileId}]`);
 
-      return { fileId, chunkCount: chunks.length };
+        return { fileId, chunkCount: saveResult.totalChunks, chunkingStrategy };
+      } else {
+        const chunks = chunkingResult.chunks;
+        await this.saveChunks(fileId, file.module_id, chunks, file.library_id, chunkingStrategy);
+
+        await this.retryOnDeadlock(async () => {
+          await pool.execute(`
+            UPDATE module_knowledge_files 
+            SET parse_status = 'parsed', 
+                chunk_count = ?,
+                total_tokens = ?,
+                chunking_strategy = ?,
+                parsed_at = NOW()
+            WHERE id = ?
+          `, [chunks.length, chunks.reduce((sum, c) => sum + c.tokenCount, 0), chunkingStrategy, fileId]);
+        }, `更新文件解析完成状态[fileId=${fileId}]`);
+
+        return { fileId, chunkCount: chunks.length, chunkingStrategy };
+      }
 
     } catch (error) {
       await this.retryOnDeadlock(async () => {
@@ -118,6 +138,56 @@ class FileParserService {
       });
 
       throw error;
+    }
+  }
+
+  async _applyChunkingStrategy(content, strategy, options = {}) {
+    const chunkingService = require('./chunkingService');
+
+    switch (strategy) {
+      case 'semantic': {
+        const chunks = await chunkingService.semanticChunk(content, {
+          chunkSize: options.chunkSize || 2000,
+          minChunkSize: options.minChunkSize || 100,
+          userId: options.userId || null
+        });
+        return { chunks, parentChild: null };
+      }
+
+      case 'parent_child': {
+        const result = chunkingService.parentChildChunk(content, {
+          parentChunkSize: options.parentChunkSize || 4000,
+          childChunkSize: options.childChunkSize || 800,
+          childOverlap: options.childOverlap || 100,
+          minChildChunkSize: options.minChildChunkSize || 100
+        });
+        return { chunks: null, parentChild: result };
+      }
+
+      case 'semantic_parent_child': {
+        const result = await chunkingService.semanticParentChildChunk(content, {
+          userId: options.userId || null,
+          parentChunkSize: options.parentChunkSize || 4000,
+          childChunkSize: options.childChunkSize || 800,
+          childOverlap: options.childOverlap || 100,
+          minChildChunkSize: options.minChildChunkSize || 100
+        });
+        return { chunks: null, parentChild: result };
+      }
+
+      case 'structure_aware':
+      default: {
+        const chunks = this.chunkContent(content, {
+          chunkSize: options.chunkSize || 2000,
+          overlap: options.overlap || 200,
+          minChunkSize: options.minChunkSize || 100
+        });
+        for (const chunk of chunks) {
+          chunk.metadata = chunk.metadata || {};
+          chunk.metadata.chunkingStrategy = 'structure_aware';
+        }
+        return { chunks, parentChild: null };
+      }
     }
   }
 
@@ -335,7 +405,7 @@ class FileParserService {
     return Math.ceil(chineseChars * 0.6 + englishCharCount * 0.25 + numberCharCount * 0.3 + others * 0.3);
   }
 
-  async saveChunks(fileId, moduleId, chunks, libraryId) {
+  async saveChunks(fileId, moduleId, chunks, libraryId, chunkingStrategy = 'structure_aware') {
     return this.retryOnDeadlock(async () => {
       const connection = await pool.getConnection();
 
@@ -350,14 +420,20 @@ class FileParserService {
           const batchSize = 100;
           for (let i = 0; i < chunks.length; i += batchSize) {
             const batch = chunks.slice(i, i + batchSize);
-            const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(',');
+            const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
             const values = [];
             for (const chunk of batch) {
-              values.push(fileId, moduleId || null, libraryId || null, chunk.chunkIndex, chunk.chunkContent, chunk.tokenCount, chunk.charCount);
+              const metadata = chunk.metadata || { chunkingStrategy };
+              values.push(
+                fileId, moduleId || null, libraryId || null,
+                chunk.chunkIndex, chunk.chunkContent, chunk.tokenCount, chunk.charCount,
+                chunkingStrategy,
+                JSON.stringify(metadata)
+              );
             }
             await connection.execute(`
               INSERT INTO ai_material_chunks
-                (file_id, module_id, library_id, chunk_index, chunk_content, token_count, char_count)
+                (file_id, module_id, library_id, chunk_index, chunk_content, token_count, char_count, chunking_strategy, metadata)
               VALUES ${placeholders}
             `, values);
           }
@@ -385,14 +461,14 @@ class FileParserService {
     });
   }
 
-  async reparseFile(fileId) {
+  async reparseFile(fileId, options = {}) {
     await pool.execute(`
       UPDATE module_knowledge_files 
       SET parse_status = 'pending', parse_error = NULL
       WHERE id = ?
     `, [fileId]);
 
-    return this.parseAndChunk(fileId);
+    return this.parseAndChunk(fileId, options);
   }
 
   async getChunksByFile(fileId) {

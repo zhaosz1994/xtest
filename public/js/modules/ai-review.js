@@ -193,15 +193,18 @@ function switchReviewSubTab(tab) {
     const humanContent = document.getElementById('manual-review-container');
     const aiContent = document.getElementById('ai-review-container');
 
+    const activeStyle = 'padding:8px 16px;cursor:pointer;border-bottom:2px solid #6366f1;color:#6366f1;font-weight:500;';
+    const inactiveStyle = 'padding:8px 16px;cursor:pointer;color:#606266;';
+
     if (tab === 'ai') {
-        if (humanTab) humanTab.classList.remove('active');
-        if (aiTab) aiTab.classList.add('active');
+        if (humanTab) { humanTab.classList.remove('active'); humanTab.style.cssText = inactiveStyle; }
+        if (aiTab) { aiTab.classList.add('active'); aiTab.style.cssText = activeStyle; }
         if (humanContent) humanContent.style.display = 'none';
         if (aiContent) aiContent.style.display = 'block';
         loadAIReviewTasks();
     } else {
-        if (aiTab) aiTab.classList.remove('active');
-        if (humanTab) humanTab.classList.add('active');
+        if (aiTab) { aiTab.classList.remove('active'); aiTab.style.cssText = inactiveStyle; }
+        if (humanTab) { humanTab.classList.add('active'); humanTab.style.cssText = activeStyle; }
         if (aiContent) aiContent.style.display = 'none';
         if (humanContent) humanContent.style.display = 'block';
     }

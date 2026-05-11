@@ -241,75 +241,24 @@ class TaskScheduler {
   async processTask(taskId) {
     logger.info('开始处理任务', { taskId });
     const caseGeneratorService = require('./caseGeneratorService');
-    const dedupService = require('./dedupService');
-    const level1PointService = require('./level1PointService');
     const emailNotificationService = require('./emailNotificationService');
+    const caseGenerationHandler = require('./handlers/caseGenerationHandler');
+    const pool = require('../db');
 
     try {
       const task = await caseGeneratorService.getTaskStatus(taskId);
       if (!task || task.status === 'cancelled') return;
 
-      const config = task.config ? (typeof task.config === 'string' ? JSON.parse(task.config) : task.config) : {};
-
-      if (config.level1Mode === 'auto') {
-        await level1PointService.generateLevel1Points(taskId, task.module_id);
-      }
-
-      const mapResult = await caseGeneratorService.executeMapPhase(taskId);
-
-      if (mapResult.skipped) {
-        logger.warn('Map阶段被跳过，任务可能已在运行中', { taskId });
-        return;
-      }
-
-      const taskAfterMap = await caseGeneratorService.getTaskStatus(taskId);
-      if (taskAfterMap && taskAfterMap.status === 'cancelled') return;
-
-      const hasFailedChunks = mapResult.failedChunks > 0;
-
-      await dedupService.executeReducePhase(taskId);
-
-      if (config.level1Mode === 'auto') {
-        await level1PointService.assignLevel1ToCases(taskId);
-      } else if (config.selectedLevel1Ids && config.selectedLevel1Ids.length > 0) {
-        await level1PointService.assignExistingLevel1ToCases(taskId, config.selectedLevel1Ids[0]);
-      }
-
-      if (hasFailedChunks) {
-        const [countResult] = await pool.execute(`
-          SELECT COUNT(*) as total FROM temp_test_cases WHERE task_id = ?
-        `, [taskId]);
-        const totalCases = countResult[0].total;
-
-        await pool.execute(`
-          UPDATE ai_case_generation_tasks 
-          SET status = 'partial_completed', 
-              stage = 'finished',
-              progress = 100,
-              progress_message = ?,
-              total_cases = ?,
-              completed_at = NOW()
-          WHERE task_id = ?
-        `, [`任务部分完成：成功${mapResult.completedChunks}块，失败${mapResult.failedChunks}块，生成${totalCases}条用例`, totalCases, taskId]);
-      } else {
-        const [countResult] = await pool.execute(`
-          SELECT COUNT(*) as total FROM temp_test_cases WHERE task_id = ?
-        `, [taskId]);
-        const totalCases = countResult[0].total;
-
-        await pool.execute(`
-          UPDATE ai_case_generation_tasks 
-          SET status = 'completed', 
-              stage = 'finished',
-              progress = 100,
-              progress_message = '任务完成',
-              total_cases = ?,
-              completed_at = NOW()
-          WHERE task_id = ?
-        `, [totalCases, taskId]);
-      }
+      const result = await caseGenerationHandler.execute({
+        task_id: taskId,
+        target_id: task.module_id,
+        config: task.config,
+        selected_files: task.selected_files,
+        user_id: task.user_id
+      });
 
       try {
+        const caseGenerationAdapter = require('./adapters/caseGenerationAdapter');
         await caseGenerationAdapter.syncToUnifiedTask(taskId);
       } catch (syncError) {
         logger.error('同步用例生成任务状态到统一任务表失败', { error: syncError.message, taskId });
@@ -321,7 +270,7 @@ class TaskScheduler {
         logger.error('发送邮件通知失败', { error: emailError.message });
       }
 
-      logger.info('任务完成', { taskId, status: hasFailedChunks ? 'partial_completed' : 'completed' });
+      logger.info('任务完成', { taskId, status: result.status });
 
     } catch (error) {
       const errorMsg = error.message || error.toString() || '未知错误（error对象为空）';
@@ -338,6 +287,7 @@ class TaskScheduler {
       `, [errorMsg, errorStack, `任务失败: ${errorMsg}`, taskId]);
 
       try {
+        const caseGenerationAdapter = require('./adapters/caseGenerationAdapter');
         await caseGenerationAdapter.syncToUnifiedTask(taskId);
       } catch (syncError) {
         logger.error('同步失败任务状态到统一任务表失败', { error: syncError.message, taskId });

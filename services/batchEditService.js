@@ -96,11 +96,28 @@ class BatchEditService {
 
     const placeholders = tempCaseIds.map(() => '?').join(',');
 
+    const [taskInfo] = await pool.execute(`
+      SELECT DISTINCT task_id FROM temp_test_cases 
+      WHERE temp_case_id IN (${placeholders})
+    `, tempCaseIds);
+
     const [result] = await pool.execute(`
       UPDATE temp_test_cases 
       SET status = 'rejected'
       WHERE temp_case_id IN (${placeholders}) AND status IN ('pending', 'approved')
     `, tempCaseIds);
+
+    if (taskInfo.length > 0) {
+      const reviewService = require('./reviewService');
+      setImmediate(() => {
+        taskInfo.forEach(({ task_id }) => {
+          reviewService.checkAndCleanupTask(task_id).catch(err => {
+            const logger = require('./logger');
+            logger.error('拒绝后清理任务失败', { taskId: task_id, error: err.message });
+          });
+        });
+      });
+    }
 
     return { updated: result.affectedRows };
   }

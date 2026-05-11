@@ -32,6 +32,7 @@ class DatabaseMigrator {
     this.registerCaseGenerationAgentIdMigration();
     this.registerUserAIGenerationParamsMigration();
     this.registerUserAISceneParamsMigration();
+    this.registerConfigFilesKbSourceMigration();
     
     logger.info('[数据库迁移] 开始检查...');
     logger.info('数据库自动迁移检查...');
@@ -629,6 +630,61 @@ class DatabaseMigrator {
       }
 
       return { status: 'ok', message: '无需修复' };
+    });
+  }
+  registerConfigFilesKbSourceMigration() {
+    this.registerMigration('config_files_kb_source_fields', async () => {
+      logger.info('检查 ai_sub_agent_config_files 表知识库来源字段...');
+
+      const hasSourceType = await this.columnExists('ai_sub_agent_config_files', 'source_type');
+      const hasSourceFileId = await this.columnExists('ai_sub_agent_config_files', 'source_file_id');
+      const hasSourceLibraryId = await this.columnExists('ai_sub_agent_config_files', 'source_library_id');
+      const hasSourcePath = await this.columnExists('ai_sub_agent_config_files', 'source_path');
+
+      let fixed = false;
+
+      if (!hasSourceType) {
+        const added = await this.addColumnSafe('ai_sub_agent_config_files', 'source_type', "VARCHAR(20) DEFAULT 'manual' COMMENT '来源类型: manual-手动添加, kb_doc-知识库文档'");
+        if (added === false) return { status: 'error', message: '无法添加字段: source_type' };
+        if (added === true) fixed = true;
+      }
+      if (!hasSourceFileId) {
+        const added = await this.addColumnSafe('ai_sub_agent_config_files', 'source_file_id', "INT DEFAULT NULL COMMENT '知识库文件ID(仅kb_doc类型有值)'");
+        if (added === false) return { status: 'error', message: '无法添加字段: source_file_id' };
+        if (added === true) fixed = true;
+      }
+      if (!hasSourceLibraryId) {
+        const added = await this.addColumnSafe('ai_sub_agent_config_files', 'source_library_id', "INT DEFAULT NULL COMMENT '来源用例库ID(仅kb_doc类型有值)'");
+        if (added === false) return { status: 'error', message: '无法添加字段: source_library_id' };
+        if (added === true) fixed = true;
+      }
+      if (!hasSourcePath) {
+        const added = await this.addColumnSafe('ai_sub_agent_config_files', 'source_path', "VARCHAR(500) DEFAULT NULL COMMENT '来源路径(仅kb_doc类型有值)'");
+        if (added === false) return { status: 'error', message: '无法添加字段: source_path' };
+        if (added === true) fixed = true;
+      }
+
+      try {
+        const [rows] = await pool.query(
+          `SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ai_sub_agent_config_files' AND COLUMN_NAME = 'file_type'`
+        );
+        if (rows.length > 0 && !rows[0].COLUMN_TYPE.includes('kb_doc')) {
+          await pool.query(
+            `ALTER TABLE ai_sub_agent_config_files MODIFY COLUMN file_type ENUM('soul','user','tools','rule','checklist','examples','glossary','template','custom','ref_doc','kb_doc') NOT NULL COMMENT '配置文件类型'`
+          );
+          fixed = true;
+          logger.info('已添加 kb_doc 到 file_type 枚举');
+        }
+      } catch (enumErr) {
+        logger.warn('添加 kb_doc 枚举值失败', { error: enumErr.message });
+      }
+
+      if (fixed) {
+        logger.info('已添加知识库来源字段');
+        return { status: 'fixed', message: '已添加知识库来源字段' };
+      }
+
+      return { status: 'ok', message: '知识库来源字段已存在' };
     });
   }
 }

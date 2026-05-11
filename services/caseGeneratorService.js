@@ -4,6 +4,7 @@ const { default: PQueue } = require('p-queue');
 const logger = require('./logger');
 const aiAuditLogger = require('./aiAuditLogger');
 const aiRequestLogger = require('./aiRequestLogger');
+const level1PointService = require('./level1PointService');
 
 class CaseGeneratorService {
   constructor() {
@@ -11,13 +12,15 @@ class CaseGeneratorService {
     this.runningTasks = new Set();
   }
 
-  async executeMapPhase(taskId) {
+  async executeMapPhase(taskId, globalAwareness = {}) {
     if (this.runningTasks.has(taskId)) {
       logger.debug('executeMapPhase 任务已在运行中，跳过', { taskId });
       return { completedChunks: 0, failedChunks: 0, totalChunks: 0, skipped: true };
     }
     this.runningTasks.add(taskId);
     logger.debug('executeMapPhase 开始处理任务', { taskId });
+
+    const { globalContext = '', allValidLevel1 = [] } = globalAwareness;
 
     try {
     const [tasks] = await pool.execute(`
@@ -42,10 +45,14 @@ class CaseGeneratorService {
       : (task.selected_files || []);
 
     let sql = `
-      SELECT c.*, f.name as file_name
+      SELECT c.*, f.name as file_name,
+        p.chunk_content as parent_chunk_content,
+        p.chunk_index as parent_chunk_index
       FROM ai_material_chunks c
       JOIN module_knowledge_files f ON c.file_id = f.id
+      LEFT JOIN ai_material_chunks p ON c.parent_chunk_id = p.id
       WHERE c.module_id = ? AND c.status = 'pending' AND f.deleted_at IS NULL
+        AND (c.chunk_type = 'child' OR c.chunk_type = 'normal' OR c.chunk_type IS NULL)
     `;
     const params = [task.module_id];
 
@@ -96,8 +103,7 @@ class CaseGeneratorService {
       const prevChunk = chunkIdx > 0 ? chunks[chunkIdx - 1] : null;
       const nextChunk = chunkIdx < chunks.length - 1 ? chunks[chunkIdx + 1] : null;
 
-      const prevContext = prevChunk ? prevChunk.chunk_content.slice(-contextChars) : null;
-      const nextContext = nextChunk ? nextChunk.chunk_content.slice(0, contextChars) : null;
+      const chunkContext = this._buildChunkContext(chunk, prevChunk, nextChunk, contextChars);
 
       await this.apiQueue.add(async () => {
         let chunkSuccess = false;
@@ -112,12 +118,12 @@ class CaseGeneratorService {
               WHERE id = ? AND status IN ('pending', 'failed')
             `, [chunk.id]);
 
-            const cases = await this.generateCasesFromChunk(chunk, task, config, agentPrompt, { prevContext, nextContext });
+            const cases = await this.generateCasesFromChunk(chunk, task, config, agentPrompt, chunkContext, { globalContext, allValidLevel1 });
 
             await pool.execute(`DELETE FROM temp_test_cases WHERE task_id = ? AND chunk_id = ?`, [taskId, chunk.id]);
 
             if (cases.length > 0) {
-              await this.saveTempCases(taskId, task.module_id, chunk.id, cases, task.library_id);
+              await this.saveTempCases(taskId, task.module_id, chunk.id, cases, task.library_id, allValidLevel1);
             }
 
             await pool.execute(`
@@ -221,11 +227,14 @@ class CaseGeneratorService {
     };
   }
 
-  async generateCasesFromChunk(chunk, task, config, agentPrompt, chunkContext = {}) {
+  async generateCasesFromChunk(chunk, task, config, agentPrompt, chunkContext = {}, globalAwareness = {}) {
+    const { globalContext = '', allValidLevel1 = [] } = globalAwareness;
     const systemPrompt = agentPrompt?.system || this.getDefaultSystemPrompt();
     const userPrompt = agentPrompt?.userTemplate 
-      ? this.applyTemplate(agentPrompt.userTemplate, chunk, task, config, chunkContext)
-      : this.buildPrompt(chunk, task, config, chunkContext);
+      ? this.applyTemplate(agentPrompt.userTemplate, chunk, task, config, chunkContext, globalAwareness)
+      : this.buildPrompt(chunk, task, config, chunkContext, globalAwareness);
+
+    const generateStartTime = Date.now();
 
     logger.debug('生成用例Prompt', {
       chunkId: chunk.id,
@@ -249,8 +258,40 @@ class CaseGeneratorService {
     });
     
     const cases = this.parseAIResponse(content);
-    
-    if (cases.length === 0 && content.length > 0) {
+
+    if (cases.length > 0) {
+      const executionTimeMs = Date.now() - generateStartTime;
+
+      aiAuditLogger.logSuccess({
+        userId: task.user_id,
+        username: task.username,
+        skillName: 'AI生成测试用例',
+        operationType: 'GENERATE',
+        executionTimeMs,
+        promptTokens: usage.prompt_tokens || 0,
+        completionTokens: usage.completion_tokens || 0,
+        totalTokens: usage.total_tokens || 0,
+        modelName: aiConfig.model_name || config?.model || 'deepseek-chat',
+        resultCount: cases.length
+      });
+
+      aiRequestLogger.logSuccess({
+        userId: task.user_id,
+        triggerType: 'generation',
+        triggerSource: 'case_generator',
+        triggerSourceName: 'AI生成测试用例',
+        systemPrompt,
+        userPrompt,
+        aiResponse: content,
+        promptTokens: usage.prompt_tokens || 0,
+        completionTokens: usage.completion_tokens || 0,
+        totalTokens: usage.total_tokens || 0,
+        modelName: aiConfig.model_name || config?.model || 'deepseek-chat',
+        executionTimeMs,
+        libraryId: task.library_id,
+        moduleId: task.module_id
+      });
+    } else if (content.length > 0) {
       logger.warn('AI返回内容解析失败，未生成有效用例', {
         chunkId: chunk.id,
         contentLength: content.length,
@@ -311,12 +352,17 @@ class CaseGeneratorService {
 5. 仅根据提供的材料内容生成，不要臆测`;
   }
 
-  buildPrompt(chunk, task, config, chunkContext = {}) {
+  buildPrompt(chunk, task, config, chunkContext = {}, globalAwareness = {}) {
+    const { globalContext = '', allValidLevel1 = [] } = globalAwareness;
     const caseLimit = config.caseCountLimit || 20;
 
     let contextSection = '';
+    if (chunkContext.parentContext) {
+      contextSection += '\n## 所属大段落上下文（当前片段是此大段落的子片段，仅供理解整体语义，不要为大段落上下文生成用例）\n';
+      contextSection += `${chunkContext.parentContext}\n\n`;
+    }
     if (chunkContext.prevContext || chunkContext.nextContext) {
-      contextSection = '\n## 相邻片段上下文（仅供理解当前片段的语义衔接，不要为上下文内容生成用例）\n';
+      contextSection += '\n## 相邻片段上下文（仅供理解当前片段的语义衔接，不要为上下文内容生成用例）\n';
       if (chunkContext.prevContext) {
         contextSection += `### 前一片段尾部:\n...${chunkContext.prevContext}\n\n`;
       }
@@ -325,22 +371,35 @@ class CaseGeneratorService {
       }
     }
 
+    let globalContextSection = '';
+    if (globalContext) {
+      globalContextSection = `\n## 全局系统背景\n${globalContext}\n`;
+    }
+
+    let level1Section = '';
+    if (allValidLevel1.length > 0) {
+      level1Section = `\n## 可选的一级测试点（level1_point 必须从以下选项中选择，不要自创）\n`;
+      level1Section += allValidLevel1.map((p, i) => `${i + 1}. ${p.name} (${p.test_type || '功能测试'})`).join('\n');
+      level1Section += '\n\n注意：如果当前片段的测试内容无法归入以上任何测试点，选择最接近的一个。\n';
+    }
+
     return `## 模块背景
 模块名称: ${task.module_name}
 模块描述: ${task.module_desc || task.module_name || '无'}
-${contextSection}## 当前材料片段
+${globalContextSection}${level1Section}${contextSection}## 当前材料片段
 文件: ${chunk.file_name}
 片段序号: ${chunk.chunk_index + 1}
-内容:
+${chunk.chunk_type === 'child' ? '片段类型: 子片段（大段落的精细切分）\n' : ''}内容:
 ${chunk.chunk_content}
 
 ## 生成要求
-1. 主要根据当前片段内容生成测试用例，结合上下文理解语义
-2. 如果片段内容不足以生成完整用例，可以跳过
-3. 用例名称要能体现测试点
-4. 测试步骤要具体可执行
-5. 预期结果要明确可验证
-6. 最多生成 ${caseLimit} 个用例
+1. 结合全局系统背景的约束生成用例
+2. 主要根据当前片段内容生成测试用例，结合上下文理解语义
+3. 如果片段内容不足以生成完整用例，可以跳过
+4. 用例名称要能体现测试点
+5. 测试步骤要具体可执行
+6. 预期结果要明确可验证
+7. 最多生成 ${caseLimit} 个用例
 
 ## 输出格式
 请严格按照以下JSON格式输出:
@@ -351,6 +410,7 @@ ${chunk.chunk_content}
       "name": "用例名称",
       "priority": "高/中/低",
       "type": "功能测试/性能测试/压力测试/规格测试/异常测试",
+      "level1_point": "一级测试点名称",
       "precondition": "前置条件",
       "purpose": "测试目的",
       "steps": "1. 步骤1\\n2. 步骤2\\n3. 步骤3",
@@ -363,7 +423,8 @@ ${chunk.chunk_content}
 \`\`\``;
   }
 
-  applyTemplate(template, chunk, task, config, chunkContext = {}) {
+  applyTemplate(template, chunk, task, config, chunkContext = {}, globalAwareness = {}) {
+    const { globalContext = '', allValidLevel1 = [] } = globalAwareness;
     const moduleDesc = task.module_desc || task.module_name || '无';
     const focusAreas = (config.focusAreas || []).join(', ');
     const caseLimit = config.caseCountLimit || 20;
@@ -388,7 +449,17 @@ ${chunk.chunk_content}
       if (prevContextStr) adjacentContext += prevContextStr + '\n';
       if (nextContextStr) adjacentContext += nextContextStr + '\n';
     }
+
+    let parentContextStr = '';
+    if (chunkContext.parentContext) {
+      parentContextStr = `所属大段落上下文（当前片段是此大段落的子片段，仅供理解整体语义）:\n${chunkContext.parentContext}`;
+    }
     
+    let level1EnumStr = '';
+    if (allValidLevel1.length > 0) {
+      level1EnumStr = allValidLevel1.map((p, i) => `${i + 1}. ${p.name}`).join('\n');
+    }
+
     const result = template
       .replace(/\{\{module_name\}\}/g, task.module_name)
       .replace(/\{\{module_description\}\}/g, moduleDesc)
@@ -400,6 +471,9 @@ ${chunk.chunk_content}
       .replace(/\{\{prev_context\}\}/g, prevContextStr)
       .replace(/\{\{next_context\}\}/g, nextContextStr)
       .replace(/\{\{adjacent_context\}\}/g, adjacentContext)
+      .replace(/\{\{parent_context\}\}/g, parentContextStr)
+      .replace(/\{\{global_context\}\}/g, globalContext)
+      .replace(/\{\{level1_enum\}\}/g, level1EnumStr)
       .replace(/\{\{context\}\}/g, context);
     
     logger.debug('模板替换完成', {
@@ -410,6 +484,36 @@ ${chunk.chunk_content}
     });
     
     return result;
+  }
+
+  _buildChunkContext(chunk, prevChunk, nextChunk, contextChars) {
+    const context = {
+      prevContext: null,
+      nextContext: null,
+      parentContext: null
+    };
+
+    if (chunk.chunk_type === 'child' && chunk.parent_chunk_content) {
+      context.parentContext = chunk.parent_chunk_content;
+    }
+
+    if (prevChunk) {
+      if (prevChunk.chunk_type === 'child' && prevChunk.parent_chunk_id === chunk.parent_chunk_id) {
+        context.prevContext = prevChunk.chunk_content.slice(-contextChars);
+      } else if (prevChunk.chunk_type !== 'child') {
+        context.prevContext = prevChunk.chunk_content.slice(-contextChars);
+      }
+    }
+
+    if (nextChunk) {
+      if (nextChunk.chunk_type === 'child' && nextChunk.parent_chunk_id === chunk.parent_chunk_id) {
+        context.nextContext = nextChunk.chunk_content.slice(0, contextChars);
+      } else if (nextChunk.chunk_type !== 'child') {
+        context.nextContext = nextChunk.chunk_content.slice(0, contextChars);
+      }
+    }
+
+    return context;
   }
 
   async getAIConfig(userId) {
@@ -439,7 +543,6 @@ ${chunk.chunk_content}
     const effectiveTimeout = timeoutConfig.generalAITask || genParams.request_timeout || 120000;
 
     const startTime = Date.now();
-    this._lastAIStartTime = startTime;
     try {
       const requestBody = {
         model: model,
@@ -448,8 +551,7 @@ ${chunk.chunk_content}
           { role: 'user', content: userPrompt }
         ],
         temperature: effectiveTemp,
-        max_tokens: effectiveMaxTokens,
-        timeout: effectiveTimeout / 1000
+        max_tokens: effectiveMaxTokens
       };
 
       if (genParams.top_p !== undefined && genParams.top_p !== 1.0) {
@@ -482,36 +584,6 @@ ${chunk.chunk_content}
         hasContent: !!aiResponse,
         executionTimeMs,
         totalTokens
-      });
-
-      aiAuditLogger.logSuccess({
-        userId,
-        username,
-        skillName: 'AI生成测试用例',
-        operationType: 'GENERATE',
-        executionTimeMs,
-        promptTokens,
-        completionTokens,
-        totalTokens,
-        modelName: model,
-        resultCount: 1
-      });
-
-      aiRequestLogger.logSuccess({
-        userId,
-        triggerType: 'generation',
-        triggerSource: 'case_generator',
-        triggerSourceName: 'AI生成测试用例',
-        systemPrompt,
-        userPrompt,
-        aiResponse,
-        promptTokens,
-        completionTokens,
-        totalTokens,
-        modelName: model,
-        executionTimeMs,
-        libraryId,
-        moduleId
       });
 
       return response.data;
@@ -573,6 +645,26 @@ ${chunk.chunk_content}
     }
   }
 
+  extractCasesFromParsed(parsed) {
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    if (parsed && typeof parsed === 'object') {
+      const caseKeys = ['cases', 'test_cases', 'testCases', 'items'];
+      for (const key of caseKeys) {
+        if (Array.isArray(parsed[key])) {
+          logger.debug(`从JSON中提取用例，使用key: ${key}`, { casesCount: parsed[key].length });
+          return parsed[key];
+        }
+      }
+      if (Array.isArray(parsed.data)) {
+        logger.debug('从JSON中提取用例，使用key: data', { casesCount: parsed.data.length });
+        return parsed.data;
+      }
+    }
+    return [];
+  }
+
   parseAIResponse(content) {
     logger.debug('开始解析AI响应', { contentLength: content.length });
     
@@ -581,7 +673,7 @@ ${chunk.chunk_content}
       logger.debug('找到JSON代码块', { matchedLength: jsonMatch[1].length });
       try {
         const parsed = JSON.parse(jsonMatch[1]);
-        const cases = parsed.cases || [];
+        const cases = this.extractCasesFromParsed(parsed);
         logger.info('JSON代码块解析成功', { casesCount: cases.length });
         return cases;
       } catch (error) {
@@ -598,7 +690,7 @@ ${chunk.chunk_content}
       logger.debug('尝试解析截断的JSON代码块', { length: jsonStr.length });
       try {
         const parsed = JSON.parse(jsonStr);
-        const cases = parsed.cases || [];
+        const cases = this.extractCasesFromParsed(parsed);
         logger.info('截断JSON代码块解析成功', { casesCount: cases.length });
         return cases;
       } catch (error) {
@@ -607,7 +699,7 @@ ${chunk.chunk_content}
         if (repaired) {
           try {
             const parsed = JSON.parse(repaired);
-            const cases = parsed.cases || [];
+            const cases = this.extractCasesFromParsed(parsed);
             logger.info('修复后JSON解析成功', { casesCount: cases.length });
             return cases;
           } catch (repairError) {
@@ -620,7 +712,7 @@ ${chunk.chunk_content}
     logger.debug('未找到JSON代码块，尝试直接解析');
     try {
       const parsed = JSON.parse(content);
-      const cases = parsed.cases || [];
+      const cases = this.extractCasesFromParsed(parsed);
       logger.info('直接解析JSON成功', { casesCount: cases.length });
       return cases;
     } catch (error) {
@@ -674,7 +766,7 @@ ${chunk.chunk_content}
     }
   }
 
-  async saveTempCases(taskId, moduleId, chunkId, cases, libraryId) {
+  async saveTempCases(taskId, moduleId, chunkId, cases, libraryId, allValidLevel1 = []) {
     if (cases.length === 0) return;
 
     const connection = await pool.getConnection();
@@ -685,23 +777,31 @@ ${chunk.chunk_content}
       const batchSize = 50;
       for (let i = 0; i < cases.length; i += batchSize) {
           const batch = cases.slice(i, i + batchSize);
-          const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
-          const values = batch.flatMap(c => [
-              `TEMP-${uuidv4().slice(0, 16).toUpperCase()}`,
-              taskId, moduleId, chunkId,
-              c.name || '未命名用例',
-              c.priority || '中',
-              c.type || '功能测试',
-              c.precondition || '',
-              c.purpose || '',
-              c.steps || '',
-              c.expected || '',
-              c.key_config || null,
-              c.remark || null
-          ]);
+          const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+          const values = batch.flatMap(c => {
+              const level1Result = this._resolveLevel1Point(c, allValidLevel1);
+              return [
+                  `TEMP-${uuidv4().slice(0, 16).toUpperCase()}`,
+                  taskId, moduleId, chunkId,
+                  level1Result.level1Id,
+                  level1Result.level1Name,
+                  level1Result.isNewLevel1,
+                  level1Result.level1Source,
+                  c.name || '未命名用例',
+                  c.priority || '中',
+                  c.type || '功能测试',
+                  c.precondition || '',
+                  c.purpose || '',
+                  c.steps || '',
+                  c.expected || '',
+                  c.key_config || null,
+                  c.remark || null
+              ];
+          });
           await connection.execute(`
               INSERT INTO temp_test_cases 
-                  (temp_case_id, task_id, module_id, chunk_id, name, priority, type,
+                  (temp_case_id, task_id, module_id, chunk_id, level1_id, level1_name, 
+                   is_new_level1, level1_source, name, priority, type,
                    precondition, purpose, steps, expected, key_config, remark)
               VALUES ${placeholders}
           `, values);
@@ -714,6 +814,50 @@ ${chunk.chunk_content}
     } finally {
       connection.release();
     }
+  }
+
+  _resolveLevel1Point(caseItem, allValidLevel1) {
+    if (!allValidLevel1 || allValidLevel1.length === 0) {
+      return { level1Id: null, level1Name: null, isNewLevel1: 0, level1Source: 'fallback' };
+    }
+
+    const pointName = caseItem.level1_point || caseItem.level1_name || '';
+
+    if (pointName) {
+      const exactMatch = allValidLevel1.find(p => p.name === pointName);
+      if (exactMatch) {
+        return {
+          level1Id: exactMatch.isExisting ? exactMatch.id : null,
+          level1Name: exactMatch.name,
+          isNewLevel1: exactMatch.isExisting ? 0 : 1,
+          level1Source: exactMatch.isExisting ? 'existing' : 'skeleton'
+        };
+      }
+
+      const fuzzyMatch = level1PointService.findFuzzyMatch(pointName, allValidLevel1);
+      if (fuzzyMatch) {
+        return {
+          level1Id: fuzzyMatch.isExisting ? fuzzyMatch.id : null,
+          level1Name: fuzzyMatch.name,
+          isNewLevel1: fuzzyMatch.isExisting ? 0 : 1,
+          level1Source: fuzzyMatch.isExisting ? 'existing' : 'skeleton'
+        };
+      }
+    }
+
+    const caseType = caseItem.type || '功能测试';
+    const typeMatches = allValidLevel1.filter(p => p.test_type === caseType);
+    if (typeMatches.length > 0) {
+      const typeMatch = typeMatches[0];
+      return {
+        level1Id: typeMatch.isExisting ? typeMatch.id : null,
+        level1Name: typeMatch.name,
+        isNewLevel1: typeMatch.isExisting ? 0 : 1,
+        level1Source: typeMatch.isExisting ? 'existing' : 'skeleton'
+      };
+    }
+
+    return { level1Id: null, level1Name: null, isNewLevel1: 0, level1Source: 'fallback' };
   }
 
   async updateProgress(taskId, processed, total, totalCases) {
@@ -746,7 +890,8 @@ ${chunk.chunk_content}
       max_tokens: options.max_tokens,
       focusAreas: options.focusAreas || [],
       level1Mode: options.level1Mode || 'auto',
-      selectedLevel1Ids: options.selectedLevel1Ids || []
+      selectedLevel1Ids: options.selectedLevel1Ids || [],
+      chunkingStrategy: options.chunkingStrategy || 'structure_aware'
     };
 
     const [result] = await pool.execute(`

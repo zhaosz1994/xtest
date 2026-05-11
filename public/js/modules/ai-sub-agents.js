@@ -20,7 +20,7 @@ function saEscapeHtml(text) {
     if (text == null) return '';
     const div = document.createElement('div');
     div.textContent = String(text);
-    return div.innerHTML;
+    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function saFormatDateTime(dateStr) {
@@ -163,6 +163,7 @@ function saCloseAllModals() {
     const overlay = document.getElementById('saOverlay');
     if (overlay) overlay.classList.remove('show');
     document.querySelectorAll('#sub-agents-section .sa-modal').forEach(el => el.classList.remove('open'));
+    saCloseKbDrawer();
 }
 
 // =====================================================================
@@ -256,6 +257,12 @@ function initSubAgentsConfig() {
         btnAddRefDoc.addEventListener('click', saAddRefDocRow);
     }
 
+    // 绑定参考文档 - 从知识库选择按钮
+    const btnSelectFromKB = document.getElementById('saBtnSelectFromKB');
+    if (btnSelectFromKB) {
+        btnSelectFromKB.addEventListener('click', saOpenKbDrawer);
+    }
+
     // 绑定 Tools.md 穿梭框操作
     const btnToolsSelectAll = document.getElementById('saBtnToolsSelectAll');
     if (btnToolsSelectAll) {
@@ -292,6 +299,11 @@ function initSubAgentsConfig() {
         const section = document.getElementById('sub-agents-section');
         if (!section || section.style.display === 'none') return;
         if (e.key === 'Escape') {
+            const kbOverlay = document.getElementById('saKbOverlay');
+            if (kbOverlay && kbOverlay.classList.contains('show')) {
+                saCloseKbDrawer();
+                return;
+            }
             if (document.getElementById('wfViewerModal')) {
                 closeWorkflowViewer();
             } else {
@@ -528,9 +540,10 @@ function saBuildEditModalHtml() {
             <div id="saTabRefdocs" class="sa-tab-content" style="display:none;">
                 <div class="sa-refdocs-header">
                     <span>\u53C2\u8003\u6587\u6863\u5217\u8868</span>
-                    <div>
+                    <div class="sa-refdocs-actions">
                         <button class="sa-btn sa-btn-sm sa-btn-ghost" id="saBtnInitConfigFiles">\u521D\u59CB\u5316\u9ED8\u8BA4\u914D\u7F6E</button>
-                        <button class="sa-btn sa-btn-sm sa-btn-primary" id="saBtnAddRefDoc">+ \u6DFB\u52A0\u6587\u6863</button>
+                        <button class="sa-btn sa-btn-sm sa-btn-ghost" id="saBtnAddRefDoc">+ \u624B\u52A8\u6DFB\u52A0</button>
+                        <button class="sa-btn sa-btn-sm sa-btn-primary" id="saBtnSelectFromKB">\uD83D\uDCDA \u4ECE\u77E5\u8BC6\u5E93\u9009\u62E9</button>
                     </div>
                 </div>
                 <div id="saRefDocsList" class="sa-refdocs-list"></div>
@@ -671,13 +684,64 @@ function saInjectStyles() {
         /* Ref docs */
         .sa-refdocs-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-shrink: 0; }
         .sa-refdocs-header span { font-size: 14px; font-weight: 500; color: #334155; }
+        .sa-refdocs-actions { display: flex; gap: 8px; align-items: center; }
         .sa-refdocs-list { border: 1px solid #e2e8f0; border-radius: 8px; overflow: auto; flex: 1; min-height: 280px; }
         .sa-refdoc-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid #f1f5f9; }
         .sa-refdoc-item:last-child { border-bottom: none; }
-        .sa-refdoc-item .sa-refdoc-name { flex: 1; font-size: 14px; color: #334155; }
+        .sa-refdoc-item .sa-refdoc-name { flex: 1; font-size: 14px; color: #334155; display: flex; align-items: center; gap: 8px; }
         .sa-refdoc-item .sa-refdoc-path { font-size: 12px; color: #94a3b8; }
         .sa-refdoc-item-actions { display: flex; gap: 4px; }
         .sa-refdoc-empty { padding: 40px; text-align: center; color: #94a3b8; font-size: 14px; }
+        .sa-refdoc-source-badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }
+        .sa-refdoc-source-badge.manual { background: #f1f5f9; color: #64748b; }
+        .sa-refdoc-source-badge.kb_doc { background: #f3e8ff; color: #7c3aed; }
+        .sa-refdoc-source-info { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+
+        /* KB Drawer */
+        .sa-kb-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.35); z-index: 11003; display: none; }
+        .sa-kb-overlay.show { display: block; }
+        .sa-kb-drawer { position: fixed; top: 0; right: -520px; width: 480px; height: 100vh; background: #fff; box-shadow: -4px 0 24px rgba(0,0,0,0.12); z-index: 11004; display: flex; flex-direction: column; transition: right 0.3s ease; }
+        .sa-kb-drawer.open { right: 0; }
+        .sa-kb-drawer-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid #e2e8f0; flex-shrink: 0; }
+        .sa-kb-drawer-header h3 { margin: 0; font-size: 16px; color: #1e293b; }
+        .sa-kb-drawer-close { background: none; border: none; font-size: 20px; cursor: pointer; color: #94a3b8; padding: 4px 8px; border-radius: 6px; }
+        .sa-kb-drawer-close:hover { background: #f1f5f9; color: #475569; }
+        .sa-kb-drawer-search { padding: 12px 20px; border-bottom: 1px solid #e2e8f0; flex-shrink: 0; }
+        .sa-kb-drawer-search input { width: 100%; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; box-sizing: border-box; }
+        .sa-kb-drawer-search input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.1); }
+        .sa-kb-drawer-selectall { padding: 8px 20px; border-bottom: 1px solid #f1f5f9; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; font-size: 13px; color: #64748b; }
+        .sa-kb-drawer-body { flex: 1; overflow-y: auto; padding: 0; min-height: 0; }
+        .sa-kb-drawer-footer { padding: 12px 20px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+        .sa-kb-drawer-footer .sa-kb-selected-count { font-size: 13px; color: #64748b; }
+        .sa-kb-group { border-bottom: 1px solid #f1f5f9; }
+        .sa-kb-group-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; cursor: pointer; font-size: 14px; color: #334155; font-weight: 500; background: #f8fafc; }
+        .sa-kb-group-header:hover { background: #f1f5f9; }
+        .sa-kb-group-header .sa-kb-group-icon { margin-right: 8px; }
+        .sa-kb-group-header .sa-kb-group-count { font-size: 12px; color: #94a3b8; font-weight: 400; margin-left: 8px; }
+        .sa-kb-group-header .sa-kb-expand-icon { font-size: 12px; color: #94a3b8; transition: transform 0.2s; }
+        .sa-kb-group-header.collapsed .sa-kb-expand-icon { transform: rotate(-90deg); }
+        .sa-kb-group-list { overflow: hidden; }
+        .sa-kb-group-list.collapsed { display: none; }
+        .sa-kb-file-row { display: flex; align-items: center; gap: 10px; padding: 8px 20px 8px 32px; font-size: 13px; color: #334155; border-bottom: 1px solid #f8fafc; }
+        .sa-kb-file-row:hover { background: #f8fafc; }
+        .sa-kb-file-row.disabled { opacity: 0.5; pointer-events: none; }
+        .sa-kb-file-row input[type="checkbox"] { accent-color: #6366f1; flex-shrink: 0; }
+        .sa-kb-file-row .sa-kb-file-icon { flex-shrink: 0; }
+        .sa-kb-file-row .sa-kb-file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .sa-kb-file-row .sa-kb-file-ext { font-size: 11px; color: #94a3b8; text-transform: uppercase; flex-shrink: 0; }
+        .sa-kb-file-row .sa-kb-file-added { font-size: 11px; color: #f59e0b; flex-shrink: 0; }
+        .sa-kb-module-header { display: flex; align-items: center; gap: 8px; padding: 8px 20px 8px 28px; cursor: pointer; font-size: 13px; color: #475569; background: #fafbfc; border-bottom: 1px solid #f8fafc; }
+        .sa-kb-module-header:hover { background: #f1f5f9; }
+        .sa-kb-module-header .sa-kb-expand-icon { font-size: 11px; color: #94a3b8; transition: transform 0.2s; }
+        .sa-kb-module-header.collapsed .sa-kb-expand-icon { transform: rotate(-90deg); }
+        .sa-kb-module-list { overflow: hidden; }
+        .sa-kb-module-list.collapsed { display: none; }
+        .sa-kb-empty { padding: 40px; text-align: center; color: #94a3b8; font-size: 14px; }
+        .sa-kb-loading { display: flex; align-items: center; justify-content: center; padding: 40px; color: #94a3b8; }
+        .sa-kb-spinner { width: 24px; height: 24px; border: 3px solid #e2e8f0; border-top-color: #6366f1; border-radius: 50%; animation: sa-kb-spin 0.8s linear infinite; margin-right: 8px; }
+        @keyframes sa-kb-spin { to { transform: rotate(360deg); } }
+        .sa-kb-resize-handle { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; cursor: col-resize; z-index: 11005; }
+        .sa-kb-resize-handle:hover, .sa-kb-resize-handle.active { background: #6366f1; }
 
         /* Footer */
         .sa-modal-footer { display: flex; justify-content: flex-end; gap: 12px; padding: 16px 24px; border-top: 1px solid #e2e8f0; }
@@ -1149,6 +1213,8 @@ function saHandleListChange(e) {
 // =====================================================================
 
 async function openSubAgentModal(agentCode) {
+    saCloseKbDrawer();
+
     // Reset state
     saCurrentEditId = null;
     saCurrentEditAgentCode = null;
@@ -1505,14 +1571,20 @@ async function loadConfigFiles(agentId) {
     if (!agentId) return;
 
     try {
-        const result = await apiRequest(`/ai-sub-agents/config-files/${agentId}`);
+        const result = await apiRequest(`/ai-sub-agents/config-files/${agentId}`, { useCache: false });
         if (result.success) {
             const files = result.data || [];
             saConfigFilesCache = {};
 
-            // 按 file_type 分类
             files.forEach(f => {
-                saConfigFilesCache[f.file_type] = f;
+                if (f.file_type === 'ref_doc' || f.file_type === 'kb_doc' || f.file_type === 'custom') {
+                    if (!saConfigFilesCache['_refDocs']) {
+                        saConfigFilesCache['_refDocs'] = [];
+                    }
+                    saConfigFilesCache['_refDocs'].push(f);
+                } else {
+                    saConfigFilesCache[f.file_type] = f;
+                }
             });
 
             // 填充 Soul.md
@@ -1534,7 +1606,7 @@ async function loadConfigFiles(agentId) {
                 ruleTextarea.value = ruleFiles.map(f => f.content || '').join('\n\n---\n\n');
             }
 
-            renderRefDocsList(files.filter(f => f.file_type === 'ref_doc' || f.file_type === 'custom'));
+            renderRefDocsList(files.filter(f => f.file_type === 'ref_doc' || f.file_type === 'custom' || f.file_type === 'kb_doc'));
         }
     } catch (e) {
         console.error('[Sub-Agents] loadConfigFiles error:', e);
@@ -1548,24 +1620,34 @@ function renderRefDocsList(refDocs) {
     if (!container) return;
 
     if (!refDocs || refDocs.length === 0) {
-        container.innerHTML = '<div class="sa-refdoc-empty">\u6682\u65E0\u53C2\u8003\u6587\u6863\uFF0C\u70B9\u51FB\u201C\u6DFB\u52A0\u6587\u6863\u201D\u6216\u201C\u521D\u59CB\u5316\u9ED8\u8BA4\u914D\u7F6E\u201D</div>';
+        container.innerHTML = '<div class="sa-refdoc-empty">\u6682\u65E0\u53C2\u8003\u6587\u6863\uFF0C\u70B9\u51FB\u201C\u624B\u52A8\u6DFB\u52A0\u201D\u6216\u201C\u4ECE\u77E5\u8BC6\u5E93\u9009\u62E9\u201D</div>';
         return;
     }
 
-    container.innerHTML = refDocs.map(doc => `
-        <div class="sa-refdoc-item" data-file-id="${doc.id}">
+    container.innerHTML = refDocs.map(doc => {
+        const sourceType = doc.source_type || (doc.file_type === 'kb_doc' ? 'kb_doc' : 'manual');
+        const badgeClass = sourceType === 'kb_doc' ? 'kb_doc' : 'manual';
+        const badgeText = sourceType === 'kb_doc' ? '\u77E5\u8BC6\u5E93' : '\u624B\u52A8';
+        const sourceInfo = doc.source_path ? `<div class="sa-refdoc-source-info">\u6765\u6E90: ${saEscapeHtml(doc.source_path)}</div>` : '';
+
+        return `
+        <div class="sa-refdoc-item" data-file-id="${doc.id}" data-source-type="${sourceType}">
             <div style="flex:1;">
-                <div class="sa-refdoc-name">${saEscapeHtml(doc.file_name || doc.name || '\u672A\u547D\u540D')}</div>
+                <div class="sa-refdoc-name">
+                    ${saEscapeHtml(doc.file_name || doc.name || '\u672A\u547D\u540D')}
+                    <span class="sa-refdoc-source-badge ${badgeClass}">${badgeText}</span>
+                </div>
                 <div class="sa-refdoc-path">${saEscapeHtml(doc.file_path || '')} ${doc.updated_at ? '| ' + saFormatDateTime(doc.updated_at) : ''}</div>
+                ${sourceInfo}
             </div>
             <div class="sa-refdoc-item-actions">
                 <button class="sa-btn sa-btn-sm sa-btn-ghost" data-action="edit-refdoc" data-file-id="${doc.id}" data-file-name="${saEscapeHtml(doc.file_name || doc.name || '')}">\u270F\uFE0F</button>
                 <button class="sa-btn sa-btn-sm sa-btn-ghost" data-action="delete-refdoc" data-file-id="${doc.id}" data-file-name="${saEscapeHtml(doc.file_name || doc.name || '')}">\u{1F5D1}\uFE0F</button>
             </div>
         </div>
-    `).join('');
+        `;
+    }).join('');
 
-    // 绑定参考文档操作事件
     container.querySelectorAll('[data-action="edit-refdoc"]').forEach(btn => {
         btn.addEventListener('click', function () {
             const fileId = this.dataset.fileId;
@@ -1605,7 +1687,7 @@ function saAddRefDocRow() {
         const content = contentInput.value.trim();
         if (!name) {
             if (typeof showErrorMessage === 'function') showErrorMessage('\u8BF7\u8F93\u5165\u6587\u6863\u540D\u79F0');
-            return;
+            return false;
         }
         try {
             const result = await apiRequest(`/ai-sub-agents/config-files/${saCurrentEditId}`, {
@@ -1629,8 +1711,14 @@ function saAddRefDocRow() {
 }
 
 async function saEditRefDoc(fileId, fileName) {
-    const doc = Object.values(saConfigFilesCache).find(f => f.id == fileId && f.file_type === 'ref_doc');
-    const currentContent = doc ? (doc.content || '') : '';
+    const refDocs = saConfigFilesCache['_refDocs'] || [];
+    const doc = refDocs.find(f => f.id === Number(fileId));
+    if (!doc) {
+        if (typeof showErrorMessage === 'function') showErrorMessage('\u672A\u627E\u5230\u6587\u6863\u4FE1\u606F');
+        return;
+    }
+    const currentContent = doc.content || '';
+    const isKbDoc = doc.file_type === 'kb_doc';
 
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
@@ -1640,7 +1728,8 @@ async function saEditRefDoc(fileId, fileName) {
     contentInput.rows = 12;
     contentInput.value = currentContent;
 
-    const dialog = saCreateInputDialog('\u7F16\u8F91\u53C2\u8003\u6587\u6863', [
+    const dialogTitle = isKbDoc ? '\u7F16\u8F91\u77E5\u8BC6\u5E93\u6587\u6863' : '\u7F16\u8F91\u53C2\u8003\u6587\u6863';
+    const dialog = saCreateInputDialog(dialogTitle, [
         { label: '\u6587\u6863\u540D\u79F0', input: nameInput },
         { label: '\u5185\u5BB9', input: contentInput }
     ]);
@@ -1650,10 +1739,10 @@ async function saEditRefDoc(fileId, fileName) {
         const content = contentInput.value.trim();
         if (!name) {
             if (typeof showErrorMessage === 'function') showErrorMessage('\u8BF7\u8F93\u5165\u6587\u6863\u540D\u79F0');
-            return;
+            return false;
         }
         try {
-            const result = await apiRequest(`/ai-sub-agents/config-files/${saCurrentEditId}/ref_doc`, {
+            const result = await apiRequest(`/ai-sub-agents/config-files/${saCurrentEditId}/${doc.file_type || 'ref_doc'}`, {
                 method: 'PUT',
                 body: JSON.stringify({
                     file_id: fileId,
@@ -1686,6 +1775,468 @@ async function saDeleteRefDoc(fileId) {
         }
     } catch (e) {
         if (typeof showErrorMessage === 'function') showErrorMessage('\u5220\u9664\u5931\u8D25: ' + e.message);
+    }
+}
+
+// =====================================================================
+// Knowledge Base Drawer - Select documents from knowledge base
+// =====================================================================
+
+let saKbSelectedFiles = new Set();
+let saKbTreeData = null;
+let saKbExistingSourceIds = new Set();
+
+function saGetFileIcon(ext) {
+    if (!ext) return '\uD83D\uDCC4';
+    const e = ext.toLowerCase();
+    if (['md', 'markdown'].includes(e)) return '\uD83D\uDCDD';
+    if (['txt'].includes(e)) return '\uD83D\uDCC4';
+    if (['doc', 'docx'].includes(e)) return '\uD83D\uDCD1';
+    if (['xls', 'xlsx'].includes(e)) return '\uD83D\uDCCA';
+    if (['pdf'].includes(e)) return '\uD83D\uDCD5';
+    if (['ppt', 'pptx'].includes(e)) return '\uD83D\uDCD8';
+    if (['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'].includes(e)) return '\uD83D\uDDBC\uFE0F';
+    if (['zip', 'rar', '7z'].includes(e)) return '\uD83D\uDCE6';
+    return '\uD83D\uDCC4';
+}
+
+function saCountFilesInTree(items, depth) {
+    if (!items || (depth || 0) > 20) return 0;
+    let count = 0;
+    items.forEach(item => {
+        if (item.type === 'folder' || item.type === 'module') {
+            count += saCountFilesInTree(item.children, (depth || 0) + 1);
+        } else if (item.type !== 'library') {
+            count++;
+        }
+    });
+    return count;
+}
+
+function saEnsureKbDrawer() {
+    let overlay = document.getElementById('saKbOverlay');
+    let drawer = document.getElementById('saKbDrawer');
+    if (overlay && drawer) return;
+
+    overlay = document.createElement('div');
+    overlay.id = 'saKbOverlay';
+    overlay.className = 'sa-kb-overlay';
+
+    drawer = document.createElement('div');
+    drawer.id = 'saKbDrawer';
+    drawer.className = 'sa-kb-drawer';
+    drawer.innerHTML = `
+        <div class="sa-kb-resize-handle" id="saKbResizeHandle"></div>
+        <div class="sa-kb-drawer-header">
+            <h3>\uD83D\uDCDA \u9009\u62E9\u77E5\u8BC6\u5E93\u6587\u6863</h3>
+            <button class="sa-kb-drawer-close" id="saKbCloseBtn">\u2715</button>
+        </div>
+        <div class="sa-kb-drawer-search">
+            <input type="text" id="saKbSearchInput" placeholder="\u641C\u7D22\u6587\u4EF6\u540D\u79F0...">
+        </div>
+        <div class="sa-kb-drawer-selectall">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="checkbox" id="saKbSelectAllCb"> \u5168\u9009
+            </label>
+            <span id="saKbSelectionCount">\u5DF2\u9009 0 \u4E2A\u6587\u4EF6</span>
+        </div>
+        <div class="sa-kb-drawer-body" id="saKbBody">
+            <div class="sa-kb-loading"><div class="sa-kb-spinner"></div>\u52A0\u8F7D\u4E2D...</div>
+        </div>
+        <div class="sa-kb-drawer-footer">
+            <span class="sa-kb-selected-count" id="saKbFooterCount">\u5DF2\u9009 0 \u4E2A\u6587\u4EF6</span>
+            <div style="display:flex;gap:8px;">
+                <button class="sa-btn sa-btn-ghost" id="saKbCancelBtn">\u53D6\u6D88</button>
+                <button class="sa-btn sa-btn-primary" id="saKbConfirmBtn">\u786E\u8BA4\u9009\u62E9</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+    document.body.appendChild(drawer);
+
+    overlay.addEventListener('click', saCloseKbDrawer);
+    document.getElementById('saKbCloseBtn').addEventListener('click', saCloseKbDrawer);
+    document.getElementById('saKbCancelBtn').addEventListener('click', saCloseKbDrawer);
+    document.getElementById('saKbConfirmBtn').addEventListener('click', saConfirmKbSelection);
+    document.getElementById('saKbSearchInput').addEventListener('input', saFilterKbTree);
+    document.getElementById('saKbSelectAllCb').addEventListener('change', saToggleKbSelectAll);
+
+    saInitKbDrawerResize();
+}
+
+let saKbResizeMouseMoveHandler = null;
+let saKbResizeMouseUpHandler = null;
+
+function saInitKbDrawerResize() {
+    const handle = document.getElementById('saKbResizeHandle');
+    const drawer = document.getElementById('saKbDrawer');
+    if (!handle || !drawer) return;
+    if (handle.dataset.resizeInit === '1') return;
+    handle.dataset.resizeInit = '1';
+
+    let isResizing = false;
+    handle.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        handle.classList.add('active');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+    });
+
+    saKbResizeMouseMoveHandler = (e) => {
+        if (!isResizing) return;
+        const newWidth = window.innerWidth - e.clientX;
+        const minWidth = 400;
+        const maxWidth = Math.round(window.innerWidth * 0.9);
+        const clampedWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
+        drawer.style.width = clampedWidth + 'px';
+    };
+    saKbResizeMouseUpHandler = () => {
+        if (!isResizing) return;
+        isResizing = false;
+        handle.classList.remove('active');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+    };
+
+    document.addEventListener('mousemove', saKbResizeMouseMoveHandler);
+    document.addEventListener('mouseup', saKbResizeMouseUpHandler);
+}
+
+async function saOpenKbDrawer() {
+    if (!saCurrentEditId) return;
+
+    saKbSelectedFiles = new Set();
+
+    const refDocs = saConfigFilesCache['_refDocs'] || [];
+    saKbExistingSourceIds = new Set();
+    refDocs.forEach(doc => {
+        if (doc.source_type === 'kb_doc' && doc.source_file_id) {
+            saKbExistingSourceIds.add(Number(doc.source_file_id));
+        }
+    });
+
+    saEnsureKbDrawer();
+
+    const overlay = document.getElementById('saKbOverlay');
+    const drawer = document.getElementById('saKbDrawer');
+    overlay.classList.add('show');
+    drawer.classList.add('open');
+
+    document.getElementById('saKbSearchInput').value = '';
+    document.getElementById('saKbSelectAllCb').checked = false;
+    saUpdateKbSelectionCount();
+
+    await saLoadKbTree();
+}
+
+function saCloseKbDrawer() {
+    const overlay = document.getElementById('saKbOverlay');
+    const drawer = document.getElementById('saKbDrawer');
+    if (overlay) overlay.classList.remove('show');
+    if (drawer) drawer.classList.remove('open');
+    saKbSelectedFiles = new Set();
+    saKbTreeData = null;
+    if (saKbResizeMouseMoveHandler) {
+        document.removeEventListener('mousemove', saKbResizeMouseMoveHandler);
+        saKbResizeMouseMoveHandler = null;
+    }
+    if (saKbResizeMouseUpHandler) {
+        document.removeEventListener('mouseup', saKbResizeMouseUpHandler);
+        saKbResizeMouseUpHandler = null;
+    }
+    const handle = document.getElementById('saKbResizeHandle');
+    if (handle) handle.dataset.resizeInit = '0';
+}
+
+async function saLoadKbTree() {
+    const body = document.getElementById('saKbBody');
+    if (!body) return;
+
+    body.innerHTML = '<div class="sa-kb-loading"><div class="sa-kb-spinner"></div>\u52A0\u8F7D\u4E2D...</div>';
+
+    try {
+        const result = await apiRequest('/knowledge/global-tree', { useCache: false });
+        if (result && result.success) {
+            saKbTreeData = result.data;
+            if (!saKbTreeData || saKbTreeData.length === 0) {
+                body.innerHTML = '<div class="sa-kb-empty">\u77E5\u8BC6\u5E93\u4E3A\u7A7A\uFF0C\u8BF7\u5148\u4E0A\u4F20\u6587\u4EF6</div>';
+                return;
+            }
+            saRenderKbTree(saKbTreeData);
+        } else {
+            const errMsg = (result && result.message) ? saEscapeHtml(result.message) : '\u672A\u77E5\u9519\u8BEF';
+            console.error('[KB Drawer] API\u8FD4\u56DE\u5931\u8D25:', result);
+            body.innerHTML = `<div class="sa-kb-empty">\u52A0\u8F7D\u77E5\u8BC6\u5E93\u5931\u8D25: ${errMsg}</div>`;
+        }
+    } catch (e) {
+        console.error('[KB Drawer] \u52A0\u8F7D\u5F02\u5E38:', e);
+        body.innerHTML = `<div class="sa-kb-empty">\u52A0\u8F7D\u77E5\u8BC6\u5E93\u5931\u8D25: ${saEscapeHtml(e.message || '')}</div>`;
+    }
+}
+
+function saRenderKbTree(tree) {
+    const body = document.getElementById('saKbBody');
+    if (!body) return;
+
+    if (!tree || tree.length === 0) {
+        body.innerHTML = '<div class="sa-kb-empty">\u77E5\u8BC6\u5E93\u4E3A\u7A7A\uFF0C\u8BF7\u5148\u4E0A\u4F20\u6587\u4EF6</div>';
+        saUpdateKbSelectionCount();
+        return;
+    }
+
+    body.innerHTML = tree.map(lib => saRenderKbLibrary(lib)).join('');
+
+    body.querySelectorAll('.sa-kb-group-header').forEach(header => {
+        header.addEventListener('click', function () {
+            const groupId = this.dataset.groupId;
+            const list = document.getElementById(groupId);
+            if (list) {
+                this.classList.toggle('collapsed');
+                list.classList.toggle('collapsed');
+            }
+        });
+    });
+
+    body.querySelectorAll('.sa-kb-module-header').forEach(header => {
+        header.addEventListener('click', function () {
+            const moduleId = this.dataset.moduleId;
+            const list = document.getElementById(moduleId);
+            if (list) {
+                this.classList.toggle('collapsed');
+                list.classList.toggle('collapsed');
+            }
+        });
+    });
+
+    body.querySelectorAll('.sa-kb-file-checkbox').forEach(cb => {
+        cb.addEventListener('click', function (e) {
+            e.stopPropagation();
+            const fileId = Number(this.dataset.fileId);
+            if (saKbExistingSourceIds.has(fileId)) return;
+            if (this.checked) {
+                saKbSelectedFiles.add(fileId);
+            } else {
+                saKbSelectedFiles.delete(fileId);
+            }
+            saUpdateKbSelectionCount();
+        });
+    });
+
+    saUpdateKbSelectionCount();
+}
+
+function saRenderKbLibrary(lib) {
+    const fileCount = saCountFilesInTree(lib.children);
+    const groupId = `sa-kb-lib-${lib.realId || lib.id}`;
+
+    let childrenHtml = '';
+    if (lib.children && lib.children.length > 0) {
+        childrenHtml = lib.children.map(child => {
+            if (child.type === 'module') {
+                return saRenderKbModule(child);
+            } else if (child.type === 'folder') {
+                return saRenderKbFolder(child, 1);
+            } else {
+                return saRenderKbFile(child);
+            }
+        }).join('');
+    }
+
+    return `
+    <div class="sa-kb-group">
+        <div class="sa-kb-group-header" data-group-id="${groupId}">
+            <span><span class="sa-kb-group-icon">\uD83D\uDCDA</span>${saEscapeHtml(lib.name)}<span class="sa-kb-group-count">${fileCount} \u4E2A\u6587\u4EF6</span></span>
+            <span class="sa-kb-expand-icon">\u25BC</span>
+        </div>
+        <div class="sa-kb-group-list" id="${groupId}">${childrenHtml}</div>
+    </div>`;
+}
+
+function saRenderKbModule(mod) {
+    const fileCount = saCountFilesInTree(mod.children);
+    const moduleId = `sa-kb-mod-${mod.realId || mod.id}`;
+
+    let childrenHtml = '';
+    if (mod.children && mod.children.length > 0) {
+        childrenHtml = mod.children.map(child => {
+            if (child.type === 'folder') {
+                return saRenderKbFolder(child, 1);
+            } else {
+                return saRenderKbFile(child);
+            }
+        }).join('');
+    }
+
+    return `
+    <div class="sa-kb-module-header" data-module-id="${moduleId}">
+        <span class="sa-kb-expand-icon">\u25BC</span>
+        <span>\uD83D\uDCE6 ${saEscapeHtml(mod.name)}</span>
+        <span style="font-size:12px;color:#94a3b8;">(${fileCount})</span>
+    </div>
+    <div class="sa-kb-module-list" id="${moduleId}">${childrenHtml}</div>`;
+}
+
+function saRenderKbFolder(folder, depth) {
+    if ((depth || 0) > 20) return '';
+    const fileCount = saCountFilesInTree(folder.children, 0);
+    const folderId = `sa-kb-folder-${folder.realId || folder.id}`;
+
+    let childrenHtml = '';
+    if (folder.children && folder.children.length > 0) {
+        childrenHtml = folder.children.map(child => {
+            if (child.type === 'folder') {
+                return saRenderKbFolder(child, (depth || 0) + 1);
+            } else {
+                return saRenderKbFile(child);
+            }
+        }).join('');
+    }
+
+    return `
+    <div class="sa-kb-module-header" data-module-id="${folderId}">
+        <span class="sa-kb-expand-icon">\u25BC</span>
+        <span>\uD83D\uDCC1 ${saEscapeHtml(folder.name)}</span>
+        <span style="font-size:12px;color:#94a3b8;">(${fileCount})</span>
+    </div>
+    <div class="sa-kb-module-list" id="${folderId}">${childrenHtml}</div>`;
+}
+
+function saRenderKbFile(file) {
+    const fileId = file.realId || file.id;
+    const ext = file.file_ext || file.fileExt || '';
+    const icon = saGetFileIcon(ext);
+    const isExisting = saKbExistingSourceIds.has(Number(fileId));
+    const isSelected = saKbSelectedFiles.has(Number(fileId));
+
+    return `
+    <div class="sa-kb-file-row ${isExisting ? 'disabled' : ''}" data-file-id="${fileId}" data-file-name="${saEscapeHtml(file.name || '')}">
+        <input type="checkbox" class="sa-kb-file-checkbox" data-file-id="${fileId}" ${isSelected ? 'checked' : ''} ${isExisting ? 'disabled' : ''}>
+        <span class="sa-kb-file-icon">${icon}</span>
+        <span class="sa-kb-file-name">${saEscapeHtml(file.name || '\u672A\u547D\u540D')}</span>
+        ${ext ? `<span class="sa-kb-file-ext">${saEscapeHtml(ext)}</span>` : ''}
+        ${isExisting ? '<span class="sa-kb-file-added">\u5DF2\u6DFB\u52A0</span>' : ''}
+    </div>`;
+}
+
+function saUpdateKbSelectionCount() {
+    const count = saKbSelectedFiles.size;
+    const countEl = document.getElementById('saKbSelectionCount');
+    const footerCountEl = document.getElementById('saKbFooterCount');
+    if (countEl) countEl.textContent = `\u5DF2\u9009 ${count} \u4E2A\u6587\u4EF6`;
+    if (footerCountEl) footerCountEl.textContent = `\u5DF2\u9009 ${count} \u4E2A\u6587\u4EF6`;
+
+    const selectAllCb = document.getElementById('saKbSelectAllCb');
+    if (selectAllCb) {
+        const allCheckboxes = document.querySelectorAll('#saKbBody .sa-kb-file-checkbox:not(:disabled)');
+        const total = allCheckboxes.length;
+        selectAllCb.checked = total > 0 && count >= total;
+        selectAllCb.indeterminate = count > 0 && count < total;
+    }
+}
+
+function saToggleKbSelectAll() {
+    const cb = document.getElementById('saKbSelectAllCb');
+    const allCheckboxes = document.querySelectorAll('#saKbBody .sa-kb-file-checkbox:not(:disabled)');
+
+    if (cb.checked) {
+        allCheckboxes.forEach(checkbox => {
+            const fileId = Number(checkbox.dataset.fileId);
+            saKbSelectedFiles.add(fileId);
+            checkbox.checked = true;
+        });
+    } else {
+        allCheckboxes.forEach(checkbox => {
+            const fileId = Number(checkbox.dataset.fileId);
+            saKbSelectedFiles.delete(fileId);
+            checkbox.checked = false;
+        });
+    }
+    saUpdateKbSelectionCount();
+}
+
+function saFilterKbTree() {
+    const searchText = document.getElementById('saKbSearchInput').value.toLowerCase();
+    const body = document.getElementById('saKbBody');
+    if (!body) return;
+
+    if (!searchText) {
+        body.querySelectorAll('.sa-kb-file-row').forEach(row => row.style.display = '');
+        body.querySelectorAll('.sa-kb-group').forEach(group => group.style.display = '');
+        return;
+    }
+
+    body.querySelectorAll('.sa-kb-group').forEach(group => {
+        group.style.display = 'none';
+    });
+
+    body.querySelectorAll('.sa-kb-file-row').forEach(row => {
+        const name = (row.dataset.fileName || '').toLowerCase();
+        if (name.includes(searchText)) {
+            row.style.display = '';
+            let parent = row.parentElement;
+            while (parent && parent !== body) {
+                if (parent.classList.contains('sa-kb-module-list') || parent.classList.contains('sa-kb-group-list')) {
+                    parent.classList.remove('collapsed');
+                }
+                if (parent.classList.contains('sa-kb-group')) {
+                    parent.style.display = '';
+                    const header = parent.querySelector(':scope > .sa-kb-group-header');
+                    if (header) header.classList.remove('collapsed');
+                }
+                parent = parent.parentElement;
+            }
+            const parentList = row.closest('.sa-kb-module-list');
+            if (parentList) parentList.classList.remove('collapsed');
+            const prevHeader = parentList ? parentList.previousElementSibling : null;
+            if (prevHeader && prevHeader.classList.contains('sa-kb-module-header')) {
+                prevHeader.classList.remove('collapsed');
+            }
+        } else {
+            row.style.display = 'none';
+        }
+    });
+}
+
+async function saConfirmKbSelection() {
+    if (saKbSelectedFiles.size === 0) {
+        if (typeof showErrorMessage === 'function') showErrorMessage('\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A\u6587\u4EF6');
+        return;
+    }
+
+    const fileIds = Array.from(saKbSelectedFiles);
+
+    try {
+        const confirmBtn = document.getElementById('saKbConfirmBtn');
+        if (confirmBtn) {
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = '\u6DFB\u52A0\u4E2D...';
+        }
+
+        const result = await apiRequest(`/ai-sub-agents/config-files/batch-kb/${saCurrentEditId}`, {
+            method: 'POST',
+            body: JSON.stringify({ file_ids: fileIds })
+        });
+
+        if (result.success) {
+            const data = result.data || {};
+            if (typeof showSuccessMessage === 'function') {
+                showSuccessMessage(result.message || `\u5DF2\u6DFB\u52A0 ${data.totalAdded || 0} \u4E2A\u77E5\u8BC6\u5E93\u6587\u6863`);
+            }
+            saCloseKbDrawer();
+            await loadConfigFiles(saCurrentEditId);
+        } else {
+            if (typeof showErrorMessage === 'function') showErrorMessage(result.message || '\u6DFB\u52A0\u5931\u8D25');
+        }
+    } catch (e) {
+        if (typeof showErrorMessage === 'function') showErrorMessage('\u6DFB\u52A0\u77E5\u8BC6\u5E93\u6587\u6863\u5931\u8D25: ' + e.message);
+    } finally {
+        const confirmBtn = document.getElementById('saKbConfirmBtn');
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = '\u786E\u8BA4\u9009\u62E9';
+        }
     }
 }
 
@@ -1744,8 +2295,11 @@ function saCreateInputDialog(title, fields) {
     document.getElementById('saInputDialogCancel').addEventListener('click', () => {
         dialogEl.remove();
     });
-    document.getElementById('saInputDialogOk').addEventListener('click', () => {
-        if (dialog.onConfirm) dialog.onConfirm();
+    document.getElementById('saInputDialogOk').addEventListener('click', async () => {
+        if (dialog.onConfirm) {
+            const result = await dialog.onConfirm();
+            if (result === false) return;
+        }
         dialogEl.remove();
     });
 
@@ -2333,7 +2887,7 @@ function renderWfOverview(d) {
     const userExists = cfgFiles.some(f => f.fileType === 'user');
     const toolsExists = cfgFiles.some(f => f.fileType === 'tools');
     const ruleExists = cfgFiles.some(f => f.fileType === 'rule');
-    const refDocCount = cfgFiles.filter(f => f.fileType === 'ref_doc' || f.fileType === 'checklist' || f.fileType === 'examples' || f.fileType === 'glossary' || f.fileType === 'template' || f.fileType === 'custom').length;
+    const refDocCount = cfgFiles.filter(f => f.fileType === 'ref_doc' || f.fileType === 'kb_doc' || f.fileType === 'checklist' || f.fileType === 'examples' || f.fileType === 'glossary' || f.fileType === 'template' || f.fileType === 'custom').length;
     const ruleCount = d.reflectionPipeline.rules.length;
     const toolCount = d.tools.parsed.length;
     const memStats = d.memory.stats;

@@ -2828,7 +2828,7 @@ app.get('/api/ai-generation-params/get', authenticateToken, async (req, res) => 
   }
 });
 
-// 获取AI模型列表（只有admin用户可以看所有模型，其他用户只能看自己的）
+// 获取AI模型列表（只有admin用户可以看所有模型，其他用户只能看自己的模型和admin公开的模型）
 app.get('/api/ai-models/list', authenticateToken, async (req, res) => {
   try {
     const currentUserId = req.user.id;
@@ -2841,15 +2841,17 @@ app.get('/api/ai-models/list', authenticateToken, async (req, res) => {
     let query, params;
     if (isAdminUser) {
       logger.info('admin用户，查询所有模型');
-      query = `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, created_by, created_at, updated_at 
+      query = `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, is_public, created_by, created_at, updated_at 
                FROM ai_models 
                ORDER BY is_default DESC, created_at ASC`;
       params = [];
     } else {
-      query = `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, created_by, created_at, updated_at 
-               FROM ai_models 
-               WHERE user_id = ? OR user_id IS NULL
-               ORDER BY is_default DESC, created_at ASC`;
+      logger.info('非admin用户，查询自己的模型和admin公开的模型');
+      query = `SELECT m.id, m.model_id, m.name, m.provider, m.api_key, m.endpoint, m.model_name, m.is_default, m.is_enabled, m.description, m.user_id, m.is_public, m.created_by, m.created_at, m.updated_at 
+               FROM ai_models m
+               LEFT JOIN users u ON m.user_id = u.id
+               WHERE m.user_id = ? OR (u.username = 'admin' AND m.is_public = 1)
+               ORDER BY m.is_default DESC, m.created_at ASC`;
       params = [currentUserId];
     }
     
@@ -2882,7 +2884,7 @@ app.get('/api/ai-models/get', authenticateToken, async (req, res) => {
     const currentUsername = req.user.username;
     
     const [models] = await pool.execute(
-      `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, created_by, created_at, updated_at 
+      `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, is_public, created_by, created_at, updated_at 
        FROM ai_models 
        WHERE model_id = ?`,
       [modelId]
@@ -2919,8 +2921,10 @@ app.post('/api/ai-models/add', authenticateToken, async (req, res) => {
   try {
     logger.debug('接收到添加AI模型请求:', req.body);
     
-    const { modelId, name, provider, apiKey, endpoint, modelName, isDefault, isEnabled, description } = req.body;
+    const { modelId, name, provider, apiKey, endpoint, modelName, isDefault, isEnabled, description, isPublic } = req.body;
     const currentUserId = req.user.id;
+    const currentUsername = req.user.username;
+    const isAdminUser = currentUsername === 'admin' || req.user.role === '管理员' || req.user.role === 'admin' || req.user.role === 'Administrator';
     
     const [existingModels] = await pool.execute(
       'SELECT model_id FROM ai_models WHERE model_id = ?',
@@ -2932,22 +2936,24 @@ app.post('/api/ai-models/add', authenticateToken, async (req, res) => {
     }
     
     if (isDefault) {
-      // 支持中英文角色值判断管理员权限
-      if (req.user.role === '管理员' || req.user.role === 'admin' || req.user.role === 'Administrator') {
+      if (isAdminUser) {
         await pool.execute('UPDATE ai_models SET is_default = FALSE');
       }
     }
     
+    // 只有 admin 用户可以设置模型为公开
+    const modelIsPublic = isAdminUser && (isPublic === true || isPublic === 'true') ? 1 : 0;
+    
     await pool.execute(
-      `INSERT INTO ai_models (model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [modelId, name, provider, apiKey, endpoint, modelName, isDefault ? true : false, isEnabled !== false, description || '', currentUserId, req.user.username]
+      `INSERT INTO ai_models (model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, is_public, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [modelId, name, provider, apiKey, endpoint, modelName, isDefault ? true : false, isEnabled !== false, description || '', currentUserId, modelIsPublic, req.user.username]
     );
     
     res.json({ success: true, message: 'AI模型添加成功' });
   } catch (error) {
     logger.error('添加AI模型错误:', { error: error.message });
-    res.json({ success: false, message: '服务器错误', error: error.message });
+    res.json({ success: false, message: '添加AI模型失败' });
   }
 });
 
@@ -2956,7 +2962,7 @@ app.post('/api/ai-models/update', authenticateToken, async (req, res) => {
   try {
     logger.debug('接收到更新AI模型请求:', req.body);
     
-    const { modelId, name, provider, apiKey, endpoint, modelName, isDefault, isEnabled, description } = req.body;
+    const { modelId, name, provider, apiKey, endpoint, modelName, isDefault, isEnabled, description, isPublic } = req.body;
     const currentUserId = req.user.id;
     const currentUsername = req.user.username;
     
@@ -2969,7 +2975,7 @@ app.post('/api/ai-models/update', authenticateToken, async (req, res) => {
       return res.json({ success: false, message: 'AI模型不存在' });
     }
     
-    const isAdminUser = currentUsername === 'admin';
+    const isAdminUser = currentUsername === 'admin' || req.user.role === '管理员' || req.user.role === 'admin' || req.user.role === 'Administrator';
     
     if (!isAdminUser && models[0].user_id !== currentUserId) {
       return res.status(403).json({ success: false, message: '您没有权限修改此AI模型' });
@@ -2979,17 +2985,20 @@ app.post('/api/ai-models/update', authenticateToken, async (req, res) => {
       await pool.execute('UPDATE ai_models SET is_default = FALSE');
     }
     
+    // 只有 admin 用户可以修改 is_public 字段
+    const modelIsPublic = isAdminUser && (isPublic === true || isPublic === 'true') ? 1 : 0;
+    
     await pool.execute(
       `UPDATE ai_models 
-       SET name = ?, provider = ?, api_key = ?, endpoint = ?, model_name = ?, is_default = ?, is_enabled = ?, description = ?
+       SET name = ?, provider = ?, api_key = ?, endpoint = ?, model_name = ?, is_default = ?, is_enabled = ?, description = ?, is_public = ?
        WHERE model_id = ?`,
-      [name, provider, apiKey, endpoint, modelName, isDefault ? true : false, isEnabled !== false, description || '', modelId]
+      [name, provider, apiKey, endpoint, modelName, isDefault ? true : false, isEnabled !== false, description || '', modelIsPublic, modelId]
     );
     
     res.json({ success: true, message: 'AI模型更新成功' });
   } catch (error) {
     logger.error('更新AI模型错误:', { error: error.message });
-    res.json({ success: false, message: '服务器错误', error: error.message });
+    res.json({ success: false, message: '更新AI模型失败' });
   }
 });
 
@@ -6185,6 +6194,7 @@ async function initDatabase() {
           is_enabled BOOLEAN DEFAULT TRUE,
           description TEXT,
           user_id INT COMMENT '用户ID',
+          is_public TINYINT(1) DEFAULT 0 COMMENT '是否公开，0-私有，1-公开',
           created_by VARCHAR(50),
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -6596,18 +6606,6 @@ async function initDatabase() {
           ('default_model_id', '', '默认AI模型ID')
         `);
         logger.info('默认AI配置插入成功');
-      }
-      
-      // 插入默认AI模型配置
-      const [aiModelsCount] = await connection.execute('SELECT COUNT(*) as count FROM ai_models');
-      if (aiModelsCount[0].count === 0) {
-        await connection.execute(`
-          INSERT INTO ai_models (model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, created_by) VALUES
-          ('deepseek-default', 'DeepSeek', 'deepseek', '', 'https://api.deepseek.com/v1/chat/completions', 'deepseek-chat', TRUE, TRUE, 'DeepSeek大模型', 'admin'),
-          ('openai-default', 'OpenAI', 'openai', '', 'https://api.openai.com/v1/chat/completions', 'gpt-3.5-turbo', FALSE, TRUE, 'OpenAI大模型', 'admin'),
-          ('zhipu-default', '智谱AI', 'zhipu', '', 'https://open.bigmodel.cn/api/paas/v4/chat/completions', 'glm-4', FALSE, TRUE, '智谱AI大模型', 'admin')
-        `);
-        logger.info('默认AI模型配置插入成功');
       }
       
       // 创建测试用例环境关联表

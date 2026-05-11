@@ -101,7 +101,8 @@ router.get('/list/:taskId', authenticateToken, async (req, res) => {
 
     const total = countResult[0].total;
     const currentPage = Math.max(1, parseInt(page) || 1);
-    const currentPageSize = Math.max(1, Math.min(200, parseInt(pageSize) || 50));
+    const maxPageSize = 200;
+    const currentPageSize = Math.max(1, Math.min(maxPageSize, parseInt(pageSize) || 50));
     const offset = (currentPage - 1) * currentPageSize;
 
     sql += ` ORDER BY tc.created_at ASC LIMIT ${currentPageSize} OFFSET ${offset}`;
@@ -506,7 +507,8 @@ router.get('/all-active', authenticateToken, async (req, res) => {
     const total = countResult[0].total;
 
     const currentPage = Math.max(1, parseInt(page) || 1);
-    const currentPageSize = Math.max(1, Math.min(200, parseInt(pageSize) || 50));
+    const maxPageSize = 200;
+    const currentPageSize = Math.max(1, Math.min(maxPageSize, parseInt(pageSize) || 50));
     const offset = (currentPage - 1) * currentPageSize;
 
     const [cases] = await pool.execute(

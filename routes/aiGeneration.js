@@ -14,7 +14,7 @@ router.post('/create', authenticateToken, async (req, res) => {
   try {
     const { moduleId, libraryId, selectedFiles, agentId, caseCountLimit, 
             enableDedup, similarityThreshold, level1Mode, selectedLevel1Ids,
-            model, temperature, max_tokens, focusAreas } = req.body;
+            model, temperature, max_tokens, focusAreas, chunkingStrategy } = req.body;
 
     if (!moduleId) {
       return res.status(400).json({ success: false, message: '缺少模块ID' });
@@ -39,7 +39,8 @@ router.post('/create', authenticateToken, async (req, res) => {
       model,
       temperature,
       max_tokens,
-      focusAreas
+      focusAreas,
+      chunkingStrategy
     });
 
     try {
@@ -228,6 +229,52 @@ router.post('/cleanup-task/:taskId', authenticateToken, async (req, res) => {
     }
   } catch (error) {
     logger.error('手动清理任务失败', { error: error.message });
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.post('/cleanup-empty-tasks', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const isAdmin = req.user.role === '管理员' || req.user.role === 'admin' || req.user.role === 'Administrator';
+
+    const [tasks] = await pool.execute(`
+      SELECT t.task_id FROM ai_case_generation_tasks t
+      LEFT JOIN temp_test_cases tc ON t.task_id = tc.task_id AND tc.status != 'merged'
+      LEFT JOIN temp_level1_points tl ON t.task_id = tl.task_id AND tl.status != 'merged'
+      WHERE ${isAdmin ? '1=1' : 't.user_id = ?'}
+        AND t.status IN ('completed', 'partial_completed', 'failed', 'cancelled')
+        AND tc.id IS NULL AND tl.id IS NULL
+    `, isAdmin ? [] : [userId]);
+
+    const cleanedTaskIds = [];
+    for (const task of tasks) {
+      await pool.execute(`DELETE FROM ai_case_generation_tasks WHERE task_id = ?`, [task.task_id]);
+      cleanedTaskIds.push(task.task_id);
+    }
+
+    if (cleanedTaskIds.length > 0) {
+      try {
+        await pool.execute(`
+          DELETE FROM ai_unified_tasks 
+          WHERE task_id IN (${cleanedTaskIds.map(() => '?').join(',')})
+        `, cleanedTaskIds);
+      } catch (e) {
+        logger.warn('清理统一任务表记录失败', { count: cleanedTaskIds.length, error: e.message });
+      }
+    }
+
+    logger.info('批量清理空任务完成', { userId, count: cleanedTaskIds.length });
+
+    res.json({
+      success: true,
+      data: {
+        cleanedCount: cleanedTaskIds.length,
+        cleanedTaskIds
+      }
+    });
+  } catch (error) {
+    logger.error('批量清理空任务失败', { error: error.message });
     res.status(500).json({ success: false, message: error.message });
   }
 });

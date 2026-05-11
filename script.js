@@ -25090,6 +25090,10 @@ async function renderAIModelsList() {
             ? model.created_by + (isOwner ? ' <span style="color:#4f46e5;">(我)</span>' : '')
             : '-';
         
+        const publicBadge = model.is_public 
+            ? '<span class="status-badge active" style="background: #10b981; color: white;">公开</span>'
+            : '<span class="status-badge inactive" style="background: #6b7280; color: white;">私有</span>';
+        
         return `
         <tr>
             <td>${model.name || '-'}</td>
@@ -25103,6 +25107,7 @@ async function renderAIModelsList() {
             <td>
                 ${model.is_default ? '<span class="default-badge">⭐ 默认</span>' : '-'}
             </td>
+            <td>${publicBadge}</td>
             <td style="font-size: 12px;">${ownerLabel}</td>
             <td>
                 <button class="config-action-btn test" onclick="testAIModelConnection('${model.model_id}')">测试</button>
@@ -25143,11 +25148,21 @@ function truncateText(text, maxLength) {
 function openAIModelModal(isEdit = false) {
     const modal = document.getElementById('ai-model-modal');
     const title = document.getElementById('ai-model-modal-title');
+    const publicRow = document.getElementById('ai-model-public-row');
 
     if (modal) {
         modal.style.display = 'flex';
         if (title) {
             title.textContent = isEdit ? '编辑AI模型' : '添加AI模型';
+        }
+    }
+
+    // 只有 admin 用户可以看到"公开模型"选项
+    if (publicRow) {
+        if (currentUser && currentUser.username === 'admin') {
+            publicRow.style.display = 'flex';
+        } else {
+            publicRow.style.display = 'none';
         }
     }
 }
@@ -25161,6 +25176,7 @@ function closeAIModelModal() {
 
     // 清空表单
     document.getElementById('ai-model-id-input').value = '';
+    document.getElementById('ai-model-id-input').disabled = false;
     document.getElementById('ai-model-name-input').value = '';
     document.getElementById('ai-model-provider-select').value = 'deepseek';
     document.getElementById('ai-model-name-api-input').value = '';
@@ -25169,6 +25185,11 @@ function closeAIModelModal() {
     document.getElementById('ai-model-default-select').value = 'false';
     document.getElementById('ai-model-enabled-select').value = 'true';
     document.getElementById('ai-model-description-input').value = '';
+    
+    const publicSelect = document.getElementById('ai-model-public-select');
+    if (publicSelect) {
+        publicSelect.value = 'false';
+    }
 
     editingAIModelId = null;
 }
@@ -25193,6 +25214,12 @@ async function editAIModel(modelId) {
             document.getElementById('ai-model-default-select').value = model.is_default ? 'true' : 'false';
             document.getElementById('ai-model-enabled-select').value = model.is_enabled ? 'true' : 'false';
             document.getElementById('ai-model-description-input').value = model.description || '';
+            
+            // 加载 is_public 的值
+            const publicSelect = document.getElementById('ai-model-public-select');
+            if (publicSelect) {
+                publicSelect.value = model.is_public ? 'true' : 'false';
+            }
 
             openAIModelModal(true);
         } else {
@@ -25217,6 +25244,10 @@ async function saveAIModel() {
     const isDefault = document.getElementById('ai-model-default-select').value === 'true';
     const isEnabled = document.getElementById('ai-model-enabled-select').value === 'true';
     const description = document.getElementById('ai-model-description-input').value.trim();
+    
+    // 获取 is_public 的值（只有 admin 用户才有这个选项）
+    const publicSelect = document.getElementById('ai-model-public-select');
+    const isPublic = publicSelect ? publicSelect.value === 'true' : false;
 
     // 验证必填字段
     if (!modelId || !name || !modelName || !apiKey || !endpoint) {
@@ -25234,6 +25265,7 @@ async function saveAIModel() {
         isDefault,
         isEnabled,
         description,
+        isPublic,
         username: currentUser ? currentUser.username : 'admin'
     };
 

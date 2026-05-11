@@ -349,23 +349,56 @@ class AutoMigration {
             'add_ai_agent_tool_usage_logs': ['ai_agent_tool_usage_logs'],
             'add_ai_operation_logs': ['ai_operation_logs'],
             'add_ai_import_optimize': ['ai_import_optimize_tasks', 'ai_import_optimize_batches', 'ai_import_case_mapping'],
-            'fix_ai_import_optimize_agent': ['ai_sub_agents']
+            'fix_ai_import_optimize_agent': ['ai_sub_agents'],
+            '20260509_add_chunking_strategy': ['ai_material_chunks'],
+            '20260509_add_global_local_architecture': ['ai_case_generation_tasks']
+        };
+
+        const migrationColumnChecks = {
+            '20260509_add_chunking_strategy': [
+                { table: 'ai_material_chunks', column: 'chunk_type' },
+                { table: 'ai_material_chunks', column: 'parent_chunk_id' },
+                { table: 'ai_material_chunks', column: 'chunking_strategy' },
+                { table: 'module_knowledge_files', column: 'chunking_strategy' }
+            ],
+            '20260509_add_global_local_architecture': [
+                { table: 'ai_case_generation_tasks', column: 'global_context' },
+                { table: 'ai_case_generation_tasks', column: 'skeleton_level1_json' },
+                { table: 'temp_test_cases', column: 'level1_source' }
+            ]
         };
 
         const tablesToCheck = migrationTableChecks[migrationName];
-        if (!tablesToCheck || tablesToCheck.length === 0) {
-            return false;
+        if (tablesToCheck && tablesToCheck.length > 0) {
+            for (const tableName of tablesToCheck) {
+                const exists = await this.checkTableExists(tableName);
+                if (!exists) {
+                    logger.info(`表 ${tableName} 不存在，迁移 ${migrationName} 需要重新执行`);
+                    return true;
+                }
+            }
         }
 
-        for (const tableName of tablesToCheck) {
-            const exists = await this.checkTableExists(tableName);
-            if (!exists) {
-                logger.info(`表 ${tableName} 不存在，迁移 ${migrationName} 需要重新执行`);
-                return true;
+        const columnsToCheck = migrationColumnChecks[migrationName];
+        if (columnsToCheck && columnsToCheck.length > 0) {
+            for (const col of columnsToCheck) {
+                const exists = await this.checkColumnExists(col.table, col.column);
+                if (!exists) {
+                    logger.info(`列 ${col.table}.${col.column} 不存在，迁移 ${migrationName} 需要重新执行`);
+                    return true;
+                }
             }
         }
 
         return false;
+    }
+
+    async checkColumnExists(tableName, columnName) {
+        const [rows] = await pool.query(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+            [tableName, columnName]
+        );
+        return rows.length > 0;
     }
 
     /**

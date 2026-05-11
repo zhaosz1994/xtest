@@ -327,6 +327,15 @@
   color: #fff;
 }
 
+.kl-tree-action-btn.kl-tree-delete-btn {
+  font-size: 11px;
+}
+
+.kl-tree-action-btn.kl-tree-delete-btn:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
 .kl-tree-children {
   padding-left: 16px;
   overflow: hidden;

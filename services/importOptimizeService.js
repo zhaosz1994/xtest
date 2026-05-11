@@ -665,6 +665,16 @@ class ImportOptimizeService {
 
       await connection.commit();
 
+      setImmediate(() => {
+        const reviewService = require('./reviewService');
+        const taskIds = [...new Set(tempCases.map(tc => tc.task_id).filter(Boolean))];
+        taskIds.forEach(tid => {
+          reviewService.checkAndCleanupTask(tid).catch(err => {
+            logger.error('覆盖合并后清理任务失败', { taskId: tid, error: err.message });
+          });
+        });
+      });
+
       return {
         success: true,
         data: {

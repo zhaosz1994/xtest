@@ -315,14 +315,14 @@ class ReviewService {
       logger.debug('submitForReview 使用 tempCaseIds 查询', { count: tempCaseIds.length });
       const [rows] = await pool.execute(`
         SELECT temp_case_id FROM temp_test_cases 
-        WHERE temp_case_id IN (${placeholders}) AND status = 'approved'
+        WHERE temp_case_id IN (${placeholders}) AND status IN ('pending', 'approved')
       `, tempCaseIds);
       tempCases = rows;
     } else {
       logger.debug('submitForReview 使用 taskId 查询', { taskId });
       const [rows] = await pool.execute(`
         SELECT temp_case_id FROM temp_test_cases 
-        WHERE task_id = ? AND status = 'approved'
+        WHERE task_id = ? AND status IN ('pending', 'approved')
       `, [taskId]);
       tempCases = rows;
     }
@@ -550,6 +550,14 @@ class ReviewService {
         await pool.execute(`
           DELETE FROM ai_case_generation_tasks WHERE task_id = ?
         `, [taskId]);
+
+        try {
+          await pool.execute(`
+            DELETE FROM ai_unified_tasks WHERE task_id = ?
+          `, [taskId]);
+        } catch (e) {
+          logger.warn('清理统一任务表记录失败', { taskId, error: e.message });
+        }
         
         logger.info('任务已清理', { 
           taskId, 

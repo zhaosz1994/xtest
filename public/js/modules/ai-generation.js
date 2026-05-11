@@ -581,7 +581,7 @@ function renderFileList(files) {
             <span class="ai-file-icon">${icon}</span>
             <div class="ai-file-info">
                 <div class="ai-file-name">${aiEscapeHtml(f.name)}</div>
-                <div class="ai-file-meta">${sizeStr} ${f.chunk_count ? `| ${f.chunk_count}块` : ''} ${statusBadge}</div>
+                <div class="ai-file-meta">${sizeStr} ${f.chunk_count ? `| ${f.chunk_count}块` : ''} ${f.chunking_strategy && f.chunking_strategy !== 'structure_aware' ? `| ${aiEscapeHtml(f.chunking_strategy)}` : ''} ${statusBadge}</div>
             </div>
         </div>`;
     }).join('');
@@ -990,7 +990,8 @@ async function createTask() {
         enableDedup: document.getElementById('enableDedup').checked,
         similarityThreshold: parseInt(document.getElementById('similarityThreshold').value) / 100,
         level1Mode: currentLevel1Mode,
-        selectedLevel1Ids
+        selectedLevel1Ids,
+        chunkingStrategy: document.getElementById('chunkingStrategy')?.value || 'structure_aware'
     };
 
     try {
@@ -1243,6 +1244,9 @@ let knowledgeTreeData = null;
 
 async function loadKnowledgeTree() {
     try {
+        if (typeof apiCache !== 'undefined') {
+            apiCache.deleteByPrefix('/knowledge/');
+        }
         let tree;
         if (aiCurrentModuleId) {
             const res = await aiApiGet(`/knowledge/tree/${aiCurrentModuleId}`);
@@ -1371,6 +1375,8 @@ function renderKnowledgeList(items, container) {
 
     folders.forEach(folder => {
         const childCount = countFiles(folder.children);
+        const folderRealId = folder.realId || folder.id;
+        const folderLibId = folder.libraryId || '';
         html += `<div class="ai-knowledge-row folder-row" data-toggle-group="folder-${folder.id}">
             <div class="col-checkbox"></div>
             <div class="col-name">
@@ -1382,7 +1388,7 @@ function renderKnowledgeList(items, container) {
             <div class="col-size">-</div>
             <div class="col-status">-</div>
             <div class="col-actions">
-                <button class="action-btn" data-delete-folder="${folder.id}" title="删除">🗑️</button>
+                <button class="action-btn" data-delete-folder="${folderRealId}" data-library-id="${folderLibId}" title="删除">🗑️</button>
             </div>
         </div>
         <div class="ai-knowledge-list" id="folder-${folder.id}" style="display:none;margin-left:16px;margin-top:4px;margin-bottom:4px;"></div>`;
@@ -1413,7 +1419,9 @@ function renderKnowledgeList(items, container) {
     container.querySelectorAll('[data-delete-folder]').forEach(btn => {
         btn.addEventListener('click', function(e) {
             e.stopPropagation();
-            deleteKnowledgeFile(parseInt(this.dataset.deleteFolder));
+            const folderId = parseInt(this.dataset.deleteFolder);
+            const libraryId = this.dataset.libraryId ? parseInt(this.dataset.libraryId) : null;
+            deleteKnowledgeFile(folderId, libraryId);
         });
     });
 
@@ -1784,19 +1792,25 @@ function closeFileContentModal() {
     document.getElementById('fileContentModal').classList.remove('open');
 }
 
-async function deleteKnowledgeFile(fileId) {
+async function deleteKnowledgeFile(fileId, libraryId) {
     if (!(await aiShowConfirmMessage('确定要删除吗？'))) return;
     try {
         const moduleId = aiCurrentModuleId || document.getElementById('moduleSelect').value;
-        if (!moduleId) { aiNotify('请先选择模块', 'warning'); return; }
         const params = new URLSearchParams();
-        params.set('moduleId', moduleId);
-        await aiApiDelete(`/knowledge/file/${fileId}?${params.toString()}`);
+        if (moduleId) params.set('moduleId', moduleId);
+        if (libraryId) params.set('libraryId', libraryId);
+        const res = await aiApiDelete(`/knowledge/file/${fileId}?${params.toString()}`);
+        if (res && res.success === false) {
+            aiNotify('删除失败', 'error');
+            return;
+        }
         aiSelectedFiles.delete(fileId);
         loadKnowledgeTree();
         loadKnowledgeFiles();
         aiNotify('删除成功', 'success');
-    } catch (e) {}
+    } catch (e) {
+        aiNotify('删除失败', 'error');
+    }
 }
 
 function confirmFileSelection() {
@@ -1829,10 +1843,50 @@ async function loadTaskFilter() {
             });
             if (prevValue) {
                 select.value = prevValue;
+                if (!select.value) {
+                    select.value = 'all';
+                    loadTempCases();
+                }
             }
         }
     } catch (e) {}
 }
+
+async function cleanupEmptyTasks() {
+    const confirmed = await showConfirmDialog(
+        '清理空任务',
+        '将清理所有没有未处理用例和一级测试点的已完成/失败/取消任务，这些任务将从下拉列表中移除。确认继续？',
+        '确认清理',
+        '取消'
+    );
+    if (!confirmed) return;
+
+    try {
+        const res = await aiApiPost('/ai-generation/cleanup-empty-tasks');
+        if (res.success) {
+            const count = res.data.cleanedCount || 0;
+            if (count > 0) {
+                aiNotify(`已清理 ${count} 个空任务`, 'success');
+                const taskFilter = document.getElementById('taskFilter');
+                const prevValue = taskFilter.value;
+                await loadTaskFilter();
+                const cleanedIds = res.data.cleanedTaskIds || [];
+                if (cleanedIds.includes(prevValue)) {
+                    taskFilter.value = 'all';
+                    await loadTempCases();
+                }
+            } else {
+                aiNotify('没有可清理的空任务', 'info');
+            }
+        } else {
+            aiNotify(res.message || '清理失败', 'error');
+        }
+    } catch (e) {
+        aiNotify('清理空任务失败', 'error');
+    }
+}
+
+document.getElementById('cleanupEmptyTasksBtn')?.addEventListener('click', cleanupEmptyTasks);
 
 async function loadTempCases() {
     await loadTempCasesPage();
@@ -2870,6 +2924,7 @@ function showOverwriteMergeModal() {
                 modal.remove();
                 selectedCases.clear();
                 updateSelectedCount();
+                loadTaskFilter();
                 loadTempCases();
             } else {
                 aiNotify(res.message || '覆盖合并失败', 'error');
@@ -3088,6 +3143,7 @@ async function batchReject() {
         aiNotify('批量拒绝成功', 'success');
         selectedCases.clear();
         updateSelectedCount();
+        loadTaskFilter();
         loadTempCases();
     } catch (e) {}
 }
@@ -3100,6 +3156,7 @@ async function batchDelete() {
         aiNotify('批量删除成功', 'success');
         selectedCases.clear();
         updateSelectedCount();
+        loadTaskFilter();
         loadTempCases();
     } catch (e) {}
 }
@@ -3157,6 +3214,7 @@ async function executeMerge() {
             }
             closeMergeModal();
             selectedCases.clear();
+            loadTaskFilter();
             loadTempCases();
         } else {
             aiNotify(res.message || '操作失败', 'error');

@@ -353,7 +353,7 @@ class AgentExecutionEngine {
      */
     async _loadConfigFiles(agentId) {
         const configMap = new Map();
-        const refDocTypes = ['checklist', 'examples', 'glossary', 'template', 'custom', 'ref_doc'];
+        const refDocTypes = ['checklist', 'examples', 'glossary', 'template', 'custom', 'ref_doc', 'kb_doc'];
 
         try {
             const [files] = await pool.execute(
@@ -464,7 +464,8 @@ class AgentExecutionEngine {
             glossary: '术语表',
             template: '输出模板',
             custom: '自定义参考',
-            ref_doc: '参考文档'
+            ref_doc: '参考文档',
+            kb_doc: '知识库文档'
         };
 
         let refDocsSection = '\n\n---\n\n## 参考文档\n\n';

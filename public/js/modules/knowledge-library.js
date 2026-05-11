@@ -3,6 +3,12 @@
  */
 let klEventListenersInitialized = false;
 
+function klInvalidateApiCache() {
+    if (typeof apiCache !== 'undefined') {
+        apiCache.deleteByPrefix('/knowledge/');
+    }
+}
+
 function initKnowledgeLibrary() {
     if (!klEventListenersInitialized) {
         klEventListenersInitialized = true;
@@ -30,6 +36,7 @@ let klModuleFileCounts = {};
 let klTreeData = [];
 let klConfirmCallback = null;
 let klContextMenuTarget = null;
+let klTreeContextMenuTarget = null;
 let klCurrentPreviewFileId = null;
 let klNotificationOffset = 0;
 let klPendingUploadFiles = [];
@@ -301,6 +308,7 @@ function renderTree() {
                     <span class="kl-tree-label">${klEscapeHtml(folder.name)}</span>
                     ${childCount > 0 ? `<span class="kl-tree-count">${childCount}</span>` : ''}
                     <button class="kl-tree-action-btn kl-tree-add-btn" data-type="folder" data-folder-id="${folder.id}" data-lib-id="${lib.id}" title="新建子文件夹">+</button>
+                    <button class="kl-tree-action-btn kl-tree-delete-btn" data-action="delete" data-type="folder" data-folder-id="${folder.id}" data-lib-id="${lib.id}" data-name="${klEscapeHtml(folder.name)}" title="删除文件夹">🗑</button>
                 </div>
             </div>`;
         }
@@ -371,14 +379,30 @@ function renderTree() {
                     const moduleId = parseInt(this.dataset.moduleId);
                     showNewFolderModalForModule(moduleId);
                 } else if (type === 'folder') {
-                    // 在用例库级别文件夹下新建子文件夹
                     const folderId = parseInt(this.dataset.folderId);
                     const libId = parseInt(this.dataset.libId);
                     showNewFolderModalForLibraryFolder(folderId, libId);
                 }
+            } else if (this.classList.contains('kl-tree-delete-btn')) {
+                const folderId = parseInt(this.dataset.folderId);
+                const libId = parseInt(this.dataset.libId);
+                const folderName = this.dataset.name;
+                klShowConfirm(`确定要删除文件夹 "${klEscapeHtml(folderName)}" 吗？文件夹内的所有文件也将被删除。`, () => deleteTreeFolder(folderId, libId), '🗑️');
             } else {
                 const moduleId = parseInt(this.dataset.moduleId);
                 downloadModule(moduleId);
+            }
+        });
+    });
+
+    container.querySelectorAll('.kl-tree-node-row').forEach(row => {
+        row.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+            const type = this.dataset.type;
+            const id = parseInt(this.dataset.id);
+            if (type === 'folder') {
+                klTreeContextMenuTarget = { type, id, libId: parseInt(this.dataset.libId), name: this.querySelector('.kl-tree-label').textContent };
+                showTreeContextMenu(e.clientX, e.clientY);
             }
         });
     });
@@ -517,7 +541,15 @@ function renderFileArea() {
     const filtered = sortFiles(getFilteredFiles());
 
     if (filtered.length === 0) {
-        emptyState.innerHTML = `<div class="icon">📁</div><div class="title">暂无文件</div><p>点击上方按钮上传文件或新建文件夹</p>`;
+        let emptyActions = '';
+        if (klCurrentFolderId && !klCurrentModuleId) {
+            const folders = klLibraryFoldersMap[klCurrentLibraryId] || [];
+            const currentFolder = folders.find(f => f.id === klCurrentFolderId);
+            if (currentFolder) {
+                emptyActions = `<button class="kl-btn kl-btn-danger kl-btn-sm kl-delete-folder-btn" data-folder-id="${klCurrentFolderId}" data-library-id="${klCurrentLibraryId}" data-folder-name="${klEscapeHtml(currentFolder.name)}" style="margin-top:12px;">🗑️ 删除此文件夹</button>`;
+            }
+        }
+        emptyState.innerHTML = `<div class="icon">📁</div><div class="title">暂无文件</div><p>点击上方按钮上传文件或新建文件夹</p>${emptyActions}`;
         emptyState.style.display = 'flex';
         listView.style.display = 'none';
         gridView.style.display = 'none';
@@ -525,6 +557,16 @@ function renderFileArea() {
     }
 
     emptyState.style.display = 'none';
+
+    const deleteFolderBtn = emptyState.querySelector('.kl-delete-folder-btn');
+    if (deleteFolderBtn) {
+        deleteFolderBtn.addEventListener('click', function() {
+            const folderId = parseInt(this.dataset.folderId);
+            const libraryId = parseInt(this.dataset.libraryId);
+            const folderName = this.dataset.folderName;
+            klShowConfirm(`确定要删除文件夹 "${folderName}" 吗？文件夹内的所有文件也将被删除。`, () => deleteTreeFolder(folderId, libraryId), '🗑️');
+        });
+    }
 
     if (klViewMode === 'list') {
         listView.style.display = 'block';
@@ -635,9 +677,8 @@ function bindFileRowEvents(container) {
 
         row.addEventListener('contextmenu', function(e) {
             e.preventDefault();
-            if (type === 'folder') return;
             klContextMenuTarget = id;
-            showContextMenu(e.clientX, e.clientY);
+            showContextMenu(e.clientX, e.clientY, type);
         });
 
         row.querySelector('input[type="checkbox"]').addEventListener('change', function(e) {
@@ -665,7 +706,11 @@ function bindFileRowEvents(container) {
                 startRename(id, name);
             } else if (action === 'delete') {
                 const name = this.dataset.name;
-                klShowConfirm(`确定要删除 "${name}" 吗？`, () => deleteFile(id), '🗑️');
+                if (type === 'folder') {
+                    klShowConfirm(`确定要删除文件夹 "${klEscapeHtml(name)}" 吗？文件夹内的所有文件也将被删除。`, () => deleteTreeFolder(id, klCurrentLibraryId), '🗑️');
+                } else {
+                    klShowConfirm(`确定要删除 "${klEscapeHtml(name)}" 吗？`, () => deleteFile(id), '🗑️');
+                }
             }
         });
     });
@@ -877,6 +922,7 @@ async function batchDelete() {
         }
         klSelectedFiles.clear();
         klSelectedFileModuleMap = {};
+        klInvalidateApiCache();
         updateBatchBar();
         if (klCurrentModuleId) {
             loadModuleFiles();
@@ -1172,6 +1218,7 @@ async function deleteFile(fileId) {
         if (klCurrentModuleId) params.set('moduleId', klCurrentModuleId);
         if (klCurrentLibraryId) params.set('libraryId', klCurrentLibraryId);
         await klApiDelete(`/api/knowledge/file/${fileId}?${params.toString()}`);
+        klInvalidateApiCache();
         klSelectedFiles.delete(fileId);
         delete klSelectedFileModuleMap[fileId];
         if (klCurrentModuleId) {
@@ -1187,6 +1234,96 @@ async function deleteFile(fileId) {
     }
 }
 
+async function deleteTreeFolder(folderId, libraryId) {
+    try {
+        const params = new URLSearchParams();
+        params.set('libraryId', libraryId);
+        await klApiDelete(`/api/knowledge/file/${folderId}?${params.toString()}`);
+        klInvalidateApiCache();
+        if (klCurrentFolderId === folderId) {
+            klCurrentFolderId = null;
+            klCurrentParentId = null;
+            const fileArea = document.getElementById('emptyState');
+            const listView = document.getElementById('fileListView');
+            const gridView = document.getElementById('fileGridView');
+            if (fileArea) fileArea.style.display = 'flex';
+            if (listView) listView.style.display = 'none';
+            if (gridView) gridView.style.display = 'none';
+            updateBreadcrumb();
+        }
+        await loadKLLibraries();
+        klNotify('文件夹删除成功', 'success');
+    } catch (e) {
+        klNotify('文件夹删除失败', 'error');
+    }
+}
+
+function showTreeContextMenu(x, y) {
+    let menu = document.getElementById('treeContextMenu');
+    if (!menu) {
+        menu = document.createElement('div');
+        menu.id = 'treeContextMenu';
+        menu.className = 'kl-context-menu';
+        menu.innerHTML = `
+            <div class="kl-context-menu-item" data-action="rename">✏️ 重命名</div>
+            <div class="kl-context-menu-sep"></div>
+            <div class="kl-context-menu-item danger" data-action="delete">🗑️ 删除</div>
+        `;
+        document.body.appendChild(menu);
+
+        menu.querySelectorAll('.kl-context-menu-item').forEach(item => {
+            item.addEventListener('click', function() {
+                const action = this.dataset.action;
+                const target = klTreeContextMenuTarget;
+                hideTreeContextMenu();
+                if (!target) return;
+                if (action === 'delete') {
+                    klShowConfirm(`确定要删除文件夹 "${klEscapeHtml(target.name)}" 吗？文件夹内的所有文件也将被删除。`, () => deleteTreeFolder(target.id, target.libId), '🗑️');
+                } else if (action === 'rename') {
+                    startTreeFolderRename(target.id, target.name, target.libId);
+                }
+            });
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('#treeContextMenu')) hideTreeContextMenu();
+        });
+    }
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    menu.classList.add('show');
+    if (x + 160 > window.innerWidth) menu.style.left = (x - 160) + 'px';
+    if (y + 120 > window.innerHeight) menu.style.top = (y - 120) + 'px';
+}
+
+function hideTreeContextMenu() {
+    const menu = document.getElementById('treeContextMenu');
+    if (menu) menu.classList.remove('show');
+    klTreeContextMenuTarget = null;
+}
+
+async function startTreeFolderRename(folderId, currentName, libraryId) {
+    document.getElementById('renameInput').value = currentName;
+    klOpenModal('renameModal');
+    const confirmBtn = document.getElementById('btnConfirmRename');
+    const newConfirmBtn = confirmBtn.cloneNode(true);
+    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+    newConfirmBtn.id = 'btnConfirmRename';
+    newConfirmBtn.addEventListener('click', async () => {
+        const newName = document.getElementById('renameInput').value.trim();
+        if (!newName) { klNotify('请输入新名称', 'warning'); return; }
+        try {
+            await klApiPut('/api/knowledge/file/rename', { fileId: folderId, newName });
+            klCloseModal('renameModal');
+            klInvalidateApiCache();
+            await loadKLLibraries();
+            klNotify('重命名成功', 'success');
+        } catch (e) {
+            klNotify('重命名失败', 'error');
+        }
+    });
+}
+
 function startRename(fileId, currentName) {
     document.getElementById('renameInput').value = currentName;
     klOpenModal('renameModal');
@@ -1200,6 +1337,7 @@ function startRename(fileId, currentName) {
         try {
             await klApiPut('/api/knowledge/file/rename', { fileId, newName });
             klCloseModal('renameModal');
+            klInvalidateApiCache();
             if (klCurrentModuleId) {
                 loadModuleFiles();
             } else {
@@ -1336,8 +1474,15 @@ function showNewFolderModalForLibraryFolder(folderId, libId) {
     setTimeout(() => document.getElementById('newFolderName').focus(), 100);
 }
 
-function showContextMenu(x, y) {
+function showContextMenu(x, y, fileType) {
     const menu = document.getElementById('contextMenu');
+    const isFolder = fileType === 'folder';
+    const previewItem = menu.querySelector('[data-action="preview"]');
+    const downloadItem = menu.querySelector('[data-action="download"]');
+    const detailItem = menu.querySelector('[data-action="detail"]');
+    if (previewItem) previewItem.style.display = isFolder ? 'none' : '';
+    if (downloadItem) downloadItem.style.display = isFolder ? 'none' : '';
+    if (detailItem) detailItem.style.display = isFolder ? 'none' : '';
     menu.style.left = x + 'px';
     menu.style.top = y + 'px';
     menu.classList.add('show');
@@ -1679,6 +1824,7 @@ async function klHandleFileUpload(files) {
     }
 
     if (successCount > 0) {
+        klInvalidateApiCache();
         klNotify(`成功上传 ${successCount} 个文件`, 'success');
     }
     if (failCount > 0) {
@@ -2118,6 +2264,7 @@ function initKLEventListeners() {
                 name
             });
             klCloseModal('newFolderModal');
+            klInvalidateApiCache();
 
             // 清理临时数据属性
             delete select.dataset.parentFolderId;
@@ -2154,6 +2301,7 @@ function initKLEventListeners() {
                 password: document.getElementById('crawlPassword').value || undefined
             });
             if (res && res.success) {
+                klInvalidateApiCache();
                 klNotify('网页爬取并保存成功！', 'success');
                 klCloseModal('crawlModal');
                 if (klCurrentModuleId === moduleId) loadModuleFiles();
@@ -2207,7 +2355,13 @@ function initKLEventListeners() {
             } else if (action === 'detail') showFileDetail(id);
             else if (action === 'delete') {
                 const file = klCurrentFiles.find(f => f.id === id);
-                if (file) klShowConfirm(`确定要删除 "${file.name}" 吗？`, () => deleteFile(id), '🗑️');
+                if (file) {
+                    if (file.type === 'folder') {
+                        klShowConfirm(`确定要删除文件夹 "${klEscapeHtml(file.name)}" 吗？文件夹内的所有文件也将被删除。`, () => deleteTreeFolder(id, klCurrentLibraryId), '🗑️');
+                    } else {
+                        klShowConfirm(`确定要删除 "${klEscapeHtml(file.name)}" 吗？`, () => deleteFile(id), '🗑️');
+                    }
+                }
             }
         });
     });
