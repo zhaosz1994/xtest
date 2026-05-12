@@ -537,16 +537,12 @@ class ReviewService {
       const [remainingCases] = await pool.execute(`
         SELECT COUNT(*) as count
         FROM temp_test_cases
-        WHERE task_id = ? AND status != 'merged'
+        WHERE task_id = ? AND status IN ('pending', 'approved')
       `, [taskId]);
 
-      const [remainingLevel1] = await pool.execute(`
-        SELECT COUNT(*) as count
-        FROM temp_level1_points
-        WHERE task_id = ? AND status != 'merged'
-      `, [taskId]);
-
-      if (remainingCases[0].count === 0 && remainingLevel1[0].count === 0) {
+      if (remainingCases[0].count === 0) {
+        await pool.execute(`DELETE FROM temp_test_cases WHERE task_id = ? AND status NOT IN ('merged')`, [taskId]);
+        await pool.execute(`DELETE FROM temp_level1_points WHERE task_id = ? AND status NOT IN ('merged')`, [taskId]);
         await pool.execute(`
           DELETE FROM ai_case_generation_tasks WHERE task_id = ?
         `, [taskId]);
@@ -561,13 +557,13 @@ class ReviewService {
         
         logger.info('任务已清理', { 
           taskId, 
-          reason: '所有临时用例和一级测试点已处理完成' 
+          reason: '所有临时用例已处理完成' 
         });
         
         return { cleaned: true };
       }
 
-      return { cleaned: false, remainingCases: remainingCases[0].count, remainingLevel1: remainingLevel1[0].count };
+      return { cleaned: false, remainingCases: remainingCases[0].count };
     } catch (error) {
       logger.error('检查任务清理状态失败', { taskId, error: error.message });
       return { cleaned: false, error: error.message };

@@ -1616,6 +1616,8 @@ ${description || '你是一名AI助手，专门协助测试团队完成各类任
                 { key: 'request_timeout', value: '120000', desc: '请求超时时间(毫秒)' },
                 { key: 'max_retries', value: '3', desc: '最大重试次数' },
                 { key: 'ai_rate_limit', value: '10', desc: 'AI速率限制(次/分钟)' },
+                { key: 'request_interval', value: '0', desc: '请求间隔(毫秒)' },
+                { key: 'retry_mode', value: 'finite', desc: '重试模式(finite/infinite)' },
                 { key: 'seed', value: '', desc: '随机种子(留空则随机)' }
             ];
 

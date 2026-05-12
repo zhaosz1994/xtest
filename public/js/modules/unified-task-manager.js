@@ -701,13 +701,15 @@
       '<div class="ai-task-tabs">' +
         '<button class="ai-task-tab active" data-tab="running" onclick="window.switchAITaskTab(\'running\')">进行中 <span id="ai-task-running-count" class="ai-task-tab-badge">0</span></button>' +
         '<button class="ai-task-tab" data-tab="stats" onclick="window.switchAITaskTab(\'stats\')">统计</button>' +
+        '<button class="ai-task-tab" data-tab="logs" onclick="window.switchAITaskTab(\'logs\')">日志</button>' +
       '</div>' +
       '<div class="ai-task-panel-content">' +
         '<div id="ai-task-tab-running" class="ai-task-tab-content" style="display:block;"></div>' +
         '<div id="ai-task-tab-stats" class="ai-task-tab-content" style="display:none;"></div>' +
+        '<div id="ai-task-tab-logs" class="ai-task-tab-content" style="display:none;"></div>' +
       '</div>' +
       '<div class="ai-task-panel-footer">' +
-        '<a href="/ai-operation-logs.html" target="_blank" class="ai-task-footer-link">查看历史记录与详细日志 →</a>' +
+        '<a href="javascript:void(0)" onclick="window.closeAITaskCenter();window.location.href=\'/ai-operation-logs.html\'" class="ai-task-footer-link">查看历史记录与详细日志 →</a>' +
       '</div>';
 
     document.body.appendChild(overlay);
@@ -966,6 +968,9 @@
     document.querySelectorAll('.ai-task-tab-content').forEach(function(c) { c.style.display = 'none'; });
     var tabContent = document.getElementById('ai-task-tab-' + tab);
     if (tabContent) tabContent.style.display = 'block';
+    if (tab === 'logs') {
+      loadAILogsTab();
+    }
   };
 
   window.cancelAITask = function(taskId) {
@@ -980,6 +985,214 @@
       if (typeof window.showErrorMessage === 'function') window.showErrorMessage('取消任务失败');
     });
   };
+
+  var _aiLogsTabLoaded = false;
+  var _aiLogsCurrentSubTab = 'failed';
+  var _aiLogsRlPage = 1;
+  var _aiLogsRlTotalPages = 1;
+  var _aiLogsRlIsAdmin = false;
+
+  function loadAILogsTab() {
+    var container = document.getElementById('ai-task-tab-logs');
+    if (!container) return;
+
+    if (!_aiLogsTabLoaded) {
+      container.innerHTML =
+        '<div class="ai-logs-sub-tabs">' +
+          '<button class="ai-logs-sub-tab active" data-subtab="failed" onclick="window._switchAILogsSubTab(\'failed\')">❌ 失败操作</button>' +
+          '<button class="ai-logs-sub-tab" data-subtab="recent" onclick="window._switchAILogsSubTab(\'recent\')">📋 最近操作</button>' +
+          '<button class="ai-logs-sub-tab" data-subtab="request" onclick="window._switchAILogsSubTab(\'request\')">📝 AI请求日志</button>' +
+          '<a href="javascript:void(0)" onclick="window.closeAITaskCenter();window.location.href=\'/ai-operation-logs.html\'" class="ai-logs-sub-tab ai-logs-full-link">完整日志页 ↗</a>' +
+        '</div>' +
+        '<div id="ai-logs-subtab-failed" class="ai-logs-subtab-content"></div>' +
+        '<div id="ai-logs-subtab-recent" class="ai-logs-subtab-content" style="display:none;"></div>' +
+        '<div id="ai-logs-subtab-request" class="ai-logs-subtab-content" style="display:none;"></div>';
+      _aiLogsTabLoaded = true;
+    }
+
+    loadAILogsSubTab(_aiLogsCurrentSubTab);
+  }
+
+  window._switchAILogsSubTab = function(subtab) {
+    _aiLogsCurrentSubTab = subtab;
+    document.querySelectorAll('.ai-logs-sub-tab').forEach(function(t) { t.classList.remove('active'); });
+    var activeBtn = document.querySelector('.ai-logs-sub-tab[data-subtab="' + subtab + '"]');
+    if (activeBtn) activeBtn.classList.add('active');
+    document.querySelectorAll('.ai-logs-subtab-content').forEach(function(c) { c.style.display = 'none'; });
+    var subContent = document.getElementById('ai-logs-subtab-' + subtab);
+    if (subContent) subContent.style.display = 'block';
+    loadAILogsSubTab(subtab);
+  };
+
+  function loadAILogsSubTab(subtab) {
+    if (subtab === 'failed') {
+      loadFailedLogsInPanel();
+    } else if (subtab === 'recent') {
+      loadRecentLogsInPanel();
+    } else if (subtab === 'request') {
+      loadRequestLogsInPanel();
+    }
+  }
+
+  function _logsApiRequest(url) {
+    var token = localStorage.getItem('authToken') || (typeof authToken !== 'undefined' ? authToken : '');
+    if (!token) return Promise.reject(new Error('未登录'));
+    return fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
+      .then(function(res) {
+        if (res.status === 401 || res.status === 403) return Promise.reject(new Error('认证失败'));
+        return res.json();
+      });
+  }
+
+  function _formatDateTime(dateStr) {
+    if (!dateStr) return '-';
+    try {
+      var d = new Date(dateStr);
+      return d.getFullYear() + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0') + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    } catch (e) { return '-'; }
+  }
+
+  function _formatNumber(num) {
+    if (num >= 1000000) return (num / 1000000).toFixed(2) + 'M';
+    if (num >= 1000) return (num / 1000).toFixed(2) + 'K';
+    return String(num);
+  }
+
+  function _escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function loadFailedLogsInPanel() {
+    var container = document.getElementById('ai-logs-subtab-failed');
+    if (!container) return;
+    container.innerHTML = '<div class="ai-task-empty" style="padding:30px 10px;"><div class="ai-task-empty-icon" style="font-size:24px;">⏳</div><div class="ai-task-empty-text" style="font-size:14px;">加载中...</div></div>';
+    _logsApiRequest('/api/ai-operation-logs/failed?limit=50').then(function(data) {
+      if (data.success && data.logs && data.logs.length > 0) {
+        container.innerHTML = renderPanelLogsTable(data.logs, true);
+      } else {
+        container.innerHTML = '<div class="ai-task-empty" style="padding:30px 10px;"><div class="ai-task-empty-icon" style="font-size:24px;">✅</div><div class="ai-task-empty-text" style="font-size:14px;">暂无失败操作</div></div>';
+      }
+    }).catch(function(err) {
+      container.innerHTML = '<div class="ai-task-empty" style="padding:30px 10px;"><div class="ai-task-empty-icon" style="font-size:24px;">⚠️</div><div class="ai-task-empty-text" style="font-size:14px;">加载失败</div></div>';
+    });
+  }
+
+  function loadRecentLogsInPanel() {
+    var container = document.getElementById('ai-logs-subtab-recent');
+    if (!container) return;
+    container.innerHTML = '<div class="ai-task-empty" style="padding:30px 10px;"><div class="ai-task-empty-icon" style="font-size:24px;">⏳</div><div class="ai-task-empty-text" style="font-size:14px;">加载中...</div></div>';
+    _logsApiRequest('/api/ai-operation-logs/recent?limit=50').then(function(data) {
+      if (data.success && data.logs && data.logs.length > 0) {
+        container.innerHTML = renderPanelLogsTable(data.logs, false);
+      } else {
+        container.innerHTML = '<div class="ai-task-empty" style="padding:30px 10px;"><div class="ai-task-empty-icon" style="font-size:24px;">📋</div><div class="ai-task-empty-text" style="font-size:14px;">暂无操作记录</div></div>';
+      }
+    }).catch(function(err) {
+      container.innerHTML = '<div class="ai-task-empty" style="padding:30px 10px;"><div class="ai-task-empty-icon" style="font-size:24px;">⚠️</div><div class="ai-task-empty-text" style="font-size:14px;">加载失败</div></div>';
+    });
+  }
+
+  var TRIGGER_TYPE_LABELS = {
+    'generation': 'AI生成用例',
+    'generation_overview': 'AI生成概述',
+    'generation_key_config': 'AI生成关键配置',
+    'review': 'AI评审',
+    'qa': 'AI问答',
+    'agent': 'Agent执行',
+    'memory_refine': '记忆提炼',
+    'reflection': '反思管道',
+    'import_optimize': '导入优化'
+  };
+
+  function loadRequestLogsInPanel() {
+    var container = document.getElementById('ai-logs-subtab-request');
+    if (!container) return;
+    container.innerHTML = '<div class="ai-task-empty" style="padding:30px 10px;"><div class="ai-task-empty-icon" style="font-size:24px;">⏳</div><div class="ai-task-empty-text" style="font-size:14px;">加载中...</div></div>';
+    _logsApiRequest('/api/ai-operation-logs/request-logs?page=' + _aiLogsRlPage + '&pageSize=15&status=failed').then(function(data) {
+      if (data.success) {
+        _aiLogsRlIsAdmin = data.isAdmin;
+        _aiLogsRlTotalPages = Math.ceil(data.pagination.total / data.pagination.pageSize) || 1;
+        if (data.logs && data.logs.length > 0) {
+          container.innerHTML = renderPanelRequestLogsTable(data.logs) + renderPanelRlPagination(data.pagination);
+        } else {
+          container.innerHTML = '<div class="ai-task-empty" style="padding:30px 10px;"><div class="ai-task-empty-icon" style="font-size:24px;">✅</div><div class="ai-task-empty-text" style="font-size:14px;">暂无失败的AI请求日志</div></div>';
+        }
+      } else {
+        container.innerHTML = '<div class="ai-task-empty" style="padding:30px 10px;"><div class="ai-task-empty-icon" style="font-size:24px;">⚠️</div><div class="ai-task-empty-text" style="font-size:14px;">加载失败</div></div>';
+      }
+    }).catch(function(err) {
+      container.innerHTML = '<div class="ai-task-empty" style="padding:30px 10px;"><div class="ai-task-empty-icon" style="font-size:24px;">⚠️</div><div class="ai-task-empty-text" style="font-size:14px;">加载失败</div></div>';
+    });
+  }
+
+  window._aiLogsRlPrevPage = function() {
+    if (_aiLogsRlPage > 1) { _aiLogsRlPage--; loadRequestLogsInPanel(); }
+  };
+  window._aiLogsRlNextPage = function() {
+    if (_aiLogsRlPage < _aiLogsRlTotalPages) { _aiLogsRlPage++; loadRequestLogsInPanel(); }
+  };
+
+  function renderPanelRlPagination(pagination) {
+    if (pagination.total === 0) return '';
+    return '<div style="display:flex;justify-content:center;align-items:center;gap:10px;margin-top:12px;padding:8px 0;">' +
+      '<span style="font-size:12px;color:#9ca3af;">共 ' + pagination.total + ' 条</span>' +
+      '<button onclick="window._aiLogsRlPrevPage()" style="padding:4px 10px;border:1px solid #d1d5db;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;"' + (_aiLogsRlPage <= 1 ? ' disabled style="opacity:0.5;padding:4px 10px;border:1px solid #d1d5db;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;"' : '') + '>← 上一页</button>' +
+      '<span style="font-size:12px;color:#6b7280;">第 ' + _aiLogsRlPage + '/' + _aiLogsRlTotalPages + ' 页</span>' +
+      '<button onclick="window._aiLogsRlNextPage()" style="padding:4px 10px;border:1px solid #d1d5db;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;"' + (_aiLogsRlPage >= _aiLogsRlTotalPages ? ' disabled style="opacity:0.5;padding:4px 10px;border:1px solid #d1d5db;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;"' : '') + '>下一页 →</button>' +
+    '</div>';
+  }
+
+  function renderPanelLogsTable(logs, showError) {
+    var html = '<table class="ai-logs-panel-table">' +
+      '<thead><tr><th>时间</th><th>技能</th><th>耗时</th><th>Token</th><th>状态</th>' +
+      (showError ? '<th>错误信息</th>' : '') +
+      '</tr></thead><tbody>';
+    logs.forEach(function(log) {
+      var time = _formatDateTime(log.created_at);
+      var statusClass = log.status === 'success' ? 'ai-logs-status-success' : 'ai-logs-status-failed';
+      var statusText = log.status === 'success' ? '成功' : '失败';
+      var tokenDisplay = log.total_tokens ? _formatNumber(log.total_tokens) : '-';
+      html += '<tr>' +
+        '<td style="white-space:nowrap;font-size:12px;">' + time + '</td>' +
+        '<td style="font-size:12px;">' + _escapeHtml(log.skill_name || '-') + '</td>' +
+        '<td style="font-size:12px;">' + (log.execution_time_ms ? log.execution_time_ms + 'ms' : '-') + '</td>' +
+        '<td style="font-size:12px;" title="提示词: ' + (log.prompt_tokens || 0) + ' | 完成: ' + (log.completion_tokens || 0) + '">' + tokenDisplay + '</td>' +
+        '<td><span class="ai-logs-status-badge ' + statusClass + '">' + statusText + '</span></td>' +
+        (showError ? '<td style="font-size:12px;color:#ef4444;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + _escapeHtml(log.error_message || '') + '">' + _escapeHtml(log.error_message || '-') + '</td>' : '') +
+      '</tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+  }
+
+  function renderPanelRequestLogsTable(logs) {
+    var html = '<table class="ai-logs-panel-table">' +
+      '<thead><tr><th>时间</th>' +
+      (_aiLogsRlIsAdmin ? '<th>用户</th>' : '') +
+      '<th>触发类型</th><th>来源</th><th>Prompt预览</th><th>Token</th><th>耗时</th><th>模型</th><th>状态</th></tr></thead><tbody>';
+    logs.forEach(function(log) {
+      var time = _formatDateTime(log.created_at);
+      var statusClass = log.status === 'success' ? 'ai-logs-status-success' : 'ai-logs-status-failed';
+      var statusText = log.status === 'success' ? '成功' : '失败';
+      var tokenDisplay = log.total_tokens ? _formatNumber(log.total_tokens) : '-';
+      var typeLabel = TRIGGER_TYPE_LABELS[log.trigger_type] || log.trigger_type || '-';
+      var promptPreview = _escapeHtml((log.user_prompt || '').substring(0, 60));
+      html += '<tr>' +
+        '<td style="white-space:nowrap;font-size:12px;">' + time + '</td>' +
+        (_aiLogsRlIsAdmin ? '<td style="font-size:12px;">' + _escapeHtml(log.username || '用户' + log.user_id) + '</td>' : '') +
+        '<td style="font-size:12px;">' + _escapeHtml(typeLabel) + '</td>' +
+        '<td style="font-size:12px;">' + _escapeHtml(log.trigger_source_name || log.trigger_source || '-') + '</td>' +
+        '<td style="font-size:12px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + _escapeHtml(log.user_prompt || '') + '">' + (promptPreview || '-') + '</td>' +
+        '<td style="font-size:12px;">' + tokenDisplay + '</td>' +
+        '<td style="font-size:12px;">' + (log.execution_time_ms ? log.execution_time_ms + 'ms' : '-') + '</td>' +
+        '<td style="font-size:12px;">' + _escapeHtml(log.model_name || '-') + '</td>' +
+        '<td><span class="ai-logs-status-badge ' + statusClass + '">' + statusText + '</span></td>' +
+      '</tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+  }
 
   var _taskCenterRefreshTimer = null;
   function startTaskCenterRefresh() {

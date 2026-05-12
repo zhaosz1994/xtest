@@ -520,7 +520,7 @@ router.get('/all-active', authenticateToken, async (req, res) => {
     const [statResult] = await pool.execute(`
       SELECT status, is_duplicate, COUNT(*) as count 
       FROM temp_test_cases 
-      WHERE task_id IN (${placeholders}) AND status != 'merged'
+      WHERE task_id IN (${placeholders})
       GROUP BY status, is_duplicate
     `, taskIdList);
 
@@ -529,6 +529,7 @@ router.get('/all-active', authenticateToken, async (req, res) => {
       if (row.status === 'pending') stats.pending += row.count;
       if (row.status === 'approved') stats.approved += row.count;
       if (row.status === 'rejected') stats.rejected += row.count;
+      if (row.status === 'merged') stats.merged += row.count;
       if (row.is_duplicate === 1) stats.duplicate += row.count;
     }
 

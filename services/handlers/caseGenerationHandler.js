@@ -123,6 +123,7 @@ class CaseGenerationHandler extends BaseTaskHandler {
 
   async _rechunkWithStrategy(task, config) {
     const fileParserService = require('../fileParserService');
+    const pool = require('../../db');
 
     const selectedFiles = typeof task.selected_files === 'string'
       ? JSON.parse(task.selected_files || '[]')

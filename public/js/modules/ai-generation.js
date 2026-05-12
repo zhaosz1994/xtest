@@ -1855,7 +1855,7 @@ async function loadTaskFilter() {
 async function cleanupEmptyTasks() {
     const confirmed = await showConfirmDialog(
         '清理空任务',
-        '将清理所有没有未处理用例和一级测试点的已完成/失败/取消任务，这些任务将从下拉列表中移除。确认继续？',
+        '将清理所有没有未处理用例的已完成/失败/取消任务，这些任务将从下拉列表中移除。确认继续？',
         '确认清理',
         '取消'
     );
@@ -2007,6 +2007,7 @@ function renderCaseStats(stats) {
         <div class="ai-stat-card"><div class="ai-stat-value">${stats.total || 0}</div><div class="ai-stat-label">总计</div></div>
         <div class="ai-stat-card"><div class="ai-stat-value">${stats.pending || 0}</div><div class="ai-stat-label">待确认</div></div>
         <div class="ai-stat-card"><div class="ai-stat-value">${stats.approved || 0}</div><div class="ai-stat-label">已批准</div></div>
+        <div class="ai-stat-card"><div class="ai-stat-value">${stats.rejected || 0}</div><div class="ai-stat-label">已拒绝</div></div>
         <div class="ai-stat-card"><div class="ai-stat-value">${stats.duplicate || 0}</div><div class="ai-stat-label">重复</div></div>
         <div class="ai-stat-card"><div class="ai-stat-value">${stats.merged || 0}</div><div class="ai-stat-label">已合并</div></div>
     `;

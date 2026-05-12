@@ -240,15 +240,16 @@ router.post('/cleanup-empty-tasks', authenticateToken, async (req, res) => {
 
     const [tasks] = await pool.execute(`
       SELECT t.task_id FROM ai_case_generation_tasks t
-      LEFT JOIN temp_test_cases tc ON t.task_id = tc.task_id AND tc.status != 'merged'
-      LEFT JOIN temp_level1_points tl ON t.task_id = tl.task_id AND tl.status != 'merged'
+      LEFT JOIN temp_test_cases tc ON t.task_id = tc.task_id AND tc.status IN ('pending', 'approved')
       WHERE ${isAdmin ? '1=1' : 't.user_id = ?'}
         AND t.status IN ('completed', 'partial_completed', 'failed', 'cancelled')
-        AND tc.id IS NULL AND tl.id IS NULL
+        AND tc.id IS NULL
     `, isAdmin ? [] : [userId]);
 
     const cleanedTaskIds = [];
     for (const task of tasks) {
+      await pool.execute(`DELETE FROM temp_test_cases WHERE task_id = ? AND status NOT IN ('merged')`, [task.task_id]);
+      await pool.execute(`DELETE FROM temp_level1_points WHERE task_id = ? AND status NOT IN ('merged')`, [task.task_id]);
       await pool.execute(`DELETE FROM ai_case_generation_tasks WHERE task_id = ?`, [task.task_id]);
       cleanedTaskIds.push(task.task_id);
     }

@@ -322,12 +322,10 @@ class TaskScheduler {
       const [tasks] = await pool.execute(`
         SELECT t.task_id
         FROM ai_case_generation_tasks t
-        LEFT JOIN temp_test_cases tc ON t.task_id = tc.task_id AND tc.status != 'merged'
-        LEFT JOIN temp_level1_points tl ON t.task_id = tl.task_id AND tl.status != 'merged'
+        LEFT JOIN temp_test_cases tc ON t.task_id = tc.task_id AND tc.status IN ('pending', 'approved')
         WHERE t.status IN ('completed', 'partial_completed')
           AND t.completed_at < DATE_SUB(NOW(), INTERVAL 3 DAY)
           AND tc.id IS NULL
-          AND tl.id IS NULL
       `);
 
       if (tasks.length === 0) {
@@ -337,6 +335,9 @@ class TaskScheduler {
       const taskIds = tasks.map(t => t.task_id);
       const placeholders = taskIds.map(() => '?').join(',');
       
+      await pool.execute(`DELETE FROM temp_test_cases WHERE task_id IN (${placeholders}) AND status NOT IN ('merged')`, taskIds);
+      await pool.execute(`DELETE FROM temp_level1_points WHERE task_id IN (${placeholders}) AND status NOT IN ('merged')`, taskIds);
+
       const [result] = await pool.execute(`
         DELETE FROM ai_case_generation_tasks 
         WHERE task_id IN (${placeholders})

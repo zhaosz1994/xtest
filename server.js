@@ -2782,9 +2782,9 @@ app.post('/api/ai-config/save', authenticateToken, requireAdmin, async (req, res
 app.get('/api/ai-generation-params/get', authenticateToken, async (req, res) => {
   try {
     const [configs] = await pool.execute(
-      'SELECT config_key, config_value FROM ai_config WHERE config_key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'SELECT config_key, config_value FROM ai_config WHERE config_key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ['temperature', 'max_tokens', 'top_p', 'frequency_penalty', 'presence_penalty',
-       'tool_choice', 'response_format', 'request_timeout', 'max_retries', 'ai_rate_limit', 'seed',
+       'tool_choice', 'response_format', 'request_timeout', 'max_retries', 'ai_rate_limit', 'request_interval', 'retry_mode', 'seed',
        'scene_data_analysis', 'scene_case_generation', 'scene_report_analysis', 'scene_memory_distillation']
     );
 
@@ -2808,7 +2808,7 @@ app.get('/api/ai-generation-params/get', authenticateToken, async (req, res) => 
       frequency_penalty: '0', presence_penalty: '0',
       tool_choice: 'auto', response_format: 'text',
       request_timeout: '120000', max_retries: '3',
-      ai_rate_limit: '10', seed: '',
+      ai_rate_limit: '10', request_interval: '0', retry_mode: 'finite', seed: '',
       scene_data_analysis: { temperature: '0.3', max_tokens: '2000', max_context_rounds: '10' },
       scene_case_generation: { temperature: '0.7', max_tokens: '4000' },
       scene_report_analysis: { temperature: '0.3', max_tokens: '2000', tool_choice: 'function' },
@@ -2921,7 +2921,7 @@ app.post('/api/ai-models/add', authenticateToken, async (req, res) => {
   try {
     logger.debug('接收到添加AI模型请求:', req.body);
     
-    const { modelId, name, provider, apiKey, endpoint, modelName, isDefault, isEnabled, description, isPublic } = req.body;
+    const { modelId, name, provider, apiKey, endpoint, modelName, isDefault, isEnabled, description, isPublic, requestIntervalMs, maxRetries, retryMode } = req.body;
     const currentUserId = req.user.id;
     const currentUsername = req.user.username;
     const isAdminUser = currentUsername === 'admin' || req.user.role === '管理员' || req.user.role === 'admin' || req.user.role === 'Administrator';
@@ -2941,13 +2941,15 @@ app.post('/api/ai-models/add', authenticateToken, async (req, res) => {
       }
     }
     
-    // 只有 admin 用户可以设置模型为公开
     const modelIsPublic = isAdminUser && (isPublic === true || isPublic === 'true') ? 1 : 0;
+    const effectiveRequestIntervalMs = parseInt(requestIntervalMs) || 0;
+    const effectiveMaxRetries = parseInt(maxRetries);
+    const effectiveRetryMode = retryMode === 'infinite' ? 'infinite' : 'finite';
     
     await pool.execute(
-      `INSERT INTO ai_models (model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, is_public, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [modelId, name, provider, apiKey, endpoint, modelName, isDefault ? true : false, isEnabled !== false, description || '', currentUserId, modelIsPublic, req.user.username]
+      `INSERT INTO ai_models (model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, is_public, created_by, request_interval_ms, max_retries, retry_mode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [modelId, name, provider, apiKey, endpoint, modelName, isDefault ? true : false, isEnabled !== false, description || '', currentUserId, modelIsPublic, req.user.username, effectiveRequestIntervalMs, isNaN(effectiveMaxRetries) ? 3 : effectiveMaxRetries, effectiveRetryMode]
     );
     
     res.json({ success: true, message: 'AI模型添加成功' });
@@ -2962,7 +2964,7 @@ app.post('/api/ai-models/update', authenticateToken, async (req, res) => {
   try {
     logger.debug('接收到更新AI模型请求:', req.body);
     
-    const { modelId, name, provider, apiKey, endpoint, modelName, isDefault, isEnabled, description, isPublic } = req.body;
+    const { modelId, name, provider, apiKey, endpoint, modelName, isDefault, isEnabled, description, isPublic, requestIntervalMs, maxRetries, retryMode } = req.body;
     const currentUserId = req.user.id;
     const currentUsername = req.user.username;
     
@@ -2985,14 +2987,16 @@ app.post('/api/ai-models/update', authenticateToken, async (req, res) => {
       await pool.execute('UPDATE ai_models SET is_default = FALSE');
     }
     
-    // 只有 admin 用户可以修改 is_public 字段
     const modelIsPublic = isAdminUser && (isPublic === true || isPublic === 'true') ? 1 : 0;
+    const effectiveRequestIntervalMs = parseInt(requestIntervalMs) || 0;
+    const effectiveMaxRetries = parseInt(maxRetries);
+    const effectiveRetryMode = retryMode === 'infinite' ? 'infinite' : 'finite';
     
     await pool.execute(
       `UPDATE ai_models 
-       SET name = ?, provider = ?, api_key = ?, endpoint = ?, model_name = ?, is_default = ?, is_enabled = ?, description = ?, is_public = ?
+       SET name = ?, provider = ?, api_key = ?, endpoint = ?, model_name = ?, is_default = ?, is_enabled = ?, description = ?, is_public = ?, request_interval_ms = ?, max_retries = ?, retry_mode = ?
        WHERE model_id = ?`,
-      [name, provider, apiKey, endpoint, modelName, isDefault ? true : false, isEnabled !== false, description || '', modelIsPublic, modelId]
+      [name, provider, apiKey, endpoint, modelName, isDefault ? true : false, isEnabled !== false, description || '', modelIsPublic, effectiveRequestIntervalMs, isNaN(effectiveMaxRetries) ? 3 : effectiveMaxRetries, effectiveRetryMode, modelId]
     );
     
     res.json({ success: true, message: 'AI模型更新成功' });
@@ -6211,6 +6215,28 @@ async function initDatabase() {
         }
       } catch (error) {
         logger.warn('检查ai_models表user_id字段:', error.message);
+      }
+
+      try {
+        const [modelColumns] = await connection.execute("SHOW COLUMNS FROM ai_models");
+        const modelColumnNames = modelColumns.map(c => c.Field);
+
+        if (!modelColumnNames.includes('request_interval_ms')) {
+          await connection.execute("ALTER TABLE ai_models ADD COLUMN request_interval_ms INT DEFAULT 0 COMMENT '请求间隔时间(毫秒)，0表示不限制' AFTER is_public");
+          logger.info('ai_models表request_interval_ms字段添加成功');
+        }
+
+        if (!modelColumnNames.includes('max_retries')) {
+          await connection.execute("ALTER TABLE ai_models ADD COLUMN max_retries INT DEFAULT 3 COMMENT '最大重试次数，0表示不重试' AFTER request_interval_ms");
+          logger.info('ai_models表max_retries字段添加成功');
+        }
+
+        if (!modelColumnNames.includes('retry_mode')) {
+          await connection.execute("ALTER TABLE ai_models ADD COLUMN retry_mode VARCHAR(20) DEFAULT 'finite' COMMENT '重试模式: finite-有限次重试, infinite-无限重试直至成功' AFTER max_retries");
+          logger.info('ai_models表retry_mode字段添加成功');
+        }
+      } catch (error) {
+        logger.warn('检查ai_models表速率限制字段:', error.message);
       }
       
       // 创建AI技能表（动态技能库）

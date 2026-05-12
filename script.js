@@ -24733,7 +24733,7 @@ const AI_GEN_PARAMS_DEFAULTS = {
     frequency_penalty: '0', presence_penalty: '0',
     tool_choice: 'auto', response_format: 'text',
     request_timeout: '120000', max_retries: '3',
-    ai_rate_limit: '10', seed: '',
+    ai_rate_limit: '10', request_interval: '0', retry_mode: 'finite', seed: '',
     scene_data_analysis: { temperature: '0.3', max_tokens: '2000', max_context_rounds: '10' },
     scene_case_generation: { temperature: '0.7', max_tokens: '4000' },
     scene_report_analysis: { temperature: '0.3', max_tokens: '2000' },
@@ -24767,6 +24767,8 @@ function renderAIGenerationParams(params) {
     setInputValue('ai-param-presence-penalty', parseFloat(p.presence_penalty));
     setInputValue('ai-param-seed', p.seed ? parseInt(p.seed) : '');
     setInputValue('ai-param-ai-rate-limit', parseInt(p.ai_rate_limit));
+    setInputValue('ai-param-request-interval', parseInt(p.request_interval || 0));
+    setSelectValue('ai-param-retry-mode', p.retry_mode || 'finite');
 
     const scenes = ['data_analysis', 'case_generation', 'report_analysis', 'memory_distillation'];
     scenes.forEach(scene => {
@@ -24865,6 +24867,8 @@ function collectAIGenerationParams() {
         request_timeout: getElValue('ai-param-request-timeout'),
         max_retries: getElValue('ai-param-max-retries'),
         ai_rate_limit: getElValue('ai-param-ai-rate-limit'),
+        request_interval: getElValue('ai-param-request-interval'),
+        retry_mode: getElValue('ai-param-retry-mode'),
         seed: getElValue('ai-param-seed')
     };
 
@@ -25215,7 +25219,6 @@ async function editAIModel(modelId) {
             document.getElementById('ai-model-enabled-select').value = model.is_enabled ? 'true' : 'false';
             document.getElementById('ai-model-description-input').value = model.description || '';
             
-            // 加载 is_public 的值
             const publicSelect = document.getElementById('ai-model-public-select');
             if (publicSelect) {
                 publicSelect.value = model.is_public ? 'true' : 'false';
@@ -25245,7 +25248,6 @@ async function saveAIModel() {
     const isEnabled = document.getElementById('ai-model-enabled-select').value === 'true';
     const description = document.getElementById('ai-model-description-input').value.trim();
     
-    // 获取 is_public 的值（只有 admin 用户才有这个选项）
     const publicSelect = document.getElementById('ai-model-public-select');
     const isPublic = publicSelect ? publicSelect.value === 'true' : false;
 

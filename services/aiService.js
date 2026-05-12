@@ -170,6 +170,8 @@ const GEN_PARAMS_DEFAULTS = {
   request_timeout: 120000,
   max_retries: 3,
   ai_rate_limit: 10,
+  request_interval: 0,
+  retry_mode: 'finite',
   seed: null,
   scene_data_analysis: { temperature: 0.3, max_tokens: 2000, max_context_rounds: 10 },
   scene_case_generation: { temperature: 0.7, max_tokens: 4000, max_context_chars: 1000, retry_interval: 30 },
@@ -218,7 +220,7 @@ async function getAIGenerationParams() {
   try {
     const configKeys = [
       'temperature', 'max_tokens', 'top_p', 'frequency_penalty', 'presence_penalty',
-      'tool_choice', 'response_format', 'request_timeout', 'max_retries', 'ai_rate_limit', 'seed',
+      'tool_choice', 'response_format', 'request_timeout', 'max_retries', 'ai_rate_limit', 'request_interval', 'retry_mode', 'seed',
       'scene_data_analysis', 'scene_case_generation', 'scene_report_analysis', 'scene_memory_distillation'
     ];
 
@@ -251,7 +253,7 @@ async function getAIGenerationParams() {
     for (const key of ['temperature', 'top_p', 'frequency_penalty', 'presence_penalty']) {
       if (result[key] !== undefined) result[key] = parseFloat(result[key]);
     }
-    for (const key of ['max_tokens', 'request_timeout', 'max_retries', 'ai_rate_limit']) {
+    for (const key of ['max_tokens', 'request_timeout', 'max_retries', 'ai_rate_limit', 'request_interval']) {
       if (result[key] !== undefined) result[key] = parseInt(result[key]);
     }
     if (result.seed === '' || result.seed === null || result.seed === undefined) {

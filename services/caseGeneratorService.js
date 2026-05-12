@@ -4,6 +4,7 @@ const { default: PQueue } = require('p-queue');
 const logger = require('./logger');
 const aiAuditLogger = require('./aiAuditLogger');
 const aiRequestLogger = require('./aiRequestLogger');
+const { callAIWithRetry } = require('./aiCallWrapper');
 const level1PointService = require('./level1PointService');
 
 class CaseGeneratorService {
@@ -531,118 +532,113 @@ ${chunk.chunk_content}
     const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
     const model = aiConfig.model_name || config?.model || 'deepseek-chat';
 
-    logger.info('调用AI API', { 
-      apiUrl: apiUrl.replace(/\/v1\/chat\/completions$/, '/...'), 
-      model, 
-      promptLength: userPrompt.length 
-    });
-
     const effectiveTemp = config?.temperature ?? sceneParams.temperature;
     const effectiveMaxTokens = config?.max_tokens ?? sceneParams.max_tokens;
-
     const effectiveTimeout = timeoutConfig.generalAITask || genParams.request_timeout || 120000;
 
-    const startTime = Date.now();
-    try {
-      const requestBody = {
-        model: model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: effectiveTemp,
-        max_tokens: effectiveMaxTokens
-      };
+    const requestBody = {
+      model: model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: effectiveTemp,
+      max_tokens: effectiveMaxTokens
+    };
 
-      if (genParams.top_p !== undefined && genParams.top_p !== 1.0) {
-        requestBody.top_p = genParams.top_p;
-      }
-      if (genParams.frequency_penalty !== undefined && genParams.frequency_penalty !== 0) {
-        requestBody.frequency_penalty = genParams.frequency_penalty;
-      }
-      if (genParams.presence_penalty !== undefined && genParams.presence_penalty !== 0) {
-        requestBody.presence_penalty = genParams.presence_penalty;
-      }
-
-      const response = await axios.post(apiUrl, requestBody, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        timeout: effectiveTimeout + 10000
-      });
-
-      const executionTimeMs = Date.now() - startTime;
-      const promptTokens = response.data?.usage?.prompt_tokens || 0;
-      const completionTokens = response.data?.usage?.completion_tokens || 0;
-      const totalTokens = response.data?.usage?.total_tokens || 0;
-      const aiResponse = response.data?.choices?.[0]?.message?.content || '';
-
-      logger.info('AI API 调用成功', { 
-        model, 
-        status: response.status,
-        hasContent: !!aiResponse,
-        executionTimeMs,
-        totalTokens
-      });
-
-      return response.data;
-    } catch (error) {
-      const executionTimeMs = Date.now() - startTime;
-      let errorMsg = error.message || '未知错误';
-      
-      if (error.code === 'ECONNABORTED') {
-        errorMsg = `AI API 请求超时（${timeoutConfig.generalAITask/1000}秒），请检查网络或增加超时时间`;
-      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
-        errorMsg = `无法连接到 AI API 服务器 (${error.code})，请检查 endpoint 配置: ${apiUrl}`;
-      } else if (error.response) {
-        const status = error.response.status;
-        const data = error.response.data;
-        
-        if (status === 401) {
-          errorMsg = `AI API 认证失败 (401)，请检查 API Key 是否正确`;
-        } else if (status === 429) {
-          errorMsg = `AI API 请求频率超限 (429)，请稍后重试`;
-        } else if (status >= 500) {
-          errorMsg = `AI API 服务器错误 (${status}): ${data?.error?.message || data?.message || errorMsg}`;
-        } else {
-          errorMsg = `AI API 错误 (${status}): ${JSON.stringify(data).substring(0, 200)}`;
-        }
-      }
-
-      logger.error('调用 AI API 失败', { 
-        error: errorMsg, 
-        code: error.code,
-        status: error.response?.status,
-        stack: error.stack
-      });
-
-      aiAuditLogger.logFailure({
-        userId,
-        username,
-        skillName: 'AI生成测试用例',
-        operationType: 'GENERATE',
-        executionTimeMs,
-        errorMessage: errorMsg,
-        modelName: model
-      });
-
-      aiRequestLogger.logFailure({
-        userId,
-        triggerType: 'generation',
-        triggerSource: 'case_generator',
-        triggerSourceName: 'AI生成测试用例',
-        systemPrompt,
-        userPrompt,
-        executionTimeMs,
-        errorMessage: errorMsg,
-        modelName: model,
-        libraryId,
-        moduleId
-      });
-
-      throw new Error(errorMsg);
+    if (genParams.top_p !== undefined && genParams.top_p !== 1.0) {
+      requestBody.top_p = genParams.top_p;
     }
+    if (genParams.frequency_penalty !== undefined && genParams.frequency_penalty !== 0) {
+      requestBody.frequency_penalty = genParams.frequency_penalty;
+    }
+    if (genParams.presence_penalty !== undefined && genParams.presence_penalty !== 0) {
+      requestBody.presence_penalty = genParams.presence_penalty;
+    }
+
+    return callAIWithRetry(async () => {
+      const startTime = Date.now();
+      try {
+        const response = await axios.post(apiUrl, requestBody, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          timeout: effectiveTimeout + 10000
+        });
+
+        const executionTimeMs = Date.now() - startTime;
+        const promptTokens = response.data?.usage?.prompt_tokens || 0;
+        const completionTokens = response.data?.usage?.completion_tokens || 0;
+        const totalTokens = response.data?.usage?.total_tokens || 0;
+        const aiResponse = response.data?.choices?.[0]?.message?.content || '';
+
+        logger.info('AI API 调用成功', {
+          model,
+          status: response.status,
+          hasContent: !!aiResponse,
+          executionTimeMs,
+          totalTokens
+        });
+
+        return response.data;
+      } catch (error) {
+        const executionTimeMs = Date.now() - startTime;
+        let errorMsg = error.message || '未知错误';
+
+        if (error.code === 'ECONNABORTED') {
+          errorMsg = `AI API 请求超时（${timeoutConfig.generalAITask/1000}秒），请检查网络或增加超时时间`;
+        } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+          errorMsg = `无法连接到 AI API 服务器 (${error.code})，请检查 endpoint 配置: ${apiUrl}`;
+        } else if (error.response) {
+          const status = error.response.status;
+          const data = error.response.data;
+
+          if (status === 401) {
+            errorMsg = `AI API 认证失败 (401)，请检查 API Key 是否正确`;
+          } else if (status === 429) {
+            errorMsg = `AI API 请求频率超限 (429)，请稍后重试`;
+          } else if (status >= 500) {
+            errorMsg = `AI API 服务器错误 (${status}): ${data?.error?.message || data?.message || errorMsg}`;
+          } else {
+            errorMsg = `AI API 错误 (${status}): ${JSON.stringify(data).substring(0, 200)}`;
+          }
+        }
+
+        logger.error('调用 AI API 失败', {
+          error: errorMsg,
+          code: error.code,
+          status: error.response?.status,
+          stack: error.stack
+        });
+
+        aiAuditLogger.logFailure({
+          userId,
+          username,
+          skillName: 'AI生成测试用例',
+          operationType: 'GENERATE',
+          executionTimeMs,
+          errorMessage: errorMsg,
+          modelName: model
+        });
+
+        aiRequestLogger.logFailure({
+          userId,
+          triggerType: 'generation',
+          triggerSource: 'case_generator',
+          triggerSourceName: 'AI生成测试用例',
+          systemPrompt,
+          userPrompt,
+          executionTimeMs,
+          errorMessage: errorMsg,
+          modelName: model,
+          libraryId,
+          moduleId
+        });
+
+        throw new Error(errorMsg);
+      }
+    }, aiConfig, { triggerSource: 'case_generator', model });
   }
 
   extractCasesFromParsed(parsed) {

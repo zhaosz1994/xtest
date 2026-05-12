@@ -9,6 +9,8 @@ INSERT IGNORE INTO ai_config (config_key, config_value, description) VALUES
 ('request_timeout', '120000', '请求超时时间(毫秒)'),
 ('max_retries', '3', '最大重试次数'),
 ('ai_rate_limit', '10', 'AI速率限制(次/分钟)'),
+('request_interval', '0', '请求间隔(毫秒)'),
+('retry_mode', 'finite', '重试模式(finite/infinite)'),
 ('seed', '', '随机种子(留空则随机)'),
 ('scene_data_analysis', '{"temperature":"0.3","max_tokens":"2000","max_context_rounds":"10"}', '数据分析助手场景参数'),
 ('scene_case_generation', '{"temperature":"0.7","max_tokens":"4000","retry_interval":"30"}', '用例生成场景参数'),

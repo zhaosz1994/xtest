@@ -3,6 +3,9 @@ const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
 const PQueue = require('p-queue').default;
 const logger = require('./logger');
+const aiAuditLogger = require('./aiAuditLogger');
+const aiRequestLogger = require('./aiRequestLogger');
+const { callAIWithRetry } = require('./aiCallWrapper');
 const { getUserAITimeoutConfig, getUserAIGenerationParams, getSceneParams, getUserAIConfig, getSystemDefaultAIConfig } = require('./aiService');
 
 const SKELETON_KEYWORDS = [
@@ -141,10 +144,14 @@ class Level1PointService {
     const tasks = chunks.map((chunk, idx) => this.skeletonQueue.add(async () => {
       const prompt = this._buildSkeletonMapPrompt(chunk.chunk_content);
       try {
-        const response = await this._callAI(aiConfig, prompt, userId, effectiveTimeout, 300, 0.3);
+        const response = await this._callAI(aiConfig, prompt, userId, effectiveTimeout, 300, 0.3, {
+          triggerType: 'generation',
+          triggerSource: 'skeleton_map',
+          triggerSourceName: '骨架扫描'
+        });
         const content = response.choices?.[0]?.message?.content || '';
         const parsed = this._parseSkeletonMapResponse(content);
-        logger.debug('骨架扫描chunk完成', { taskId, chunkIndex: idx, domains: parsed.test_domains });
+        logger.info('骨架扫描chunk完成', { taskId, chunkIndex: idx, domains: parsed.test_domains, background: (parsed.background || '').substring(0, 80) });
         return { chunkIndex: idx, ...parsed };
       } catch (error) {
         logger.warn('骨架扫描chunk失败，跳过', { taskId, chunkIndex: idx, error: error.message });
@@ -236,7 +243,11 @@ ${combined}
 }
 \`\`\``;
 
-    const response = await this._callAI(aiConfig, prompt, userId, effectiveTimeout, 800, 0.3);
+    const response = await this._callAI(aiConfig, prompt, userId, effectiveTimeout, 800, 0.3, {
+      triggerType: 'generation',
+      triggerSource: 'skeleton_global_context',
+      triggerSourceName: '全局背景合并'
+    });
     const content = response.choices?.[0]?.message?.content || '';
 
     const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) ||
@@ -269,7 +280,21 @@ ${combined}
     }
 
     const uniqueDomains = [...new Set(allDomains.map(d => d.trim()).filter(d => d))];
-    if (uniqueDomains.length === 0) return [];
+    logger.info('增量测试点提取-领域汇总', {
+      taskId,
+      totalDomains: allDomains.length,
+      uniqueDomains: uniqueDomains.length,
+      domains: uniqueDomains.slice(0, 20)
+    });
+
+    if (uniqueDomains.length === 0) {
+      logger.warn('增量测试点提取-无可用测试领域，骨架扫描可能未提取到test_domains', {
+        taskId,
+        mapResultsCount: mapResults.length,
+        mapResultsSample: mapResults.slice(0, 3).map(r => ({ background: (r.background || '').substring(0, 50), domains: r.test_domains }))
+      });
+      return [];
+    }
 
     const existingNames = new Set(existingLevel1.map(p => this._normalizeName(p.name)));
 
@@ -283,21 +308,49 @@ ${combined}
       return true;
     });
 
-    if (deltaDomains.length === 0) return [];
+    logger.info('增量测试点提取-去重后领域', {
+      taskId,
+      existingCount: existingLevel1.length,
+      deltaDomains: deltaDomains.length,
+      filteredOut: uniqueDomains.length - deltaDomains.length,
+      deltaDomainsList: deltaDomains.slice(0, 20)
+    });
+
+    if (deltaDomains.length === 0) {
+      logger.warn('增量测试点提取-所有领域与已有测试点重复', {
+        taskId,
+        uniqueDomains: uniqueDomains.slice(0, 10),
+        existingNames: [...existingNames].slice(0, 10)
+      });
+      return [];
+    }
 
     const aiConfig = await this._getAIConfig(taskId);
     const userId = await this._getUserId(taskId);
     const timeoutConfig = await getUserAITimeoutConfig(userId);
     const effectiveTimeout = timeoutConfig.generalAITask || 120000;
-
     const existingNamesStr = existingLevel1.map(p => p.name).join(', ') || '暂无';
 
-    const prompt = `请将以下测试领域名称规范化为一级测试点名称。
+    const BATCH_SIZE = 30;
+    const allDeltaPoints = [];
+
+    for (let i = 0; i < deltaDomains.length; i += BATCH_SIZE) {
+      const batch = deltaDomains.slice(i, i + BATCH_SIZE);
+      const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(deltaDomains.length / BATCH_SIZE);
+
+      logger.info('增量测试点提取-分批处理', {
+        taskId,
+        batch: `${batchNum}/${totalBatches}`,
+        batchSize: batch.length
+      });
+
+      const prompt = `请将以下测试领域名称规范化为一级测试点名称。
 
 命名规范："功能/领域名称 + 测试类型"，如"Buffer管理测试"、"异常处理测试"
 现有一级测试点（避免重复）：${existingNamesStr}
 
-待规范化的领域：${deltaDomains.join(', ')}
+待规范化的领域：${batch.join(', ')}
 
 输出格式（严格JSON）：
 \`\`\`json
@@ -308,14 +361,41 @@ ${combined}
 }
 \`\`\``;
 
-    const response = await this._callAI(aiConfig, prompt, userId, effectiveTimeout, 800, 0.3);
-    const content = response.choices?.[0]?.message?.content || '';
+      try {
+        const response = await this._callAI(aiConfig, prompt, userId, effectiveTimeout, 2000, 0.3, {
+          triggerType: 'generation',
+          triggerSource: 'skeleton_delta_level1',
+          triggerSourceName: `增量测试点提取(${batchNum}/${totalBatches})`,
+          moduleId
+        });
+        const content = response.choices?.[0]?.message?.content || '';
+        const batchPoints = this._parseDeltaLevel1Response(content);
+        allDeltaPoints.push(...batchPoints);
 
-    const deltaPoints = this._parseDeltaLevel1Response(content);
+        logger.info('增量测试点提取-批次完成', {
+          taskId,
+          batch: `${batchNum}/${totalBatches}`,
+          inputDomains: batch.length,
+          extractedPoints: batchPoints.length
+        });
+      } catch (error) {
+        logger.warn('增量测试点提取-批次失败，跳过', {
+          taskId,
+          batch: `${batchNum}/${totalBatches}`,
+          error: error.message
+        });
+      }
+    }
+
+    logger.info('增量测试点提取-全部批次完成', {
+      taskId,
+      totalBatches: Math.ceil(deltaDomains.length / BATCH_SIZE),
+      rawPointsCount: allDeltaPoints.length
+    });
 
     const dedupedPoints = [];
     const allExistingNames = new Set(existingLevel1.map(p => this._normalizeName(p.name)));
-    for (const point of deltaPoints) {
+    for (const point of allDeltaPoints) {
       const normalized = this._normalizeName(point.name);
       let isDuplicate = false;
       for (const existingName of allExistingNames) {
@@ -352,17 +432,38 @@ ${combined}
     if (jsonMatch) {
       try {
         const parsed = JSON.parse(jsonMatch[1]);
-        return parsed.delta_level1_points || parsed.level1_points || [];
+        const points = parsed.delta_level1_points || parsed.level1_points || [];
+        if (points.length === 0) {
+          logger.warn('增量测试点提取-AI返回JSON但字段为空', {
+            rawKeys: Object.keys(parsed),
+            contentPreview: content.substring(0, 200)
+          });
+        }
+        return points;
       } catch (e) {
-        // fall through
+        logger.warn('增量测试点提取-JSON代码块解析失败', {
+          error: e.message,
+          contentPreview: content.substring(0, 200)
+        });
       }
     }
 
     try {
       const parsed = JSON.parse(content);
-      return parsed.delta_level1_points || parsed.level1_points || [];
+      const points = parsed.delta_level1_points || parsed.level1_points || [];
+      if (points.length === 0) {
+        logger.warn('增量测试点提取-AI返回裸JSON但字段为空', {
+          rawKeys: Object.keys(parsed),
+          contentPreview: content.substring(0, 200)
+        });
+      }
+      return points;
     } catch (e) {
-      // fall through
+      logger.warn('增量测试点提取-响应解析完全失败', {
+        error: e.message,
+        contentLength: content.length,
+        contentPreview: content.substring(0, 300)
+      });
     }
 
     return [];
@@ -559,7 +660,7 @@ ${combined}
     return tasks.length > 0 ? tasks[0].user_id : null;
   }
 
-  async _callAI(aiConfig, userPrompt, userId, effectiveTimeout, maxTokens, temperature) {
+  async _callAI(aiConfig, userPrompt, userId, effectiveTimeout, maxTokens, temperature, logContext = {}) {
     if (!aiConfig) throw new Error('AI配置不存在');
 
     const apiKey = aiConfig.api_key;
@@ -568,10 +669,12 @@ ${combined}
     const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
     const model = aiConfig.model_name || 'deepseek-chat';
 
+    const systemPrompt = '你是一个专业的测试用例设计专家，擅长分析需求文档并提取关键信息。请严格按照要求的JSON格式输出。';
+
     const requestBody = {
       model: model,
       messages: [
-        { role: 'system', content: '你是一个专业的测试用例设计专家，擅长分析需求文档并提取关键信息。请严格按照要求的JSON格式输出。' },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
       temperature: temperature || 0.3,
@@ -583,19 +686,87 @@ ${combined}
       requestBody.top_p = genParams.top_p;
     }
 
-    const response = await axios.post(apiUrl, requestBody, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      timeout: Math.max(effectiveTimeout + 15000, 180000)
-    });
+    const triggerType = logContext.triggerType || 'generation';
+    const triggerSource = logContext.triggerSource || 'skeleton';
+    const triggerSourceName = logContext.triggerSourceName || '骨架生成';
 
-    if (!response.data || !response.data.choices || !response.data.choices[0]) {
-      throw new Error('AI响应格式异常：缺少choices字段');
-    }
+    return callAIWithRetry(async () => {
+      const startTime = Date.now();
+      try {
+        const response = await axios.post(apiUrl, requestBody, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          timeout: Math.max(effectiveTimeout + 15000, 180000)
+        });
 
-    return response.data;
+        if (!response.data || !response.data.choices || !response.data.choices[0]) {
+          throw new Error('AI响应格式异常：缺少choices字段');
+        }
+
+        const executionTimeMs = Date.now() - startTime;
+        const usage = response.data.usage || {};
+        const content = response.data.choices[0].message?.content || '';
+
+        aiAuditLogger.logSuccess({
+          userId,
+          skillName: triggerSourceName,
+          operationType: 'GENERATE',
+          executionTimeMs,
+          promptTokens: usage.prompt_tokens || 0,
+          completionTokens: usage.completion_tokens || 0,
+          totalTokens: usage.total_tokens || 0,
+          modelName: model,
+          resultCount: logContext.resultCount || 1
+        });
+
+        aiRequestLogger.logSuccess({
+          userId,
+          triggerType,
+          triggerSource,
+          triggerSourceName,
+          systemPrompt,
+          userPrompt,
+          aiResponse: content,
+          promptTokens: usage.prompt_tokens || 0,
+          completionTokens: usage.completion_tokens || 0,
+          totalTokens: usage.total_tokens || 0,
+          modelName: model,
+          executionTimeMs,
+          moduleId: logContext.moduleId || null
+        });
+
+        return response.data;
+      } catch (error) {
+        const executionTimeMs = Date.now() - startTime;
+        const errorMessage = error.response?.data?.error?.message || error.message || '未知错误';
+
+        aiAuditLogger.logFailure({
+          userId,
+          skillName: triggerSourceName,
+          operationType: 'GENERATE',
+          executionTimeMs,
+          errorMessage,
+          modelName: model
+        });
+
+        aiRequestLogger.logFailure({
+          userId,
+          triggerType,
+          triggerSource,
+          triggerSourceName,
+          systemPrompt,
+          userPrompt,
+          executionTimeMs,
+          errorMessage,
+          modelName: model,
+          moduleId: logContext.moduleId || null
+        });
+
+        throw error;
+      }
+    }, aiConfig, { triggerSource: triggerSourceName, model });
   }
 }
 
