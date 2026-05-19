@@ -1,5 +1,6 @@
 const pool = require('../db');
 const { getUserAIConfig, getUserAITimeoutConfig, getUserAIGenerationParams, getSceneParams } = require('./aiService');
+const { buildAIHeaders, callAIStream, callAIStreamWithRetry } = require('./aiCallWrapper');
 const sandboxExecutor = require('./sandboxExecutor');
 const llmResponseParser = require('./llmResponseParser');
 const diffGenerator = require('./diffGenerator');
@@ -254,6 +255,315 @@ class AgentExecutionEngine {
         } catch (error) {
             const executionTimeMs = Date.now() - startTime;
             logger.error('Agent执行失败', {
+                agentCode,
+                userId,
+                error: error.message,
+                executionTimeMs
+            });
+
+            agentToolUsageLogger.logFailure({
+                userId,
+                username: context.username,
+                itemType: 'sub_agent',
+                itemCode: agentCode,
+                itemName: null,
+                source: context.source || null,
+                executionTimeMs,
+                errorMessage: error.message,
+                contextInfo: {
+                    libraryId: context.libraryId,
+                    moduleId: context.moduleId
+                }
+            });
+
+            aiRequestLogger.logFailure({
+                userId,
+                username: context.username,
+                triggerType: context.source || 'agent',
+                triggerSource: agentCode,
+                triggerSourceName: null,
+                systemPrompt: null,
+                userPrompt: null,
+                aiResponse: null,
+                executionTimeMs,
+                errorMessage: error.message,
+                modelName: aiConfig?.model_name || null,
+                libraryId: context.libraryId,
+                moduleId: context.moduleId
+            });
+
+            return {
+                success: false,
+                result: null,
+                error: error.message,
+                toolCallsLog: [],
+                memoryContribution: null,
+                executionTimeMs
+            };
+        }
+    }
+
+    /**
+     * 流式执行Sub-Agent，支持SSE推送到客户端
+     * @param {string} agentCode - 代理编码
+     * @param {number} userId - 用户ID
+     * @param {Object} variables - 模板变量
+     * @param {Object} context - 执行上下文
+     * @param {Object} streamCallbacks - 流式回调
+     * @param {Function} streamCallbacks.onContent - 内容增量回调 (deltaContent, fullContent) => void
+     * @param {Function} streamCallbacks.onToolCall - 工具调用回调 (toolCalls) => void
+     * @param {Function} streamCallbacks.onToolResult - 工具结果回调 (toolName, result) => void
+     * @param {Function} streamCallbacks.onRound - 轮次回调 (round, maxRounds) => void
+     * @returns {Object} { success, result, toolCallsLog, memoryContribution }
+     */
+    async executeAgentStream(agentCode, userId, variables, context, streamCallbacks = {}) {
+        const startTime = Date.now();
+        let aiConfig = null;
+        const { onContent, onToolCall, onToolResult, onRound } = streamCallbacks;
+
+        try {
+            const agent = await this._resolveAgent(agentCode, userId);
+            if (!agent) {
+                return {
+                    success: false,
+                    result: null,
+                    error: `代理 "${agentCode}" 不存在`,
+                    toolCallsLog: [],
+                    memoryContribution: null,
+                    executionTimeMs: Date.now() - startTime
+                };
+            }
+
+            const configFiles = await this._loadConfigFiles(agent.id);
+
+            let memoryContext = '';
+            let memoryContribution = null;
+            if (agent.memory_enabled) {
+                memoryContext = await this._loadMemoryContext(
+                    agent.id,
+                    context.libraryId,
+                    context.moduleId
+                );
+                if (memoryContext) {
+                    memoryContribution = '已注入记忆上下文';
+                }
+            }
+
+            const soulContent = configFiles.get('soul') || this._getDefaultSoul(agent);
+            let systemPrompt = soulContent;
+            if (memoryContext) {
+                systemPrompt += '\n\n' + memoryContext;
+            }
+
+            const userTemplate = configFiles.get('user') || '';
+            let userPrompt = this._renderUserPrompt(userTemplate, variables);
+
+            const refDocs = configFiles.get('ref_docs');
+            if (refDocs && refDocs.length > 0) {
+                userPrompt = this._appendRefDocs(userPrompt, refDocs);
+            }
+
+            if (!userPrompt || userPrompt.trim().length === 0) {
+                logger.warn('Agent缺少User Prompt模板，跳过AI调用', {
+                    agentCode,
+                    agentId: agent.id,
+                    userId
+                });
+                return {
+                    success: false,
+                    result: null,
+                    error: '代理缺少User Prompt模板，无法生成有效请求',
+                    toolCallsLog: [],
+                    memoryContribution: null,
+                    executionTimeMs: Date.now() - startTime
+                };
+            }
+
+            const toolsConfig = configFiles.get('tools');
+            let tools = [];
+            if (toolsConfig) {
+                const toolNames = this._parseToolNames(toolsConfig);
+                tools = await this._loadToolsConfig(toolNames);
+            }
+
+            aiConfig = await getUserAIConfig(userId);
+            if (!aiConfig) {
+                return {
+                    success: false,
+                    result: null,
+                    error: '未配置AI模型，请先在设置中配置AI模型',
+                    toolCallsLog: [],
+                    memoryContribution: null,
+                    executionTimeMs: Date.now() - startTime
+                };
+            }
+
+            const streamShouldAbort = context.sourceTaskId ? async () => {
+                try {
+                    if (context.source === 'import_optimize') {
+                        const [rows] = await pool.execute(
+                            `SELECT status FROM ai_import_optimize_tasks WHERE task_id = ?`,
+                            [context.sourceTaskId]
+                        );
+                        return rows.length > 0 && rows[0].status === 'cancelled';
+                    }
+                    const [rows] = await pool.execute(
+                        `SELECT status FROM ai_unified_tasks WHERE task_id = ?`,
+                        [context.sourceTaskId]
+                    );
+                    return rows.length > 0 && rows[0].status === 'cancelled';
+                } catch (e) { return false; }
+            } : null;
+
+            let llmResult = await this._callLLMStream(
+                systemPrompt, userPrompt, tools, aiConfig, userId,
+                'scene_case_generation', onContent, streamShouldAbort
+            );
+
+            const toolCallsLog = [];
+            let rounds = 0;
+            let totalPromptTokens = llmResult.usage?.prompt_tokens || 0;
+            let totalCompletionTokens = llmResult.usage?.completion_tokens || 0;
+            let totalTokensAccum = llmResult.usage?.total_tokens || 0;
+
+            while (llmResult.tool_calls && llmResult.tool_calls.length > 0 && rounds < MAX_TOOL_CALL_ROUNDS) {
+                rounds++;
+                if (onRound) onRound(rounds, MAX_TOOL_CALL_ROUNDS);
+                if (onToolCall) onToolCall(llmResult.tool_calls);
+
+                const toolResults = await this._executeToolCalls(
+                    llmResult.tool_calls,
+                    { userId, userRole: context.userRole, username: context.username, agentCode }
+                );
+
+                for (let i = 0; i < llmResult.tool_calls.length; i++) {
+                    const tc = llmResult.tool_calls[i];
+                    const tr = toolResults[i];
+                    toolCallsLog.push({
+                        round: rounds,
+                        toolName: tc.function?.name || tc.name || 'unknown',
+                        arguments: tc.function?.arguments || tc.arguments || '{}',
+                        result: tr?.result || tr?.error || null,
+                        success: tr?.success !== false
+                    });
+                    if (onToolResult) onToolResult(
+                        tc.function?.name || tc.name || 'unknown',
+                        tr?.success ? tr.result : tr?.error
+                    );
+                }
+
+                llmResult = await this._callLLMWithToolResultsStream(
+                    systemPrompt,
+                    userPrompt,
+                    llmResult.tool_calls,
+                    toolResults,
+                    tools,
+                    aiConfig,
+                    userId,
+                    'scene_case_generation',
+                    onContent,
+                    streamShouldAbort
+                );
+
+                totalPromptTokens += llmResult.usage?.prompt_tokens || 0;
+                totalCompletionTokens += llmResult.usage?.completion_tokens || 0;
+                totalTokensAccum += llmResult.usage?.total_tokens || 0;
+            }
+
+            const finalContent = llmResult.content || '';
+            const executionTimeMs = Date.now() - startTime;
+            const hitMaxRounds = llmResult.tool_calls && llmResult.tool_calls.length > 0;
+
+            logger.info('Agent流式执行完成', {
+                agentCode,
+                agentId: agent.id,
+                userId,
+                rounds,
+                toolCallsCount: toolCallsLog.length,
+                executionTimeMs,
+                hitMaxRounds
+            });
+
+            agentToolUsageLogger.logSuccess({
+                userId,
+                username: context.username,
+                itemType: 'sub_agent',
+                itemCode: agentCode,
+                itemName: agent.display_name,
+                source: context.source || null,
+                executionTimeMs,
+                promptTokens: totalPromptTokens,
+                completionTokens: totalCompletionTokens,
+                totalTokens: totalTokensAccum,
+                modelName: aiConfig.model_name || null,
+                contextInfo: {
+                    libraryId: context.libraryId,
+                    moduleId: context.moduleId,
+                    toolCallsCount: toolCallsLog.length,
+                    rounds,
+                    hitMaxRounds
+                }
+            });
+
+            if (hitMaxRounds) {
+                aiRequestLogger.logFailure({
+                    userId,
+                    username: context.username,
+                    triggerType: context.source || 'agent',
+                    triggerSource: agentCode,
+                    triggerSourceName: agent.display_name,
+                    systemPrompt,
+                    userPrompt,
+                    aiResponse: finalContent || '(Agent达到最大工具调用轮次，未生成最终回复)',
+                    promptTokens: totalPromptTokens,
+                    completionTokens: totalCompletionTokens,
+                    totalTokens: totalTokensAccum,
+                    modelName: aiConfig.model_name || null,
+                    executionTimeMs,
+                    errorMessage: `Agent达到最大工具调用轮次(${MAX_TOOL_CALL_ROUNDS})，任务可能未完成`,
+                    libraryId: context.libraryId,
+                    moduleId: context.moduleId
+                });
+            } else {
+                aiRequestLogger.logSuccess({
+                    userId,
+                    username: context.username,
+                    triggerType: context.source || 'agent',
+                    triggerSource: agentCode,
+                    triggerSourceName: agent.display_name,
+                    systemPrompt,
+                    userPrompt,
+                    aiResponse: finalContent,
+                    promptTokens: totalPromptTokens,
+                    completionTokens: totalCompletionTokens,
+                    totalTokens: totalTokensAccum,
+                    modelName: aiConfig.model_name || null,
+                    executionTimeMs,
+                    libraryId: context.libraryId,
+                    moduleId: context.moduleId
+                });
+            }
+
+            return {
+                success: true,
+                result: finalContent,
+                toolCallsLog,
+                memoryContribution,
+                executionTimeMs,
+                promptTokens: totalPromptTokens,
+                completionTokens: totalCompletionTokens,
+                totalTokens: totalTokensAccum,
+                modelName: aiConfig.model_name || null,
+                agentId: agent.id,
+                agentConfig: {
+                    maxRetries: agent.max_retries || 3,
+                    rules: configFiles.get('rules') || []
+                }
+            };
+
+        } catch (error) {
+            const executionTimeMs = Date.now() - startTime;
+            logger.error('Agent流式执行失败', {
                 agentCode,
                 userId,
                 error: error.message,
@@ -608,10 +918,7 @@ class AgentExecutionEngine {
         let response;
         try {
             response = await axios.post(apiUrl, requestBody, {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`
-                },
+                headers: buildAIHeaders(aiConfig.provider, apiKey),
                 timeout: effectiveTimeout + 10000
             });
         } catch (axiosError) {
@@ -648,6 +955,160 @@ class AgentExecutionEngine {
                 completion_tokens: usage.completion_tokens || 0,
                 total_tokens: usage.total_tokens || 0
             }
+        };
+    }
+
+    /**
+     * 流式调用LLM API
+     * @param {string} systemPrompt - 系统提示词
+     * @param {string} userPrompt - 用户提示词
+     * @param {Array} tools - Function Calling工具列表
+     * @param {Object} aiConfig - AI配置
+     * @param {number} userId - 用户ID
+     * @param {string} sceneName - 场景名称
+     * @param {Function} onContent - 内容增量回调
+     * @returns {Object} { content, tool_calls, usage }
+     */
+    async _callLLMStream(systemPrompt, userPrompt, tools, aiConfig, userId, sceneName = 'scene_case_generation', onContent = null, shouldAbort = null) {
+        const apiKey = aiConfig.api_key;
+        const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
+        const model = aiConfig.model_name || 'deepseek-chat';
+
+        const genParams = await getUserAIGenerationParams(userId);
+        const sceneParams = getSceneParams(genParams, sceneName);
+
+        const messages = [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+        ];
+
+        const requestBody = {
+            model: model,
+            messages: messages,
+            temperature: sceneParams.temperature,
+            max_tokens: sceneParams.max_tokens
+        };
+
+        if (genParams.top_p !== undefined && genParams.top_p !== 1.0) {
+            requestBody.top_p = genParams.top_p;
+        }
+        if (genParams.frequency_penalty !== undefined && genParams.frequency_penalty !== 0) {
+            requestBody.frequency_penalty = genParams.frequency_penalty;
+        }
+        if (genParams.presence_penalty !== undefined && genParams.presence_penalty !== 0) {
+            requestBody.presence_penalty = genParams.presence_penalty;
+        }
+        if (genParams.seed !== null && genParams.seed !== undefined) {
+            requestBody.seed = genParams.seed;
+        }
+
+        if (tools && tools.length > 0) {
+            requestBody.tools = tools;
+            requestBody.tool_choice = genParams.tool_choice || 'auto';
+        } else {
+            const responseFormat = genParams.response_format || 'text';
+            if (responseFormat === 'json_object') {
+                requestBody.response_format = { type: 'json_object' };
+            }
+        }
+
+        const timeoutConfig = await getUserAITimeoutConfig(aiConfig.user_id);
+        const effectiveTimeout = timeoutConfig.generalAITask || genParams.request_timeout || 120000;
+
+        const headers = buildAIHeaders(aiConfig.provider, apiKey);
+
+        const onChunk = onContent ? (chunk) => {
+            if (chunk.type === 'content') {
+                onContent(chunk.content, chunk.fullContent);
+            }
+        } : null;
+
+        const result = await callAIStreamWithRetry(apiUrl, requestBody, headers, aiConfig, {
+            onChunk,
+            timeout: effectiveTimeout + 10000,
+            logContext: { triggerSource: 'agent_stream', model },
+            shouldAbort
+        });
+
+        return {
+            content: result.content || '',
+            tool_calls: result.tool_calls || null,
+            usage: result.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+        };
+    }
+
+    /**
+     * 流式带工具结果继续调用LLM
+     * @param {string} systemPrompt - 系统提示词
+     * @param {string} userPrompt - 用户提示词
+     * @param {Array} toolCalls - 上次的工具调用
+     * @param {Array} toolResults - 工具执行结果
+     * @param {Array} tools - 工具定义
+     * @param {Object} aiConfig - AI配置
+     * @param {number} userId - 用户ID
+     * @param {string} sceneName - 场景名称
+     * @param {Function} onContent - 内容增量回调
+     * @returns {Object} { content, tool_calls, usage }
+     */
+    async _callLLMWithToolResultsStream(systemPrompt, userPrompt, toolCalls, toolResults, tools, aiConfig, userId, sceneName = 'scene_case_generation', onContent = null, shouldAbort = null) {
+        const apiKey = aiConfig.api_key;
+        const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
+        const model = aiConfig.model_name || 'deepseek-chat';
+
+        const genParams = await getUserAIGenerationParams(userId);
+        const sceneParams = getSceneParams(genParams, sceneName);
+
+        const messages = [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+            {
+                role: 'assistant',
+                content: null,
+                tool_calls: toolCalls
+            }
+        ];
+
+        for (let i = 0; i < toolCalls.length; i++) {
+            const tc = toolCalls[i];
+            const tr = toolResults[i];
+            messages.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                content: JSON.stringify(tr?.success ? tr.result : { error: tr?.error || '执行失败' })
+            });
+        }
+
+        const requestBody = {
+            model: model,
+            messages: messages,
+            temperature: sceneParams.temperature,
+            max_tokens: sceneParams.max_tokens,
+            tools: tools,
+            tool_choice: genParams.tool_choice || 'auto'
+        };
+
+        const timeoutConfig = await getUserAITimeoutConfig(aiConfig.user_id);
+        const effectiveTimeout = timeoutConfig.generalAITask || genParams.request_timeout || 120000;
+
+        const headers = buildAIHeaders(aiConfig.provider, apiKey);
+
+        const onChunk = onContent ? (chunk) => {
+            if (chunk.type === 'content') {
+                onContent(chunk.content, chunk.fullContent);
+            }
+        } : null;
+
+        const result = await callAIStreamWithRetry(apiUrl, requestBody, headers, aiConfig, {
+            onChunk,
+            timeout: effectiveTimeout + 10000,
+            logContext: { triggerSource: 'agent_stream_tool_result', model },
+            shouldAbort
+        });
+
+        return {
+            content: result.content || '',
+            tool_calls: result.tool_calls || null,
+            usage: result.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
         };
     }
 
@@ -706,10 +1167,7 @@ class AgentExecutionEngine {
         let response;
         try {
             response = await axios.post(apiUrl, requestBody, {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`
-                },
+                headers: buildAIHeaders(aiConfig.provider, apiKey),
                 timeout: effectiveTimeout + 10000
             });
         } catch (axiosError) {

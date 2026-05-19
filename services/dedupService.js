@@ -1,6 +1,7 @@
 const pool = require('../db');
 const crypto = require('crypto');
 const logger = require('./logger');
+const { buildAIHeaders } = require('./aiCallWrapper');
 
 class DedupService {
   constructor() {
@@ -242,10 +243,7 @@ class DedupService {
         input: text.slice(0, 8000),
         timeout: effectiveTimeout / 1000
       }, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${aiConfig.api_key}`
-        },
+        headers: buildAIHeaders(aiConfig.provider, aiConfig.api_key),
         timeout: effectiveTimeout + 10000
       });
 

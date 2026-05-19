@@ -4,6 +4,7 @@ const pool = require('../db');
 const { authenticateToken, isAdmin } = require('../middleware');
 const reportService = require('../services/reportService');
 const { getUserAIConfig, getUserAITimeoutConfig, getUserAIGenerationParams, getSceneParams } = require('../services/aiService');
+const { buildAIHeaders } = require('../services/aiCallWrapper');
 const { logActivity } = require('./history');
 const logger = require('../services/logger');
 const aiAuditLogger = require('../services/aiAuditLogger');
@@ -610,10 +611,7 @@ ${blockedCases.slice(0, 10).map(tc =>
     
     const response = await fetch(aiModel.endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${aiModel.api_key}`
-      },
+      headers: buildAIHeaders(aiModel.provider, aiModel.api_key),
       body: JSON.stringify({
         model: aiModel.model_name,
         messages: [

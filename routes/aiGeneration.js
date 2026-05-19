@@ -8,6 +8,7 @@ const pool = require('../db');
 const logger = require('../services/logger');
 const aiAuditLogger = require('../services/aiAuditLogger');
 const aiRequestLogger = require('../services/aiRequestLogger');
+const { buildAIHeaders, callAIStreamWithRetry } = require('../services/aiCallWrapper');
 const unifiedTaskService = require('../services/unifiedTaskService');
 
 router.post('/create', authenticateToken, async (req, res) => {
@@ -407,7 +408,6 @@ ${caseInfo}
 
 请为该测试点生成一段概述：`;
 
-    const axios = require('axios');
     const timeoutConfig = await aiService.getUserAITimeoutConfig(req.user.id);
     const _genParams1 = await aiService.getUserAIGenerationParams(req.user.id);
     const _sceneParams1 = aiService.getSceneParams(_genParams1, 'scene_case_generation');
@@ -418,7 +418,7 @@ ${caseInfo}
     let overview = '';
 
     try {
-      const response = await axios.post(apiUrl, {
+      const requestBody = {
         model,
         messages: [
           { role: 'system', content: systemPrompt },
@@ -426,20 +426,22 @@ ${caseInfo}
         ],
         temperature: _sceneParams1.temperature,
         max_tokens: _sceneParams1.max_tokens
-      }, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${aiConfig.api_key}`
-        },
-        timeout: timeoutConfig.generalAITask || _genParams1.request_timeout
+      };
+
+      const headers = buildAIHeaders(aiConfig.provider, aiConfig.api_key);
+      const effectiveTimeout = timeoutConfig.generalAITask || _genParams1.request_timeout || 120000;
+
+      const streamResult = await callAIStreamWithRetry(apiUrl, requestBody, headers, aiConfig, {
+        timeout: effectiveTimeout + 10000,
+        logContext: { triggerSource: 'overview_generation', model }
       });
 
-      overview = response.data?.choices?.[0]?.message?.content?.trim() || '';
+      overview = streamResult.content?.trim() || '';
       
       const executionTimeMs = Date.now() - startTime;
-      const promptTokens = response.data?.usage?.prompt_tokens || 0;
-      const completionTokens = response.data?.usage?.completion_tokens || 0;
-      const totalTokens = response.data?.usage?.total_tokens || 0;
+      const promptTokens = streamResult.usage?.prompt_tokens || 0;
+      const completionTokens = streamResult.usage?.completion_tokens || 0;
+      const totalTokens = streamResult.usage?.total_tokens || 0;
 
       aiAuditLogger.logSuccess({
         userId: req.user.id,
@@ -576,7 +578,6 @@ router.post('/generate-key-config', authenticateToken, async (req, res) => {
 测试步骤: ${steps || '无'}
 预期结果: ${expected || '无'}`;
 
-    const axios = require('axios');
     const timeoutConfig = await aiService.getUserAITimeoutConfig(req.user.id);
     const _genParams2 = await aiService.getUserAIGenerationParams(req.user.id);
     const _sceneParams2 = aiService.getSceneParams(_genParams2, 'scene_case_generation');
@@ -587,7 +588,7 @@ router.post('/generate-key-config', authenticateToken, async (req, res) => {
     let keyConfig = '';
 
     try {
-      const response = await axios.post(apiUrl, {
+      const requestBody = {
         model,
         messages: [
           { role: 'system', content: systemPrompt },
@@ -595,20 +596,22 @@ router.post('/generate-key-config', authenticateToken, async (req, res) => {
         ],
         temperature: _sceneParams2.temperature,
         max_tokens: _sceneParams2.max_tokens
-      }, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${aiConfig.api_key}`
-        },
-        timeout: timeoutConfig.generalAITask || _genParams2.request_timeout
+      };
+
+      const headers = buildAIHeaders(aiConfig.provider, aiConfig.api_key);
+      const effectiveTimeout = timeoutConfig.generalAITask || _genParams2.request_timeout || 120000;
+
+      const streamResult = await callAIStreamWithRetry(apiUrl, requestBody, headers, aiConfig, {
+        timeout: effectiveTimeout + 10000,
+        logContext: { triggerSource: 'key_config_generation', model }
       });
 
-      keyConfig = response.data?.choices?.[0]?.message?.content?.trim() || '';
+      keyConfig = streamResult.content?.trim() || '';
       
       const executionTimeMs = Date.now() - startTime;
-      const promptTokens = response.data?.usage?.prompt_tokens || 0;
-      const completionTokens = response.data?.usage?.completion_tokens || 0;
-      const totalTokens = response.data?.usage?.total_tokens || 0;
+      const promptTokens = streamResult.usage?.prompt_tokens || 0;
+      const completionTokens = streamResult.usage?.completion_tokens || 0;
+      const totalTokens = streamResult.usage?.total_tokens || 0;
 
       aiAuditLogger.logSuccess({
         userId: req.user.id,

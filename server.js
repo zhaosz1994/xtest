@@ -9,6 +9,7 @@ const logger = require('./services/logger');
 const { loginLimiter, apiLimiter, dashboardLimiter, writeLimiter, aiLimiter } = require('./services/rateLimiter');
 const AuditLogService = require('./services/auditLogService');
 const { getUserAIConfig } = require('./services/aiService');
+const { buildAIHeaders } = require('./services/aiCallWrapper');
 const autoMigration = require('./services/autoMigration');
 // 暂时注释掉模块路由，直接在server.js中实现
 // const modulesRouter = require('./routes/modules');
@@ -3194,10 +3195,7 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
 
     const response = await fetch(aiModel.endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${aiModel.api_key}`
-      },
+      headers: buildAIHeaders(aiModel.provider, aiModel.api_key),
       body: JSON.stringify({
         model: aiModel.model_name,
         messages: messages,
@@ -3377,10 +3375,7 @@ ${result.instructions}
               
               const reportResponse = await fetch(aiModel.endpoint, {
                 method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${aiModel.api_key}`
-                },
+                headers: buildAIHeaders(aiModel.provider, aiModel.api_key),
                 body: JSON.stringify({
                   model: aiModel.model_name,
                   messages: reportMessages,
@@ -3481,10 +3476,7 @@ ${result.instructions}
         
         const loopResponse = await fetch(aiModel.endpoint, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${aiModel.api_key}`
-          },
+          headers: buildAIHeaders(aiModel.provider, aiModel.api_key),
           body: JSON.stringify({
             model: aiModel.model_name,
             messages: currentMessages,
@@ -7397,10 +7389,7 @@ app.post('/api/testplans/ai_parse_filter', authenticateToken, async (req, res) =
 
     const response = await fetch(aiModel.endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${aiModel.api_key}`
-      },
+      headers: buildAIHeaders(aiModel.provider, aiModel.api_key),
       body: JSON.stringify({
         model: aiModel.model_name,
         messages: [

@@ -1,10 +1,10 @@
 const BaseTaskHandler = require('./baseTaskHandler');
 const pool = require('../../db');
-const axios = require('axios');
 const logger = require('../logger');
 const aiAuditLogger = require('../aiAuditLogger');
 const aiRequestLogger = require('../aiRequestLogger');
 const { getUserAIConfig, getUserAITimeoutConfig, getUserAIGenerationParams, getSceneParams } = require('../aiService');
+const { buildAIHeaders, callAIStreamWithRetry } = require('../aiCallWrapper');
 const unifiedTaskService = require('../unifiedTaskService');
 
 class OverviewGenerationHandler extends BaseTaskHandler {
@@ -106,29 +106,36 @@ ${caseInfo}
 
       const startTime = Date.now();
       try {
-        const response = await axios.post(apiUrl, {
+        const requestBody = {
           model,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
           ],
           temperature: sceneParams.temperature,
-          max_tokens: sceneParams.max_tokens,
-          timeout: effectiveTimeout / 1000
-        }, {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${aiConfig.api_key}`
-          },
-          timeout: effectiveTimeout + 10000
+          max_tokens: sceneParams.max_tokens
+        };
+
+        const headers = buildAIHeaders(aiConfig.provider, aiConfig.api_key);
+
+        const streamResult = await callAIStreamWithRetry(apiUrl, requestBody, headers, aiConfig, {
+          timeout: effectiveTimeout + 10000,
+          logContext: { triggerSource: 'overview_handler', model },
+          shouldAbort: async () => {
+            const [rows] = await pool.execute(
+              `SELECT status FROM ai_unified_tasks WHERE task_id = ?`,
+              [task.task_id]
+            );
+            return rows.length > 0 && rows[0].status === 'cancelled';
+          }
         });
 
-        overview = response.data?.choices?.[0]?.message?.content?.trim() || '';
+        overview = streamResult.content?.trim() || '';
 
         const executionTimeMs = Date.now() - startTime;
-        const promptTokens = response.data?.usage?.prompt_tokens || 0;
-        const completionTokens = response.data?.usage?.completion_tokens || 0;
-        const totalTokens = response.data?.usage?.total_tokens || 0;
+        const promptTokens = streamResult.usage?.prompt_tokens || 0;
+        const completionTokens = streamResult.usage?.completion_tokens || 0;
+        const totalTokens = streamResult.usage?.total_tokens || 0;
 
         await unifiedTaskService.updateTaskTokens(task.task_id, {
           modelName: model,

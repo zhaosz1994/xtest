@@ -25135,6 +25135,7 @@ function getProviderName(provider) {
         'deepseek': 'DeepSeek',
         'openai': 'OpenAI',
         'openai-compatible': 'OpenAI兼容API',
+        'openrouter': 'OpenRouter',
         'zhipu': '智谱AI',
         'anthropic': 'Anthropic',
         'custom': '自定义'
@@ -25417,12 +25418,16 @@ async function testAIModelConnection(modelId) {
             'Content-Type': 'application/json'
         };
 
-        // 根据提供商设置认证方式
         if (model.provider === 'anthropic') {
             headers['x-api-key'] = model.api_key;
             headers['anthropic-version'] = '2023-06-01';
         } else {
             headers['Authorization'] = `Bearer ${model.api_key}`;
+        }
+
+        if (model.provider === 'openrouter' || model.provider === 'openai-compatible') {
+            headers['HTTP-Referer'] = window.location.origin;
+            headers['X-Title'] = 'XTest';
         }
 
         const testResponse = await fetch(model.endpoint, {
@@ -25523,6 +25528,9 @@ document.addEventListener('DOMContentLoaded', function () {
                     endpointInput.value = '';
                     endpointInput.placeholder = '请输入兼容OpenAI格式的API端点URL';
                     break;
+                case 'openrouter':
+                    endpointInput.value = 'https://openrouter.ai/api/v1/chat/completions';
+                    break;
                 case 'zhipu':
                     endpointInput.value = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
                     break;
@@ -25594,6 +25602,12 @@ async function loadAIConfigAndModels() {
     } catch (error) {
         logger.error('[AI助手] 加载AI模型列表失败:', error);
     }
+
+    try {
+        await loadQAAgents();
+    } catch (error) {
+        logger.error('[AI助手] 加载QA代理列表失败:', error);
+    }
 }
 
 // 预加载AI模型列表（后台静默加载）
@@ -25613,6 +25627,44 @@ async function preloadAIModels() {
 }
 
 // 加载AI助手模型列表
+async function loadQAAgents() {
+    const agentSelect = document.getElementById('ai-qa-agent-select');
+    const agentInfo = document.getElementById('ai-qa-agent-info');
+    if (!agentSelect) return;
+
+    try {
+        const response = await apiRequest('/api/ai-qa/available-agents');
+        if (response.success && response.data && response.data.length > 0) {
+            let optionsHtml = '<option value="">通用助手</option>';
+            for (const agent of response.data) {
+                const desc = agent.description ? ` - ${agent.description.substring(0, 20)}${agent.description.length > 20 ? '...' : ''}` : '';
+                optionsHtml += `<option value="${escapeHtml(agent.agent_code)}">${escapeHtml(agent.display_name)}${desc}</option>`;
+            }
+            agentSelect.innerHTML = optionsHtml;
+
+            agentSelect.addEventListener('change', function() {
+                if (agentInfo) {
+                    if (this.value) {
+                        const selected = response.data.find(a => a.agent_code === this.value);
+                        if (selected && selected.description) {
+                            agentInfo.textContent = selected.description.substring(0, 60);
+                            agentInfo.style.display = 'inline-block';
+                        } else {
+                            agentInfo.style.display = 'none';
+                        }
+                    } else {
+                        agentInfo.style.display = 'none';
+                    }
+                }
+            });
+        } else {
+            agentSelect.innerHTML = '<option value="">通用助手</option>';
+        }
+    } catch (error) {
+        agentSelect.innerHTML = '<option value="">通用助手</option>';
+    }
+}
+
 async function loadAIAssistantModels(forceRefresh = false) {
     const modelSelect = document.getElementById('ai-model-select');
     const modelSelectHeader = document.getElementById('ai-model-select-header');
@@ -25838,21 +25890,153 @@ async function sendAIQuery() {
         return;
     }
 
-    // 获取选择的模型
     const modelSelect = document.getElementById('ai-model-select');
     const selectedModelId = modelSelect ? modelSelect.value : '';
 
-    // 添加用户消息到聊天容器
     addChatMessage('user', message);
 
-    // 清空输入框
     input.value = '';
 
-    // 显示加载状态
     const loadingMessage = addChatMessage('loading', '正在思考中...');
 
     try {
-        // 调用后端 AI 分析接口
+        const agentSelect = document.getElementById('ai-qa-agent-select');
+        const agentCode = agentSelect ? agentSelect.value : '';
+
+        if (agentCode) {
+            await _sendAIQueryStream(agentCode, message, loadingMessage);
+        } else {
+            await _sendAIQueryLegacy(message, selectedModelId, loadingMessage);
+        }
+    } catch (error) {
+        removeChatMessage(loadingMessage);
+        addChatMessage('assistant', `抱歉，处理您的问题时出现错误: ${error.message}`);
+    }
+}
+
+async function _sendAIQueryStream(agentCode, question, loadingMessage) {
+    let assistantMsg = null;
+    let fullContent = '';
+
+    try {
+        const currentModuleId = window.currentModuleId || null;
+        const currentLibraryId = window.currentLibraryId || null;
+
+        const response = await fetch('/api/ai-qa/ask-stream', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                agent_code: agentCode,
+                question: question,
+                library_id: currentLibraryId,
+                module_id: currentModuleId
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            removeChatMessage(loadingMessage);
+            addChatMessage('assistant', `抱歉，处理您的问题时出现错误: ${errorData.message || '服务器错误'}`);
+            return;
+        }
+
+        removeChatMessage(loadingMessage);
+        assistantMsg = addChatMessage('assistant', '');
+        const contentDiv = assistantMsg.querySelector('.ai-message-content');
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                if (line.startsWith(': ')) continue;
+
+                if (line.startsWith('event: ')) {
+                    const eventName = line.slice(7).trim();
+                    continue;
+                }
+
+                if (line.startsWith('data: ')) {
+                    const dataStr = line.slice(6).trim();
+                    try {
+                        const data = JSON.parse(dataStr);
+
+                        if (data.delta !== undefined) {
+                            fullContent = data.full || fullContent + data.delta;
+                            if (contentDiv) {
+                                contentDiv.innerHTML = parseMarkdown(fullContent);
+                                const container = document.getElementById('ai-chat-container');
+                                if (container) container.scrollTop = container.scrollHeight;
+                            }
+                        } else if (data.tools) {
+                            if (contentDiv) {
+                                const toolInfo = document.createElement('div');
+                                toolInfo.className = 'ai-tool-call-info';
+                                toolInfo.style.cssText = 'font-size:12px;color:#888;margin-top:4px;';
+                                toolInfo.textContent = `🔧 调用工具: ${data.tools.join(', ')}`;
+                                contentDiv.appendChild(toolInfo);
+                                const container = document.getElementById('ai-chat-container');
+                                if (container) container.scrollTop = container.scrollHeight;
+                            }
+                        } else if (data.tool !== undefined) {
+                            if (contentDiv) {
+                                const resultInfo = document.createElement('div');
+                                resultInfo.className = 'ai-tool-result-info';
+                                resultInfo.style.cssText = 'font-size:12px;color:#888;margin-top:2px;';
+                                resultInfo.textContent = `✅ ${data.tool}: ${data.preview || '完成'}`;
+                                contentDiv.appendChild(resultInfo);
+                                const container = document.getElementById('ai-chat-container');
+                                if (container) container.scrollTop = container.scrollHeight;
+                            }
+                        } else if (data.round !== undefined) {
+                            if (contentDiv) {
+                                const roundInfo = document.createElement('div');
+                                roundInfo.className = 'ai-round-info';
+                                roundInfo.style.cssText = 'font-size:12px;color:#888;margin-top:2px;';
+                                roundInfo.textContent = `🔄 工具调用轮次: ${data.round}/${data.maxRounds}`;
+                                contentDiv.appendChild(roundInfo);
+                                const container = document.getElementById('ai-chat-container');
+                                if (container) container.scrollTop = container.scrollHeight;
+                            }
+                        } else if (data.message !== undefined) {
+                            removeChatMessage(assistantMsg);
+                            addChatMessage('assistant', `抱歉，处理您的问题时出现错误: ${data.message}`);
+                            return;
+                        } else if (data.answer !== undefined) {
+                            fullContent = data.answer;
+                            if (contentDiv) {
+                                contentDiv.innerHTML = parseMarkdown(fullContent);
+                                const container = document.getElementById('ai-chat-container');
+                                if (container) container.scrollTop = container.scrollHeight;
+                            }
+                        }
+                    } catch (e) {}
+                }
+            }
+        }
+
+        if (fullContent && contentDiv) {
+            contentDiv.innerHTML = parseMarkdown(fullContent);
+        }
+    } catch (error) {
+        if (assistantMsg) removeChatMessage(assistantMsg);
+        addChatMessage('assistant', `抱歉，流式传输中断: ${error.message}`);
+    }
+}
+
+async function _sendAIQueryLegacy(message, selectedModelId, loadingMessage) {
+    try {
         const response = await apiRequest('/ai/analyze', {
             method: 'POST',
             body: JSON.stringify({
@@ -25861,11 +26045,9 @@ async function sendAIQuery() {
             })
         });
 
-        // 移除加载消息
         removeChatMessage(loadingMessage);
 
         if (response.success) {
-            // 检查是否为报告类型
             if (response.isReport) {
                 addChatMessage('assistant', response.answer, true);
             } else {
@@ -25874,9 +26056,7 @@ async function sendAIQuery() {
         } else {
             addChatMessage('assistant', `抱歉，处理您的问题时出现错误: ${response.message || '未知错误'}`);
         }
-
     } catch (error) {
-        logger.error('AI查询错误:', error);
         removeChatMessage(loadingMessage);
         addChatMessage('assistant', `抱歉，处理您的问题时出现错误: ${error.message}`);
     }
@@ -25998,6 +26178,20 @@ ${JSON.stringify(contextData, null, 2)}
             if (!endpoint) endpoint = 'https://api.openai.com/v1/chat/completions';
             headers['Authorization'] = `Bearer ${apiKey}`;
             if (!modelName) requestBody.model = 'gpt-3.5-turbo';
+            break;
+        case 'openrouter':
+            if (!endpoint) endpoint = 'https://openrouter.ai/api/v1/chat/completions';
+            headers['Authorization'] = `Bearer ${apiKey}`;
+            headers['HTTP-Referer'] = window.location.origin;
+            headers['X-Title'] = 'XTest';
+            if (!modelName) requestBody.model = 'openrouter/auto';
+            break;
+        case 'openai-compatible':
+            if (!endpoint) throw new Error('OpenAI兼容API需要配置API端点');
+            headers['Authorization'] = `Bearer ${apiKey}`;
+            headers['HTTP-Referer'] = window.location.origin;
+            headers['X-Title'] = 'XTest';
+            if (!modelName) requestBody.model = 'custom-model';
             break;
         case 'zhipu':
             if (!endpoint) endpoint = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';

@@ -1,11 +1,10 @@
 const pool = require('../db');
 const { v4: uuidv4 } = require('uuid');
-const axios = require('axios');
 const PQueue = require('p-queue').default;
 const logger = require('./logger');
 const aiAuditLogger = require('./aiAuditLogger');
 const aiRequestLogger = require('./aiRequestLogger');
-const { callAIWithRetry } = require('./aiCallWrapper');
+const { callAIStreamWithRetry, buildAIHeaders } = require('./aiCallWrapper');
 const { getUserAITimeoutConfig, getUserAIGenerationParams, getSceneParams, getUserAIConfig, getSystemDefaultAIConfig } = require('./aiService');
 
 const SKELETON_KEYWORDS = [
@@ -148,7 +147,7 @@ class Level1PointService {
           triggerType: 'generation',
           triggerSource: 'skeleton_map',
           triggerSourceName: '骨架扫描'
-        });
+        }, taskId);
         const content = response.choices?.[0]?.message?.content || '';
         const parsed = this._parseSkeletonMapResponse(content);
         logger.info('骨架扫描chunk完成', { taskId, chunkIndex: idx, domains: parsed.test_domains, background: (parsed.background || '').substring(0, 80) });
@@ -247,7 +246,7 @@ ${combined}
       triggerType: 'generation',
       triggerSource: 'skeleton_global_context',
       triggerSourceName: '全局背景合并'
-    });
+    }, taskId);
     const content = response.choices?.[0]?.message?.content || '';
 
     const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) ||
@@ -367,7 +366,7 @@ ${combined}
           triggerSource: 'skeleton_delta_level1',
           triggerSourceName: `增量测试点提取(${batchNum}/${totalBatches})`,
           moduleId
-        });
+        }, taskId);
         const content = response.choices?.[0]?.message?.content || '';
         const batchPoints = this._parseDeltaLevel1Response(content);
         allDeltaPoints.push(...batchPoints);
@@ -660,7 +659,7 @@ ${combined}
     return tasks.length > 0 ? tasks[0].user_id : null;
   }
 
-  async _callAI(aiConfig, userPrompt, userId, effectiveTimeout, maxTokens, temperature, logContext = {}) {
+  async _callAI(aiConfig, userPrompt, userId, effectiveTimeout, maxTokens, temperature, logContext = {}, taskId = null) {
     if (!aiConfig) throw new Error('AI配置不存在');
 
     const apiKey = aiConfig.api_key;
@@ -690,83 +689,88 @@ ${combined}
     const triggerSource = logContext.triggerSource || 'skeleton';
     const triggerSourceName = logContext.triggerSourceName || '骨架生成';
 
-    return callAIWithRetry(async () => {
-      const startTime = Date.now();
-      try {
-        const response = await axios.post(apiUrl, requestBody, {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-          },
-          timeout: Math.max(effectiveTimeout + 15000, 180000)
-        });
-
-        if (!response.data || !response.data.choices || !response.data.choices[0]) {
-          throw new Error('AI响应格式异常：缺少choices字段');
-        }
-
-        const executionTimeMs = Date.now() - startTime;
-        const usage = response.data.usage || {};
-        const content = response.data.choices[0].message?.content || '';
-
-        aiAuditLogger.logSuccess({
-          userId,
-          skillName: triggerSourceName,
-          operationType: 'GENERATE',
-          executionTimeMs,
-          promptTokens: usage.prompt_tokens || 0,
-          completionTokens: usage.completion_tokens || 0,
-          totalTokens: usage.total_tokens || 0,
-          modelName: model,
-          resultCount: logContext.resultCount || 1
-        });
-
-        aiRequestLogger.logSuccess({
-          userId,
-          triggerType,
-          triggerSource,
-          triggerSourceName,
-          systemPrompt,
-          userPrompt,
-          aiResponse: content,
-          promptTokens: usage.prompt_tokens || 0,
-          completionTokens: usage.completion_tokens || 0,
-          totalTokens: usage.total_tokens || 0,
-          modelName: model,
-          executionTimeMs,
-          moduleId: logContext.moduleId || null
-        });
-
-        return response.data;
-      } catch (error) {
-        const executionTimeMs = Date.now() - startTime;
-        const errorMessage = error.response?.data?.error?.message || error.message || '未知错误';
-
-        aiAuditLogger.logFailure({
-          userId,
-          skillName: triggerSourceName,
-          operationType: 'GENERATE',
-          executionTimeMs,
-          errorMessage,
-          modelName: model
-        });
-
-        aiRequestLogger.logFailure({
-          userId,
-          triggerType,
-          triggerSource,
-          triggerSourceName,
-          systemPrompt,
-          userPrompt,
-          executionTimeMs,
-          errorMessage,
-          modelName: model,
-          moduleId: logContext.moduleId || null
-        });
-
-        throw error;
+    const startTime = Date.now();
+    try {
+      const headers = buildAIHeaders(aiConfig.provider, apiKey);
+      const streamOptions = {
+        timeout: Math.max(effectiveTimeout + 15000, 180000),
+        logContext: { triggerSource: triggerSourceName, model }
+      };
+      if (taskId) {
+        streamOptions.shouldAbort = async () => {
+          const [rows] = await pool.execute(
+            `SELECT status FROM ai_case_generation_tasks WHERE task_id = ?`,
+            [taskId]
+          );
+          return rows.length > 0 && rows[0].status === 'cancelled';
+        };
       }
-    }, aiConfig, { triggerSource: triggerSourceName, model });
+      const streamResult = await callAIStreamWithRetry(apiUrl, requestBody, headers, aiConfig, streamOptions);
+
+      const executionTimeMs = Date.now() - startTime;
+      const usage = streamResult.usage || {};
+      const content = streamResult.content || '';
+
+      aiAuditLogger.logSuccess({
+        userId,
+        skillName: triggerSourceName,
+        operationType: 'GENERATE',
+        executionTimeMs,
+        promptTokens: usage.prompt_tokens || 0,
+        completionTokens: usage.completion_tokens || 0,
+        totalTokens: usage.total_tokens || 0,
+        modelName: model,
+        resultCount: logContext.resultCount || 1
+      });
+
+      aiRequestLogger.logSuccess({
+        userId,
+        triggerType,
+        triggerSource,
+        triggerSourceName,
+        systemPrompt,
+        userPrompt,
+        aiResponse: content,
+        promptTokens: usage.prompt_tokens || 0,
+        completionTokens: usage.completion_tokens || 0,
+        totalTokens: usage.total_tokens || 0,
+        modelName: model,
+        executionTimeMs,
+        moduleId: logContext.moduleId || null
+      });
+
+      return {
+        choices: [{ message: { content } }],
+        usage
+      };
+    } catch (error) {
+      const executionTimeMs = Date.now() - startTime;
+      const errorMessage = error.response?.data?.error?.message || error.message || '未知错误';
+
+      aiAuditLogger.logFailure({
+        userId,
+        skillName: triggerSourceName,
+        operationType: 'GENERATE',
+        executionTimeMs,
+        errorMessage,
+        modelName: model
+      });
+
+      aiRequestLogger.logFailure({
+        userId,
+        triggerType,
+        triggerSource,
+        triggerSourceName,
+        systemPrompt,
+        userPrompt,
+        executionTimeMs,
+        errorMessage,
+        modelName: model,
+        moduleId: logContext.moduleId || null
+      });
+
+      throw error;
+    }
   }
 }
 

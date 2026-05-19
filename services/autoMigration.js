@@ -365,6 +365,9 @@ class AutoMigration {
                 { table: 'ai_case_generation_tasks', column: 'global_context' },
                 { table: 'ai_case_generation_tasks', column: 'skeleton_level1_json' },
                 { table: 'temp_test_cases', column: 'level1_source' }
+            ],
+            '20260518_add_stream_mode_to_sub_agents': [
+                { table: 'ai_sub_agents', column: 'stream_mode' }
             ]
         };
 

@@ -1,9 +1,9 @@
 const pool = require('../db');
 const { getUserAIConfig, getUserAITimeoutConfig, getUserAIGenerationParams, getSceneParams } = require('./aiService');
+const { buildAIHeaders, callAIStreamWithRetry } = require('./aiCallWrapper');
 const llmResponseParser = require('./llmResponseParser');
 const logger = require('./logger');
 const aiRequestLogger = require('./aiRequestLogger');
-const axios = require('axios');
 
 class ReflectionPipeline {
     async executeReflectionPipeline(agentId, draft, rules, context) {
@@ -155,30 +155,22 @@ class ReflectionPipeline {
             messages: messages,
             temperature: effectiveTemperature,
             max_tokens: effectiveMaxTokens,
-            response_format: { type: 'json_object' },
-            timeout: timeout / 1000
+            response_format: { type: 'json_object' }
         };
 
+        const headers = buildAIHeaders(aiConfig.provider, apiKey);
         const startTime = Date.now();
 
         try {
-            const response = await axios.post(apiUrl, requestBody, {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + apiKey
-                },
-                timeout: timeout + 10000
+            const streamResult = await callAIStreamWithRetry(apiUrl, requestBody, headers, aiConfig, {
+                timeout: timeout + 10000,
+                logContext: { triggerSource: 'reflection_stream', model: effectiveModel }
             });
 
-            const choice = response.data?.choices?.[0];
-            if (!choice) {
-                throw new Error('LLM返回数据格式异常: 无choices');
-            }
-
-            const content = choice.message?.content || '';
-            const promptTokens = response.data?.usage?.prompt_tokens || 0;
-            const completionTokens = response.data?.usage?.completion_tokens || 0;
-            const totalTokens = response.data?.usage?.total_tokens || 0;
+            const content = streamResult.content || '';
+            const promptTokens = streamResult.usage?.prompt_tokens || 0;
+            const completionTokens = streamResult.usage?.completion_tokens || 0;
+            const totalTokens = streamResult.usage?.total_tokens || 0;
             const executionTimeMs = Date.now() - startTime;
 
             aiRequestLogger.logSuccess({

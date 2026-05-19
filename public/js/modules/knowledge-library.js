@@ -2082,11 +2082,11 @@ function showAITargetModal(fileCount, libraryCount, moduleCount) {
 }
 
 async function startAIGeneration(moduleId, libraryId) {
-    // 不再直接创建任务，而是携带上下文参数跳转到 AI 生成页面
-    // 让用户在 AI 生成页面中确认参数后一键生成
+    const fileIds = Array.from(klSelectedFiles);
     const params = new URLSearchParams({
         libraryId: libraryId || '',
-        moduleId: moduleId || ''
+        moduleId: moduleId || '',
+        selectedFiles: fileIds.join(',')
     });
     klSelectedFiles.clear();
     klSelectedFileModuleMap = {};

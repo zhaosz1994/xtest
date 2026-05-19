@@ -1,8 +1,8 @@
 const pool = require('../db');
 const { getUserAIConfig, getUserAITimeoutConfig, getUserAIGenerationParams, getSceneParams } = require('./aiService');
+const { buildAIHeaders, callAIStreamWithRetry } = require('./aiCallWrapper');
 const logger = require('./logger');
 const aiRequestLogger = require('./aiRequestLogger');
-const axios = require('axios');
 
 const MEMORY_CHAR_LIMIT = 5000;
 
@@ -586,27 +586,27 @@ ${currentMemory || '(空)'}
         const effectiveTimeout = timeoutConfig.generalAITask || genParams.request_timeout || 120000;
 
         try {
-            const response = await axios.post(apiUrl, {
+            const requestBody = {
                 model: model,
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userPrompt }
                 ],
                 temperature: sceneParams.temperature,
-                max_tokens: sceneParams.max_tokens,
-                timeout: effectiveTimeout / 1000
-            }, {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`
-                },
-                timeout: effectiveTimeout + 10000
+                max_tokens: sceneParams.max_tokens
+            };
+
+            const headers = buildAIHeaders(aiConfig.provider, apiKey);
+
+            const streamResult = await callAIStreamWithRetry(apiUrl, requestBody, headers, aiConfig, {
+                timeout: effectiveTimeout + 10000,
+                logContext: { triggerSource: 'memory_distiller', model }
             });
 
-            const content = response.data?.choices?.[0]?.message?.content || '';
-            const promptTokens = response.data?.usage?.prompt_tokens || 0;
-            const completionTokens = response.data?.usage?.completion_tokens || 0;
-            const totalTokens = response.data?.usage?.total_tokens || 0;
+            const content = streamResult.content || '';
+            const promptTokens = streamResult.usage?.prompt_tokens || 0;
+            const completionTokens = streamResult.usage?.completion_tokens || 0;
+            const totalTokens = streamResult.usage?.total_tokens || 0;
             const executionTimeMs = Date.now() - startTime;
 
             aiRequestLogger.logSuccess({

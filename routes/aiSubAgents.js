@@ -156,6 +156,7 @@ router.get('/list', authenticateToken, async (req, res) => {
           category: a.category,
           isSystem: a.is_system,
           allowQa: a.allow_qa,
+          streamMode: a.stream_mode || 'auto',
           isEnabled: a.is_enabled,
           creatorId: a.creator_id,
           visibility: a.visibility,
@@ -259,6 +260,7 @@ router.get('/detail/:agentCode', authenticateToken, async (req, res) => {
           category: agent.category,
           isSystem: agent.is_system,
           allowQa: agent.allow_qa,
+          streamMode: agent.stream_mode || 'auto',
           isEnabled: agent.is_enabled,
           creatorId: agent.creator_id,
           visibility: agent.visibility,
@@ -302,7 +304,8 @@ router.post('/create', authenticateToken, async (req, res) => {
       agent_code, display_name, description, category,
       allow_qa, memory_enabled, memory_distill_threshold,
       is_enabled, configFiles, model, sort_order,
-      llm_temperature, llm_max_tokens, max_retries, timeout_seconds
+      llm_temperature, llm_max_tokens, max_retries, timeout_seconds,
+      stream_mode
     } = req.body;
     const userId = req.user.id;
     const userIsAdmin = isAdmin(req.user);
@@ -344,8 +347,8 @@ router.post('/create', authenticateToken, async (req, res) => {
     // 插入代理记录
     const [result] = await connection.execute(
       `INSERT INTO ai_sub_agents
-        (agent_code, display_name, description, category, is_system, allow_qa, is_enabled, creator_id, visibility, memory_enabled, memory_distill_threshold, llm_model, llm_temperature, llm_max_tokens, max_retries, timeout_seconds, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (agent_code, display_name, description, category, is_system, allow_qa, is_enabled, creator_id, visibility, memory_enabled, memory_distill_threshold, llm_model, llm_temperature, llm_max_tokens, max_retries, timeout_seconds, sort_order, stream_mode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         agent_code,
         display_name,
@@ -363,7 +366,8 @@ router.post('/create', authenticateToken, async (req, res) => {
         llm_max_tokens || 4096,
         max_retries || 3,
         timeout_seconds || 300,
-        sort_order || 0
+        sort_order || 0,
+        stream_mode || 'auto'
       ]
     );
 
@@ -469,7 +473,8 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
       display_name, description, category,
       allow_qa, memory_enabled, memory_distill_threshold,
       is_enabled, configFiles, model, sort_order,
-      llm_temperature, llm_max_tokens, max_retries, timeout_seconds
+      llm_temperature, llm_max_tokens, max_retries, timeout_seconds,
+      stream_mode
     } = req.body;
 
     // 查找当前代理
@@ -513,6 +518,7 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
         if (llm_temperature !== undefined) { updates.push('llm_temperature = ?'); params.push(llm_temperature); }
         if (llm_max_tokens !== undefined) { updates.push('llm_max_tokens = ?'); params.push(llm_max_tokens); }
         if (max_retries !== undefined) { updates.push('max_retries = ?'); params.push(max_retries); }
+        if (stream_mode !== undefined) { updates.push('stream_mode = ?'); params.push(stream_mode); }
         if (timeout_seconds !== undefined) { updates.push('timeout_seconds = ?'); params.push(timeout_seconds); }
 
         if (updates.length > 0) {
@@ -633,6 +639,7 @@ router.put('/update/:id', authenticateToken, async (req, res) => {
       if (llm_temperature !== undefined) { updates.push('llm_temperature = ?'); params.push(llm_temperature); }
       if (llm_max_tokens !== undefined) { updates.push('llm_max_tokens = ?'); params.push(llm_max_tokens); }
       if (max_retries !== undefined) { updates.push('max_retries = ?'); params.push(max_retries); }
+      if (stream_mode !== undefined) { updates.push('stream_mode = ?'); params.push(stream_mode); }
       if (timeout_seconds !== undefined) { updates.push('timeout_seconds = ?'); params.push(timeout_seconds); }
 
       if (updates.length > 0) {

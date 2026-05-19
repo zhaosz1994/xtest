@@ -462,9 +462,19 @@ function saBuildEditModalHtml() {
                         </select>
                     </div>
                 </div>
-                <div class="sa-form-group">
-                    <label>\u6392\u5E8F</label>
-                    <input type="number" id="saInputSortOrder" class="sa-input" value="0" min="0">
+                <div class="sa-form-row">
+                    <div class="sa-form-group">
+                        <label>\u6D41\u5F0F\u8F93\u51FA</label>
+                        <select id="saInputStreamMode" class="sa-select">
+                            <option value="auto">\u81EA\u52A8\uFF08QA\u6D41\u5F0F/\u4EFB\u52A1\u975E\u6D41\u5F0F\uFF09</option>
+                            <option value="always">\u59CB\u7EC8\u6D41\u5F0F</option>
+                            <option value="never">\u59CB\u7EC8\u975E\u6D41\u5F0F</option>
+                        </select>
+                    </div>
+                    <div class="sa-form-group">
+                        <label>\u6392\u5E8F</label>
+                        <input type="number" id="saInputSortOrder" class="sa-input" value="0" min="0">
+                    </div>
                 </div>
             </div>
 
@@ -1253,6 +1263,8 @@ async function openSubAgentModal(agentCode) {
                 renderModelSelect(agent.model);
                 document.getElementById('saInputMemoryEnabled').value = (agent.memoryEnabled === 1 || agent.memoryEnabled === true || agent.memory_enabled === 1 || agent.memory_enabled === true) ? '1' : '0';
                 document.getElementById('saInputIsEnabled').value = (agent.isEnabled === 1 || agent.isEnabled === true || agent.is_enabled === 1 || agent.is_enabled === true) ? '1' : '0';
+                const streamModeSelect = document.getElementById('saInputStreamMode');
+                if (streamModeSelect) streamModeSelect.value = agent.streamMode || agent.stream_mode || 'auto';
                 document.getElementById('saInputSortOrder').value = agent.sortOrder || agent.sort_order || 0;
 
                 document.getElementById('saInputTemperature').value = agent.llmTemperature || agent.llm_temperature || 0.7;
@@ -1433,7 +1445,8 @@ async function saveSubAgent() {
         llm_temperature: temperature,
         llm_max_tokens: maxTokens,
         max_retries: maxRetries,
-        timeout_seconds: timeoutSeconds
+        timeout_seconds: timeoutSeconds,
+        stream_mode: document.getElementById('saInputStreamMode') ? document.getElementById('saInputStreamMode').value : 'auto'
     };
 
     try {

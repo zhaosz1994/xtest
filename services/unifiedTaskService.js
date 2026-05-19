@@ -292,12 +292,47 @@ class UnifiedTaskService {
   }
 
   async cancelTask(taskId, userId) {
-    const [result] = await pool.execute(
-      `UPDATE ai_unified_tasks
-       SET status = 'cancelled', completed_at = NOW()
-       WHERE task_id = ? AND user_id = ? AND status = 'pending'`,
+    const [tasks] = await pool.execute(
+      `SELECT task_id, task_type, status FROM ai_unified_tasks WHERE task_id = ? AND user_id = ?`,
       [taskId, userId]
     );
+
+    if (tasks.length === 0) return false;
+
+    const task = tasks[0];
+    if (task.status !== 'pending' && task.status !== 'processing') return false;
+
+    const [result] = await pool.execute(
+      `UPDATE ai_unified_tasks
+       SET status = 'cancelled', progress_message = '用户取消', completed_at = NOW()
+       WHERE task_id = ? AND user_id = ? AND status IN ('pending', 'processing')`,
+      [taskId, userId]
+    );
+
+    if (result.affectedRows > 0 && task.task_type === 'case_generation') {
+      try {
+        const caseGeneratorService = require('./caseGeneratorService');
+        await caseGeneratorService.cancelTask(taskId, userId);
+      } catch (e) {
+        logger.warn('取消子任务失败', { taskId, error: e.message });
+      }
+    }
+
+    if (result.affectedRows > 0 && task.task_type === 'import_optimize') {
+      try {
+        const importOptimizeService = require('./importOptimizeService');
+        await pool.execute(
+          `UPDATE ai_import_optimize_tasks SET status = 'cancelled', error_message = '用户取消', completed_at = NOW() WHERE task_id = ? AND status IN ('pending', 'processing')`,
+          [taskId]
+        );
+        await pool.execute(
+          `UPDATE ai_import_optimize_batches SET status = 'failed', error_message = '任务已取消' WHERE task_id = ? AND status IN ('pending', 'processing')`,
+          [taskId]
+        );
+      } catch (e) {
+        logger.warn('取消导入优化子任务失败', { taskId, error: e.message });
+      }
+    }
 
     return result.affectedRows > 0;
   }

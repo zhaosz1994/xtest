@@ -40,6 +40,7 @@ let aiCurrentModuleId = null;
 let aiCurrentLibraryId = null;
 let aiCurrentParentId = null;
 let aiSelectedFiles = new Set();
+let aiPrefillFileIds = null;
 let aiCurrentTaskId = null;
 let aiProgressInterval = null;
 let allTempCases = [];
@@ -542,7 +543,19 @@ async function onModuleChange() {
     aiSelectedFiles.clear();
     if (aiCurrentModuleId) {
         await loadKnowledgeFiles();
-        selectAllFiles();
+        if (aiPrefillFileIds) {
+            selectSpecificFiles(aiPrefillFileIds);
+            aiPrefillFileIds = null;
+        } else {
+            const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
+            const prefillFiles = urlParams.get('selectedFiles');
+            if (prefillFiles) {
+                const fileIds = prefillFiles.split(',').map(Number).filter(n => !isNaN(n));
+                selectSpecificFiles(fileIds);
+            } else {
+                selectAllFiles();
+            }
+        }
         await loadAILevel1Points();
     } else {
         document.getElementById('fileList').innerHTML = '<div class="ai-empty"><div class="icon">📁</div><p>请先选择模块</p></div>';
@@ -672,6 +685,21 @@ function selectAllFiles() {
         item.classList.add('selected');
         const checkbox = item.querySelector('.ai-file-checkbox');
         if (checkbox) checkbox.checked = true;
+    });
+    updateFileSelectionInfo();
+    updateSelectionCount();
+}
+
+function selectSpecificFiles(fileIds) {
+    const fileIdSet = new Set(fileIds);
+    document.querySelectorAll('#fileList .ai-file-item').forEach(item => {
+        const fileId = parseInt(item.dataset.fileId);
+        if (fileIdSet.has(fileId)) {
+            aiSelectedFiles.add(fileId);
+            item.classList.add('selected');
+            const checkbox = item.querySelector('.ai-file-checkbox');
+            if (checkbox) checkbox.checked = true;
+        }
     });
     updateFileSelectionInfo();
     updateSelectionCount();
@@ -1813,8 +1841,36 @@ async function deleteKnowledgeFile(fileId, libraryId) {
     }
 }
 
-function confirmFileSelection() {
-    loadKnowledgeFiles();
+function collectSelectedFilesFromTree(nodes, selectedIds) {
+    const results = [];
+    if (!nodes) return results;
+    for (const node of nodes) {
+        if (node.type !== 'library' && node.type !== 'module' && node.type !== 'folder' && selectedIds.has(node.id)) {
+            results.push({
+                id: node.id,
+                name: node.name,
+                type: node.type || 'file',
+                file_ext: node.fileExt || node.file_ext || '',
+                file_size: node.fileSize || node.file_size || 0,
+                parse_status: node.parseStatus || node.parse_status || '',
+                chunk_count: node.chunkCount || node.chunk_count || 0,
+                chunking_strategy: node.chunkingStrategy || node.chunking_strategy || ''
+            });
+        }
+        if (node.children) {
+            results.push(...collectSelectedFilesFromTree(node.children, selectedIds));
+        }
+    }
+    return results;
+}
+
+async function confirmFileSelection() {
+    if (aiCurrentModuleId) {
+        await loadKnowledgeFiles();
+    } else {
+        const selectedFiles = collectSelectedFilesFromTree(knowledgeTreeData, aiSelectedFiles);
+        renderFileList(selectedFiles);
+    }
     closeKnowledgeDrawer();
 }
 
@@ -3739,24 +3795,25 @@ function applyAIGenerationContext() {
     const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
     const libraryId = urlParams.get('libraryId');
     const moduleId = urlParams.get('moduleId');
+    const selectedFiles = urlParams.get('selectedFiles');
 
     if (!libraryId && !moduleId) return;
 
-    // 清掉 URL 参数，避免刷新时重复填充
+    if (selectedFiles) {
+        aiPrefillFileIds = selectedFiles.split(',').map(Number).filter(n => !isNaN(n));
+    }
+
     const cleanHash = window.location.hash.split('?')[0];
     history.replaceState(null, '', cleanHash);
 
-    // 确保在 generate 标签页
     switchTab('generate');
 
-    // 设置库
     const libSelect = document.getElementById('librarySelect');
     if (libraryId && libSelect) {
         libSelect.value = libraryId;
         aiCurrentLibraryId = parseInt(libraryId);
     }
 
-    // 加载模块列表并选中目标模块
     if (libraryId) {
         loadModulesByLibrary(parseInt(libraryId)).then(() => {
             if (moduleId) {

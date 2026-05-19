@@ -732,6 +732,7 @@
     if (panel) {
       panel.classList.remove('ai-task-panel-open');
     }
+    _aiLogsTabLoaded = false;
     setTimeout(function() {
       if (panel) panel.remove();
       if (overlay) overlay.remove();
@@ -870,6 +871,8 @@
       var statusTextMap = { processing: '生成中...', pending: '排队中...', completed: '已完成', partial_completed: '部分完成', failed: '失败', cancelled: '已取消' };
       var statusText = statusTextMap[task.status] || '排队中...';
       var isPending = task.status === 'pending';
+      var isProcessing = task.status === 'processing';
+      var canCancel = isPending || isProcessing;
       var safeTaskId = (task.task_id || '').replace(/[^a-zA-Z0-9_\-]/g, '');
       var safeTargetName = (task.target_name || '未知目标').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
       var safeUsername = (task.username || '未知').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -883,7 +886,7 @@
             '<span class="ai-task-target-name">' + safeTargetName + '</span>' +
             '<span class="ai-task-username">👤 ' + safeUsername + '</span>' +
           '</div>' +
-          (isPending ? '<button class="ai-task-cancel-btn" onclick="window.cancelAITask(\'' + safeTaskId + '\')">取消</button>' : '') +
+          (canCancel ? '<button class="ai-task-cancel-btn" onclick="window.cancelAITask(\'' + safeTaskId + '\')">取消</button>' : '') +
         '</div>' +
         '<div class="ai-task-progress-row">' +
           '<div class="ai-task-progress-bar"><div class="ai-task-progress-fill" style="width:' + (task.progress || 0) + '%;background:' + tc.color + ';"></div></div>' +
@@ -973,13 +976,19 @@
     }
   };
 
-  window.cancelAITask = function(taskId) {
+  window.cancelAITask = async function(taskId) {
+    var confirmFn = window.showConfirmMessage || function(msg) {
+      return Promise.resolve(confirm(msg));
+    };
+    var confirmed = await confirmFn('确定要取消该任务吗？正在处理的进度将丢失。');
+    if (!confirmed) return;
     apiRequest('/ai-tasks/cancel/' + taskId, { method: 'POST' }).then(function(response) {
       if (response.success) {
         if (typeof window.showSuccessMessage === 'function') window.showSuccessMessage('任务已取消');
         loadRunningTasks();
+        loadTaskStats();
       } else {
-        if (typeof window.showErrorMessage === 'function') window.showErrorMessage(response.message);
+        if (typeof window.showErrorMessage === 'function') window.showErrorMessage(response.message || '无法取消该任务');
       }
     }).catch(function(error) {
       if (typeof window.showErrorMessage === 'function') window.showErrorMessage('取消任务失败');

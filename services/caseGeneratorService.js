@@ -4,7 +4,7 @@ const { default: PQueue } = require('p-queue');
 const logger = require('./logger');
 const aiAuditLogger = require('./aiAuditLogger');
 const aiRequestLogger = require('./aiRequestLogger');
-const { callAIWithRetry } = require('./aiCallWrapper');
+const { callAIStreamWithRetry, buildAIHeaders } = require('./aiCallWrapper');
 const level1PointService = require('./level1PointService');
 
 class CaseGeneratorService {
@@ -96,7 +96,10 @@ class CaseGeneratorService {
     const sceneParams = getSceneParams(genParams, 'scene_case_generation');
     const contextChars = config.max_context_chars ?? sceneParams.max_context_chars ?? 1000;
 
-    const maxRetries = parseInt(process.env.CHUNK_MAX_RETRIES) || 3;
+    const aiConfig = await this.getAIConfig(task.user_id);
+    const maxRetries = parseInt(process.env.CHUNK_MAX_RETRIES) || genParams.max_retries || 3;
+    const effectiveRetryMode = (aiConfig.retry_mode === 'infinite' || genParams.retry_mode === 'infinite') ? 'infinite' : 'finite';
+    const isInfiniteRetry = effectiveRetryMode === 'infinite';
     const retryInterval = (sceneParams.retry_interval !== undefined ? sceneParams.retry_interval : 30) * 1000;
 
     for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
@@ -110,8 +113,20 @@ class CaseGeneratorService {
         let chunkSuccess = false;
         let lastError = null;
         let actualRetryCount = 0;
+        let retry = 0;
 
-        for (let retry = 0; retry < maxRetries; retry++) {
+        while (true) {
+          const [taskCheck] = await pool.execute(
+            `SELECT status FROM ai_case_generation_tasks WHERE task_id = ?`,
+            [taskId]
+          );
+          if (taskCheck.length > 0 && taskCheck[0].status === 'cancelled') {
+            logger.info('任务已取消，停止处理chunk', { chunkId: chunk.id, taskId });
+            chunkSuccess = false;
+            lastError = new Error('任务已取消');
+            break;
+          }
+
           try {
             await pool.execute(`
               UPDATE ai_material_chunks 
@@ -138,33 +153,44 @@ class CaseGeneratorService {
             break;
           } catch (error) {
             lastError = error;
-            if (retry < maxRetries - 1) {
-              logger.warn('chunk处理失败，准备重试', {
-                chunkId: chunk.id,
-                taskId,
-                retry: retry + 1,
-                maxRetries,
-                retryIntervalMs: retryInterval,
-                error: error.message
-              });
-              await new Promise(resolve => setTimeout(resolve, retryInterval));
+            const shouldRetry = isInfiniteRetry || retry < maxRetries - 1;
+            if (!shouldRetry) {
+              break;
             }
+
+            const delayMs = Math.min(retryInterval * Math.pow(1.5, retry), 120000);
+            const jitter = delayMs * 0.1 * Math.random();
+            const actualDelay = Math.round(delayMs + jitter);
+
+            logger.warn('chunk处理失败，准备重试', {
+              chunkId: chunk.id,
+              taskId,
+              retry: retry + 1,
+              maxRetries: isInfiniteRetry ? '∞' : maxRetries,
+              retryMode: effectiveRetryMode,
+              nextRetryInMs: actualDelay,
+              error: error.message
+            });
+            await new Promise(resolve => setTimeout(resolve, actualDelay));
+            retry++;
           }
         }
 
         if (!chunkSuccess) {
+          const isCancelled = lastError && lastError.message === '任务已取消';
           const errorMsg = lastError ? (lastError.message || lastError.toString() || '未知错误') : '重试耗尽';
-          logger.error('处理chunk失败（重试耗尽）', {
+          logger.error(isCancelled ? 'chunk处理因任务取消而终止' : '处理chunk失败（重试耗尽）', {
             chunkId: chunk.id,
             taskId,
             error: errorMsg,
-            maxRetries
+            maxRetries: isInfiniteRetry ? '∞' : maxRetries,
+            retryMode: effectiveRetryMode
           });
           await pool.execute(`
             UPDATE ai_material_chunks 
             SET status = 'failed', error_message = ?, retry_count = ?
             WHERE id = ?
-          `, [errorMsg.substring(0, 500), maxRetries, chunk.id]);
+          `, [errorMsg.substring(0, 500), retry, chunk.id]);
           failedChunks++;
         } else {
           completedChunks++;
@@ -247,7 +273,7 @@ class CaseGeneratorService {
 
     const aiConfig = await this.getAIConfig(task.user_id);
 
-    const response = await this.callAI(aiConfig, systemPrompt, userPrompt, config, task.user_id, task.username, task.library_id, task.module_id);
+    const response = await this.callAI(aiConfig, systemPrompt, userPrompt, config, task.user_id, task.username, task.library_id, task.module_id, chunk.task_id);
 
     const content = response.choices?.[0]?.message?.content || '';
     const usage = response.usage || {};
@@ -522,8 +548,7 @@ ${chunk.chunk_content}
     return aiService.getUserAIConfig(userId);
   }
 
-  async callAI(aiConfig, systemPrompt, userPrompt, config, userId, username = null, libraryId = null, moduleId = null) {
-    const axios = require('axios');
+  async callAI(aiConfig, systemPrompt, userPrompt, config, userId, username = null, libraryId = null, moduleId = null, taskId = null) {
     const { getUserAITimeoutConfig, getUserAIGenerationParams, getSceneParams } = require('./aiService');
     const timeoutConfig = await getUserAITimeoutConfig(userId);
     const genParams = await getUserAIGenerationParams(userId);
@@ -556,89 +581,114 @@ ${chunk.chunk_content}
       requestBody.presence_penalty = genParams.presence_penalty;
     }
 
-    return callAIWithRetry(async () => {
-      const startTime = Date.now();
-      try {
-        const response = await axios.post(apiUrl, requestBody, {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-          },
-          timeout: effectiveTimeout + 10000
-        });
+    const headers = buildAIHeaders(aiConfig.provider, apiKey);
 
-        const executionTimeMs = Date.now() - startTime;
-        const promptTokens = response.data?.usage?.prompt_tokens || 0;
-        const completionTokens = response.data?.usage?.completion_tokens || 0;
-        const totalTokens = response.data?.usage?.total_tokens || 0;
-        const aiResponse = response.data?.choices?.[0]?.message?.content || '';
-
-        logger.info('AI API 调用成功', {
-          model,
-          status: response.status,
-          hasContent: !!aiResponse,
-          executionTimeMs,
-          totalTokens
-        });
-
-        return response.data;
-      } catch (error) {
-        const executionTimeMs = Date.now() - startTime;
-        let errorMsg = error.message || '未知错误';
-
-        if (error.code === 'ECONNABORTED') {
-          errorMsg = `AI API 请求超时（${timeoutConfig.generalAITask/1000}秒），请检查网络或增加超时时间`;
-        } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
-          errorMsg = `无法连接到 AI API 服务器 (${error.code})，请检查 endpoint 配置: ${apiUrl}`;
-        } else if (error.response) {
-          const status = error.response.status;
-          const data = error.response.data;
-
-          if (status === 401) {
-            errorMsg = `AI API 认证失败 (401)，请检查 API Key 是否正确`;
-          } else if (status === 429) {
-            errorMsg = `AI API 请求频率超限 (429)，请稍后重试`;
-          } else if (status >= 500) {
-            errorMsg = `AI API 服务器错误 (${status}): ${data?.error?.message || data?.message || errorMsg}`;
-          } else {
-            errorMsg = `AI API 错误 (${status}): ${JSON.stringify(data).substring(0, 200)}`;
-          }
-        }
-
-        logger.error('调用 AI API 失败', {
-          error: errorMsg,
-          code: error.code,
-          status: error.response?.status,
-          stack: error.stack
-        });
-
-        aiAuditLogger.logFailure({
-          userId,
-          username,
-          skillName: 'AI生成测试用例',
-          operationType: 'GENERATE',
-          executionTimeMs,
-          errorMessage: errorMsg,
-          modelName: model
-        });
-
-        aiRequestLogger.logFailure({
-          userId,
-          triggerType: 'generation',
-          triggerSource: 'case_generator',
-          triggerSourceName: 'AI生成测试用例',
-          systemPrompt,
-          userPrompt,
-          executionTimeMs,
-          errorMessage: errorMsg,
-          modelName: model,
-          libraryId,
-          moduleId
-        });
-
-        throw new Error(errorMsg);
+    const startTime = Date.now();
+    try {
+      const streamOptions = {
+        timeout: effectiveTimeout + 10000,
+        logContext: { triggerSource: 'case_generator', model }
+      };
+      if (taskId) {
+        streamOptions.shouldAbort = async () => {
+          const [rows] = await pool.execute(
+            `SELECT status FROM ai_case_generation_tasks WHERE task_id = ?`,
+            [taskId]
+          );
+          return rows.length > 0 && rows[0].status === 'cancelled';
+        };
       }
-    }, aiConfig, { triggerSource: 'case_generator', model });
+      const streamResult = await callAIStreamWithRetry(apiUrl, requestBody, headers, aiConfig, streamOptions);
+
+      const executionTimeMs = Date.now() - startTime;
+      const promptTokens = streamResult.usage?.prompt_tokens || 0;
+      const completionTokens = streamResult.usage?.completion_tokens || 0;
+      const totalTokens = streamResult.usage?.total_tokens || 0;
+      const aiResponse = streamResult.content || '';
+
+      if (!aiResponse && streamResult.reasoning_content) {
+        logger.warn('AI返回content为空但有reasoning_content（可能是推理模型）', {
+          model,
+          reasoningLength: streamResult.reasoning_content.length,
+          finishReason: streamResult.finish_reason
+        });
+      }
+
+      logger.info('AI API 流式调用成功', {
+        model,
+        hasContent: !!aiResponse,
+        contentLength: aiResponse.length,
+        executionTimeMs,
+        totalTokens,
+        finishReason: streamResult.finish_reason
+      });
+
+      return {
+        choices: [{
+          message: { content: aiResponse }
+        }],
+        usage: {
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          total_tokens: totalTokens
+        }
+      };
+    } catch (error) {
+      const executionTimeMs = Date.now() - startTime;
+      let errorMsg = error.message || '未知错误';
+
+      if (error.code === 'ECONNABORTED') {
+        errorMsg = `AI API 请求超时（${timeoutConfig.generalAITask/1000}秒），请检查网络或增加超时时间`;
+      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+        errorMsg = `无法连接到 AI API 服务器 (${error.code})，请检查 endpoint 配置: ${apiUrl}`;
+      } else if (error.response) {
+        const status = error.response.status;
+        const data = error.response.data;
+
+        if (status === 401) {
+          errorMsg = `AI API 认证失败 (401)，请检查 API Key 是否正确`;
+        } else if (status === 429) {
+          errorMsg = `AI API 请求频率超限 (429)，请稍后重试`;
+        } else if (status >= 500) {
+          errorMsg = `AI API 服务器错误 (${status}): ${data?.error?.message || data?.message || errorMsg}`;
+        } else {
+          errorMsg = `AI API 错误 (${status}): ${JSON.stringify(data).substring(0, 200)}`;
+        }
+      }
+
+      logger.error('调用 AI API 失败', {
+        error: errorMsg,
+        code: error.code,
+        status: error.response?.status,
+        stack: error.stack
+      });
+
+      aiAuditLogger.logFailure({
+        userId,
+        username,
+        skillName: 'AI生成测试用例',
+        operationType: 'GENERATE',
+        executionTimeMs,
+        errorMessage: errorMsg,
+        modelName: model
+      });
+
+      aiRequestLogger.logFailure({
+        userId,
+        triggerType: 'generation',
+        triggerSource: 'case_generator',
+        triggerSourceName: 'AI生成测试用例',
+        systemPrompt,
+        userPrompt,
+        executionTimeMs,
+        errorMessage: errorMsg,
+        modelName: model,
+        libraryId,
+        moduleId
+      });
+
+      throw new Error(errorMsg);
+    }
   }
 
   extractCasesFromParsed(parsed) {
@@ -664,7 +714,7 @@ ${chunk.chunk_content}
   parseAIResponse(content) {
     logger.debug('开始解析AI响应', { contentLength: content.length });
     
-    const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/);
+    const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/i);
     if (jsonMatch) {
       logger.debug('找到JSON代码块', { matchedLength: jsonMatch[1].length });
       try {
@@ -680,7 +730,7 @@ ${chunk.chunk_content}
       }
     }
 
-    const truncatedMatch = content.match(/```json\s*([\s\S]+)/);
+    const truncatedMatch = content.match(/```json\s*([\s\S]+)/i);
     if (truncatedMatch) {
       let jsonStr = truncatedMatch[1].replace(/\s*```\s*$/, '');
       logger.debug('尝试解析截断的JSON代码块', { length: jsonStr.length });
@@ -705,6 +755,40 @@ ${chunk.chunk_content}
       }
     }
 
+    const braceStart = content.indexOf('{');
+    const bracketStart = content.indexOf('[');
+    let jsonStart = -1;
+    if (braceStart >= 0 && bracketStart >= 0) {
+      jsonStart = Math.min(braceStart, bracketStart);
+    } else if (braceStart >= 0) {
+      jsonStart = braceStart;
+    } else if (bracketStart >= 0) {
+      jsonStart = bracketStart;
+    }
+
+    if (jsonStart > 0) {
+      const jsonContent = content.substring(jsonStart);
+      logger.debug('尝试从混合内容中提取JSON', { jsonStart, jsonLength: jsonContent.length });
+      try {
+        const parsed = JSON.parse(jsonContent);
+        const cases = this.extractCasesFromParsed(parsed);
+        logger.info('从混合内容中提取JSON成功', { casesCount: cases.length });
+        return cases;
+      } catch (error) {
+        const repaired = this.tryRepairTruncatedJSON(jsonContent);
+        if (repaired) {
+          try {
+            const parsed = JSON.parse(repaired);
+            const cases = this.extractCasesFromParsed(parsed);
+            logger.info('从混合内容修复JSON成功', { casesCount: cases.length });
+            return cases;
+          } catch (repairError) {
+            logger.error('从混合内容修复JSON仍失败', { error: repairError.message });
+          }
+        }
+      }
+    }
+
     logger.debug('未找到JSON代码块，尝试直接解析');
     try {
       const parsed = JSON.parse(content);
@@ -721,11 +805,34 @@ ${chunk.chunk_content}
   }
 
   tryRepairTruncatedJSON(jsonStr) {
+    const result = this._repairJSON(jsonStr);
+    if (result) return result;
+
+    const stripPatterns = [
+      /,\s*"[^"]*"?$/,
+      /"[^"]*"\s*:\s*$/,
+      /"[^"]*"?$/,
+    ];
+
+    let stripped = jsonStr.trimEnd();
+    for (const pattern of stripPatterns) {
+      const next = stripped.replace(pattern, '');
+      if (next !== stripped) {
+        stripped = next.replace(/,\s*$/, '');
+        const result2 = this._repairJSON(stripped);
+        if (result2) return result2;
+        break;
+      }
+    }
+
+    return null;
+  }
+
+  _repairJSON(jsonStr) {
     let str = jsonStr.trimEnd();
     str = str.replace(/,\s*$/, '');
 
-    let openBraces = 0;
-    let openBrackets = 0;
+    let stack = [];
     let inString = false;
     let escape = false;
 
@@ -735,23 +842,21 @@ ${chunk.chunk_content}
       if (ch === '\\') { escape = true; continue; }
       if (ch === '"') { inString = !inString; continue; }
       if (inString) continue;
-      if (ch === '{') openBraces++;
-      if (ch === '}') openBraces--;
-      if (ch === '[') openBrackets++;
-      if (ch === ']') openBrackets--;
+      if (ch === '{') { stack.push('}'); continue; }
+      if (ch === '[') { stack.push(']'); continue; }
+      if (ch === '}' && stack.length > 0 && stack[stack.length - 1] === '}') { stack.pop(); continue; }
+      if (ch === ']' && stack.length > 0 && stack[stack.length - 1] === ']') { stack.pop(); continue; }
     }
 
     if (inString) {
+      if (escape) {
+        str = str.slice(0, -1);
+      }
       str += '"';
     }
 
-    while (openBrackets > 0) {
-      str += ']';
-      openBrackets--;
-    }
-    while (openBraces > 0) {
-      str += '}';
-      openBraces--;
+    for (let i = stack.length - 1; i >= 0; i--) {
+      str += stack[i];
     }
 
     try {

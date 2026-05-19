@@ -1,5 +1,6 @@
 const pool = require('../db');
 const { getUserAIConfig, getUserAITimeoutConfig, getUserAIGenerationParams, getSceneParams } = require('./aiService');
+const { buildAIHeaders, callAIStreamWithRetry } = require('./aiCallWrapper');
 const aiAuditLogger = require('./aiAuditLogger');
 const logger = require('./logger');
 
@@ -103,46 +104,32 @@ ${caseSummary}
     const timeoutConfig = await getUserAITimeoutConfig(userId);
     const genParams = await getUserAIGenerationParams(userId);
     const sceneParams = getSceneParams(genParams, 'scene_case_generation');
-    const timeoutId = setTimeout(() => controller.abort(), timeoutConfig.generalAITask || genParams.request_timeout);
-    
-    const response = await fetch(aiModel.endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${aiModel.api_key}`
-      },
-      body: JSON.stringify({
-        model: aiModel.model_name,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: sceneParams.temperature,
-        max_tokens: sceneParams.max_tokens
-      }),
-      signal: controller.signal
-    });
-    
+    const effectiveTimeout = timeoutConfig.generalAITask || genParams.request_timeout || 120000;
+    const timeoutId = setTimeout(() => controller.abort(), effectiveTimeout);
+
+    const requestBody = {
+      model: aiModel.model_name,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: sceneParams.temperature,
+      max_tokens: sceneParams.max_tokens
+    };
+
+    const headers = buildAIHeaders(aiModel.provider, aiModel.api_key);
+    const streamResult = await callAIStreamWithRetry(
+      aiModel.endpoint, requestBody, headers, aiModel,
+      { timeout: effectiveTimeout + 10000, signal: controller.signal, logContext: { triggerSource: 'summary_generator' } }
+    );
+
     clearTimeout(timeoutId);
-    
-    if (!response.ok) {
-      throw new Error(`AI API请求失败: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    
-    if (data.usage) {
-      promptTokens = data.usage.prompt_tokens || 0;
-      completionTokens = data.usage.completion_tokens || 0;
-      totalTokens = data.usage.total_tokens || 0;
-    }
-    
-    let summary = null;
-    
-    if (data.choices && Array.isArray(data.choices) && data.choices.length > 0) {
-      const choice = data.choices[0];
-      summary = choice.message?.content?.trim() || null;
-    }
+
+    promptTokens = streamResult.usage?.prompt_tokens || 0;
+    completionTokens = streamResult.usage?.completion_tokens || 0;
+    totalTokens = streamResult.usage?.total_tokens || 0;
+
+    let summary = streamResult.content?.trim() || null;
     
     if (!summary) {
       logger.warn('AI返回的概述为空', { level1Id });
