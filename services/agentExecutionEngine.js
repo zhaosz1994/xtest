@@ -13,6 +13,57 @@ const MAX_TOOL_CALL_ROUNDS = 5;
 
 class AgentExecutionEngine {
     /**
+     * 统一执行入口，根据stream_mode自动选择执行方式
+     * @param {string} agentCode - 代理编码
+     * @param {number} userId - 用户ID
+     * @param {Object} variables - 模板变量
+     * @param {Object} context - 执行上下文
+     * @param {Object} streamCallbacks - 流式回调（仅流式模式使用）
+     * @returns {Object} { success, result, toolCallsLog, memoryContribution }
+     */
+    async execute(agentCode, userId, variables, context, streamCallbacks = {}) {
+        const agent = await this._resolveAgent(agentCode, userId);
+        if (!agent) {
+            return {
+                success: false,
+                result: null,
+                error: `代理 "${agentCode}" 不存在`,
+                toolCallsLog: [],
+                memoryContribution: null,
+                executionTimeMs: 0
+            };
+        }
+
+        const useStream = this._shouldUseStream(agent, context.source);
+
+        if (useStream) {
+            return this.executeAgentStream(agentCode, userId, variables, context, streamCallbacks, agent);
+        } else {
+            return this.executeAgent(agentCode, userId, variables, context, agent);
+        }
+    }
+
+    /**
+     * 根据stream_mode和调用场景决定是否使用流式
+     * @param {Object} agent - 代理记录
+     * @param {string} source - 调用来源 ('qa', 'qa_stream', 'task', 'import_optimize')
+     * @returns {boolean} 是否使用流式
+     */
+    _shouldUseStream(agent, source) {
+        const streamMode = agent.stream_mode || 'auto';
+
+        switch (streamMode) {
+            case 'always':
+                return true;
+            case 'never':
+                return false;
+            case 'auto':
+            default:
+                return source === 'qa_stream' || source === 'qa';
+        }
+    }
+
+    /**
      * 执行Sub-Agent
      * @param {string} agentCode - 代理编码
      * @param {number} userId - 用户ID
@@ -23,13 +74,12 @@ class AgentExecutionEngine {
      * @param {string} context.sourceTaskId - 来源任务ID
      * @returns {Object} { success, result, toolCallsLog, memoryContribution }
      */
-    async executeAgent(agentCode, userId, variables, context) {
+    async executeAgent(agentCode, userId, variables, context, _preResolvedAgent = null) {
         const startTime = Date.now();
         let aiConfig = null;
 
         try {
-            // 1. 通过Override引擎解析代理（私有覆盖 > 系统默认）
-            const agent = await this._resolveAgent(agentCode, userId);
+            const agent = _preResolvedAgent || await this._resolveAgent(agentCode, userId);
             if (!agent) {
                 return {
                     success: false,
@@ -316,13 +366,13 @@ class AgentExecutionEngine {
      * @param {Function} streamCallbacks.onRound - 轮次回调 (round, maxRounds) => void
      * @returns {Object} { success, result, toolCallsLog, memoryContribution }
      */
-    async executeAgentStream(agentCode, userId, variables, context, streamCallbacks = {}) {
+    async executeAgentStream(agentCode, userId, variables, context, streamCallbacks = {}, _preResolvedAgent = null) {
         const startTime = Date.now();
         let aiConfig = null;
         const { onContent, onToolCall, onToolResult, onRound } = streamCallbacks;
 
         try {
-            const agent = await this._resolveAgent(agentCode, userId);
+            const agent = _preResolvedAgent || await this._resolveAgent(agentCode, userId);
             if (!agent) {
                 return {
                     success: false,
@@ -959,7 +1009,6 @@ class AgentExecutionEngine {
     }
 
     /**
-     * 流式调用LLM API
      * @param {string} systemPrompt - 系统提示词
      * @param {string} userPrompt - 用户提示词
      * @param {Array} tools - Function Calling工具列表

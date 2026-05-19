@@ -25917,120 +25917,135 @@ async function sendAIQuery() {
 async function _sendAIQueryStream(agentCode, question, loadingMessage) {
     let assistantMsg = null;
     let fullContent = '';
+    let thinkingDiv = null;
 
     try {
         const currentModuleId = window.currentModuleId || null;
         const currentLibraryId = window.currentLibraryId || null;
 
-        const response = await fetch('/api/ai-qa/ask-stream', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            credentials: 'same-origin',
-            body: JSON.stringify({
+        const consumer = new StreamConsumer({
+            url: '/api/ai-qa/ask-stream',
+            body: {
                 agent_code: agentCode,
                 question: question,
                 library_id: currentLibraryId,
                 module_id: currentModuleId
-            })
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            removeChatMessage(loadingMessage);
-            addChatMessage('assistant', `抱歉，处理您的问题时出现错误: ${errorData.message || '服务器错误'}`);
-            return;
-        }
-
-        removeChatMessage(loadingMessage);
-        assistantMsg = addChatMessage('assistant', '');
-        const contentDiv = assistantMsg.querySelector('.ai-message-content');
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-                if (line.startsWith(': ')) continue;
-
-                if (line.startsWith('event: ')) {
-                    const eventName = line.slice(7).trim();
-                    continue;
-                }
-
-                if (line.startsWith('data: ')) {
-                    const dataStr = line.slice(6).trim();
-                    try {
-                        const data = JSON.parse(dataStr);
-
-                        if (data.delta !== undefined) {
-                            fullContent = data.full || fullContent + data.delta;
-                            if (contentDiv) {
-                                contentDiv.innerHTML = parseMarkdown(fullContent);
-                                const container = document.getElementById('ai-chat-container');
-                                if (container) container.scrollTop = container.scrollHeight;
-                            }
-                        } else if (data.tools) {
-                            if (contentDiv) {
-                                const toolInfo = document.createElement('div');
-                                toolInfo.className = 'ai-tool-call-info';
-                                toolInfo.style.cssText = 'font-size:12px;color:#888;margin-top:4px;';
-                                toolInfo.textContent = `🔧 调用工具: ${data.tools.join(', ')}`;
-                                contentDiv.appendChild(toolInfo);
-                                const container = document.getElementById('ai-chat-container');
-                                if (container) container.scrollTop = container.scrollHeight;
-                            }
-                        } else if (data.tool !== undefined) {
-                            if (contentDiv) {
-                                const resultInfo = document.createElement('div');
-                                resultInfo.className = 'ai-tool-result-info';
-                                resultInfo.style.cssText = 'font-size:12px;color:#888;margin-top:2px;';
-                                resultInfo.textContent = `✅ ${data.tool}: ${data.preview || '完成'}`;
-                                contentDiv.appendChild(resultInfo);
-                                const container = document.getElementById('ai-chat-container');
-                                if (container) container.scrollTop = container.scrollHeight;
-                            }
-                        } else if (data.round !== undefined) {
-                            if (contentDiv) {
-                                const roundInfo = document.createElement('div');
-                                roundInfo.className = 'ai-round-info';
-                                roundInfo.style.cssText = 'font-size:12px;color:#888;margin-top:2px;';
-                                roundInfo.textContent = `🔄 工具调用轮次: ${data.round}/${data.maxRounds}`;
-                                contentDiv.appendChild(roundInfo);
-                                const container = document.getElementById('ai-chat-container');
-                                if (container) container.scrollTop = container.scrollHeight;
-                            }
-                        } else if (data.message !== undefined) {
-                            removeChatMessage(assistantMsg);
-                            addChatMessage('assistant', `抱歉，处理您的问题时出现错误: ${data.message}`);
-                            return;
-                        } else if (data.answer !== undefined) {
-                            fullContent = data.answer;
-                            if (contentDiv) {
-                                contentDiv.innerHTML = parseMarkdown(fullContent);
-                                const container = document.getElementById('ai-chat-container');
-                                if (container) container.scrollTop = container.scrollHeight;
-                            }
+            },
+            callbacks: {
+                onTextDelta: (delta, full) => {
+                    if (!assistantMsg) {
+                        removeChatMessage(loadingMessage);
+                        assistantMsg = addChatMessage('assistant', '');
+                    }
+                    fullContent = full;
+                    const contentDiv = assistantMsg?.querySelector('.ai-message-content');
+                    if (contentDiv) {
+                        contentDiv.innerHTML = parseMarkdown(fullContent);
+                        const container = document.getElementById('ai-chat-container');
+                        if (container) container.scrollTop = container.scrollHeight;
+                    }
+                },
+                onThinkingStart: () => {
+                    if (!assistantMsg) {
+                        removeChatMessage(loadingMessage);
+                        assistantMsg = addChatMessage('assistant', '');
+                    }
+                    const contentDiv = assistantMsg?.querySelector('.ai-message-content');
+                    if (contentDiv) {
+                        thinkingDiv = document.createElement('div');
+                        thinkingDiv.className = 'ai-thinking-block';
+                        thinkingDiv.style.cssText = 'font-size:12px;color:#888;border-left:3px solid #ddd;padding-left:8px;margin:4px 0;opacity:0.7;';
+                        thinkingDiv.innerHTML = '<em>思考中...</em>';
+                        contentDiv.appendChild(thinkingDiv);
+                    }
+                },
+                onThinkingDelta: (delta, fullThinking) => {
+                    if (thinkingDiv) {
+                        thinkingDiv.innerHTML = '<em>💭 思考过程:</em><br>' + escapeHtml(fullThinking).replace(/\n/g, '<br>');
+                        const container = document.getElementById('ai-chat-container');
+                        if (container) container.scrollTop = container.scrollHeight;
+                    }
+                },
+                onThinkingComplete: (text, thinkingTimeMs) => {
+                    if (thinkingDiv) {
+                        const timeStr = thinkingTimeMs ? ` (${(thinkingTimeMs / 1000).toFixed(1)}s)` : '';
+                        thinkingDiv.innerHTML = `<details><summary><em>💭 思考过程${timeStr}</em></summary><div style="margin-top:4px;white-space:pre-wrap;">${escapeHtml(text)}</div></details>`;
+                        thinkingDiv.style.opacity = '0.6';
+                    }
+                },
+                onToolCallStart: (toolCallId, toolName) => {
+                    if (!assistantMsg) {
+                        removeChatMessage(loadingMessage);
+                        assistantMsg = addChatMessage('assistant', '');
+                    }
+                    const contentDiv = assistantMsg?.querySelector('.ai-message-content');
+                    if (contentDiv) {
+                        const toolInfo = document.createElement('div');
+                        toolInfo.className = 'ai-tool-call-info';
+                        toolInfo.style.cssText = 'font-size:12px;color:#888;margin-top:4px;';
+                        toolInfo.textContent = `🔧 调用工具: ${toolName}`;
+                        contentDiv.appendChild(toolInfo);
+                        const container = document.getElementById('ai-chat-container');
+                        if (container) container.scrollTop = container.scrollHeight;
+                    }
+                },
+                onToolResult: (toolName, result, success) => {
+                    if (!assistantMsg) return;
+                    const contentDiv = assistantMsg.querySelector('.ai-message-content');
+                    if (contentDiv) {
+                        const resultInfo = document.createElement('div');
+                        resultInfo.className = 'ai-tool-result-info';
+                        resultInfo.style.cssText = 'font-size:12px;color:#888;margin-top:2px;';
+                        const preview = typeof result === 'string' ? result.substring(0, 200) : '完成';
+                        resultInfo.textContent = `✅ ${toolName}: ${preview}`;
+                        contentDiv.appendChild(resultInfo);
+                        const container = document.getElementById('ai-chat-container');
+                        if (container) container.scrollTop = container.scrollHeight;
+                    }
+                },
+                onRound: (round, maxRounds) => {
+                    if (!assistantMsg) return;
+                    const contentDiv = assistantMsg.querySelector('.ai-message-content');
+                    if (contentDiv) {
+                        const roundInfo = document.createElement('div');
+                        roundInfo.className = 'ai-round-info';
+                        roundInfo.style.cssText = 'font-size:12px;color:#888;margin-top:2px;';
+                        roundInfo.textContent = `🔄 工具调用轮次: ${round}/${maxRounds}`;
+                        contentDiv.appendChild(roundInfo);
+                        const container = document.getElementById('ai-chat-container');
+                        if (container) container.scrollTop = container.scrollHeight;
+                    }
+                },
+                onDone: (data) => {
+                    if (data.answer && assistantMsg) {
+                        fullContent = data.answer;
+                        const contentDiv = assistantMsg.querySelector('.ai-message-content');
+                        if (contentDiv) {
+                            contentDiv.innerHTML = parseMarkdown(fullContent);
+                            const container = document.getElementById('ai-chat-container');
+                            if (container) container.scrollTop = container.scrollHeight;
                         }
-                    } catch (e) {}
+                    }
+                },
+                onError: (message, code) => {
+                    if (assistantMsg) removeChatMessage(assistantMsg);
+                    removeChatMessage(loadingMessage);
+                    addChatMessage('assistant', `抱歉，处理您的问题时出现错误: ${message}`);
                 }
             }
-        }
+        });
 
-        if (fullContent && contentDiv) {
-            contentDiv.innerHTML = parseMarkdown(fullContent);
+        await consumer.start();
+
+        if (fullContent && assistantMsg) {
+            const contentDiv = assistantMsg.querySelector('.ai-message-content');
+            if (contentDiv) {
+                contentDiv.innerHTML = parseMarkdown(fullContent);
+            }
         }
     } catch (error) {
         if (assistantMsg) removeChatMessage(assistantMsg);
+        removeChatMessage(loadingMessage);
         addChatMessage('assistant', `抱歉，流式传输中断: ${error.message}`);
     }
 }

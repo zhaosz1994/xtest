@@ -6,6 +6,7 @@ const aiAuditLogger = require('./aiAuditLogger');
 const aiRequestLogger = require('./aiRequestLogger');
 const { callAIStreamWithRetry, buildAIHeaders } = require('./aiCallWrapper');
 const { getUserAITimeoutConfig, getUserAIGenerationParams, getSceneParams, getUserAIConfig, getSystemDefaultAIConfig } = require('./aiService');
+const { buildStructuredPrompt, parseStructuredResponse } = require('./structuredOutputParser');
 
 const SKELETON_KEYWORDS = [
   '异常', '错误', '边界', '限制', '失败', '超时', '溢出',
@@ -171,6 +172,11 @@ class Level1PointService {
 
   _buildSkeletonMapPrompt(chunkContent) {
     const truncated = chunkContent.length > 3000 ? chunkContent.slice(0, 3000) + '...' : chunkContent;
+    const fields = [
+      { name: 'background', type: 'string', description: '系统背景关键信息，100字以内' },
+      { name: 'test_domains', type: 'array', description: '测试领域名称列表（多个值用逗号分隔）' }
+    ];
+    const formatInstruction = buildStructuredPrompt(fields);
     return `请分析以下需求文档片段，提取两类信息：
 
 1. 系统背景信息：硬件型号、软件版本、网络环境、全局配置参数、模块依赖关系、前置条件等关键技术约束
@@ -179,40 +185,21 @@ class Level1PointService {
 文档片段：
 ${truncated}
 
-输出格式（严格JSON）：
-\`\`\`json
-{
-  "background": "系统背景关键信息，100字以内",
-  "test_domains": ["领域1", "领域2"]
-}
-\`\`\``;
+${formatInstruction}`;
   }
 
   _parseSkeletonMapResponse(content) {
-    const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) ||
-                      content.match(/```\s*([\s\S]*?)\s*```/);
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[1]);
-        return {
-          background: parsed.background || '',
-          test_domains: Array.isArray(parsed.test_domains) ? parsed.test_domains : []
-        };
-      } catch (e) {
-        // fall through
-      }
-    }
-
-    try {
-      const parsed = JSON.parse(content);
+    const fields = [
+      { name: 'background', type: 'string', description: '系统背景关键信息' },
+      { name: 'test_domains', type: 'array', description: '测试领域名称列表' }
+    ];
+    const parsed = parseStructuredResponse(content, fields);
+    if (parsed) {
       return {
         background: parsed.background || '',
         test_domains: Array.isArray(parsed.test_domains) ? parsed.test_domains : []
       };
-    } catch (e) {
-      // fall through
     }
-
     return { background: '', test_domains: [] };
   }
 
@@ -231,16 +218,15 @@ ${truncated}
     const timeoutConfig = await getUserAITimeoutConfig(userId);
     const effectiveTimeout = timeoutConfig.generalAITask || 120000;
 
+    const fields = [
+      { name: 'global_context', type: 'string', description: '全局系统背景说明，500字以内' }
+    ];
+    const formatInstruction = buildStructuredPrompt(fields);
     const prompt = `请将以下多个文档片段的系统背景信息，融合成一份500字以内的"全局测试系统背景说明"。保留所有技术约束和硬性参数，去除重复，保持精炼。
 
 ${combined}
 
-输出格式（严格JSON）：
-\`\`\`json
-{
-  "global_context": "全局系统背景说明，500字以内"
-}
-\`\`\``;
+${formatInstruction}`;
 
     const response = await this._callAI(aiConfig, prompt, userId, effectiveTimeout, 800, 0.3, {
       triggerType: 'generation',
@@ -249,22 +235,9 @@ ${combined}
     }, taskId);
     const content = response.choices?.[0]?.message?.content || '';
 
-    const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) ||
-                      content.match(/```\s*([\s\S]*?)\s*```/);
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[1]);
-        return parsed.global_context || '';
-      } catch (e) {
-        // fall through
-      }
-    }
-
-    try {
-      const parsed = JSON.parse(content);
-      return parsed.global_context || '';
-    } catch (e) {
-      // fall through
+    const parsed = parseStructuredResponse(content, fields);
+    if (parsed && parsed.global_context) {
+      return parsed.global_context;
     }
 
     return combined.slice(0, 500);
@@ -344,6 +317,12 @@ ${combined}
         batchSize: batch.length
       });
 
+      const deltaFields = [
+        { name: 'name', type: 'string', description: '一级测试点名称' },
+        { name: 'test_type', type: 'string', description: '功能测试/性能测试/异常测试/...' },
+        { name: 'description', type: 'string', description: '简短描述' }
+      ];
+      const formatInstruction = buildStructuredPrompt(deltaFields, { format: 'list' });
       const prompt = `请将以下测试领域名称规范化为一级测试点名称。
 
 命名规范："功能/领域名称 + 测试类型"，如"Buffer管理测试"、"异常处理测试"
@@ -351,14 +330,7 @@ ${combined}
 
 待规范化的领域：${batch.join(', ')}
 
-输出格式（严格JSON）：
-\`\`\`json
-{
-  "delta_level1_points": [
-    {"name": "一级测试点名称", "test_type": "功能测试/性能测试/异常测试/...", "description": "简短描述"}
-  ]
-}
-\`\`\``;
+${formatInstruction}`;
 
       try {
         const response = await this._callAI(aiConfig, prompt, userId, effectiveTimeout, 2000, 0.3, {
@@ -426,44 +398,33 @@ ${combined}
   }
 
   _parseDeltaLevel1Response(content) {
+    const fields = [
+      { name: 'name', type: 'string', description: '一级测试点名称' },
+      { name: 'test_type', type: 'string', description: '测试类型' },
+      { name: 'description', type: 'string', description: '简短描述' }
+    ];
+    const parsed = parseStructuredResponse(content, fields, { format: 'list' });
+    if (parsed && parsed.length > 0) {
+      return parsed;
+    }
+
+    logger.warn('增量测试点提取-结构化响应解析失败，尝试旧格式兼容', {
+      contentPreview: content.substring(0, 200)
+    });
+
     const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) ||
                       content.match(/```\s*([\s\S]*?)\s*```/);
     if (jsonMatch) {
       try {
-        const parsed = JSON.parse(jsonMatch[1]);
-        const points = parsed.delta_level1_points || parsed.level1_points || [];
-        if (points.length === 0) {
-          logger.warn('增量测试点提取-AI返回JSON但字段为空', {
-            rawKeys: Object.keys(parsed),
-            contentPreview: content.substring(0, 200)
-          });
-        }
-        return points;
-      } catch (e) {
-        logger.warn('增量测试点提取-JSON代码块解析失败', {
-          error: e.message,
-          contentPreview: content.substring(0, 200)
-        });
-      }
+        const jsonParsed = JSON.parse(jsonMatch[1]);
+        return jsonParsed.delta_level1_points || jsonParsed.level1_points || [];
+      } catch (e) {}
     }
 
     try {
-      const parsed = JSON.parse(content);
-      const points = parsed.delta_level1_points || parsed.level1_points || [];
-      if (points.length === 0) {
-        logger.warn('增量测试点提取-AI返回裸JSON但字段为空', {
-          rawKeys: Object.keys(parsed),
-          contentPreview: content.substring(0, 200)
-        });
-      }
-      return points;
-    } catch (e) {
-      logger.warn('增量测试点提取-响应解析完全失败', {
-        error: e.message,
-        contentLength: content.length,
-        contentPreview: content.substring(0, 300)
-      });
-    }
+      const jsonParsed = JSON.parse(content);
+      return jsonParsed.delta_level1_points || jsonParsed.level1_points || [];
+    } catch (e) {}
 
     return [];
   }

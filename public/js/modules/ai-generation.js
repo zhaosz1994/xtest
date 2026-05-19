@@ -41,6 +41,7 @@ let aiCurrentLibraryId = null;
 let aiCurrentParentId = null;
 let aiSelectedFiles = new Set();
 let aiPrefillFileIds = null;
+let aiHasContextParams = false;
 let aiCurrentTaskId = null;
 let aiProgressInterval = null;
 let allTempCases = [];
@@ -468,11 +469,6 @@ async function loadModules() {
     const token = localStorage.getItem('authToken') || localStorage.getItem('token');
     if (!token) return;
 
-    // 从 URL 参数读取知识库传过来的上下文（libraryId, moduleId）
-    const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
-    const prefillLibraryId = urlParams.get('libraryId');
-    const prefillModuleId = urlParams.get('moduleId');
-
     try {
         const res = await aiApiGet('/libraries/list');
         if (res.success) {
@@ -485,21 +481,12 @@ async function loadModules() {
                 libSelect.appendChild(opt);
             });
 
-            // 优先使用 URL 参数中的 libraryId，否则默认选第一个
-            const targetLibraryId = prefillLibraryId || (libraries.length > 0 ? libraries[0].id : null);
-            if (targetLibraryId) {
-                aiCurrentLibraryId = parseInt(targetLibraryId);
+            if (aiHasContextParams) return;
+
+            if (libraries.length > 0) {
+                aiCurrentLibraryId = parseInt(libraries[0].id);
                 document.getElementById('librarySelect').value = aiCurrentLibraryId;
                 await loadModulesByLibrary(aiCurrentLibraryId);
-
-                // 如果 URL 参数中有 moduleId，自动选中并加载文件和测试点
-                if (prefillModuleId) {
-                    const moduleSelect = document.getElementById('moduleSelect');
-                    if (moduleSelect) {
-                        moduleSelect.value = prefillModuleId;
-                        await onModuleChange();
-                    }
-                }
             }
         }
     } catch (e) {}
@@ -546,6 +533,7 @@ async function onModuleChange() {
         if (aiPrefillFileIds) {
             selectSpecificFiles(aiPrefillFileIds);
             aiPrefillFileIds = null;
+            aiHasContextParams = false;
         } else {
             const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
             const prefillFiles = urlParams.get('selectedFiles');
@@ -3799,6 +3787,8 @@ function applyAIGenerationContext() {
 
     if (!libraryId && !moduleId) return;
 
+    aiHasContextParams = true;
+
     if (selectedFiles) {
         aiPrefillFileIds = selectedFiles.split(',').map(Number).filter(n => !isNaN(n));
     }
@@ -3808,21 +3798,29 @@ function applyAIGenerationContext() {
 
     switchTab('generate');
 
-    const libSelect = document.getElementById('librarySelect');
-    if (libraryId && libSelect) {
-        libSelect.value = libraryId;
-        aiCurrentLibraryId = parseInt(libraryId);
-    }
+    const applyContext = async () => {
+        const libSelect = document.getElementById('librarySelect');
+        if (libraryId && libSelect) {
+            let retries = 0;
+            while (libSelect.options.length <= 1 && retries < 20) {
+                await new Promise(r => setTimeout(r, 50));
+                retries++;
+            }
+            libSelect.value = libraryId;
+            aiCurrentLibraryId = parseInt(libraryId);
+        }
 
-    if (libraryId) {
-        loadModulesByLibrary(parseInt(libraryId)).then(() => {
+        if (libraryId) {
+            await loadModulesByLibrary(parseInt(libraryId));
             if (moduleId) {
                 const moduleSelect = document.getElementById('moduleSelect');
                 if (moduleSelect) {
                     moduleSelect.value = moduleId;
-                    onModuleChange();
+                    await onModuleChange();
                 }
             }
-        });
-    }
+        }
+    };
+
+    applyContext();
 }

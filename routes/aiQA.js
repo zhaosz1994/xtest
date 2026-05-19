@@ -3,6 +3,8 @@ const router = express.Router();
 const pool = require('../db');
 const { authenticateToken, isAdmin } = require('../middleware');
 const agentExecutionEngine = require('../services/agentExecutionEngine');
+const SSEWriter = require('../services/stream/SSEWriter');
+const { ChunkType } = require('../services/stream/ChunkType');
 const logger = require('../services/logger');
 
 router.get('/available-agents', authenticateToken, async (req, res) => {
@@ -12,7 +14,7 @@ router.get('/available-agents', authenticateToken, async (req, res) => {
 
     let query = `
       SELECT id, agent_code, display_name, description, category,
-             is_system, creator_id, visibility, memory_enabled
+             is_system, creator_id, visibility, memory_enabled, stream_mode
       FROM ai_sub_agents
       WHERE allow_qa = 1 AND is_enabled = 1
     `;
@@ -55,6 +57,7 @@ router.get('/available-agents', authenticateToken, async (req, res) => {
         description: agent.description,
         category: agent.category,
         memory_enabled: agent.memory_enabled,
+        stream_mode: agent.stream_mode || 'auto',
         config_file_types: configFiles.map(f => f.file_type)
       });
     }
@@ -207,31 +210,10 @@ router.post('/ask-stream', authenticateToken, async (req, res) => {
     const username = users[0]?.username || '';
     const userRole = users[0]?.role || '';
 
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no'
-    });
-
-    const sendSSE = (event, data) => {
-      try {
-        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-      } catch (e) {
-        logger.warn('SSE写入失败（客户端可能已断开）', { error: e.message });
-      }
-    };
-
-    const heartbeat = setInterval(() => {
-      try {
-        res.write(': heartbeat\n\n');
-      } catch (e) {
-        clearInterval(heartbeat);
-      }
-    }, 15000);
+    const sseWriter = new SSEWriter(res);
 
     req.on('close', () => {
-      clearInterval(heartbeat);
+      sseWriter.close();
     });
 
     const variables = {
@@ -250,17 +232,31 @@ router.post('/ask-stream', authenticateToken, async (req, res) => {
 
     const streamCallbacks = {
       onContent: (deltaContent, fullContent) => {
-        sendSSE('content', { delta: deltaContent, full: fullContent });
+        sseWriter.forwardChunk({
+          type: ChunkType.TEXT_DELTA,
+          text: deltaContent,
+          fullText: fullContent
+        });
       },
       onToolCall: (toolCalls) => {
-        const names = toolCalls.map(tc => tc.function?.name || tc.name || 'unknown');
-        sendSSE('tool_call', { tools: names });
+        for (const tc of toolCalls) {
+          sseWriter.forwardChunk({
+            type: ChunkType.TOOL_CALL_START,
+            toolCallId: tc.id || tc.function?.name || 'unknown',
+            toolName: tc.function?.name || tc.name || 'unknown'
+          });
+        }
       },
       onToolResult: (toolName, result) => {
-        sendSSE('tool_result', { tool: toolName, preview: typeof result === 'string' ? result.substring(0, 200) : 'executed' });
+        sseWriter.forwardChunk({
+          type: ChunkType.TOOL_RESULT,
+          toolName,
+          result: typeof result === 'string' ? result.substring(0, 500) : result,
+          success: true
+        });
       },
       onRound: (round, maxRounds) => {
-        sendSSE('round', { round, maxRounds });
+        sseWriter.sendEvent('round', { round, maxRounds });
       }
     };
 
@@ -272,10 +268,8 @@ router.post('/ask-stream', authenticateToken, async (req, res) => {
       streamCallbacks
     );
 
-    clearInterval(heartbeat);
-
     if (result.success) {
-      sendSSE('done', {
+      sseWriter.sendDone({
         answer: result.result,
         memoryContribution: result.memoryContribution,
         toolCallsLog: result.toolCallsLog,
@@ -288,20 +282,18 @@ router.post('/ask-stream', authenticateToken, async (req, res) => {
         executionTimeMs: result.executionTimeMs
       });
     } else {
-      sendSSE('error', { message: result.error || 'QA问答执行失败' });
+      sseWriter.sendError(result.error || 'QA问答执行失败');
     }
-
-    try {
-      res.end();
-    } catch (e) {}
   } catch (error) {
     logger.error('QA流式问答失败', { error: error.message });
     try {
       if (!res.headersSent) {
         res.status(500).json({ success: false, message: 'QA流式问答执行失败' });
       } else {
-        res.write(`event: error\ndata: ${JSON.stringify({ message: error.message })}\n\n`);
-        res.end();
+        try {
+          res.write(`event: error\ndata: ${JSON.stringify({ message: error.message, code: 'stream_error' })}\n\n`);
+          res.end();
+        } catch (e) {}
       }
     } catch (e) {}
   }
