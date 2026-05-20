@@ -1886,7 +1886,7 @@ async function loadTaskFilter() {
                 select.value = prevValue;
                 if (!select.value) {
                     select.value = 'all';
-                    loadTempCases();
+                    await loadTempCases();
                 }
             }
         }
@@ -2808,7 +2808,8 @@ async function showCompareView(tempCaseId, tempCase) {
                 await aiApiPost('/temp-cases/batch-reject', { tempCaseIds: [tempCaseId] });
                 aiNotify('已拒绝', 'success');
                 aiCloseAllModals();
-                loadTempCases();
+                await loadTaskFilter();
+                await loadTempCases();
             } catch (e) { aiNotify('操作失败', 'error'); }
         });
         footer.insertBefore(rejectBtn, saveBtn);
@@ -2838,7 +2839,8 @@ async function showCompareView(tempCaseId, tempCase) {
                 if (res.success) {
                     aiNotify(`覆盖合并成功，共合并 ${res.data.merged_count} 个用例`, 'success');
                     aiCloseAllModals();
-                    loadTempCases();
+                    await loadTaskFilter();
+                    await loadTempCases();
                 } else {
                     aiNotify(res.message || '覆盖合并失败', 'error');
                 }
@@ -2966,8 +2968,8 @@ function showOverwriteMergeModal() {
                 modal.remove();
                 selectedCases.clear();
                 updateSelectedCount();
-                loadTaskFilter();
-                loadTempCases();
+                await loadTaskFilter();
+                await loadTempCases();
             } else {
                 aiNotify(res.message || '覆盖合并失败', 'error');
             }
@@ -3028,7 +3030,8 @@ async function saveCaseDetail() {
         await aiApiPut(`/temp-cases/update/${tempCaseId}`, updates);
         aiNotify('保存成功', 'success');
         closeCaseDetailModal();
-        loadTempCases();
+        await loadTaskFilter();
+        await loadTempCases();
     } catch (e) {}
 }
 
@@ -3088,7 +3091,8 @@ async function deleteCase(tempCaseId) {
     try {
         await aiApiPost('/temp-cases/batch-delete', { tempCaseIds: [tempCaseId] });
         aiNotify('删除成功', 'success');
-        loadTempCases();
+        await loadTaskFilter();
+        await loadTempCases();
     } catch (e) {}
 }
 
@@ -3163,7 +3167,10 @@ async function saveBatchEdit() {
         });
         aiNotify('批量编辑成功', 'success');
         closeBatchEditModal();
-        loadTempCases();
+        selectedCases.clear();
+        updateSelectedCount();
+        await loadTaskFilter();
+        await loadTempCases();
     } catch (e) {}
 }
 
@@ -3174,7 +3181,8 @@ async function batchApprove() {
         aiNotify('批量批准成功', 'success');
         selectedCases.clear();
         updateSelectedCount();
-        loadTempCases();
+        await loadTaskFilter();
+        await loadTempCases();
     } catch (e) {}
 }
 
@@ -3185,8 +3193,8 @@ async function batchReject() {
         aiNotify('批量拒绝成功', 'success');
         selectedCases.clear();
         updateSelectedCount();
-        loadTaskFilter();
-        loadTempCases();
+        await loadTaskFilter();
+        await loadTempCases();
     } catch (e) {}
 }
 
@@ -3198,8 +3206,8 @@ async function batchDelete() {
         aiNotify('批量删除成功', 'success');
         selectedCases.clear();
         updateSelectedCount();
-        loadTaskFilter();
-        loadTempCases();
+        await loadTaskFilter();
+        await loadTempCases();
     } catch (e) {}
 }
 
@@ -3256,8 +3264,9 @@ async function executeMerge() {
             }
             closeMergeModal();
             selectedCases.clear();
-            loadTaskFilter();
-            loadTempCases();
+            updateSelectedCount();
+            await loadTaskFilter();
+            await loadTempCases();
         } else {
             aiNotify(res.message || '操作失败', 'error');
         }
