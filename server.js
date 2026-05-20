@@ -2841,13 +2841,11 @@ app.get('/api/ai-models/list', authenticateToken, async (req, res) => {
     
     let query, params;
     if (isAdminUser) {
-      logger.info('admin用户，查询所有模型');
       query = `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, is_public, created_by, created_at, updated_at 
                FROM ai_models 
                ORDER BY is_default DESC, created_at ASC`;
       params = [];
     } else {
-      logger.info('非admin用户，查询自己的模型和admin公开的模型');
       query = `SELECT m.id, m.model_id, m.name, m.provider, m.api_key, m.endpoint, m.model_name, m.is_default, m.is_enabled, m.description, m.user_id, m.is_public, m.created_by, m.created_at, m.updated_at 
                FROM ai_models m
                LEFT JOIN users u ON m.user_id = u.id
@@ -2957,6 +2955,74 @@ app.post('/api/ai-models/add', authenticateToken, async (req, res) => {
   } catch (error) {
     logger.error('添加AI模型错误:', { error: error.message });
     res.json({ success: false, message: '添加AI模型失败' });
+  }
+});
+
+// 测试AI模型连接
+app.post('/api/ai-models/test', authenticateToken, async (req, res) => {
+  try {
+    const { modelId } = req.body;
+    const currentUserId = req.user.id;
+    const currentUsername = req.user.username;
+
+    const [models] = await pool.execute(
+      `SELECT model_id, name, provider, api_key, endpoint, model_name, user_id, is_public FROM ai_models WHERE model_id = ?`,
+      [modelId]
+    );
+
+    if (models.length === 0) {
+      return res.json({ success: false, message: 'AI模型不存在' });
+    }
+
+    const model = models[0];
+
+    const isAdminUser = currentUsername === 'admin';
+    if (!isAdminUser && model.user_id !== currentUserId && !model.is_public) {
+      return res.status(403).json({ success: false, message: '您没有权限测试此AI模型' });
+    }
+
+    if (!model.api_key) {
+      return res.json({ success: false, message: '该模型未配置API密钥' });
+    }
+
+    const headers = buildAIHeaders(model.provider, model.api_key);
+
+    const testBody = {
+      model: model.model_name,
+      messages: [{ role: 'user', content: 'Hello' }],
+      max_tokens: 10
+    };
+
+    const testResponse = await fetch(model.endpoint, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify(testBody),
+      signal: AbortSignal.timeout(15000)
+    });
+
+    if (testResponse.ok) {
+      res.json({ success: true, message: `模型 "${model.name}" 连接成功！AI服务可用` });
+    } else {
+      let errorMessage = '未知错误';
+      try {
+        const contentType = testResponse.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const errorData = await testResponse.json();
+          errorMessage = errorData.error?.message || errorData.message || JSON.stringify(errorData);
+        } else {
+          errorMessage = await testResponse.text();
+        }
+      } catch (parseError) {
+        errorMessage = `HTTP ${testResponse.status}: ${testResponse.statusText}`;
+      }
+      res.json({ success: false, message: `模型 "${model.name}" 连接失败: ${errorMessage}` });
+    }
+  } catch (error) {
+    logger.error('测试AI模型连接错误:', { error: error.message });
+    if (error.name === 'TimeoutError') {
+      return res.json({ success: false, message: '连接超时，请检查端点地址是否正确' });
+    }
+    res.json({ success: false, message: '连接测试失败: ' + error.message });
   }
 });
 

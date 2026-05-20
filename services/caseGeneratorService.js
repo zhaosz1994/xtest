@@ -243,14 +243,21 @@ class CaseGeneratorService {
       SELECT file_type, content FROM ai_sub_agent_config_files WHERE agent_id = ? ORDER BY sort_order ASC
     `, [agentId]);
 
-    if (configFiles.length === 0) return null;
-
     const soulFile = configFiles.find(f => f.file_type === 'soul');
     const userFile = configFiles.find(f => f.file_type === 'user');
 
+    const [agents] = await pool.execute(
+      'SELECT llm_model, llm_temperature, llm_max_tokens FROM ai_sub_agents WHERE id = ?',
+      [agentId]
+    );
+    const agentConfig = agents?.[0] || null;
+
     return {
       system: soulFile?.content || null,
-      userTemplate: userFile?.content || null
+      userTemplate: userFile?.content || null,
+      llmModel: agentConfig?.llm_model || null,
+      llmTemperature: agentConfig?.llm_temperature ?? null,
+      llmMaxTokens: agentConfig?.llm_max_tokens ?? null
     };
   }
 
@@ -273,7 +280,12 @@ class CaseGeneratorService {
 
     const aiConfig = await this.getAIConfig(task.user_id);
 
-    const response = await this.callAI(aiConfig, systemPrompt, userPrompt, config, task.user_id, task.username, task.library_id, task.module_id, chunk.task_id);
+    const effectiveConfig = { ...config };
+    if (agentPrompt?.llmModel) effectiveConfig.model = agentPrompt.llmModel;
+    if (agentPrompt?.llmTemperature != null) effectiveConfig.temperature = agentPrompt.llmTemperature;
+    if (agentPrompt?.llmMaxTokens != null) effectiveConfig.max_tokens = agentPrompt.llmMaxTokens;
+
+    const response = await this.callAI(aiConfig, systemPrompt, userPrompt, effectiveConfig, task.user_id, task.username, task.library_id, task.module_id, chunk.task_id);
 
     const content = response.choices?.[0]?.message?.content || '';
     const usage = response.usage || {};
@@ -337,7 +349,7 @@ class CaseGeneratorService {
         completionTokens: usage.completion_tokens || 0,
         totalTokens: usage.total_tokens || 0,
         modelName: aiConfig.model_name || config?.model || 'deepseek-chat',
-        errorMessage: 'AI返回内容无法解析为有效的测试用例JSON格式'
+        errorMessage: 'AI返回内容无法解析为有效的测试用例格式'
       });
 
       aiRequestLogger.logFailure({
@@ -352,7 +364,7 @@ class CaseGeneratorService {
         completionTokens: usage.completion_tokens || 0,
         totalTokens: usage.total_tokens || 0,
         modelName: aiConfig.model_name || config?.model || 'deepseek-chat',
-        errorMessage: 'AI返回内容无法解析为有效的测试用例JSON格式',
+        errorMessage: 'AI返回内容无法解析为有效的测试用例格式',
         libraryId: task.library_id,
         moduleId: task.module_id
       });
@@ -376,7 +388,8 @@ class CaseGeneratorService {
 2. 测试步骤要具体可执行，编号清晰
 3. 预期结果要明确可验证
 4. 考虑正常场景和异常场景
-5. 仅根据提供的材料内容生成，不要臆测`;
+5. 仅根据提供的材料内容生成，不要臆测
+6. 严格按照指定的格式输出，不要使用JSON格式`;
   }
 
   buildPrompt(chunk, task, config, chunkContext = {}, globalAwareness = {}) {
@@ -423,31 +436,25 @@ ${chunk.chunk_content}
 1. 结合全局系统背景的约束生成用例
 2. 主要根据当前片段内容生成测试用例，结合上下文理解语义
 3. 如果片段内容不足以生成完整用例，可以跳过
-4. 用例名称要能体现测试点
+4. 每个用例的name字段必须填写，且要能体现测试点，禁止留空
 5. 测试步骤要具体可执行
 6. 预期结果要明确可验证
 7. 最多生成 ${caseLimit} 个用例
 
 ## 输出格式
-请严格按照以下JSON格式输出:
-\`\`\`json
-{
-  "cases": [
-    {
-      "name": "用例名称",
-      "priority": "高/中/低",
-      "type": "功能测试/性能测试/压力测试/规格测试/异常测试",
-      "level1_point": "一级测试点名称",
-      "precondition": "前置条件",
-      "purpose": "测试目的",
-      "steps": "1. 步骤1\\n2. 步骤2\\n3. 步骤3",
-      "expected": "预期结果",
-      "key_config": "关键配置(可选)",
-      "remark": "备注(可选)"
-    }
-  ]
-}
-\`\`\``;
+请按以下格式输出，每个用例之间用空行分隔，每个用例内字段各占一行，不要输出JSON、不要加引号、不要加花括号。name为必填字段，不可省略或留空：
+
+---CASE---
+name: 用例名称（必填，不可为空）
+priority: 高/中/低
+type: 功能测试/性能测试/压力测试/规格测试/异常测试
+level1_point: 一级测试点名称
+precondition: 前置条件
+purpose: 测试目的
+steps: 1. 步骤1 2. 步骤2 3. 步骤3（步骤间用空格+编号分隔）
+expected: 预期结果
+key_config: 关键配置(可选，无则不输出此行)
+remark: 备注(可选，无则不输出此行)`;
   }
 
   applyTemplate(template, chunk, task, config, chunkContext = {}, globalAwareness = {}) {
@@ -558,7 +565,7 @@ ${chunk.chunk_content}
     const model = aiConfig.model_name || config?.model || 'deepseek-chat';
 
     const effectiveTemp = config?.temperature ?? sceneParams.temperature;
-    const effectiveMaxTokens = config?.max_tokens ?? sceneParams.max_tokens;
+    const effectiveMaxTokens = config?.max_tokens ?? sceneParams.max_tokens ?? 4000;
     const effectiveTimeout = timeoutConfig.generalAITask || genParams.request_timeout || 120000;
 
     const requestBody = {
@@ -692,28 +699,58 @@ ${chunk.chunk_content}
   }
 
   extractCasesFromParsed(parsed) {
+    let rawCases = [];
+
     if (Array.isArray(parsed)) {
-      return parsed;
-    }
-    if (parsed && typeof parsed === 'object') {
+      rawCases = parsed;
+    } else if (parsed && typeof parsed === 'object') {
       const caseKeys = ['cases', 'test_cases', 'testCases', 'items'];
+      let found = false;
       for (const key of caseKeys) {
         if (Array.isArray(parsed[key])) {
           logger.debug(`从JSON中提取用例，使用key: ${key}`, { casesCount: parsed[key].length });
-          return parsed[key];
+          rawCases = parsed[key];
+          found = true;
+          break;
         }
       }
-      if (Array.isArray(parsed.data)) {
+      if (!found && Array.isArray(parsed.data)) {
         logger.debug('从JSON中提取用例，使用key: data', { casesCount: parsed.data.length });
-        return parsed.data;
+        rawCases = parsed.data;
       }
     }
-    return [];
+
+    return rawCases
+      .filter(c => {
+        const name = c.name || c['用例名称'] || c.title || c.case_name;
+        return name && String(name).trim();
+      })
+      .map(c => {
+        const normalized = {
+          name: c.name || c['用例名称'] || c.title || c.case_name || '',
+          priority: c.priority || c['优先级'] || '中',
+          type: c.type || c['类型'] || '功能测试',
+          level1_point: c.level1_point || c['一级测试点'] || '',
+          precondition: c.precondition || c['前置条件'] || '',
+          purpose: c.purpose || c['测试目的'] || '',
+          steps: c.steps || c['测试步骤'] || '',
+          expected: c.expected || c['预期结果'] || '',
+          key_config: c.key_config || c['关键配置'] || '',
+          remark: c.remark || c['备注'] || ''
+        };
+        return this._normalizeCaseFields(normalized);
+      });
   }
 
   parseAIResponse(content) {
     logger.debug('开始解析AI响应', { contentLength: content.length });
-    
+
+    const structuredCases = this._parseStructuredCases(content);
+    if (structuredCases.length > 0) {
+      logger.info('结构化纯文本解析成功', { casesCount: structuredCases.length });
+      return structuredCases;
+    }
+
     const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/i);
     if (jsonMatch) {
       logger.debug('找到JSON代码块', { matchedLength: jsonMatch[1].length });
@@ -804,6 +841,93 @@ ${chunk.chunk_content}
     }
   }
 
+  _normalizeCaseFields(caseObj) {
+    const multiLineFields = ['steps', 'expected', 'precondition', 'purpose'];
+    const result = {};
+
+    for (const [key, value] of Object.entries(caseObj)) {
+      if (value === null || value === undefined) {
+        result[key] = '';
+        continue;
+      }
+
+      if (Array.isArray(value)) {
+        result[key] = value.map(v => String(v).trim()).filter(v => v).join('\n');
+        continue;
+      }
+
+      let str = String(value);
+
+      if (multiLineFields.includes(key)) {
+        str = str
+          .replace(/\s*;\s*/g, '\n')
+          .replace(/\s*(\d+\.\s)/g, '\n$1')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
+        if (str.startsWith('\n')) str = str.substring(1);
+      }
+
+      result[key] = str;
+    }
+
+    return result;
+  }
+
+  _parseStructuredCases(content) {
+    if (!content || !content.includes('---CASE---')) return [];
+
+    const caseBlocks = content.split('---CASE---').filter(b => b.trim());
+    const cases = [];
+    const multiLineKeys = ['steps', 'expected', 'precondition', 'purpose', '测试步骤', '预期结果', '前置条件', '测试目的'];
+
+    for (const block of caseBlocks) {
+      const caseObj = {};
+      const lines = block.trim().split('\n');
+      let currentKey = null;
+      let currentValue = '';
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+
+        const colonIdx = line.indexOf(':');
+        if (colonIdx > 0 && colonIdx < line.length - 1) {
+          if (currentKey) {
+            caseObj[currentKey] = currentValue.trim();
+          }
+          currentKey = line.substring(0, colonIdx).trim();
+          currentValue = line.substring(colonIdx + 1).trim();
+        } else if (currentKey) {
+          const separator = multiLineKeys.includes(currentKey) ? '\n' : ' ';
+          currentValue += separator + line;
+        }
+      }
+      if (currentKey) {
+        caseObj[currentKey] = currentValue.trim();
+      }
+
+      if (caseObj.name || caseObj['用例名称']) {
+        const caseName = (caseObj.name || caseObj['用例名称'] || '').trim();
+        if (!caseName) continue;
+        const normalized = this._normalizeCaseFields({
+          name: caseName,
+          priority: caseObj.priority || caseObj['优先级'] || '中',
+          type: caseObj.type || caseObj['类型'] || '功能测试',
+          level1_point: caseObj.level1_point || caseObj['一级测试点'] || '',
+          precondition: caseObj.precondition || caseObj['前置条件'] || '',
+          purpose: caseObj.purpose || caseObj['测试目的'] || '',
+          steps: caseObj.steps || caseObj['测试步骤'] || '',
+          expected: caseObj.expected || caseObj['预期结果'] || '',
+          key_config: caseObj.key_config || caseObj['关键配置'] || '',
+          remark: caseObj.remark || caseObj['备注'] || ''
+        });
+        cases.push(normalized);
+      }
+    }
+
+    return cases;
+  }
+
   tryRepairTruncatedJSON(jsonStr) {
     const result = this._repairJSON(jsonStr);
     if (result) return result;
@@ -870,14 +994,25 @@ ${chunk.chunk_content}
   async saveTempCases(taskId, moduleId, chunkId, cases, libraryId, allValidLevel1 = []) {
     if (cases.length === 0) return;
 
+    const validCases = cases.filter(c => {
+      const name = c.name || c['用例名称'] || '';
+      return name.trim();
+    });
+
+    if (validCases.length < cases.length) {
+      logger.warn('过滤掉无名称的用例', { total: cases.length, filtered: cases.length - validCases.length, kept: validCases.length });
+    }
+
+    if (validCases.length === 0) return;
+
     const connection = await pool.getConnection();
 
     try {
       await connection.beginTransaction();
 
       const batchSize = 50;
-      for (let i = 0; i < cases.length; i += batchSize) {
-          const batch = cases.slice(i, i + batchSize);
+      for (let i = 0; i < validCases.length; i += batchSize) {
+          const batch = validCases.slice(i, i + batchSize);
           const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
           const values = batch.flatMap(c => {
               const level1Result = this._resolveLevel1Point(c, allValidLevel1);
@@ -888,7 +1023,7 @@ ${chunk.chunk_content}
                   level1Result.level1Name,
                   level1Result.isNewLevel1,
                   level1Result.level1Source,
-                  c.name || '未命名用例',
+                  (c.name || c['用例名称'] || '').trim(),
                   c.priority || '中',
                   c.type || '功能测试',
                   c.precondition || '',

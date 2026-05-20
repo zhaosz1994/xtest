@@ -425,7 +425,7 @@ ${caseInfo}
           { role: 'user', content: userPrompt }
         ],
         temperature: _sceneParams1.temperature,
-        max_tokens: _sceneParams1.max_tokens
+        max_tokens: _sceneParams1.max_tokens ?? 4000
       };
 
       const headers = buildAIHeaders(aiConfig.provider, aiConfig.api_key);
@@ -595,7 +595,7 @@ router.post('/generate-key-config', authenticateToken, async (req, res) => {
           { role: 'user', content: userPrompt }
         ],
         temperature: _sceneParams2.temperature,
-        max_tokens: _sceneParams2.max_tokens
+        max_tokens: _sceneParams2.max_tokens ?? 4000
       };
 
       const headers = buildAIHeaders(aiConfig.provider, aiConfig.api_key);

@@ -86,7 +86,7 @@ class AIReviewService {
             const caseResults = [];
 
             const [agents] = await pool.execute(
-                'SELECT agent_code, display_name, max_retries FROM ai_sub_agents WHERE id = ?',
+                'SELECT agent_code, display_name, max_retries, llm_model, llm_temperature, llm_max_tokens FROM ai_sub_agents WHERE id = ?',
                 [agentId]
             );
             const agentCode = agents[0]?.agent_code || 'review_test_cases';

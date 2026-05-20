@@ -144,7 +144,7 @@ class Level1PointService {
     const tasks = chunks.map((chunk, idx) => this.skeletonQueue.add(async () => {
       const prompt = this._buildSkeletonMapPrompt(chunk.chunk_content);
       try {
-        const response = await this._callAI(aiConfig, prompt, userId, effectiveTimeout, 300, 0.3, {
+        const response = await this._callAI(aiConfig, prompt, userId, effectiveTimeout, null, null, {
           triggerType: 'generation',
           triggerSource: 'skeleton_map',
           triggerSourceName: '骨架扫描'
@@ -228,7 +228,7 @@ ${combined}
 
 ${formatInstruction}`;
 
-    const response = await this._callAI(aiConfig, prompt, userId, effectiveTimeout, 800, 0.3, {
+    const response = await this._callAI(aiConfig, prompt, userId, effectiveTimeout, null, null, {
       triggerType: 'generation',
       triggerSource: 'skeleton_global_context',
       triggerSourceName: '全局背景合并'
@@ -333,9 +333,9 @@ ${formatInstruction}`;
 ${formatInstruction}`;
 
       try {
-        const response = await this._callAI(aiConfig, prompt, userId, effectiveTimeout, 2000, 0.3, {
+        const response = await this._callAI(aiConfig, prompt, userId, effectiveTimeout, null, null, {
           triggerType: 'generation',
-          triggerSource: 'skeleton_delta_level1',
+          triggerSource: 'delta_level1',
           triggerSourceName: `增量测试点提取(${batchNum}/${totalBatches})`,
           moduleId
         }, taskId);
@@ -629,7 +629,12 @@ ${formatInstruction}`;
     const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
     const model = aiConfig.model_name || 'deepseek-chat';
 
-    const systemPrompt = '你是一个专业的测试用例设计专家，擅长分析需求文档并提取关键信息。请严格按照要求的JSON格式输出。';
+    const systemPrompt = '你是一个专业的测试用例设计专家，擅长分析需求文档并提取关键信息。请严格按照要求的格式输出。';
+
+    const genParams = userId ? await getUserAIGenerationParams(userId) : {};
+    const sceneParams = getSceneParams(genParams, 'scene_data_analysis');
+    const effectiveTemperature = temperature ?? sceneParams.temperature ?? 0.3;
+    const effectiveMaxTokens = maxTokens ?? sceneParams.max_tokens ?? 4000;
 
     const requestBody = {
       model: model,
@@ -637,11 +642,10 @@ ${formatInstruction}`;
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      temperature: temperature || 0.3,
-      max_tokens: maxTokens || 300
+      temperature: effectiveTemperature,
+      max_tokens: effectiveMaxTokens
     };
 
-    const genParams = userId ? await getUserAIGenerationParams(userId) : {};
     if (genParams.top_p !== undefined && genParams.top_p !== 1.0) {
       requestBody.top_p = genParams.top_p;
     }

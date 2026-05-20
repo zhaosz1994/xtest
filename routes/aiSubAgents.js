@@ -1068,7 +1068,7 @@ router.get('/workflow/:agentCode', authenticateToken, async (req, res) => {
         const sceneParams = aiService.getSceneParams(genParams, 'scene_case_generation');
         const effectiveModel = agent.llm_model || aiConfig.model_name || 'deepseek-chat';
         const effectiveTemperature = agent.llm_temperature != null ? parseFloat(agent.llm_temperature) : sceneParams.temperature;
-        const effectiveMaxTokens = agent.llm_max_tokens || sceneParams.max_tokens;
+        const effectiveMaxTokens = agent.llm_max_tokens ?? sceneParams.max_tokens ?? 4000;
         const endpoint = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
         const endpointMasked = endpoint.replace(/(https?:\/\/[^/]+).*/, '$1/***');
         aiModelConfig = {

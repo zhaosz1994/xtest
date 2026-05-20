@@ -3,11 +3,18 @@
  * Extracted from ai-generation.html inline script
  */
 let aiGenInitialized = false;
+let aiSavedContextParams = null;
 
 function initAIGeneration() {
     if (aiGenInitialized) return;
     aiGenInitialized = true;
-    loadModules();
+
+    const queryString = window.location.hash.split('?')[1];
+    if (queryString) {
+        aiSavedContextParams = queryString;
+    }
+
+    aiModulesLoadPromise = loadModules();
     loadAgents();
 
     const aiNewFolderName = document.getElementById('aiNewFolderName');
@@ -41,7 +48,7 @@ let aiCurrentLibraryId = null;
 let aiCurrentParentId = null;
 let aiSelectedFiles = new Set();
 let aiPrefillFileIds = null;
-let aiHasContextParams = false;
+let aiModulesLoadPromise = null;
 let aiCurrentTaskId = null;
 let aiProgressInterval = null;
 let allTempCases = [];
@@ -481,8 +488,6 @@ async function loadModules() {
                 libSelect.appendChild(opt);
             });
 
-            if (aiHasContextParams) return;
-
             if (libraries.length > 0) {
                 aiCurrentLibraryId = parseInt(libraries[0].id);
                 document.getElementById('librarySelect').value = aiCurrentLibraryId;
@@ -533,16 +538,8 @@ async function onModuleChange() {
         if (aiPrefillFileIds) {
             selectSpecificFiles(aiPrefillFileIds);
             aiPrefillFileIds = null;
-            aiHasContextParams = false;
         } else {
-            const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
-            const prefillFiles = urlParams.get('selectedFiles');
-            if (prefillFiles) {
-                const fileIds = prefillFiles.split(',').map(Number).filter(n => !isNaN(n));
-                selectSpecificFiles(fileIds);
-            } else {
-                selectAllFiles();
-            }
+            selectAllFiles();
         }
         await loadAILevel1Points();
     } else {
@@ -3780,14 +3777,15 @@ function closeAgentsModal() {
  * 在 script.js 的路由处理中调用
  */
 function applyAIGenerationContext() {
-    const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    const paramsStr = aiSavedContextParams || window.location.hash.split('?')[1] || '';
+    aiSavedContextParams = null;
+
+    const urlParams = new URLSearchParams(paramsStr);
     const libraryId = urlParams.get('libraryId');
     const moduleId = urlParams.get('moduleId');
     const selectedFiles = urlParams.get('selectedFiles');
 
     if (!libraryId && !moduleId) return;
-
-    aiHasContextParams = true;
 
     if (selectedFiles) {
         aiPrefillFileIds = selectedFiles.split(',').map(Number).filter(n => !isNaN(n));
@@ -3799,26 +3797,29 @@ function applyAIGenerationContext() {
     switchTab('generate');
 
     const applyContext = async () => {
-        const libSelect = document.getElementById('librarySelect');
-        if (libraryId && libSelect) {
-            let retries = 0;
-            while (libSelect.options.length <= 1 && retries < 20) {
-                await new Promise(r => setTimeout(r, 50));
-                retries++;
+        try {
+            if (aiModulesLoadPromise) {
+                await aiModulesLoadPromise;
             }
-            libSelect.value = libraryId;
-            aiCurrentLibraryId = parseInt(libraryId);
-        }
 
-        if (libraryId) {
-            await loadModulesByLibrary(parseInt(libraryId));
-            if (moduleId) {
-                const moduleSelect = document.getElementById('moduleSelect');
-                if (moduleSelect) {
-                    moduleSelect.value = moduleId;
-                    await onModuleChange();
+            const libSelect = document.getElementById('librarySelect');
+            if (libraryId && libSelect) {
+                libSelect.value = libraryId;
+                aiCurrentLibraryId = parseInt(libraryId);
+            }
+
+            if (libraryId) {
+                await loadModulesByLibrary(parseInt(libraryId));
+                if (moduleId) {
+                    const moduleSelect = document.getElementById('moduleSelect');
+                    if (moduleSelect) {
+                        moduleSelect.value = moduleId;
+                        await onModuleChange();
+                    }
                 }
             }
+        } catch (err) {
+            console.error('[AI Generation] applyAIGenerationContext failed:', err);
         }
     };
 

@@ -173,10 +173,10 @@ const GEN_PARAMS_DEFAULTS = {
   request_interval: 0,
   retry_mode: 'finite',
   seed: null,
-  scene_data_analysis: { temperature: 0.3, max_tokens: 2000, max_context_rounds: 10 },
+  scene_data_analysis: { temperature: 0.3, max_tokens: 4000, max_context_rounds: 10 },
   scene_case_generation: { temperature: 0.7, max_tokens: 4000, max_context_chars: 1000, retry_interval: 30 },
-  scene_report_analysis: { temperature: 0.3, max_tokens: 2000 },
-  scene_memory_distillation: { temperature: 0.3, max_tokens: 800 }
+  scene_report_analysis: { temperature: 0.3, max_tokens: 4000 },
+  scene_memory_distillation: { temperature: 0.3, max_tokens: 2000 }
 };
 
 let _genParamsCache = null;
@@ -369,10 +369,10 @@ async function getUserAIGenerationParams(userId) {
 function getSceneParams(globalParams, sceneKey) {
   const scene = globalParams[sceneKey] || {};
   return {
-    temperature: scene.temperature !== undefined ? scene.temperature : globalParams.temperature,
-    max_tokens: scene.max_tokens !== undefined ? scene.max_tokens : globalParams.max_tokens,
-    max_context_chars: scene.max_context_chars !== undefined ? scene.max_context_chars : 1000,
-    retry_interval: scene.retry_interval !== undefined ? scene.retry_interval : 30,
+    temperature: scene.temperature ?? globalParams.temperature,
+    max_tokens: scene.max_tokens ?? globalParams.max_tokens,
+    max_context_chars: scene.max_context_chars ?? 1000,
+    retry_interval: scene.retry_interval ?? 30,
     top_p: globalParams.top_p,
     frequency_penalty: globalParams.frequency_penalty,
     presence_penalty: globalParams.presence_penalty,

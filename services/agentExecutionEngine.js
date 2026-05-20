@@ -164,7 +164,7 @@ class AgentExecutionEngine {
             }
 
             // 8. 调用LLM
-            let llmResult = await this._callLLM(systemPrompt, userPrompt, tools, aiConfig, userId);
+            let llmResult = await this._callLLM(systemPrompt, userPrompt, tools, aiConfig, userId, 'scene_case_generation', agent);
 
             // 9. 处理工具调用（Agentic Loop，最多5轮）
             const toolCallsLog = [];
@@ -202,7 +202,9 @@ class AgentExecutionEngine {
                     toolResults,
                     tools,
                     aiConfig,
-                    userId
+                    userId,
+                    'scene_case_generation',
+                    agent
                 );
 
                 totalPromptTokens += llmResult.usage?.prompt_tokens || 0;
@@ -467,7 +469,7 @@ class AgentExecutionEngine {
 
             let llmResult = await this._callLLMStream(
                 systemPrompt, userPrompt, tools, aiConfig, userId,
-                'scene_case_generation', onContent, streamShouldAbort
+                'scene_case_generation', onContent, streamShouldAbort, agent
             );
 
             const toolCallsLog = [];
@@ -512,7 +514,8 @@ class AgentExecutionEngine {
                     userId,
                     'scene_case_generation',
                     onContent,
-                    streamShouldAbort
+                    streamShouldAbort,
+                    agent
                 );
 
                 totalPromptTokens += llmResult.usage?.prompt_tokens || 0;
@@ -918,13 +921,16 @@ class AgentExecutionEngine {
      * @param {number} userId - 用户ID
      * @returns {Object} { content, tool_calls }
      */
-    async _callLLM(systemPrompt, userPrompt, tools, aiConfig, userId, sceneName = 'scene_case_generation') {
+    async _callLLM(systemPrompt, userPrompt, tools, aiConfig, userId, sceneName = 'scene_case_generation', agent = null) {
         const apiKey = aiConfig.api_key;
         const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
-        const model = aiConfig.model_name || 'deepseek-chat';
+        const model = agent?.llm_model || aiConfig.model_name || 'deepseek-chat';
 
         const genParams = await getUserAIGenerationParams(userId);
         const sceneParams = getSceneParams(genParams, sceneName);
+
+        const effectiveTemperature = agent?.llm_temperature != null ? parseFloat(agent.llm_temperature) : sceneParams.temperature;
+        const effectiveMaxTokens = agent?.llm_max_tokens ?? sceneParams.max_tokens ?? 4000;
 
         const messages = [
             { role: 'system', content: systemPrompt },
@@ -934,8 +940,8 @@ class AgentExecutionEngine {
         const requestBody = {
             model: model,
             messages: messages,
-            temperature: sceneParams.temperature,
-            max_tokens: sceneParams.max_tokens
+            temperature: effectiveTemperature,
+            max_tokens: effectiveMaxTokens
         };
 
         if (genParams.top_p !== undefined && genParams.top_p !== 1.0) {
@@ -957,7 +963,11 @@ class AgentExecutionEngine {
         } else {
             const responseFormat = genParams.response_format || 'text';
             if (responseFormat === 'json_object') {
-                requestBody.response_format = { type: 'json_object' };
+                const provider = (aiConfig.provider || '').toLowerCase();
+                const supportsJsonMode = ['openai', 'deepseek', 'zhipu'].includes(provider);
+                if (supportsJsonMode) {
+                    requestBody.response_format = { type: 'json_object' };
+                }
             }
         }
 
@@ -1018,13 +1028,16 @@ class AgentExecutionEngine {
      * @param {Function} onContent - 内容增量回调
      * @returns {Object} { content, tool_calls, usage }
      */
-    async _callLLMStream(systemPrompt, userPrompt, tools, aiConfig, userId, sceneName = 'scene_case_generation', onContent = null, shouldAbort = null) {
+    async _callLLMStream(systemPrompt, userPrompt, tools, aiConfig, userId, sceneName = 'scene_case_generation', onContent = null, shouldAbort = null, agent = null) {
         const apiKey = aiConfig.api_key;
         const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
-        const model = aiConfig.model_name || 'deepseek-chat';
+        const model = agent?.llm_model || aiConfig.model_name || 'deepseek-chat';
 
         const genParams = await getUserAIGenerationParams(userId);
         const sceneParams = getSceneParams(genParams, sceneName);
+
+        const effectiveTemperature = agent?.llm_temperature != null ? parseFloat(agent.llm_temperature) : sceneParams.temperature;
+        const effectiveMaxTokens = agent?.llm_max_tokens ?? sceneParams.max_tokens ?? 4000;
 
         const messages = [
             { role: 'system', content: systemPrompt },
@@ -1034,8 +1047,8 @@ class AgentExecutionEngine {
         const requestBody = {
             model: model,
             messages: messages,
-            temperature: sceneParams.temperature,
-            max_tokens: sceneParams.max_tokens
+            temperature: effectiveTemperature,
+            max_tokens: effectiveMaxTokens
         };
 
         if (genParams.top_p !== undefined && genParams.top_p !== 1.0) {
@@ -1057,7 +1070,11 @@ class AgentExecutionEngine {
         } else {
             const responseFormat = genParams.response_format || 'text';
             if (responseFormat === 'json_object') {
-                requestBody.response_format = { type: 'json_object' };
+                const provider = (aiConfig.provider || '').toLowerCase();
+                const supportsJsonMode = ['openai', 'deepseek', 'zhipu'].includes(provider);
+                if (supportsJsonMode) {
+                    requestBody.response_format = { type: 'json_object' };
+                }
             }
         }
 
@@ -1099,13 +1116,16 @@ class AgentExecutionEngine {
      * @param {Function} onContent - 内容增量回调
      * @returns {Object} { content, tool_calls, usage }
      */
-    async _callLLMWithToolResultsStream(systemPrompt, userPrompt, toolCalls, toolResults, tools, aiConfig, userId, sceneName = 'scene_case_generation', onContent = null, shouldAbort = null) {
+    async _callLLMWithToolResultsStream(systemPrompt, userPrompt, toolCalls, toolResults, tools, aiConfig, userId, sceneName = 'scene_case_generation', onContent = null, shouldAbort = null, agent = null) {
         const apiKey = aiConfig.api_key;
         const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
-        const model = aiConfig.model_name || 'deepseek-chat';
+        const model = agent?.llm_model || aiConfig.model_name || 'deepseek-chat';
 
         const genParams = await getUserAIGenerationParams(userId);
         const sceneParams = getSceneParams(genParams, sceneName);
+
+        const effectiveTemperature = agent?.llm_temperature != null ? parseFloat(agent.llm_temperature) : sceneParams.temperature;
+        const effectiveMaxTokens = agent?.llm_max_tokens ?? sceneParams.max_tokens ?? 4000;
 
         const messages = [
             { role: 'system', content: systemPrompt },
@@ -1130,8 +1150,8 @@ class AgentExecutionEngine {
         const requestBody = {
             model: model,
             messages: messages,
-            temperature: sceneParams.temperature,
-            max_tokens: sceneParams.max_tokens,
+            temperature: effectiveTemperature,
+            max_tokens: effectiveMaxTokens,
             tools: tools,
             tool_choice: genParams.tool_choice || 'auto'
         };
@@ -1172,13 +1192,16 @@ class AgentExecutionEngine {
      * @param {number} userId - 用户ID
      * @returns {Object} { content, tool_calls }
      */
-    async _callLLMWithToolResults(systemPrompt, userPrompt, toolCalls, toolResults, tools, aiConfig, userId, sceneName = 'scene_case_generation') {
+    async _callLLMWithToolResults(systemPrompt, userPrompt, toolCalls, toolResults, tools, aiConfig, userId, sceneName = 'scene_case_generation', agent = null) {
         const apiKey = aiConfig.api_key;
         const apiUrl = aiConfig.endpoint || aiConfig.api_url || 'https://api.deepseek.com/v1/chat/completions';
-        const model = aiConfig.model_name || 'deepseek-chat';
+        const model = agent?.llm_model || aiConfig.model_name || 'deepseek-chat';
 
         const genParams = await getUserAIGenerationParams(userId);
         const sceneParams = getSceneParams(genParams, sceneName);
+
+        const effectiveTemperature = agent?.llm_temperature != null ? parseFloat(agent.llm_temperature) : sceneParams.temperature;
+        const effectiveMaxTokens = agent?.llm_max_tokens ?? sceneParams.max_tokens ?? 4000;
 
         const messages = [
             { role: 'system', content: systemPrompt },
@@ -1203,8 +1226,8 @@ class AgentExecutionEngine {
         const requestBody = {
             model: model,
             messages: messages,
-            temperature: sceneParams.temperature,
-            max_tokens: sceneParams.max_tokens,
+            temperature: effectiveTemperature,
+            max_tokens: effectiveMaxTokens,
             tools: tools,
             tool_choice: genParams.tool_choice || 'auto'
         };

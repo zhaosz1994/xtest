@@ -114,7 +114,7 @@ ${caseSummary}
         { role: 'user', content: userPrompt }
       ],
       temperature: sceneParams.temperature,
-      max_tokens: sceneParams.max_tokens
+      max_tokens: sceneParams.max_tokens ?? 4000
     };
 
     const headers = buildAIHeaders(aiModel.provider, aiModel.api_key);

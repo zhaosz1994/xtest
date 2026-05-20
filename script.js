@@ -25385,82 +25385,31 @@ async function testAIModelConnection(modelId) {
     try {
         showLoading();
 
-        // 获取模型信息
-        const response = await apiRequest(`/ai-models/get?modelId=${modelId}`);
-        if (!response.success || !response.model) {
-            showErrorMessage('获取模型信息失败');
-            return;
-        }
-
-        const model = response.model;
-
-        if (!model.api_key) {
-            showErrorMessage('该模型未配置API密钥，请先编辑模型配置');
-            return;
-        }
-
-        // 显示测试状态
         const statusDiv = document.getElementById('ai-config-status');
         if (statusDiv) {
             statusDiv.style.display = 'block';
             statusDiv.className = 'config-status loading';
-            statusDiv.innerHTML = `🔄 正在测试模型 "${model.name}" 连接...`;
+            statusDiv.innerHTML = `🔄 正在测试模型连接...`;
         }
 
-        // 构建测试请求
-        const testBody = {
-            model: model.model_name,
-            messages: [{ role: 'user', content: 'Hello' }],
-            max_tokens: 10
-        };
-
-        const headers = {
-            'Content-Type': 'application/json'
-        };
-
-        if (model.provider === 'anthropic') {
-            headers['x-api-key'] = model.api_key;
-            headers['anthropic-version'] = '2023-06-01';
-        } else {
-            headers['Authorization'] = `Bearer ${model.api_key}`;
-        }
-
-        if (model.provider === 'openrouter' || model.provider === 'openai-compatible') {
-            headers['HTTP-Referer'] = window.location.origin;
-            headers['X-Title'] = 'XTest';
-        }
-
-        const testResponse = await fetch(model.endpoint, {
+        const response = await apiRequest('/ai-models/test', {
             method: 'POST',
-            headers: headers,
-            body: JSON.stringify(testBody)
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ modelId })
         });
 
-        if (testResponse.ok) {
+        if (response.success) {
             if (statusDiv) {
                 statusDiv.className = 'config-status success';
-                statusDiv.innerHTML = `✅ 模型 "${model.name}" 连接成功！AI服务可用`;
+                statusDiv.innerHTML = `✅ ${response.message}`;
             }
-            showSuccessMessage('AI模型连接测试成功');
+            showSuccessMessage(response.message);
         } else {
-            let errorMessage = '未知错误';
-            try {
-                const contentType = testResponse.headers.get('content-type');
-                if (contentType && contentType.includes('application/json')) {
-                    const errorData = await testResponse.json();
-                    errorMessage = errorData.error?.message || errorData.message || JSON.stringify(errorData);
-                } else {
-                    errorMessage = await testResponse.text();
-                }
-            } catch (parseError) {
-                errorMessage = `HTTP ${testResponse.status}: ${testResponse.statusText}`;
-            }
-
             if (statusDiv) {
                 statusDiv.className = 'config-status error';
-                statusDiv.innerHTML = `❌ 模型 "${model.name}" 连接失败: ${errorMessage}`;
+                statusDiv.innerHTML = `❌ ${response.message}`;
             }
-            showErrorMessage('连接测试失败: ' + errorMessage);
+            showErrorMessage(response.message);
         }
     } catch (error) {
         logger.error('测试AI模型连接错误:', error);

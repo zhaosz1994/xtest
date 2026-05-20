@@ -24,7 +24,7 @@ class ReflectionPipeline {
         const agentConfig = await this.loadAgentConfig(agentId);
         const effectiveModel = agentConfig?.llm_model || aiConfig.model_name || 'deepseek-chat';
         const effectiveTemperature = agentConfig?.llm_temperature != null ? parseFloat(agentConfig.llm_temperature) : sceneParams.temperature;
-        const effectiveMaxTokens = agentConfig?.llm_max_tokens || sceneParams.max_tokens;
+        const effectiveMaxTokens = agentConfig?.llm_max_tokens ?? sceneParams.max_tokens ?? 4000;
 
         const timeoutConfig = await getUserAITimeoutConfig(aiConfig.user_id);
         const timeout = timeoutConfig.generalAITask || genParams.request_timeout || 120000;
@@ -129,6 +129,54 @@ class ReflectionPipeline {
         };
     }
 
+    _parseReflectionResponse(content) {
+        if (!content) return null;
+        const result = {};
+        const lines = content.trim().split('\n');
+        let currentKey = null;
+        let currentValue = '';
+
+        for (const rawLine of lines) {
+            const line = rawLine.trim();
+            if (!line) continue;
+
+            const colonIdx = line.indexOf(':');
+            if (colonIdx > 0 && colonIdx < line.length - 1) {
+                if (currentKey) {
+                    result[currentKey] = currentValue.trim();
+                }
+                currentKey = line.substring(0, colonIdx).trim();
+                currentValue = line.substring(colonIdx + 1).trim();
+            } else if (currentKey) {
+                currentValue += ' ' + line;
+            }
+        }
+        if (currentKey) {
+            result[currentKey] = currentValue.trim();
+        }
+
+        if (result.passed === undefined && result.summary === undefined) {
+            return null;
+        }
+
+        const parsed = {
+            passed: result.passed === 'true' || result.passed === true,
+            summary: result.summary || '',
+            confidence: parseFloat(result.confidence || 0),
+            revised_draft: null
+        };
+
+        if (result.revised_draft && result.revised_draft !== 'null') {
+            try {
+                parsed.revised_draft = JSON.parse(result.revised_draft);
+            } catch (e) {
+                parsed.revised_draft = result.revised_draft;
+            }
+        }
+
+        return parsed;
+    }
+
     async _callRuleLLM(agentId, rule, currentDraft, reviewHistory, cachedContext) {
         const { aiConfig, timeout, effectiveModel, effectiveTemperature, effectiveMaxTokens } = cachedContext;
 
@@ -139,11 +187,11 @@ class ReflectionPipeline {
         const systemPrompt = rule.content;
         const userPrompt = '## 当前草稿\n' + JSON.stringify(currentDraft, null, 2) +
             '\n\n## 前序评审履历\n' + (historyTexts.length > 0 ? historyTexts.join('\n') : '（无前序履历，这是第一轮评审）') +
-            '\n\n## 输出要求\n请以JSON格式输出评审结果，包含以下字段：\n' +
-            '- "passed": boolean，是否通过当前规则\n' +
-            '- "summary": string，评审摘要\n' +
-            '- "revised_draft": object|null，修正后的草稿（未通过时必须提供修正版本，通过时可为null）\n' +
-            '- "confidence": number，置信度分数(0-100)';
+            '\n\n## 输出要求\n请按以下格式输出评审结果，每行一个字段，不要输出JSON、不要加引号、不要加花括号：\n' +
+            'passed: true或false\n' +
+            'summary: 评审摘要\n' +
+            'confidence: 置信度分数(0-100)\n' +
+            'revised_draft: 修正后的草稿JSON（未通过时必须提供，通过时写null）';
 
         const messages = [
             { role: 'system', content: systemPrompt },
@@ -154,8 +202,7 @@ class ReflectionPipeline {
             model: effectiveModel,
             messages: messages,
             temperature: effectiveTemperature,
-            max_tokens: effectiveMaxTokens,
-            response_format: { type: 'json_object' }
+            max_tokens: effectiveMaxTokens
         };
 
         const headers = buildAIHeaders(aiConfig.provider, apiKey);
@@ -188,7 +235,11 @@ class ReflectionPipeline {
                 executionTimeMs
             });
 
-            const parsed = llmResponseParser.parseJSON(content);
+            let parsed = this._parseReflectionResponse(content);
+
+            if (!parsed) {
+                parsed = llmResponseParser.parseJSON(content);
+            }
 
             if (!parsed) {
                 logger.warn('反思管道LLM响应解析失败', {

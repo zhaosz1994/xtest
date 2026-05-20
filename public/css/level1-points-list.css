@@ -235,7 +235,7 @@
     display: grid;
     grid-template-columns: 40px 80px 200px 1fr 100px 100px 120px 60px;
     gap: 16px;
-    align-items: center;
+    align-items: start;
     padding: 16px 20px;
     cursor: pointer;
 }
@@ -302,13 +302,10 @@
 .level1-summary {
     font-size: 13px;
     color: #64748b;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    line-height: 1.4;
-    max-height: 2.8em;
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+    word-break: break-word;
+    line-height: 1.5;
 }
 
 .level1-updated-time {
