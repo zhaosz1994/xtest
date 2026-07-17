@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "name": "default_test_workflow",
+  "description": "xtest默认测试工作流，吸收CTA深度测试闭环",
+  "max_loops_per_node": 10,
+  "nodes": [
+    { "id": "env_prepare", "label": "环境准备", "agent": "env_preparer", "handler": "env_prepare", "config": { "timeout_ms": 300000, "requires_lease": true } },
+    { "id": "learn_context", "label": "学习上下文", "agent": "planner_agent", "handler": "learn_context", "config": { "max_tokens": 16000, "extract_hard_constraints": true } },
+    { "id": "approval_gate", "label": "审批门控", "agent": "human", "handler": "approval_gate", "requires_approval": true, "config": { "auto_approve_if_no_assignee": false } },
+    { "id": "test_dispatch", "label": "测试用例派发", "agent": "test_dispatcher", "handler": "test_dispatch", "config": { "batch_size": 10, "parallel_sessions": 3 } },
+    { "id": "test_hunt", "label": "测试执行", "agent": "test_hunter", "handler": "test_hunt", "config": { "timeout_per_command_ms": 30000, "capture_output": true } },
+    { "id": "test_completeness_gate", "label": "完整性门控", "agent": "completeness_checker", "handler": "test_completeness_gate", "config": { "check_hard_constraints": true, "check_coverage_threshold": 0.9, "max_retest_loops": 3 } },
+    { "id": "hard_constraint_check", "label": "硬约束覆盖裁决", "agent": "constraint_checker", "handler": "hard_constraint_check", "config": { "mechanical_comparison": true } },
+    { "id": "knowledge_settle", "label": "知识沉淀", "agent": "knowledge_settler", "handler": "knowledge_settle", "config": { "persist_understanding": true, "persist_outline": true, "persist_test_plan": true, "persist_lessons": true } }
+  ],
+  "edges": [
+    { "from": "__START__", "to": "env_prepare" },
+    { "from": "env_prepare", "to": "learn_context" },
+    { "from": "learn_context", "to": "approval_gate" },
+    { "from": "approval_gate", "to": "test_dispatch" },
+    { "from": "test_dispatch", "to": "test_hunt" },
+    { "from": "test_hunt", "to": "test_completeness_gate" },
+    { "from": "test_completeness_gate", "to": "hard_constraint_check", "condition": "nodeResults.test_completeness_gate.output.coverage_met == true" },
+    { "from": "test_completeness_gate", "to": "test_dispatch", "condition": "nodeResults.test_completeness_gate.output.coverage_met == false && nodeResults.test_completeness_gate.output.retest_count < 3" },
+    { "from": "test_completeness_gate", "to": "hard_constraint_check", "is_default": true },
+    { "from": "hard_constraint_check", "to": "knowledge_settle" },
+    { "from": "knowledge_settle", "to": "__END__" },
+    { "from": "test_hunt", "to": "test_dispatch", "on_error": true }
+  ]
+}

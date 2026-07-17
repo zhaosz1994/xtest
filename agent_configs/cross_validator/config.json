@@ -1,0 +1,17 @@
+{
+  "agent_type": "ai",
+  "name": "cross_validator",
+  "description": "多路径交叉验证Agent，用不同方式触发同一功能并比对结果",
+  "tools": ["sdk_cli_tool_service", "traffic_tool_service", "register_accessor"],
+  "input_contract": {
+    "prereq": ["test_hunt"],
+    "handoff": ["test_hunt"],
+    "accumulating": ["discrepancies"],
+    "writes": ["test_bugs"]
+  },
+  "parameters": {
+    "paths": ["cli_command", "register_write", "traffic_trigger"],
+    "min_paths": 2,
+    "timeout_per_validation_ms": 15000
+  }
+}

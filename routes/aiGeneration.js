@@ -15,7 +15,7 @@ router.post('/create', authenticateToken, async (req, res) => {
   try {
     const { moduleId, libraryId, selectedFiles, agentId, caseCountLimit, 
             enableDedup, similarityThreshold, level1Mode, selectedLevel1Ids,
-            model, temperature, max_tokens, focusAreas, chunkingStrategy } = req.body;
+            model, temperature, max_tokens, focusAreas, chunkingStrategy, chipVersionId } = req.body;
 
     if (!moduleId) {
       return res.status(400).json({ success: false, message: '缺少模块ID' });
@@ -41,7 +41,8 @@ router.post('/create', authenticateToken, async (req, res) => {
       temperature,
       max_tokens,
       focusAreas,
-      chunkingStrategy
+      chunkingStrategy,
+      chipVersionId
     });
 
     try {

@@ -407,6 +407,14 @@
     color: #3b82f6;
 }
 
+.level1-action-btn.tcl-btn {
+    color: #3b82f6;
+}
+
+.level1-action-btn.tcl-btn:hover {
+    background: rgba(59, 130, 246, 0.1);
+}
+
 .test-cases-container {
     max-height: 0;
     opacity: 0;
@@ -972,6 +980,23 @@
     gap: 12px;
     padding: 16px 24px;
     border-top: 1px solid #e2e8f0;
+}
+
+.level1-select-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+}
+
+.level1-select-checkbox {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.level1-item.selected {
+    background: #eff6ff;
 }
 
 .toast-container {

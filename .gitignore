@@ -1,6 +1,9 @@
 # 依赖目录
 node_modules/
 
+# Python 虚拟环境（自动生成，不提交）
+venv/
+
 # 环境变量文件（包含敏感信息，不应提交）
 .env
 .env.local

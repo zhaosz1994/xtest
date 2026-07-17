@@ -2962,12 +2962,29 @@
             listContainer.style.display = 'block';
             if (editBtn) editBtn.style.display = 'inline-flex';
             
-            listContainer.innerHTML = currentDrawerScripts.map((script, index) => `
-                <div class="drawer-script-item">
+            listContainer.innerHTML = currentDrawerScripts.map((script, index) => {
+                const isGenerated = script.link_type === 'generated';
+                const executionStatus = script.execution_status || '';
+                const executionStatusMap = {
+                    pending: { text: '待执行', cls: 'exec-pending' },
+                    passed: { text: '执行通过', cls: 'exec-passed' },
+                    passed_after_repair: { text: '修复后通过', cls: 'exec-passed-after-repair' },
+                    failed: { text: '执行失败', cls: 'exec-failed' },
+                    timeout: { text: '执行超时', cls: 'exec-timeout' },
+                    skipped: { text: '未执行', cls: 'exec-skipped' },
+                    agent_unreachable: { text: 'Agent不可达', cls: 'exec-unreachable' }
+                };
+                const execInfo = executionStatusMap[executionStatus] || null;
+
+                return `
+                <div class="drawer-script-item ${isGenerated ? 'script-ai-generated' : ''}">
                     <span class="script-type-badge ${script.script_type}">${script.script_type.toUpperCase()}</span>
+                    ${isGenerated ? '<span class="script-ai-badge" title="AI自动生成">🤖 AI</span>' : ''}
                     <span class="script-name">${escapeHtml(script.script_name)}</span>
+                    ${execInfo ? `<span class="script-exec-status ${execInfo.cls}">${execInfo.text}</span>` : ''}
                     ${script.file_path ? `<span class="script-file-indicator" title="已上传文件">📎</span>` : ''}
                     ${script.link_url ? `<a href="${escapeHtml(script.link_url)}" class="script-link" target="_blank" rel="noopener noreferrer" onclick="if(!this.href.startsWith('http')){event.preventDefault();return false;}">查看</a>` : ''}
+                    ${isGenerated && script.generation_task_id ? `<a href="/api/tcl-generation/download/${escapeHtml(script.generation_task_id)}" class="script-download-link" title="下载TCL脚本" download>⬇</a>` : ''}
                     <button type="button" class="btn-icon" onclick="editDrawerScript(${index})" title="编辑">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -2981,7 +2998,7 @@
                         </svg>
                     </button>
                 </div>
-            `).join('');
+            `}).join('');
             
             const hiddenInput = document.getElementById('drawer-scripts');
             if (hiddenInput) hiddenInput.value = JSON.stringify(currentDrawerScripts);

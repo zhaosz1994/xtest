@@ -1,0 +1,1766 @@
+# V2.1 扩展设计：Traffic Agent 与 SDK CLI Agent 双智能体自测试框架
+
+> 对《智能交换芯片多代系自适应自动化测试系统详细设计文档 V2.0》的专项扩展。本文聚焦 CModel 软件仿真平台、FPGA/硬件原型平台、EDA 仿真加速器三类测试环境；将“组包、发包、打流”抽象为 **Traffic Agent / SdkCTP Agent**，将“SDK CLI 启动、配置下发、信息反馈、状态诊断”抽象为 **SDK CLI Agent / Config Agent**。两个 Agent 既可协同，也可独立工作。
+
+> **术语修订说明（2026-07-02）**：本文中的 **DRV 文件** 指公司内部芯片寄存器、表项、字段、访问权限、复位值、枚举语义等硬件事实来源文件。此前文稿中曾使用通用寄存器描述文件术语；在本系统设计中统一修订为 **DRV**，即后续所有寄存器字段解析、地址字典、CLI/SDK 一致性校验、证据链追溯均以 DRV 为准。
+
+---
+
+## 1. 核心设计目标
+
+原 V2.0 已定义 Planner / Search / Scripter / Critic / Executor / Reflection 的通用多 Agent 验证框架。V2.1 建议在执行层增加两个专业 Agent：
+
+1. **Traffic Agent / SdkCTP Agent**  
+   基于 SdkCTP 进行报文构造、flow spec 生成、EPGM/IXIA/仿真发包器适配、打流、抓包、流量统计和流量侧异常分析。
+
+2. **SDK CLI Agent / Config Agent**  
+   启动并维护 SDK CLI 会话，基于知识库生成配置命令，执行芯片配置、状态查询、counter dump、寄存器/表项检查、错误回读和配置侧异常分析。
+
+整体闭环：
+
+```text
+理解测试意图 → 查知识库 → 下发芯片配置 → 构造报文/流量 → 打流 → 观察 counters/logs/pcap → 判断 pass/fail → 失败归因 → 调整配置或流量 → 回灌知识库
+```
+
+---
+
+## 2. 三类测试环境统一抽象
+
+| 环境 | 特点 | Traffic Agent 适配 | SDK CLI Agent 适配 |
+|---|---|---|---|
+| CModel 软件仿真 | 快，适合功能回归；timing 近似；虚拟 EPGM/injector | SdkCTP 报文转 CModel packet object；支持虚拟端口、快速 replay、seed 固定、packet trace | 启动 SDK CLI 连接 CModel target；执行配置、show、counter；解析 CModel log 和 CLI stdout |
+| FPGA / 硬件原型 | 接近真实芯片；适合 bring-up、协议互通、性能稳定性；资源昂贵 | SdkCTP 生成 IXIA/Spirent/硬件 EPGM flow spec；管理端口映射、线速、包长、burst；读取丢包/乱序/CRC | 通过 console/ssh/telnet/serial 启动 CLI；配置端口/VLAN/QoS/PFC/ECN；查询 counters、link、table、interrupt |
+| EDA 加速器 | Palladium/Veloce/Zebu 等；启动成本高；系统级观测强 | SdkCTP flow spec 转 transactor transaction 或 EPGM proxy；绑定 waveform marker | 连接 emulator SDK shell；支持慢速命令超时、checkpoint/restore；CLI 操作与 cycle/transaction 对齐 |
+
+关键原则：三类环境的底层通道不同，但上层测试意图、配置语义、流量语义、pass/fail 语义要统一。
+
+---
+
+## 3. 双 Agent 总体架构
+
+```text
+                              ┌──────────────────────┐
+                              │  Test Planner Agent   │
+                              │ 测试目标/覆盖点/风险  │
+                              └──────────┬───────────┘
+                                         │ Test Intent
+                ┌────────────────────────┼────────────────────────┐
+                ▼                        ▼                        ▼
+       ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+       │ Search Agent     │      │ Critic Agent    │      │ Reflection Agent│
+       │ 查DRV/SDK/文档   │      │ 审查计划和动作  │      │ 失败复盘回灌    │
+       └────────┬────────┘      └────────┬────────┘      └────────┬────────┘
+                │ Evidence Bundle         │ Gate                   ▲
+                ▼                         ▼                        │
+┌────────────────────────────────────────────────────────────────────────────┐
+│                         Agent Coordination Bus                            │
+│ session_id | chip_version | target_env | test_id | shared_state | events   │
+└───────────────┬──────────────────────────────────────────┬─────────────────┘
+                ▼                                          ▼
+┌───────────────────────────────┐             ┌──────────────────────────────┐
+│ Traffic Agent / SdkCTP Agent  │◄──events───►│ SDK CLI Agent / Config Agent │
+│ 组包/发包/打流/抓包/流量统计   │             │ CLI启动/配置/查询/反馈解析    │
+└───────────────┬───────────────┘             └──────────────┬───────────────┘
+                ▼                                             ▼
+┌───────────────────────────────┐             ┌──────────────────────────────┐
+│ Traffic Adapter Layer         │             │ CLI Adapter Layer            │
+│ CModel/IXIA/EPGM/Transactor   │             │ CModel/FPGA/Emulator SDK CLI │
+└───────────────┬───────────────┘             └──────────────┬───────────────┘
+                └────────────────── Target Environment ───────┘
+                      CModel | FPGA/IXIA | EDA Accelerator
+```
+
+分工：
+
+- **Planner**：提出“测什么”。
+- **Search**：提供证据，包括 DRV、SDK、CLI 手册、协议文档、Bug-RAG。
+- **SDK CLI Agent**：负责“怎么配置芯片、怎么看芯片内部状态”。
+- **Traffic Agent**：负责“怎么构造包、怎么打流、怎么看流量结果”。
+- **Critic**：审查配置计划、流量计划、安全边界、证据链。
+- **Reflection**：失败归因、补充知识库、生成新规则和新测试。
+
+---
+
+## 4. Traffic Agent / SdkCTP Agent 设计
+
+### 4.1 职责
+
+Traffic Agent 是流量侧专家。它将测试意图或结构化 Test Plan 转为 SdkCTP 可执行的流量场景，并对发包结果进行结构化分析。
+
+核心能力：
+
+- 构造 L2/L3/L4/MPLS/VXLAN/RoCE/PFC/自定义头等报文。
+- 生成单流、多流、突发、持续、拥塞、pause storm、错误注入等 traffic profile。
+- 对接 CModel injector、IXIA、Spirent、硬件 EPGM、EDA transactor。
+- 收集 tx/rx/loss/latency/jitter/out-of-order/CRC/FCS/pcap。
+- 判断异常来源：发包侧失败、配置侧失败、DUT 行为异常、环境阻塞。
+
+### 4.2 输入对象示例
+
+```json
+{
+  "traffic_task_id": "TT-PFC-0001",
+  "test_id": "TP-PFC-GEN3-0001",
+  "chip_version": "Switch_Gen3",
+  "target_env": "fpga_ixia",
+  "intent": "generate pause storm on lossless queue 3 and verify recovery",
+  "topology": {
+    "ports": ["port1", "port2"],
+    "direction": "port1_to_port2",
+    "speed": "400G",
+    "queue": 3
+  },
+  "packet_requirements": {
+    "l2": {"dst_mac": "00:11:22:33:44:55", "src_mac": "00:aa:bb:cc:dd:ee"},
+    "vlan": 100,
+    "ether_type": "ipv4",
+    "ip": {"src": "10.0.0.1", "dst": "10.0.0.2", "dscp": 26},
+    "priority": {"pcp": 3},
+    "payload_len": [64, 512, 1518]
+  },
+  "traffic_profile": {
+    "mode": "burst_then_continuous",
+    "rate_percent": 90,
+    "duration_sec": 30,
+    "burst_size": 10000,
+    "seed": 2026070201
+  },
+  "expected_observation": {
+    "rx_loss_rate": "<0.01% after recovery",
+    "no_deadlock": true,
+    "queue_recover_within_ms": 100
+  },
+  "evidence_bundle_id": "EB-PFC-GEN3-0001"
+}
+```
+
+### 4.3 输出对象示例
+
+```json
+{
+  "traffic_result_id": "TR-PFC-0001",
+  "status": "passed | failed | blocked | inconclusive",
+  "sdkctp_artifacts": {
+    "flow_spec": "artifacts/.../flow_spec.yaml",
+    "sdkctp_script": "artifacts/.../traffic.py",
+    "pcap": "artifacts/.../capture.pcap"
+  },
+  "runtime_stats": {
+    "tx_packets": 1000000,
+    "rx_packets": 999998,
+    "loss_packets": 2,
+    "avg_latency_us": 12.3,
+    "max_latency_us": 88.7,
+    "out_of_order": 0
+  },
+  "events": [
+    {"time_ms": 0, "event": "traffic_started"},
+    {"time_ms": 2300, "event": "pause_storm_injected"},
+    {"time_ms": 12000, "event": "traffic_recovered"}
+  ],
+  "failure_signature": null,
+  "recommendation": "traffic side passed; ask SDK CLI Agent to verify PFC recovery counters"
+}
+```
+
+### 4.4 内部模块
+
+| 模块 | 职责 |
+|---|---|
+| Packet Template Builder | 根据协议知识构造报文模板 |
+| Flow Scenario Planner | 生成单流/多流/突发/拥塞/异常注入场景 |
+| SdkCTP Script Generator | 生成 SdkCTP 脚本或 API 调用序列 |
+| Traffic Environment Adapter | 适配 CModel、IXIA、Spirent、EPGM、EDA transactor |
+| Capture & Statistics Collector | 抓包、读取发包仪统计、解析 pcap |
+| Traffic Failure Classifier | 区分流量工具问题、配置问题、DUT 问题、环境问题 |
+
+### 4.5 工具服务接口
+
+```yaml
+service: traffic_tool_service
+apis:
+  - build_packet_template(packet_requirements) -> packet_template_id
+  - compile_flow_spec(packet_template_id, traffic_profile, topology, target_env) -> flow_spec_id, sdkctp_script_path
+  - start_traffic(flow_spec_id) -> run_id
+  - stop_traffic(run_id) -> stop_status
+  - get_traffic_stats(run_id) -> tx_rx_loss_latency_jitter
+  - capture_packets(run_id, port, duration_sec) -> pcap_path
+  - analyze_pcap(pcap_path, expected_pattern) -> packet_analysis_report
+```
+
+---
+
+## 5. SDK CLI Agent / Config Agent 设计
+
+### 5.1 职责
+
+SDK CLI Agent 是配置和观测侧专家。它把测试计划转为 SDK CLI 命令序列，并根据 CLI 输出、寄存器值、counter、表项、event log 进行状态判断。
+
+核心能力：
+
+- 启动 SDK CLI，连接 CModel/FPGA/EDA target。
+- 识别 prompt、登录状态、芯片初始化状态，支持断线重连。
+- 基于知识库生成端口、VLAN、L2/L3、ACL、QoS、PFC、ECN、Telemetry 等配置命令。
+- 执行 show/counter/dump/debug 命令并解析输出。
+- 配置前后做 snapshot，生成 diff 和 rollback。
+- 判断命令不存在、参数非法、环境不支持、SDK bug、DUT 状态异常。
+
+### 5.2 输入对象示例
+
+```json
+{
+  "cli_task_id": "CT-PFC-0001",
+  "test_id": "TP-PFC-GEN3-0001",
+  "chip_version": "Switch_Gen3",
+  "target_env": "fpga_ixia",
+  "sdk_branch": "sdk_gen3_dev",
+  "intent": "configure port1->port2 lossless queue 3 with PFC deadlock recovery enabled",
+  "config_scope": ["port", "vlan", "qos", "pfc", "counter"],
+  "evidence_bundle_id": "EB-PFC-GEN3-0001",
+  "safety_policy": {
+    "allow_reset": false,
+    "allow_link_flap": true,
+    "require_snapshot_before_config": true,
+    "require_rollback_plan": true
+  }
+}
+```
+
+### 5.3 输出对象示例
+
+```json
+{
+  "cli_result_id": "CR-PFC-0001",
+  "status": "configured | failed | partially_configured | rollbacked",
+  "command_log": "artifacts/.../sdk_cli_session.log",
+  "config_snapshot_before": "artifacts/.../snapshot_before.json",
+  "config_snapshot_after": "artifacts/.../snapshot_after.json",
+  "executed_commands": [
+    {"cmd": "port enable 1", "status": "ok"},
+    {"cmd": "qos map pcp 3 queue 3", "status": "ok"},
+    {"cmd": "pfc deadlock enable queue 3", "status": "ok"}
+  ],
+  "observations": {
+    "link_status": "up",
+    "pfc_deadlock_recovery": "enabled",
+    "queue3_tx_counter": 1000000,
+    "queue3_drop_counter": 2
+  },
+  "failure_signature": null,
+  "rollback_plan": "artifacts/.../rollback.cli"
+}
+```
+
+### 5.4 内部模块
+
+| 模块 | 职责 |
+|---|---|
+| CLI Session Manager | 启动、登录、心跳、重连、prompt 识别 |
+| Command Planner | 根据知识库和测试意图生成 CLI 命令序列 |
+| Command Executor | 执行命令，处理分页、超时、确认提示、错误码 |
+| Output Parser | 将 CLI 文本输出解析成结构化 JSON |
+| State Snapshotter | 配置前后 dump 状态，用于比对和回滚 |
+| Rollback Generator | 自动生成回滚命令 |
+| CLI Failure Classifier | 区分命令错误、SDK bug、DUT 异常、环境异常 |
+
+### 5.5 工具服务接口
+
+```yaml
+service: sdk_cli_tool_service
+apis:
+  - open_session(target_env, connection_profile, sdk_branch) -> session_id, prompt, sdk_version
+  - run_command(session_id, command, timeout_sec) -> stdout, stderr, exit_status, parsed_error
+  - run_command_batch(session_id, commands, stop_on_error) -> batch_result
+  - snapshot_state(session_id, snapshot_profile) -> snapshot_id, snapshot_json_path
+  - diff_snapshot(before_snapshot_id, after_snapshot_id) -> state_diff
+  - query_counter(session_id, counter_spec) -> counter_values
+  - generate_rollback(state_diff) -> rollback_commands
+  - close_session(session_id) -> close_status
+```
+
+---
+
+## 6. 双 Agent 协作协议
+
+Traffic Agent 与 SDK CLI Agent 之间必须通过结构化事件交互，不能依赖自然语言聊天式同步。
+
+### 6.1 共享状态对象
+
+```json
+{
+  "test_id": "TP-PFC-GEN3-0001",
+  "phase": "configuring | ready_to_traffic | traffic_running | observing | diagnosing | completed",
+  "chip_version": "Switch_Gen3",
+  "target_env": "fpga_ixia",
+  "topology": {
+    "ingress_port": "port1",
+    "egress_port": "port2",
+    "queue": 3
+  },
+  "config_state": {
+    "port_ready": true,
+    "qos_ready": true,
+    "pfc_ready": true,
+    "telemetry_ready": false
+  },
+  "traffic_state": {
+    "flow_compiled": true,
+    "traffic_running": false,
+    "last_run_id": null
+  },
+  "observations": {
+    "cli_counters": {},
+    "traffic_stats": {},
+    "logs": []
+  },
+  "locks": {
+    "lab_resource": "fpga_board_03",
+    "ixia_ports": ["1/1", "1/2"]
+  }
+}
+```
+
+### 6.2 事件类型
+
+| 事件 | 发送方 | 接收方 | 含义 |
+|---|---|---|---|
+| `CONFIG_READY` | SDK CLI Agent | Traffic Agent | 芯片配置完成，可以打流 |
+| `CONFIG_FAILED` | SDK CLI Agent | Planner / Reflection / Traffic | 配置失败，停止打流 |
+| `TRAFFIC_READY` | Traffic Agent | SDK CLI Agent | 流量脚本已生成，可以预检查 |
+| `TRAFFIC_STARTED` | Traffic Agent | SDK CLI Agent | 流量已开始，CLI 侧开始采样 counters |
+| `TRAFFIC_STOPPED` | Traffic Agent | SDK CLI Agent | 流量已停止，CLI 侧做最终 dump |
+| `COUNTER_ANOMALY` | SDK CLI Agent | Traffic / Reflection | counters 异常，需要关联流量统计 |
+| `TRAFFIC_ANOMALY` | Traffic Agent | SDK CLI / Reflection | 丢包/乱序/延迟异常，需要查芯片状态 |
+| `ROLLBACK_DONE` | SDK CLI Agent | Planner / Executor | 环境已恢复 |
+
+### 6.3 协同流程
+
+```text
+1. Planner 输出测试计划
+2. Search 输出 Evidence Bundle
+3. SDK CLI Agent 生成配置计划
+4. Traffic Agent 生成流量计划
+5. Critic 同时审查配置计划与流量计划
+6. SDK CLI Agent snapshot before
+7. SDK CLI Agent 执行配置
+8. SDK CLI Agent 发 CONFIG_READY
+9. Traffic Agent start traffic
+10. SDK CLI Agent 周期性 query counters
+11. Traffic Agent 收集 tx/rx/pcap/latency
+12. Traffic Agent stop traffic
+13. SDK CLI Agent snapshot after + final counters
+14. 二者联合生成 pass/fail verdict
+15. 失败进入 Reflection；成功进入 coverage update
+16. SDK CLI Agent 执行 rollback 或恢复默认状态
+```
+
+---
+
+## 7. 独立工作模式
+
+### 7.1 Traffic Agent 独立模式
+
+适用场景：
+
+- 验证 SdkCTP 报文构造是否正确。
+- 调试 IXIA/EPGM 端口和流量 profile。
+- 重放历史 pcap。
+- 构造协议 corner case 包，不依赖 DUT 配置变化。
+
+输入示例：
+
+```text
+请基于 SdkCTP 构造一组 VXLAN over IPv4 的 5-tuple 随机流，端口 1 到端口 2，包长 64/512/1518 混合，持续 60 秒，输出 flow spec 和预期统计。
+```
+
+### 7.2 SDK CLI Agent 独立模式
+
+适用场景：
+
+- 批量配置芯片 feature。
+- 查询 counters/register/table。
+- CLI 命令学习和自动纠错。
+- bring-up 阶段状态巡检。
+
+输入示例：
+
+```text
+连接 FPGA board_03，检查端口 1/2 link 状态、PFC 使能状态、队列 3 counters，并生成结构化报告。不要修改任何配置。
+```
+
+---
+
+## 8. AI 自我测试闭环
+
+### 8.1 状态机
+
+```text
+IDLE
+  │
+  ▼
+LEARN_CONTEXT         从 DRV/SDK/文档/Bug-RAG 学习模块知识
+  │
+  ▼
+GENERATE_HYPOTHESIS   生成测试假设：哪些边界/历史bug/组合场景值得测
+  │
+  ▼
+PLAN_CONFIG_TRAFFIC   生成配置计划和流量计划
+  │
+  ▼
+CRITIC_GATE           静态审查、安全审查、证据链审查
+  │ pass
+  ▼
+EXECUTE_CONFIG        SDK CLI Agent 下发配置
+  │
+  ▼
+EXECUTE_TRAFFIC       Traffic Agent 打流
+  │
+  ▼
+OBSERVE               双 Agent 联合观测 counters/logs/pcap/waveform
+  │
+  ▼
+VERDICT               生成 pass/fail/inconclusive
+  │
+  ├─ pass → UPDATE_COVERAGE → IDLE
+  ├─ fail → REFLECT_AND_LEARN → 生成新测试/知识回灌
+  └─ blocked → ENV_DIAGNOSIS → 等待资源或人工处理
+```
+
+### 8.2 自测试生成策略
+
+AI 可自动生成以下候选测试：
+
+1. **历史 Bug 继承**：Gen1/Gen2 出过的问题，Gen3 必须生成回归。
+2. **跨代差异检测**：字段宽度、端口数量、队列数量、buffer size、状态机枚举变化时，生成 old boundary / new boundary 测试。
+3. **SDK CLI 与 DRV 一致性**：CLI 配置后读取寄存器或 show 状态，验证语义一致。
+4. **流量与 counter 一致性**：Traffic Agent 统计的 tx/rx 与 SDK CLI Agent 查询的 port/queue counters 对齐。
+5. **负向和非法输入**：对 CLI 非法参数、报文字段异常、超速流量、错误 VLAN、无效 PCP 等做安全范围内异常测试。
+6. **组合场景探索**：PFC + ECN + QoS + ACL + mirror 等组合 feature 由 Planner 生成组合矩阵，Critic 控制规模。
+
+---
+
+## 9. 历史 Bug 学习、测试方法抽取与查漏补缺机制
+
+历史 Bug 不能只作为“案例检索材料”，还要被系统进一步加工成可复用的测试知识资产。对于测试执行 Agent 来说，Bug-RAG 的价值不只是告诉它“过去哪里出过问题”，而是要回答三个更工程化的问题：
+
+1. **这个 Bug 暴露了什么测试方法？** 例如边界值、状态机切换、拥塞注入、异常恢复、跨模块组合、长稳压测、随机压力、协议非法输入等。
+2. **现有测试点漏了什么？** 例如已有测试只覆盖正常转发，没有覆盖 counter wrap、queue full、资源耗尽、配置切换中打流、warm reboot 后状态恢复等。
+3. **当前模块生成测试点时应该参考哪些历史 Bug？** 不能只按关键词粗搜，而要按模块、测试方法、测试点、具体测试内容进行多维向量检索。
+
+### 9.1 Bug 学习流水线
+
+建议将历史 Bug 从“缺陷记录”转成“测试知识卡片”。流水线如下：
+
+```text
+历史 Bug / Jira / 禅道 / Git commit / Review 记录 / 测试报告
+  │
+  ▼
+Bug Normalizer
+标准化字段：模块、代系、环境、严重度、触发条件、修复方式、关联测试
+  │
+  ▼
+Bug Method Extractor
+抽取测试方法：边界、异常、压力、组合、时序、恢复、随机、长稳
+  │
+  ▼
+Test Gap Analyzer
+对比现有测试点，判断缺失测试方法、缺失场景、缺失观测指标
+  │
+  ▼
+Bug Vector Indexer
+按模块/测试方法/测试点/测试内容多粒度入向量库
+  │
+  ▼
+Agent Retrieval
+Planner / Traffic Agent / SDK CLI Agent / Critic 执行前检索参考
+```
+
+### 9.2 Bug 知识卡片结构
+
+每个 Bug 应拆成结构化知识卡片，而不是只保存一段文本摘要。
+
+```json
+{
+  "bug_id": "BUG-PFC-2026-0017",
+  "title": "PFC recovery FSM stuck when queue pointer wraps",
+  "chip_versions": ["Switch_Gen2", "Switch_Gen3"],
+  "module": "PFC",
+  "submodules": ["deadlock_recovery", "queue_manager", "counter"],
+  "target_envs": ["CModel", "FPGA", "EDA_Accelerator"],
+  "severity": "critical",
+  "root_cause": "queue pointer wrap condition is not handled during recovery clear",
+  "trigger_conditions": [
+    "lossless queue near pointer wrap",
+    "pause storm active",
+    "deadlock recovery timer reaches threshold"
+  ],
+  "test_methods": [
+    "boundary_value_test",
+    "state_machine_transition_test",
+    "traffic_stress_injection",
+    "recovery_time_check"
+  ],
+  "related_test_points": [
+    "PFC_DEADLOCK_RECOVERY_QUEUE_WRAP",
+    "PFC_PAUSE_STORM_RECOVERY",
+    "QUEUE_COUNTER_WRAP"
+  ],
+  "recommended_test_content": [
+    "force queue pointer to old_max-1, old_max, old_max+1",
+    "inject pause storm while recovery FSM enters WAIT_CLEAR",
+    "verify queue occupancy returns to zero within recovery timeout",
+    "compare Traffic Agent rx stats with SDK CLI queue counters"
+  ],
+  "coverage_gap_implication": "existing normal PFC enable/disable test is insufficient; must add boundary and recovery scenarios",
+  "evidence_refs": [
+    "bug_report:BUG-PFC-2026-0017",
+    "fix_commit:abc1234",
+    "drv:PFC_RECOVERY_STATUS.FSM_STATE",
+    "sdk_cli:show pfc deadlock status"
+  ]
+}
+```
+
+### 9.3 Bug 向量库多粒度索引
+
+Bug 向量数据库不能只建一个 `bug_summary_embedding`。建议至少建立四类向量索引，使 Agent 能按不同任务阶段检索。
+
+| 索引粒度 | embedding 输入 | 主要使用者 | 用途 |
+|---|---|---|---|
+| 模块级 `bug_module_index` | module + submodule + root cause + trigger | Planner / Search | 生成模块测试计划时检索历史风险 |
+| 测试方法级 `bug_method_index` | test_methods + trigger_conditions + fix pattern | Planner / Critic | 抽取应补充的测试方法，如边界、异常、恢复、压力 |
+| 测试点级 `bug_testpoint_index` | related_test_points + coverage_gap_implication | Planner / Coverage Agent | 对现有测试点查漏补缺 |
+| 具体内容级 `bug_content_index` | recommended_test_content + evidence_refs | Traffic Agent / SDK CLI Agent | 生成具体配置、打流、观测步骤时参考 |
+
+### 9.4 执行 Agent 的 Bug 检索协议
+
+当测试执行 Agent 生成测试点和执行测试时，必须带着以下四元组去查 Bug 向量库：
+
+```json
+{
+  "chip_version": "Switch_Gen3",
+  "module": "PFC",
+  "test_method": "state_machine_transition_test",
+  "test_point": "PFC_DEADLOCK_RECOVERY_QUEUE_WRAP",
+  "test_content": "pause storm during queue pointer wrap and recovery FSM WAIT_CLEAR"
+}
+```
+
+检索策略：
+
+1. **先按模块召回**：确定该模块历史高危 Bug 和共性风险。
+2. **再按测试方法召回**：找到历史 Bug 中沉淀出的测试方法，例如边界、恢复、组合、压力。
+3. **再按测试点召回**：判断当前已有测试点是否覆盖历史 Bug 暴露的问题。
+4. **最后按测试内容召回**：为 Traffic Agent 和 SDK CLI Agent 生成具体动作提供参考。
+
+### 9.5 查漏补缺输出
+
+Bug 学习模块必须输出测试点缺口报告，供 Planner 和 Coverage Agent 使用。
+
+```json
+{
+  "module": "PFC",
+  "existing_test_points": [
+    "PFC_ENABLE_DISABLE",
+    "PFC_NORMAL_PAUSE_FRAME",
+    "PFC_COUNTER_BASIC"
+  ],
+  "bug_derived_required_points": [
+    "PFC_DEADLOCK_RECOVERY_QUEUE_WRAP",
+    "PFC_RECOVERY_TIMER_BOUNDARY",
+    "PFC_PAUSE_STORM_WITH_QOS_REMAP",
+    "PFC_COUNTER_WRAP_AND_CLEAR"
+  ],
+  "missing_test_points": [
+    "PFC_DEADLOCK_RECOVERY_QUEUE_WRAP",
+    "PFC_RECOVERY_TIMER_BOUNDARY",
+    "PFC_PAUSE_STORM_WITH_QOS_REMAP"
+  ],
+  "recommended_actions": [
+    "Planner must add boundary tests for recovery timer old/new max",
+    "Traffic Agent must inject pause storm while queue pointer is near wrap",
+    "SDK CLI Agent must query FSM state, queue occupancy, recovery counters before/during/after traffic"
+  ]
+}
+```
+
+### 9.6 与双 Agent 执行的关系
+
+- **Planner Agent**：基于 Bug 向量库补充测试方法和测试点，不允许只根据功能规格生成正常路径测试。
+- **Traffic Agent**：按 `recommended_test_content` 构造能复现历史风险的流量，例如 pause storm、burst、错误 VLAN、边界包长、拥塞组合。
+- **SDK CLI Agent**：按 Bug 卡片中的观测要求查询对应 counters、FSM state、寄存器字段、event log。
+- **Critic Agent**：检查高危历史 Bug 是否被覆盖；如果没有覆盖，必须给出 waiver，否则拒绝执行或拒绝合入。
+- **Reflection Agent**：当新 Bug 出现时，自动抽取新的测试方法、测试点缺口和推荐测试内容，写回 Bug 向量库。
+
+这一机制使历史 Bug 从“事后参考材料”升级为“测试生成约束”和“覆盖率补全来源”。
+
+---
+
+## 10. 示例：PFC Deadlock Recovery 双 Agent 用例
+
+### 9.1 测试目标
+
+验证 Gen3 在 lossless queue 3 上遭遇 pause storm 后，PFC deadlock recovery 能在规定时间内恢复，不产生持续丢包和队列卡死。
+
+### 9.2 SDK CLI Agent 动作
+
+```text
+1. snapshot before: dump port/qos/pfc/counter state
+2. port enable 1,2
+3. vlan create 100
+4. vlan add port 1,2
+5. qos map pcp 3 queue 3
+6. pfc enable port 1,2 priority 3
+7. pfc deadlock-recovery enable queue 3 threshold 4095
+8. clear counters port 1,2
+9. show pfc status
+10. emit CONFIG_READY
+```
+
+### 9.3 Traffic Agent 动作
+
+```text
+1. 使用 SdkCTP 构造 PCP=3 的 IPv4/UDP 数据流
+2. 构造 pause frame / pause storm 场景
+3. port1 → port2 持续打流，rate=90%，duration=30s
+4. 在第 2s 注入 pause storm
+5. 抓取 port2 出口 pcap
+6. 收集 tx/rx/loss/latency/jitter
+7. emit TRAFFIC_STOPPED
+```
+
+### 9.4 联合观测与判定
+
+SDK CLI Agent 查询：
+
+```text
+show counter port 1,2
+show queue counter port 2 queue 3
+show pfc deadlock status
+show event log pfc
+```
+
+Traffic Agent 输出：
+
+```text
+tx_packets, rx_packets, loss_packets, pause_frame_count, latency_max, pcap_signature
+```
+
+联合判定：
+
+```json
+{
+  "verdict": "passed",
+  "criteria": {
+    "deadlock_recovered": true,
+    "recovery_time_ms": 73,
+    "loss_after_recovery": 0,
+    "queue3_not_stuck": true,
+    "cli_counter_matches_traffic": true
+  }
+}
+```
+
+失败时产生联合失败签名：
+
+```json
+{
+  "verdict": "failed",
+  "failure_signature": "pfc_recovery_counter_stuck_after_pause_storm",
+  "traffic_evidence": "rx stopped after pause storm; pcap no egress packets after t=2.3s",
+  "cli_evidence": "queue3 occupancy remains max; recovery FSM state=WAIT_CLEAR",
+  "next_action": "Reflection Agent should compare Gen2/Gen3 PFC_RECOVERY_TIMER field width and FSM transition table"
+}
+```
+
+---
+
+## 11. 数据库与知识库扩展
+
+### 10.1 新增表
+
+```sql
+CREATE TABLE agent_session (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  session_id VARCHAR(128) NOT NULL,
+  test_id VARCHAR(128) NOT NULL,
+  chip_version VARCHAR(64) NOT NULL,
+  target_env VARCHAR(64) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  started_at DATETIME,
+  ended_at DATETIME,
+  created_by VARCHAR(64),
+  metadata JSON
+);
+
+CREATE TABLE cli_command_trace (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  session_id VARCHAR(128) NOT NULL,
+  command_index INT NOT NULL,
+  command_text TEXT NOT NULL,
+  stdout_path TEXT,
+  parsed_result JSON,
+  status VARCHAR(32),
+  error_signature VARCHAR(256),
+  evidence_refs JSON,
+  created_at DATETIME
+);
+
+CREATE TABLE traffic_run_trace (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  session_id VARCHAR(128) NOT NULL,
+  run_id VARCHAR(128) NOT NULL,
+  sdkctp_script_path TEXT,
+  flow_spec_path TEXT,
+  pcap_path TEXT,
+  stats JSON,
+  status VARCHAR(32),
+  failure_signature VARCHAR(256),
+  created_at DATETIME
+);
+```
+
+### 10.2 知识库新增资产类型
+
+| 类型 | 内容 |
+|---|---|
+| `sdkctp_template` | 常用报文模板、flow spec 模板、EPGM 参数模板 |
+| `cli_command_pattern` | CLI 命令语法、参数约束、示例、错误码 |
+| `env_adapter_profile` | CModel/FPGA/EDA 环境连接方式、能力差异、限制 |
+| `joint_failure_signature` | 流量侧 + CLI 侧联合失败签名 |
+| `rollback_recipe` | 不同 feature 的安全回滚流程 |
+| `bug_method_card` | 从历史 Bug 中抽取出的测试方法，如边界、压力、异常恢复、组合场景 |
+| `bug_test_gap_report` | 历史 Bug 推导出的缺失测试点、缺失观测项、缺失流量场景 |
+| `bug_execution_hint` | 面向 Traffic Agent / SDK CLI Agent 的具体执行提示：配置、打流、counter、日志观测 |
+
+---
+
+## 12. 安全与门禁
+
+### 11.1 Traffic Agent 安全策略
+
+- 默认限制打流速率、端口范围、持续时间。
+- FPGA/IXIA 环境必须申请 resource lock。
+- 不允许在共享 lab 环境对非授权端口发包。
+- 错误包、超速、pause storm 等破坏性场景需要 safety tag。
+- 所有 traffic run 必须可停止，且有 watchdog。
+
+### 11.2 SDK CLI Agent 安全策略
+
+- 默认禁止 `reset chip`、`erase flash`、`reboot board`、全局 destructive command。
+- 修改配置前必须 snapshot。
+- 支持 dry-run：只生成 CLI 命令，不执行。
+- 支持 command allowlist / denylist。
+- 共享环境下所有配置必须有 rollback。
+
+### 11.3 Critic 门禁扩展
+
+| 审查项 | 说明 |
+|---|---|
+| 配置与流量一致性 | CLI 配置的 VLAN/QoS/队列/端口必须与流量字段匹配 |
+| 环境能力匹配 | CModel/FPGA/EDA 是否支持该命令和该流量能力 |
+| 资源安全 | 是否锁定板卡、IXIA 端口、仿真资源 |
+| 可回滚性 | 配置前 snapshot、配置后 diff、rollback 是否存在 |
+| 可复现性 | seed、版本、命令、flow spec、日志路径是否记录 |
+| 证据链 | 每个关键配置和关键报文字段是否有 DRV/SDK/文档/bug 依据 |
+
+---
+
+
+## 13. 用户操作、Agent 管理与模块化知识库治理设计
+
+前面章节解决了“Agent 如何理解知识、配置芯片、打流、执行测试、学习 Bug”的问题。本章进一步补充用户侧如何管理和操作这些 Agent，以及当一个交换芯片包含几十个模块、每个模块都有多类设计文档时，知识库如何组织、审核、发布、检索和持续维护。
+
+### 13.1 用户工作台总体设计
+
+系统需要提供一个面向验证团队的 **Agent & Knowledge Console**。用户不应该直接面对底层向量库、脚本路径、CLI 连接串和 SdkCTP 参数，而应该通过一个结构化工作台完成以下操作：
+
+```text
+选择项目/芯片代系
+  │
+  ▼
+选择模块/子模块
+  │
+  ▼
+查看知识库完备度与历史 Bug 风险
+  │
+  ▼
+选择 Agent 工作模式：咨询 / 生成 / dry-run / 执行 / 自测试
+  │
+  ▼
+配置目标环境：CModel / FPGA / EDA Accelerator
+  │
+  ▼
+提交任务，观察 Agent 协作过程
+  │
+  ▼
+审核测试点、配置计划、流量计划、执行结果、查漏补缺报告
+```
+
+推荐 UI 顶部固定五个全局上下文：
+
+| 全局上下文 | 示例 | 说明 |
+|---|---|---|
+| Project | ScaleUp_Switch | 项目级隔离 |
+| Chip Version | Switch_Gen3 / Gen3_RevB | DRV、SDK、文档、Bug、测试结果均按代系隔离 |
+| Module | PFC / MMU / L2 / ACL / Telemetry | 所有 Agent 行动必须绑定模块 |
+| Target Env | CModel / FPGA / EDA | 决定 CLI adapter、Traffic adapter、安全策略 |
+| Mode | Advisory / Dry-run / Execute / Autonomous | 决定 Agent 权限和人工审批强度 |
+
+### 13.2 Agent 管理中心
+
+用户需要能像管理“测试工程师小组”一样管理多个 Agent，而不是把 Agent 看成一个黑盒按钮。
+
+#### 13.2.1 Agent Registry
+
+每个 Agent 都应在系统中注册，拥有明确职责、工具权限、适用模块和运行模式。
+
+```json
+{
+  "agent_id": "traffic_agent_v1",
+  "display_name": "Traffic Agent / SdkCTP Agent",
+  "role": "packet_generation_and_traffic_execution",
+  "allowed_tools": ["traffic_tool_service", "pcap_analyzer", "ixia_adapter"],
+  "allowed_envs": ["CModel", "FPGA", "EDA_Accelerator"],
+  "allowed_modes": ["advisory", "dry_run", "execute"],
+  "requires_approval_for": ["pause_storm", "line_rate_traffic", "error_packet_injection"],
+  "default_safety_policy": "traffic_safe_policy_v1"
+}
+```
+
+Agent Registry 页面至少展示：
+
+- Agent 名称、职责、版本。
+- 可调用工具列表。
+- 可操作环境。
+- 允许操作的模块范围。
+- 当前在线状态。
+- 最近执行任务。
+- 失败率、成功率、平均执行时间。
+- 最近产生的测试点和 Bug 学习记录。
+
+#### 13.2.2 Agent 工作模式
+
+| 模式 | 权限 | 适用场景 |
+|---|---|---|
+| Advisory 咨询模式 | 只读知识库，只给建议，不生成可执行动作 | 架构评审、测试思路讨论 |
+| Generation 生成模式 | 生成测试点、CLI 命令、SdkCTP flow，但不执行 | 测试开发、人工审查 |
+| Dry-run 模式 | 模拟执行，检查命令和流量计划，不触碰设备 | 上板前检查、CI 门禁 |
+| Execute 执行模式 | 在授权环境执行配置和打流 | CModel/FPGA/EDA 回归 |
+| Autonomous 自测试模式 | 在安全边界内自动生成、执行、复盘和补测试 | 夜间回归、版本探索测试 |
+
+高风险环境建议默认只开放 Advisory / Generation / Dry-run；Execute 和 Autonomous 需要项目管理员授权。
+
+#### 13.2.3 Agent Task Card
+
+用户提交任务后，系统应生成可追踪的 Agent Task Card。
+
+```json
+{
+  "task_id": "AT-PFC-20260702-001",
+  "created_by": "verification_user",
+  "module": "PFC",
+  "target_env": "FPGA",
+  "mode": "dry_run",
+  "agents": ["planner_agent", "sdk_cli_agent", "traffic_agent", "critic_agent"],
+  "objective": "Generate and dry-run PFC deadlock recovery test for queue pointer wrap",
+  "status": "waiting_for_critic_review",
+  "artifacts": {
+    "test_plan": ".../plan.json",
+    "cli_plan": ".../cli_plan.json",
+    "traffic_plan": ".../flow_spec.yaml",
+    "critic_report": ".../critic_report.json"
+  },
+  "approval_required": true
+}
+```
+
+任务卡页面需要支持：
+
+- 暂停 / 恢复 / 取消。
+- 进入人工审批。
+- 一键生成 rollback。
+- 查看 Agent 对话和决策依据。
+- 查看每个工具调用的输入输出。
+- 复制为新任务。
+- 将成功任务沉淀为测试模板。
+
+### 13.3 模块化知识库空间设计
+
+一个复杂交换芯片可能包含几十个模块。知识库必须以模块为基本治理单元，而不是把所有文档扔进一个大池子。
+
+#### 13.3.1 模块树
+
+建议建立 Module Taxonomy：
+
+```text
+Switch Chip
+├─ Front-end / Ingress
+│  ├─ Parser
+│  ├─ VLAN
+│  ├─ L2
+│  ├─ L3
+│  ├─ ACL
+│  └─ Tunnel / VXLAN
+├─ Buffer / MMU
+│  ├─ Admission Control
+│  ├─ Queue Manager
+│  ├─ WRED / ECN
+│  └─ PFC / Deadlock Recovery
+├─ Fabric / Scheduling
+│  ├─ VOQ
+│  ├─ Scheduler
+│  ├─ Multicast
+│  └─ Load Balancing
+├─ Egress
+│  ├─ Egress ACL
+│  ├─ Rewrite
+│  ├─ Mirroring
+│  └─ Timestamp
+├─ Telemetry / OAM
+│  ├─ INT
+│  ├─ Counter
+│  ├─ Event Log
+│  └─ Debug Bus
+├─ Port / MAC / PCS / SerDes
+└─ SDK / CLI / DRV Common
+```
+
+每个模块空间拥有自己的：
+
+- 设计文档。
+- DRV 片段。
+- SDK/CLI 相关代码和命令。
+- SdkCTP 流量模板。
+- 历史 Bug。
+- 测试点库。
+- 覆盖率报告。
+- Agent 执行历史。
+- 知识库健康度。
+
+#### 13.3.2 文档类型分类
+
+| 文档类型 | 示例 | 用途 |
+|---|---|---|
+| DRV 文件 | 寄存器、表项、字段、枚举、访问权限 | 地址字典、字段校验、证据链 |
+| Architecture Spec | 模块架构说明、功能边界 | Planner 生成测试目标 |
+| Micro-architecture Spec | 状态机、队列、pipeline、时序 | 生成边界和异常测试 |
+| SDK Design / API Doc | SDK 函数、结构体、宏 | SDK CLI Agent 配置生成 |
+| CLI Manual | CLI 命令、参数、输出解释 | CLI 命令生成和输出解析 |
+| SdkCTP Template | 报文模板、流量模板 | Traffic Agent 组包打流 |
+| Test Plan / Test Case | 人工历史测试点 | 测试点继承和查漏补缺 |
+| Bug / Issue / Commit | Bug 单、修复提交、root cause | Bug 方法抽取和风险继承 |
+| Coverage Report | 功能覆盖、代码覆盖、断言覆盖 | 发现覆盖缺口 |
+| Log / Waveform Note | 失败日志、波形标注、debug 记录 | Reflection 归因和失败签名 |
+
+### 13.4 知识导入与发布流程
+
+知识库导入不能是“上传即生效”，否则会污染 Agent 决策。建议采用四阶段流程：
+
+```text
+Draft Upload 草稿上传
+  │
+  ▼
+Auto Parse 自动解析
+  │  文档切片、元数据抽取、模块归类、版本识别、敏感信息检查
+  ▼
+Human Review 人工审核
+  │  模块 owner 确认归属、版本、有效性、可见范围
+  ▼
+Publish & Index 发布索引
+  │  写入结构化库 + 向量库 + 证据链索引
+  ▼
+Knowledge Health Check 健康检查
+     检查缺失文档、冲突版本、过期知识、低置信片段
+```
+
+#### 13.4.1 文档元数据
+
+每个文档入库时必须绑定元数据：
+
+```json
+{
+  "doc_id": "DOC-PFC-MICROARCH-GEN3-001",
+  "project": "ScaleUp_Switch",
+  "chip_version": "Switch_Gen3",
+  "module": "PFC",
+  "submodule": "deadlock_recovery",
+  "doc_type": "micro_architecture_spec",
+  "doc_version": "v1.4",
+  "owner": "pfc_arch_owner",
+  "review_status": "approved",
+  "effective_from": "2026-07-01",
+  "supersedes": "DOC-PFC-MICROARCH-GEN3-000",
+  "confidential_level": "internal_high",
+  "index_status": {
+    "structured_db": "done",
+    "vector_db": "done",
+    "evidence_graph": "done"
+  }
+}
+```
+
+#### 13.4.2 知识版本和冲突处理
+
+Agent 检索时必须优先使用当前 chip_version、当前发布版本、已审核知识。若发现冲突，必须显式报告。
+
+冲突类型包括：
+
+- DRV 字段定义与设计文档不一致。
+- CLI 手册命令参数与 SDK 源码 handler 不一致。
+- 测试计划中的测试点与最新 Bug 学习结果不一致。
+- 不同版本文档对 reset value、threshold、状态机枚举描述不一致。
+
+冲突处理策略：
+
+| 冲突等级 | 处理方式 |
+|---|---|
+| Critical | 阻断 Agent 执行，要求 owner 处理 |
+| High | 允许生成计划，但禁止 execute |
+| Medium | 标记 warning，Critic 加强审查 |
+| Low | 记录到知识库健康报告 |
+
+### 13.5 模块知识健康度 Dashboard
+
+对于几十个模块，用户需要一眼看到哪些模块已经可以放心让 Agent 工作，哪些模块知识还不完整。
+
+建议提供 Knowledge Readiness Matrix：
+
+| 模块 | DRV | 架构文档 | 微架构 | SDK/CLI | SdkCTP模板 | Bug卡片 | 测试点 | 覆盖率 | 健康度 |
+|---|---|---|---|---|---|---|---|---|---|
+| PFC | ✅ | ✅ | ✅ | ✅ | ✅ | 28 | 134 | 87% | 92 |
+| MMU | ✅ | ✅ | ⚠️旧版 | ✅ | ✅ | 41 | 220 | 79% | 81 |
+| ACL | ✅ | ✅ | ✅ | ⚠️缺CLI输出解析 | ⚠️基础模板 | 19 | 156 | 74% | 76 |
+| Telemetry | ✅ | ⚠️草稿 | ⚠️缺状态机 | ✅ | ❌ | 7 | 42 | 45% | 48 |
+
+健康度评分建议：
+
+```text
+健康度 = 文档完备度 25%
+       + DRV/SDK/CLI 一致性 20%
+       + Bug 学习覆盖度 20%
+       + 测试点覆盖度 20%
+       + 最近执行稳定性 15%
+```
+
+当健康度低于阈值时，Agent 不应直接进入 Autonomous 自测试模式，只能 Advisory 或 Generation。
+
+### 13.6 知识库浏览与检索体验
+
+用户需要按模块浏览，也需要跨模块检索。
+
+#### 13.6.1 模块主页
+
+每个模块主页展示：
+
+- 模块简介和 owner。
+- 当前 chip_version 下文档清单。
+- DRV 寄存器/表项摘要。
+- SDK API 和 CLI 命令摘要。
+- 关键状态机和关键阈值。
+- 历史 Bug 风险热力图。
+- 测试方法分布。
+- 现有测试点树。
+- 缺失测试点列表。
+- 最近 Agent 执行任务。
+
+#### 13.6.2 多维检索
+
+检索框应支持自然语言 + 结构化过滤：
+
+```text
+module:PFC method:boundary env:FPGA bug:critical "queue pointer wrap"
+```
+
+检索结果按证据类型分组：
+
+- DRV 字段。
+- 设计文档段落。
+- CLI 命令。
+- SDK 代码片段。
+- SdkCTP 模板。
+- 历史 Bug 卡片。
+- 测试点。
+- 覆盖率缺口。
+- Agent 执行记录。
+
+### 13.7 用户如何操作一次完整自测试
+
+以 PFC 模块为例，用户操作流程如下：
+
+```text
+1. 进入 Agent & Knowledge Console
+2. 选择 Project=ScaleUp_Switch, Chip=Switch_Gen3, Module=PFC
+3. 查看 Knowledge Readiness：PFC 健康度 92，可执行 Autonomous
+4. 点击“生成测试建议”
+5. Planner 查询模块文档、DRV、Bug 向量库、覆盖率缺口
+6. 系统显示：建议新增 6 个测试点，其中 3 个来自历史 Bug 查漏补缺
+7. 用户选择 “PFC_DEADLOCK_RECOVERY_QUEUE_WRAP”
+8. 选择环境：先 CModel dry-run，再 FPGA execute
+9. SDK CLI Agent 生成配置计划，Traffic Agent 生成 SdkCTP flow spec
+10. Critic 输出审查报告，提示 pause storm 属于高风险流量，需要审批
+11. 用户批准 CModel 执行，FPGA 执行保持待审批
+12. 系统运行 CModel 测试，产出 verdict 和 coverage update
+13. 用户查看报告，确认后将同一测试模板推广到 FPGA 环境
+14. FPGA 执行前系统自动申请板卡和 IXIA 端口锁
+15. 执行完成后生成联合 verdict、Bug 风险覆盖记录和知识回灌建议
+```
+
+### 13.8 角色和权限设计
+
+| 角色 | 权限 |
+|---|---|
+| Viewer | 查看知识库、报告、Agent 结果 |
+| Test Engineer | 生成测试点、dry-run、提交执行申请 |
+| Module Owner | 审核模块文档、发布知识、批准模块内执行 |
+| Lab Manager | 管理 FPGA/IXIA/EDA 资源锁和执行窗口 |
+| Verification Lead | 批准高风险自测试、查看跨模块覆盖率 |
+| Admin | 管理 Agent、工具、权限、全局策略 |
+
+权限必须细到以下维度：
+
+- 哪些模块可见。
+- 哪些 chip_version 可操作。
+- 哪些环境可执行。
+- 哪些 Agent 可调用。
+- 是否允许高风险流量。
+- 是否允许修改配置。
+- 是否允许发布知识库。
+
+### 13.9 Agent 操作审计
+
+所有 Agent 动作必须可审计，包括：
+
+- 谁发起任务。
+- 使用了哪些知识版本。
+- 检索到了哪些 Bug 卡片。
+- 生成了哪些测试点。
+- 执行了哪些 CLI 命令。
+- 调用了哪些 SdkCTP flow。
+- 是否获得人工审批。
+- 执行结果如何。
+- 是否写回知识库。
+
+审计日志示例：
+
+```json
+{
+  "audit_id": "AUDIT-20260702-001",
+  "task_id": "AT-PFC-20260702-001",
+  "user": "test_engineer_a",
+  "module": "PFC",
+  "mode": "execute",
+  "knowledge_snapshot": "KS-Switch_Gen3-20260702-1200",
+  "bug_cards_used": ["BUG-PFC-2026-0017", "BUG-PFC-2026-0021"],
+  "cli_commands_executed": 18,
+  "traffic_runs": 2,
+  "approval_id": "APPROVAL-12345",
+  "verdict": "passed",
+  "artifacts": ["plan.json", "cli_session.log", "flow_spec.yaml", "pcap", "report.html"]
+}
+```
+
+### 13.10 用户侧关键页面汇总
+
+| 页面 | 核心功能 |
+|---|---|
+| Dashboard | 项目、芯片版本、模块健康度、回归状态总览 |
+| Module Knowledge Space | 按模块管理文档、DRV、SDK/CLI、Bug、测试点 |
+| Agent Registry | 查看和管理 Agent 能力、权限、版本、状态 |
+| Agent Task Center | 创建、审批、暂停、恢复、复用 Agent 任务 |
+| Test Point Manager | 查看现有测试点、Bug 衍生测试点、缺口和覆盖率 |
+| Bug Learning Center | 查看 Bug 方法抽取、Bug 卡片、测试方法分布 |
+| Traffic Studio | 管理 SdkCTP 模板、flow spec、pcap、流量统计 |
+| SDK CLI Console | 管理 CLI 会话、命令计划、snapshot、rollback |
+| Resource Center | 查看 FPGA、CModel、EDA、IXIA 资源状态、lease、队列、预约和预计释放时间 |
+| Execution Monitor | 查看 CModel/FPGA/EDA 执行进度和资源锁 |
+| Reflection Center | 查看失败归因、知识回灌建议、Prompt/规则补丁 |
+
+通过这些页面，用户可以把几十个模块的大量文档、Bug、测试点和 Agent 执行动作纳入统一治理，而不是依赖散落的文件夹、聊天记录和人工经验。
+
+
+## 14. 多用户并发操作、环境独占与资源调度设计
+
+在真实验证团队中，这套系统不会只被一个人使用。多个验证工程师、模块 owner、SDK 工程师可能同时使用 Agent 操作台，分别在不同 FPGA、EDA 加速器或 CModel 环境上测试不同模块。因此系统必须明确解决两个问题：
+
+1. **同一个物理或逻辑测试环境同一时间只能被一个用户/任务独占操作**，避免两个 Agent 同时配置同一块 FPGA、同一套加速器、同一个 CModel 实例，导致状态互相污染。
+2. **不同用户可以并行使用不同环境测试不同模块**，例如用户 A 使用 `FPGA_board_03` 测 PFC，用户 B 使用 `CModel_instance_12` 测 ACL，用户 C 使用 `EDA_accel_pool_02` 测 MMU。
+
+核心原则：
+
+```text
+知识库可多人并发读写但需要版本治理；
+测试环境必须资源锁隔离；
+Agent 执行必须绑定 user + task + environment lease；
+没有获得环境 lease 的 Agent 禁止执行配置和打流。
+```
+
+### 14.1 多用户操作模型
+
+系统中的用户操作分为两类：
+
+| 操作类型 | 是否需要独占资源 | 示例 |
+|---|---|---|
+| 知识类操作 | 不需要环境独占，但需要文档版本和审核锁 | 上传设计文档、查看 DRV、检索 Bug、生成测试点建议 |
+| 执行类操作 | 必须申请环境独占 lease | SDK CLI 配置、FPGA 打流、CModel 执行、EDA 加速器运行 |
+
+因此用户 A 和用户 B 可以同时：
+
+- 浏览同一个 PFC 模块知识库。
+- 生成不同模块的测试点。
+- 查询 Bug 向量库。
+- 创建 dry-run 测试计划。
+
+但不能同时：
+
+- 操作同一块 FPGA。
+- 连接同一个 SDK CLI target 执行配置。
+- 控制同一对 IXIA 端口打流。
+- 运行同一个 CModel 实例并修改其状态。
+- 使用同一个 EDA emulator 分区执行测试。
+
+### 14.2 环境资源模型
+
+建议将所有可执行环境抽象成统一的 `Environment Resource`。
+
+```json
+{
+  "resource_id": "FPGA_BOARD_03",
+  "resource_type": "FPGA",
+  "display_name": "FPGA board 03 - Gen3 RevB",
+  "supported_chip_versions": ["Switch_Gen3", "Switch_Gen3_RevB"],
+  "supported_modules": ["PFC", "MMU", "ACL", "Telemetry"],
+  "connection_profiles": {
+    "sdk_cli": "ssh://fpga03/sdk_cli",
+    "traffic": "ixia://chassis1/ports/1/1,1/2"
+  },
+  "status": "idle | leased | maintenance | offline",
+  "current_lease_id": null,
+  "capabilities": ["sdk_cli", "traffic", "counter", "pcap"],
+  "risk_level": "high"
+}
+```
+
+资源类型建议包括：
+
+| 资源类型 | 粒度 | 是否独占 | 说明 |
+|---|---|---|---|
+| `CMODEL_INSTANCE` | 单个 CModel 进程/容器 | 是 | 不同 CModel 实例可并行；同一实例独占 |
+| `FPGA_BOARD` | 单块 FPGA 板卡 | 是 | 配置状态不可共享，必须独占 |
+| `IXIA_PORT_GROUP` | 一组 IXIA/Spirent 端口 | 是 | 打流端口必须独占，可与 FPGA lease 绑定 |
+| `EDA_ACCEL_PARTITION` | 加速器分区/slot | 是 | 同一 partition 独占，不同 partition 可并行 |
+| `SDK_CLI_TARGET` | 一个 SDK CLI 连接目标 | 是 | 同一 target 不允许多用户同时配置 |
+| `WAVEFORM_LICENSE` | license/token | 可计数 | 作为配额资源管理 |
+| `SIM_LICENSE` | license/token | 可计数 | 作为调度约束，不一定独占 |
+
+### 14.3 Environment Lease 机制
+
+所有执行任务开始前必须申请 `Environment Lease`。Lease 是系统对环境的临时独占授权。
+
+```json
+{
+  "lease_id": "LEASE-FPGA-20260702-001",
+  "resource_id": "FPGA_BOARD_03",
+  "resource_type": "FPGA",
+  "owner_user": "user_a",
+  "task_id": "AT-PFC-20260702-001",
+  "module": "PFC",
+  "chip_version": "Switch_Gen3_RevB",
+  "mode": "execute",
+  "lease_status": "active",
+  "acquired_at": "2026-07-02T15:20:00+08:00",
+  "expires_at": "2026-07-02T16:20:00+08:00",
+  "auto_extend_policy": "allow_once_with_activity",
+  "bound_resources": ["IXIA_PORT_GROUP_1_1_1_2", "SDK_CLI_TARGET_FPGA03"],
+  "cleanup_policy": "rollback_and_release"
+}
+```
+
+Lease 规则：
+
+- 一个独占资源同一时间只能有一个 active lease。
+- 一个任务可以绑定多个资源，例如 FPGA + IXIA ports + SDK CLI target。
+- Lease 必须有超时时间，避免用户断开后长期占用。
+- Agent 执行每个危险动作前必须校验 lease 是否仍有效。
+- Lease 到期前系统提醒用户续租；无人响应则执行安全清理。
+- 任务结束后必须 rollback / cleanup / release。
+
+### 14.4 多用户并发场景
+
+#### 场景一：不同用户使用不同环境，允许并行
+
+```text
+用户A：PFC 模块，FPGA_BOARD_03，Traffic + SDK CLI execute
+用户B：ACL 模块，CMODEL_INSTANCE_12，CModel dry-run
+用户C：MMU 模块，EDA_ACCEL_PARTITION_02，长场景回归
+```
+
+调度结果：允许并行，因为资源不同。
+
+```json
+{
+  "user_a": {"resource": "FPGA_BOARD_03", "module": "PFC", "status": "running"},
+  "user_b": {"resource": "CMODEL_INSTANCE_12", "module": "ACL", "status": "running"},
+  "user_c": {"resource": "EDA_ACCEL_PARTITION_02", "module": "MMU", "status": "running"}
+}
+```
+
+#### 场景二：两个用户抢同一 FPGA，后者排队
+
+```text
+15:00 用户A 已获得 FPGA_BOARD_03 lease，执行 PFC 测试
+15:05 用户B 也申请 FPGA_BOARD_03，准备执行 ACL 测试
+```
+
+调度结果：用户 B 不能执行，只能选择：
+
+1. 进入等待队列。
+2. 切换到其他空闲 FPGA。
+3. 改用 CModel dry-run。
+4. 请求用户 A 释放资源或转交 lease。
+
+UI 提示：
+
+```text
+FPGA_BOARD_03 当前被 user_a / AT-PFC-20260702-001 占用，预计 15:42 释放。
+你可以：
+[加入队列] [查找等价资源] [切换到CModel] [申请管理员介入]
+```
+
+#### 场景三：同一用户开多个任务，也必须受资源锁限制
+
+即使是同一个用户，也不能让两个任务同时操作同一个 FPGA 或同一个 CModel 实例。系统按 `task_id` 和 `lease_id` 隔离，而不是只按用户隔离。
+
+```text
+user_a / task_1 占用 FPGA_BOARD_03
+user_a / task_2 再次申请 FPGA_BOARD_03
+```
+
+结果：task_2 必须等待 task_1 完成，除非 task_1 主动释放或合并任务。
+
+### 14.5 资源调度器 Resource Scheduler
+
+系统需要新增 `Resource Scheduler` 服务，负责资源发现、锁定、排队、释放和异常恢复。
+
+```text
+User Request
+  │
+  ▼
+Task Planner
+  │  需要 FPGA? CModel? EDA? IXIA? SDK CLI target?
+  ▼
+Resource Scheduler
+  │
+  ├─ 检查资源状态
+  ├─ 检查用户权限
+  ├─ 检查模块与芯片版本兼容性
+  ├─ 检查风险等级和审批状态
+  ├─ 分配 lease 或进入队列
+  └─ 绑定 Agent Task Card
+  │
+  ▼
+Agent Execution
+```
+
+Resource Scheduler API：
+
+```yaml
+service: resource_scheduler_service
+apis:
+  - list_resources(filter) -> resources
+  - check_availability(resource_id, time_window) -> availability
+  - acquire_lease(user_id, task_id, resource_requirements, ttl) -> lease_id
+  - renew_lease(lease_id, ttl) -> lease_status
+  - release_lease(lease_id, cleanup_status) -> release_status
+  - enqueue_task(task_id, resource_requirements, priority) -> queue_position
+  - find_equivalent_resource(resource_requirements) -> candidate_resources
+  - force_release(lease_id, admin_approval) -> release_status
+```
+
+### 14.6 Agent 与 Lease 的强绑定
+
+Traffic Agent 和 SDK CLI Agent 的所有执行动作必须携带 `lease_id`。
+
+SDK CLI Agent 执行命令前：
+
+```json
+{
+  "action": "run_command",
+  "session_id": "SDKCLI-FPGA03-001",
+  "lease_id": "LEASE-FPGA-20260702-001",
+  "command": "pfc deadlock-recovery enable queue 3 threshold 4095"
+}
+```
+
+Traffic Agent 发包前：
+
+```json
+{
+  "action": "start_traffic",
+  "flow_spec_id": "FLOW-PFC-001",
+  "lease_id": "LEASE-FPGA-20260702-001",
+  "bound_ports": ["ixia:1/1", "ixia:1/2"]
+}
+```
+
+工具服务必须拒绝没有有效 lease 的请求：
+
+```json
+{
+  "status": "rejected",
+  "reason": "LEASE_REQUIRED_OR_EXPIRED",
+  "message": "Resource FPGA_BOARD_03 is not leased by this task. Execution is blocked."
+}
+```
+
+### 14.7 多用户下的 Agent Session 隔离
+
+每个用户任务必须拥有独立的 Agent Session，不允许共享可变上下文。
+
+```json
+{
+  "agent_session_id": "AS-PFC-USERA-001",
+  "user_id": "user_a",
+  "task_id": "AT-PFC-20260702-001",
+  "module": "PFC",
+  "chip_version": "Switch_Gen3_RevB",
+  "target_env": "FPGA_BOARD_03",
+  "lease_id": "LEASE-FPGA-20260702-001",
+  "knowledge_snapshot": "KS-Switch_Gen3-20260702-1500",
+  "workspace_path": "task_runs/AT-PFC-20260702-001/",
+  "artifact_scope": "private_to_task"
+}
+```
+
+隔离内容包括：
+
+- Agent 对话上下文隔离。
+- CLI session 隔离。
+- SdkCTP flow artifact 隔离。
+- 日志和 pcap 隔离。
+- snapshot / rollback 文件隔离。
+- Reflection 临时结论隔离，审核后才写回公共知识库。
+
+### 14.8 CModel 多实例池设计
+
+CModel 通常可以通过多实例/多容器提高并发能力。建议将 CModel 设计为实例池。
+
+```text
+CModel Pool
+├─ CMODEL_INSTANCE_01  idle
+├─ CMODEL_INSTANCE_02  leased by user_b / ACL
+├─ CMODEL_INSTANCE_03  leased by nightly_regression / MMU
+├─ CMODEL_INSTANCE_04  maintenance
+└─ CMODEL_INSTANCE_05  idle
+```
+
+调度策略：
+
+- dry-run 优先分配 CModel，而不是直接占用 FPGA。
+- 同一模块重复测试可以复用 warm CModel image，但每个任务仍需独立实例或独立 snapshot。
+- CModel 实例执行结束后恢复 clean snapshot。
+- 用户可指定实例，也可让系统自动分配。
+
+### 14.9 FPGA / IXIA 联合锁设计
+
+FPGA 测试经常不只占用板卡，还占用 IXIA 端口、SDK CLI target、console、甚至电源控制资源。因此 FPGA lease 应支持绑定资源组。
+
+```json
+{
+  "resource_bundle_id": "BUNDLE-FPGA03-IXIA-1-1-1-2",
+  "resources": [
+    "FPGA_BOARD_03",
+    "SDK_CLI_TARGET_FPGA03",
+    "IXIA_PORT_1_1",
+    "IXIA_PORT_1_2",
+    "CONSOLE_FPGA03"
+  ],
+  "bundle_status": "idle",
+  "compatible_modules": ["PFC", "ACL", "L2", "MMU"],
+  "cleanup_sequence": [
+    "stop_traffic",
+    "collect_stats",
+    "rollback_cli_config",
+    "clear_counters",
+    "release_ixia_ports",
+    "release_fpga_board"
+  ]
+}
+```
+
+如果任何一个资源不可用，整个 bundle 不可执行。
+
+### 14.10 EDA 加速器队列与预约
+
+EDA 加速器运行时间长、编译成本高，建议支持预约和队列。
+
+| 调度能力 | 说明 |
+|---|---|
+| Reservation | 用户预约某个时间段运行长测试 |
+| Queue | 无空闲资源时进入队列 |
+| Priority | nightly regression / release gate 可高优先级 |
+| Pre-check | 提前做编译和 dry-run，减少占用浪费 |
+| Checkpoint | 支持 checkpoint/restore 时，失败后快速复现 |
+| Quota | 每个用户/团队每天最多占用时长 |
+
+EDA 加速器任务生命周期：
+
+```text
+submit → precheck → compile/elaborate → wait_for_slot → acquire_lease → run → collect_wave/log → release → reflection
+```
+
+### 14.11 多用户 UI 设计
+
+Agent & Knowledge Console 需要增加 **Resource Center** 页面。
+
+#### Resource Center 总览
+
+| 资源 | 类型 | 状态 | 当前用户 | 当前任务 | 模块 | 预计释放 | 操作 |
+|---|---|---|---|---|---|---|---|
+| FPGA_BOARD_03 | FPGA | Leased | user_a | AT-PFC-001 | PFC | 15:42 | 查看/排队 |
+| FPGA_BOARD_04 | FPGA | Idle | - | - | - | - | 申请 |
+| CMODEL_12 | CModel | Leased | user_b | AT-ACL-002 | ACL | 15:20 | 查看 |
+| CMODEL_15 | CModel | Idle | - | - | - | - | 申请 |
+| EDA_PART_02 | EDA | Queue 3 | user_c | AT-MMU-003 | MMU | 18:30 | 查看队列 |
+
+#### 创建任务时的资源选择
+
+用户创建任务时，系统显示：
+
+```text
+目标模块：PFC
+推荐执行路径：CModel dry-run → FPGA execute
+
+可用资源：
+✅ CMODEL_15       立即可用
+✅ CMODEL_16       立即可用
+⏳ FPGA_BOARD_03   user_a 占用，预计 15:42 释放
+✅ FPGA_BOARD_04   可用，但无 IXIA 端口绑定
+⏳ EDA_PART_02     队列第 3 位，预计 18:30
+```
+
+系统可推荐：
+
+- 先用 CModel 执行 dry-run。
+- 如果需要 FPGA + IXIA，选择完整资源 bundle。
+- 如果目标 FPGA 忙，切换到等价 FPGA。
+- 如果必须使用指定 FPGA，加入队列。
+
+### 14.12 权限、优先级与公平性
+
+多用户系统必须有优先级策略，否则资源会被长期占用。
+
+| 任务类型 | 默认优先级 |
+|---|---:|
+| Release gate / tapeout blocker | 100 |
+| Nightly regression | 80 |
+| Module owner approved debug | 70 |
+| 普通 execute | 50 |
+| dry-run | 30 |
+| exploratory autonomous | 20 |
+
+公平性规则：
+
+- 单用户不能长期占满全部 FPGA 或 CModel 实例。
+- 每个用户/团队可设置每日配额。
+- 低优先级任务不能抢占高优先级 release gate。
+- 高优先级任务如需抢占，必须先执行被抢占任务的安全清理。
+- 抢占操作必须审计。
+
+### 14.13 异常恢复与孤儿锁处理
+
+多用户系统一定会遇到用户断线、Agent 崩溃、任务卡死、设备无响应等情况。因此需要 orphan lease recovery。
+
+异常场景：
+
+| 异常 | 处理 |
+|---|---|
+| 用户浏览器关闭 | lease 不立即释放，任务继续；到期前提醒 |
+| Agent 崩溃 | Scheduler 标记 task unhealthy，触发 cleanup agent |
+| SDK CLI 无响应 | 尝试安全断开，保留现场 snapshot |
+| Traffic stop 失败 | 触发硬 watchdog，停止 IXIA/EPGM |
+| rollback 失败 | 标记资源 dirty，禁止下一用户使用，通知 Lab Manager |
+| lease 超时 | 自动进入 grace period，之后 cleanup/release |
+
+资源状态增加 `dirty`：
+
+```text
+idle → leased → cleanup → idle
+                 └─ cleanup_failed → dirty → maintenance → idle
+```
+
+如果资源处于 `dirty`，新的用户不能申请，直到 Lab Manager 或自动健康检查确认恢复。
+
+### 14.14 数据库表扩展
+
+建议新增资源和租约相关表。
+
+```sql
+CREATE TABLE env_resource (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  resource_id VARCHAR(128) NOT NULL UNIQUE,
+  resource_type VARCHAR(64) NOT NULL,
+  display_name VARCHAR(256),
+  status VARCHAR(32) NOT NULL,
+  capabilities JSON,
+  supported_chip_versions JSON,
+  supported_modules JSON,
+  risk_level VARCHAR(32),
+  metadata JSON,
+  updated_at DATETIME
+);
+
+CREATE TABLE env_resource_lease (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  lease_id VARCHAR(128) NOT NULL UNIQUE,
+  resource_id VARCHAR(128) NOT NULL,
+  owner_user VARCHAR(128) NOT NULL,
+  task_id VARCHAR(128) NOT NULL,
+  module VARCHAR(128),
+  chip_version VARCHAR(128),
+  lease_status VARCHAR(32) NOT NULL,
+  acquired_at DATETIME,
+  expires_at DATETIME,
+  released_at DATETIME,
+  cleanup_status VARCHAR(32),
+  metadata JSON
+);
+
+CREATE TABLE env_resource_queue (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  queue_id VARCHAR(128) NOT NULL,
+  task_id VARCHAR(128) NOT NULL,
+  user_id VARCHAR(128) NOT NULL,
+  resource_requirements JSON,
+  priority INT DEFAULT 50,
+  queue_status VARCHAR(32),
+  created_at DATETIME,
+  scheduled_at DATETIME
+);
+```
+
+### 14.15 多用户审计
+
+审计记录必须能回答：
+
+- 谁在什么时候占用了哪个环境？
+- 占用是为了哪个模块和哪个任务？
+- 执行了哪些 Agent？
+- 是否获得审批？
+- 是否影响了其他排队用户？
+- 释放前是否 rollback 成功？
+- 资源是否 clean？
+
+审计事件示例：
+
+```json
+{
+  "audit_type": "resource_lease_acquired",
+  "lease_id": "LEASE-FPGA-20260702-001",
+  "resource_id": "FPGA_BOARD_03",
+  "user_id": "user_a",
+  "task_id": "AT-PFC-20260702-001",
+  "module": "PFC",
+  "approval_id": "APPROVAL-7788",
+  "acquired_at": "2026-07-02T15:20:00+08:00",
+  "expected_release": "2026-07-02T16:20:00+08:00"
+}
+```
+
+### 14.16 推荐落地顺序
+
+多用户能力建议分阶段落地：
+
+1. **Phase A：最小资源锁**
+   - env_resource 表。
+   - acquire/release lease。
+   - Agent 执行强制校验 lease。
+
+2. **Phase B：队列和可视化**
+   - Resource Center 页面。
+   - 资源状态看板。
+   - 等待队列和预计释放时间。
+
+3. **Phase C：资源 bundle**
+   - FPGA + IXIA + SDK CLI target 组合锁。
+   - cleanup sequence。
+   - dirty 状态。
+
+4. **Phase D：预约和优先级**
+   - EDA 预约。
+   - release gate 优先级。
+   - 用户/团队配额。
+
+5. **Phase E：自动恢复**
+   - orphan lease recovery。
+   - cleanup agent。
+   - 自动健康检查。
+
+这一设计保证：**同一环境同一时间只有一个用户/任务能操作；不同用户可以并行使用不同 FPGA、不同 CModel 实例或不同 EDA 分区测试不同模块；所有资源占用、执行和释放都可审计、可恢复、可追踪。**
+
+## 15. UI 扩展建议
+
+在 Agent & Knowledge Console 的基础上，建议在原 V2.0 Web UI 中重点增加以下面板：
+
+1. **Traffic Studio**
+   - 报文模板库。
+   - SdkCTP flow spec 编辑器。
+   - 拓扑/端口/速率配置。
+   - 发包运行状态、统计图、pcap 下载。
+   - Traffic Agent 对话与解释区。
+
+2. **SDK CLI Console Agent**
+   - 目标环境连接状态。
+   - CLI 命令计划预览。
+   - dry-run / execute 切换。
+   - session log 实时输出。
+   - snapshot diff 和 rollback 按钮。
+   - CLI Agent 对异常输出的解释。
+
+3. **Joint Verdict View**
+   - 左侧 Traffic Agent 统计，右侧 SDK CLI Agent counters。
+   - 中间显示对齐关系：TX/RX vs port counter，queue counter vs pcap signature。
+   - 显示最终 verdict、失败签名、证据链、下一步建议。
+
+---
+
+## 16. 落地路线图
+
+### Phase 1：工具服务化
+
+- 包装 SdkCTP 为 `traffic_tool_service`。
+- 包装 SDK CLI 为 `sdk_cli_tool_service`。
+- 打通 open_session、run_command、build_packet_template、start_traffic、get_stats 等最小 API。
+- 支持 CModel 环境优先，因为资源成本低、反馈快。
+
+### Phase 2：双 Agent 协同执行
+
+- 实现 Agent Coordination Bus 和 shared_state。
+- 支持 CONFIG_READY、TRAFFIC_STARTED、TRAFFIC_STOPPED、COUNTER_ANOMALY 等事件。
+- 实现 PFC / VLAN / L2 forwarding 3 个代表性场景。
+
+### Phase 3：知识库闭环与模块化治理
+
+- 将 CLI 命令模式、SdkCTP 模板、失败签名、rollback recipe、Bug 测试方法卡片、测试点缺口报告纳入 RAG/向量库。
+- 建设 Module Knowledge Space，为几十个模块建立模块树、owner、文档版本、知识健康度和发布审核流程。
+- 建设 Agent Registry 与 Agent Task Center，使用户可以按模块、环境、权限和工作模式管理 Agent。
+- Reflection Agent 自动沉淀“失败原因—测试方法—测试点缺口—修正动作—新增测试”。
+- 支持跨代继承：Gen1/Gen2 的 CLI 和流量模板迁移到 Gen3。
+
+### Phase 4：FPGA/EDA 生产化与多用户资源调度
+
+- 加入 lab resource lock、IXIA port lock、EDA license/resource 管理。
+- 建设 Resource Scheduler、Environment Lease、Resource Center、资源队列和预约能力，支持多用户并行使用不同环境，并保证同一环境独占。
+- 加入审批机制和安全门禁。
+- 接入 CI/CD，形成夜间自测试和版本门禁。
+
+---
+
+## 17. 结论
+
+这次扩展的关键不是简单多加两个 Agent 名字，而是把芯片测试中最核心的两个动作分离成两个可协作的智能体：
+
+- **Traffic Agent = 流量发生器专家**，知道如何基于 SdkCTP 构造报文、打流、抓包、解释流量异常。
+- **SDK CLI Agent = 芯片配置与观测专家**，知道如何启动 SDK CLI、下发配置、查询状态、解释 counters/logs。
+
+二者通过结构化事件和共享状态协作，能覆盖 CModel、FPGA、EDA 加速器三类环境；既能独立调试，也能在 Planner/Search/Critic/Reflection 的框架下完成 AI 自我测试闭环。用户通过 Agent & Knowledge Console 管理几十个芯片模块的知识空间、Agent 权限、任务审批、测试点查漏补缺和执行审计；通过 Resource Scheduler 和 Environment Lease 管理多用户并发，确保同一 FPGA/CModel/EDA/IXIA 资源同一时间只被一个用户或任务操作，而不同用户可在不同环境上并行测试不同模块。同时，系统以 DRV 作为寄存器与表项事实源，并将历史 Bug 转化为测试方法、测试点缺口和具体执行提示，驱动后续测试生成与查漏补缺。这样，系统就从“AI 生成测试脚本”升级为“AI 驱动的芯片测试执行与学习系统”。

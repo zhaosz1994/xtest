@@ -91,14 +91,16 @@ class AutoMigration {
                     }
                 }
                 
-                await this.recordMigration(migrationName);
-                
-                if (errors.length > 0 && successCount === 0) {
+                if (errors.length > 0) {
                     logger.error(`迁移执行失败: ${migrationName}`, { 
+                        successStatements: successCount,
+                        skippedStatements: skipCount,
                         errors: errors.map(e => e.error).join('; ')
                     });
                     return { success: false, migrationName, error: errors.map(e => e.error).join('; ') };
                 }
+                
+                await this.recordMigration(migrationName);
                 
                 logger.info(`迁移执行成功: ${migrationName}`, {
                     successStatements: successCount,
@@ -351,7 +353,18 @@ class AutoMigration {
             'add_ai_import_optimize': ['ai_import_optimize_tasks', 'ai_import_optimize_batches', 'ai_import_case_mapping'],
             'fix_ai_import_optimize_agent': ['ai_sub_agents'],
             '20260509_add_chunking_strategy': ['ai_material_chunks'],
-            '20260509_add_global_local_architecture': ['ai_case_generation_tasks']
+            '20260509_add_global_local_architecture': ['ai_case_generation_tasks'],
+            '20260630_add_chip_adaptive_system': ['chip_versions', 'chip_registers', 'chip_register_fields', 'sdk_api_symbols', 'bug_rag_entries', 'execution_environments', 'script_execution_runs'],
+            '20260702_traffic_cli_agent_extension': ['agent_registry', 'agent_tasks', 'agent_session', 'agent_events', 'cli_command_trace', 'traffic_run_trace', 'env_resource', 'env_resource_lease', 'env_resource_queue', 'bug_method_cards', 'bug_test_gap_reports', 'agent_audit_logs'],
+            '20260706_agent_catalog': ['agent_console_catalog'],
+            '20260706_agent_tool_registry': ['agent_tool_registry'],
+            '20260710_diagram_knowledge_layer': ['diagram_asset', 'diagram_node', 'diagram_edge', 'diagram_review'],
+            '20260711_knowledge_health': [],
+            '20260712_knowledge_review': ['knowledge_conflict_log'],
+            '20260713_module_taxonomy': [],
+            '20260714_resource_bundle': ['env_resource_bundle', 'env_resource_bundle_item'],
+            '20260715_eda_reservation': ['eda_reservation', 'resource_quota'],
+            '20260716_catalog_extra_categories': []
         };
 
         const migrationColumnChecks = {
@@ -368,6 +381,44 @@ class AutoMigration {
             ],
             '20260518_add_stream_mode_to_sub_agents': [
                 { table: 'ai_sub_agents', column: 'stream_mode' }
+            ],
+            '20260630_add_chip_adaptive_system': [
+                { table: 'module_knowledge_files', column: 'chip_version_id' },
+                { table: 'module_knowledge_files', column: 'file_category' },
+                { table: 'module_knowledge_files', column: 'chunking_strategy' },
+                { table: 'ai_material_chunks', column: 'chip_version_id' },
+                { table: 'ai_material_chunks', column: 'embedding' },
+                { table: 'ai_material_chunks', column: 'file_category' },
+                { table: 'ai_material_chunks', column: 'chunking_strategy' },
+                { table: 'ai_material_chunks', column: 'chunk_type' },
+                { table: 'ai_material_chunks', column: 'parent_chunk_id' },
+                { table: 'ai_material_chunks', column: 'metadata' },
+                { table: 'ai_material_chunks', column: 'library_id' },
+                { table: 'level1_points', column: 'chip_version_id' },
+                { table: 'test_cases', column: 'chip_version_id' },
+                { table: 'tcl_generation_tasks', column: 'chip_version_id' },
+                { table: 'tcl_generation_tasks', column: 'execution_env_id' },
+                { table: 'ai_case_generation_tasks', column: 'chip_version_id' }
+            ],
+            '20260702_traffic_cli_agent_extension': [
+                { table: 'traffic_run_trace', column: 'created_by' },
+                { table: 'bug_method_cards', column: 'module_id' }
+            ],
+            '20260706_agent_catalog': [
+                { table: 'agent_registry', column: 'deleted_at' },
+                { table: 'env_resource', column: 'deleted_at' }
+            ],
+            '20260711_knowledge_health': [
+                { table: 'modules', column: 'health_score' }
+            ],
+            '20260712_knowledge_review': [
+                { table: 'module_knowledge_files', column: 'review_status' }
+            ],
+            '20260713_module_taxonomy': [
+                { table: 'modules', column: 'taxonomy_path' }
+            ],
+            '20260714_resource_bundle': [
+                { table: 'env_resource_lease', column: 'bundle_id' }
             ]
         };
 

@@ -709,6 +709,7 @@
 
 .kl-status-pending { background: #fef3c7; color: #92400e; }
 .kl-status-parsing { background: #dbeafe; color: #1e40af; }
+.kl-status-learning { background: #fef3c7; color: #92400e; }
 .kl-status-parsed { background: #d1fae5; color: #065f46; }
 .kl-status-failed { background: #fee2e2; color: #991b1b; }
 

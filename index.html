@@ -11,6 +11,8 @@
     <link rel="stylesheet" href="styles-design-system.css">
     <link rel="stylesheet" href="css/knowledge-library.css">
     <link rel="stylesheet" href="css/ai-generation.css">
+    <link rel="stylesheet" href="css/agent-console.css?v=20260715j">
+    <link rel="stylesheet" href="css/workflow.css?v=20260715c">
     <script src="/js/marked.min.js"></script>
     <script src="/js/purify.min.js"></script>
     <script>
@@ -392,6 +394,13 @@
                                 <path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
                             </svg>
                             <span class="nav-btn-text">AI生成</span>
+                        </a>
+                        <!-- Agent & Knowledge Console入口 -->
+                        <a href="#/agent-console" onclick="event.preventDefault(); Router.navigateTo('agent-console');" class="nav-action-btn" style="background: linear-gradient(135deg, #0f766e 0%, #2563eb 100%); color: white; text-decoration: none;" title="Agent & Knowledge Console">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 2l3 7h7l-5.5 4.5L18.5 21 12 16.8 5.5 21l2-7.5L2 9h7z"></path>
+                            </svg>
+                            <span class="nav-btn-text">Agent控制台</span>
                         </a>
                         <!-- AI任务中心入口 -->
                         <a href="javascript:void(0)" onclick="if(typeof openAITaskCenter==='function')openAITaskCenter()" class="nav-action-btn ai-task-center-btn" id="ai-task-center-btn" title="AI任务中心" style="background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%); color: white; text-decoration: none; position: relative;">
@@ -782,7 +791,7 @@
                         
                         <!-- 趋势分析区域 -->
                         <div class="dashboard-section-title">
-                            <h3>📈 测试趋势分析</h3>
+                            <h3><span class="title-icon">📈</span>测试趋势分析</h3>
                             <span class="section-subtitle">近7天/30天通过率与执行趋势</span>
                             <div class="trend-time-selector">
                                 <button class="trend-btn active" onclick="switchTrendPeriod(7)">近7天</button>
@@ -810,7 +819,7 @@
 
                         <!-- 第一行：项目测试进度概览 -->
                         <div class="dashboard-section-title">
-                            <h3>📊 项目测试进度概览</h3>
+                            <h3><span class="title-icon">📊</span>项目测试进度概览</h3>
                             <span class="section-subtitle">实时监控各项目测试执行情况</span>
                         </div>
                         <div class="dashboard-charts-row">
@@ -838,7 +847,7 @@
 
                         <!-- 第二行：负责人任务分析 -->
                         <div class="dashboard-section-title">
-                            <h3>👥 负责人任务分析</h3>
+                            <h3><span class="title-icon">👥</span>负责人任务分析</h3>
                             <span class="section-subtitle">分析各负责人的任务分配和完成情况</span>
                         </div>
                         <div class="dashboard-charts-row">
@@ -862,7 +871,7 @@
 
                         <!-- 第三行：详细数据表格 -->
                         <div class="dashboard-section-title">
-                            <h3>📋 详细数据</h3>
+                            <h3><span class="title-icon">📋</span>详细数据</h3>
                             <span class="section-subtitle">查看详细测试数据</span>
                         </div>
                         <div class="dashboard-tables-row">
@@ -921,7 +930,7 @@
 
                         <!-- 第四行：趋势分析 -->
                         <div class="dashboard-section-title">
-                            <h3>📈 趋势分析</h3>
+                            <h3><span class="title-icon">📈</span>趋势分析</h3>
                             <span class="section-subtitle">测试进度和状态变化趋势</span>
                         </div>
                         <div class="dashboard-charts-row">
@@ -938,7 +947,7 @@
                         
                         <!-- 最近登录人员 -->
                         <div class="dashboard-section-title">
-                            <h3>🕐 最近活动</h3>
+                            <h3><span class="title-icon">🕐</span>最近活动</h3>
                             <span class="section-subtitle">最近登录和操作记录</span>
                         </div>
                         <div class="dashboard-recent-logins-modern">
@@ -4527,6 +4536,409 @@ return rows[0];'></textarea>
                     </div>
                 </section>
 
+                <!-- Agent & Knowledge Console Section -->
+                <section id="agent-console-section" style="display: none;">
+                    <main class="agent-console-page">
+                        <header class="agent-console-header">
+                            <div class="agent-console-title-block">
+                                <h1>Agent 控制台</h1>
+                                <p>Traffic Agent · SDK CLI Agent · 资源调度 · Bug 学习 · Pipeline</p>
+                            </div>
+                            <div class="agent-console-header-actions">
+                                <button class="agent-console-btn agent-console-btn-ghost" id="agent-console-refresh-btn" type="button" title="刷新全部">刷新</button>
+                                <button class="agent-console-btn agent-console-btn-ghost" id="agent-console-audit-btn" type="button" title="管理员">审计日志</button>
+                                <button class="agent-console-btn agent-console-btn-ghost" id="agent-console-config-btn" type="button" title="管理员">配置管理</button>
+                                <button class="agent-console-btn agent-console-btn-ghost" id="agent-console-tools-btn" type="button" title="管理员">工具管理</button>
+                                <button class="agent-console-btn agent-console-btn-ghost" id="agent-console-review-btn" type="button" title="管理员">知识审核</button>
+                                <button class="agent-console-btn agent-console-btn-ghost" id="agent-console-chip-module-btn" type="button" title="芯片代系与模块管理">芯片&模块</button>
+                                <button class="agent-console-btn agent-console-btn-ghost" id="agent-console-back-btn" type="button">返回</button>
+                            </div>
+                        </header>
+
+                        <nav class="agent-console-nav" id="agent-console-nav">
+                            <button class="agent-console-nav-item active" data-page="overview" type="button">
+                                <span class="agent-console-nav-icon">📊</span><span>概览</span>
+                            </button>
+                            <button class="agent-console-nav-item" data-page="tasks" type="button">
+                                <span class="agent-console-nav-icon">📋</span><span>任务中心</span>
+                            </button>
+                            <button class="agent-console-nav-item" data-page="pipeline" type="button">
+                                <span class="agent-console-nav-icon">⚡</span><span>调度中心</span>
+                            </button>
+                            <button class="agent-console-nav-item" data-page="resources" type="button">
+                                <span class="agent-console-nav-icon">🔧</span><span>资源与预约</span>
+                            </button>
+                            <button class="agent-console-nav-item" data-page="tools" type="button">
+                                <span class="agent-console-nav-icon">🛠️</span><span>工具箱</span>
+                            </button>
+                            <button class="agent-console-nav-item" data-page="knowledge" type="button">
+                                <span class="agent-console-nav-icon">📚</span><span>知识中心</span>
+                            </button>
+                            <button class="agent-console-nav-item" data-page="cta" type="button">
+                                <span class="agent-console-nav-icon">🔬</span><span>CTA</span>
+                            </button>
+                        </nav>
+
+                        <div class="agent-console-context" id="agent-console-context-bar" style="display:none;">
+                            <label>芯片代系
+                                <select id="agent-chip-select"></select>
+                            </label>
+                            <label>模块
+                                <select id="agent-module-select"></select>
+                            </label>
+                            <label>目标环境
+                                <select id="agent-env-select"></select>
+                            </label>
+                            <label>模式
+                                <select id="agent-mode-select"></select>
+                            </label>
+                        </div>
+
+                        <div class="agent-console-stats" id="agent-console-stats"></div>
+
+                        <!-- ========== 页面: 概览 ========== -->
+                        <div class="agent-console-page-view active" data-page="overview">
+                            <div class="agent-console-grid">
+                                <article class="agent-console-card agent-console-wide agent-console-hero">
+                                    <div class="agent-console-card-title">
+                                        <h2>🚀 快速创建任务</h2>
+                                        <span>规划 + SDK CLI + 流量 + 评审</span>
+                                    </div>
+                                    <textarea id="agent-objective-input" placeholder="例如：生成并干跑 PFC 死锁恢复测试，验证队列指针回绕"></textarea>
+                                    <div class="agent-console-actions-row">
+                                        <button class="agent-console-btn" id="agent-create-task-btn" type="button">创建任务卡</button>
+                                        <button class="agent-console-btn agent-console-btn-secondary" id="agent-generate-gap-btn" type="button">生成查漏补缺报告</button>
+                                        <button class="agent-console-btn agent-console-btn-outline" id="hero-goto-pipeline" type="button" data-goto-page="pipeline">前往调度中心 ▶</button>
+                                    </div>
+                                </article>
+
+                                <article class="agent-console-card">
+                                    <div class="agent-console-card-title">
+                                        <h2>Agent 注册表</h2>
+                                        <span>能力与状态</span>
+                                        <button class="agent-console-small-btn" id="agent-add-btn" type="button">新增 Agent</button>
+                                    </div>
+                                    <div id="agent-registry-list" class="agent-console-list" data-skeleton="加载中...">加载中...</div>
+                                </article>
+
+                                <article class="agent-console-card">
+                                    <div class="agent-console-card-title">
+                                        <h2>最近任务</h2>
+                                        <span>最新 5 条</span>
+                                        <button class="agent-console-small-btn" id="agent-task-refresh-btn" type="button">刷新任务</button>
+                                    </div>
+                                    <div class="agent-console-actions-row" style="margin-bottom:10px;">
+                                        <div class="ac-filter-group">
+                                            <span class="ac-filter-icon">🔍</span>
+                                            <select id="agent-task-status-filter" class="ac-filter-select">
+                                                <option value="">全部状态</option>
+                                            </select>
+                                        </div>
+                                        <button class="agent-console-small-btn" type="button" data-goto-page="tasks">查看全部 ▶</button>
+                                    </div>
+                                    <div id="agent-task-list-overview" class="agent-console-list" data-skeleton="加载中...">加载中...</div>
+                                </article>
+                            </div>
+                        </div>
+
+                        <!-- ========== 页面: 任务中心 ========== -->
+                        <div class="agent-console-page-view" data-page="tasks">
+                            <div class="agent-console-grid">
+                                <article class="agent-console-card agent-console-wide">
+                                    <div class="agent-console-card-title">
+                                        <h2>Agent 任务中心</h2>
+                                        <span>任务卡和协作状态</span>
+                                    </div>
+                                    <div class="agent-console-actions-row" style="margin-bottom:10px;">
+                                        <div class="ac-filter-group">
+                                            <span class="ac-filter-icon">🔍</span>
+                                            <select id="agent-task-status-filter-full" class="ac-filter-select"></select>
+                                        </div>
+                                        <button class="agent-console-small-btn" id="agent-task-refresh-full-btn" type="button">刷新任务</button>
+                                    </div>
+                                    <div id="agent-task-list" class="agent-console-list" data-skeleton="加载中...">加载中...</div>
+                                </article>
+                            </div>
+                        </div>
+
+                        <!-- ========== 页面: 调度中心 ========== -->
+                        <div class="agent-console-page-view" data-page="pipeline">
+                            <div class="agent-console-grid">
+                                <article class="agent-console-card agent-console-wide">
+                                    <div class="agent-console-card-title">
+                                        <h2>Agent 调度中心</h2>
+                                        <span>Pipeline 流水线可视化</span>
+                                        <button class="agent-console-small-btn" id="pipeline-refresh-btn" type="button">刷新</button>
+                                        <button class="agent-console-small-btn" id="pipeline-auto-toggle-btn" type="button">自动刷新: 开</button>
+                                    </div>
+                                    <div id="pipeline-summary-bar" class="pipeline-summary-bar"></div>
+                                    <div id="pipeline-filters" class="pipeline-filters-bar"></div>
+                                    <div id="pipeline-board" class="pipeline-board-container" data-skeleton="加载中...">加载中...</div>
+                                    <div id="pipeline-agent-bar" class="pipeline-agent-bar"></div>
+                                </article>
+                            </div>
+                        </div>
+
+                        <!-- ========== 页面: 资源与预约 ========== -->
+                        <div class="agent-console-page-view" data-page="resources">
+                            <div class="agent-console-grid">
+                                <article class="agent-console-card">
+                                    <div class="agent-console-card-title">
+                                        <h2>资源中心</h2>
+                                        <span>资源锁与队列</span>
+                                        <button class="agent-console-small-btn" id="resource-add-btn" type="button">新增资源</button>
+                                    </div>
+                                    <div id="agent-resource-list" class="agent-console-list" data-skeleton="加载中...">加载中...</div>
+                                    <div class="agent-console-actions-row" style="margin-top:10px;">
+                                        <button class="agent-console-small-btn" id="agent-lease-list-btn" type="button">查看租约</button>
+                                        <button class="agent-console-small-btn" id="agent-queue-list-btn" type="button">查看队列</button>
+                                    </div>
+                                </article>
+
+                                <article class="agent-console-card">
+                                    <div class="agent-console-card-title">
+                                        <h2>资源 Bundle</h2>
+                                        <span>多资源联合锁</span>
+                                        <button class="agent-console-small-btn" id="bundle-add-btn" type="button">新增 Bundle</button>
+                                        <button class="agent-console-small-btn" id="bundle-refresh-btn" type="button" style="margin-left:6px;">刷新</button>
+                                    </div>
+                                    <div id="agent-bundle-list" class="agent-console-list" data-skeleton="加载中...">加载中...</div>
+                                </article>
+
+                                <article class="agent-console-card agent-console-wide">
+                                    <div class="agent-console-card-title">
+                                        <h2>EDA 预约</h2>
+                                        <span>预约 / 配额 / 抢占</span>
+                                        <button class="agent-console-small-btn" id="reservation-add-btn" type="button">新增预约</button>
+                                        <button class="agent-console-small-btn" id="reservation-refresh-btn" type="button" style="margin-left:6px;">刷新</button>
+                                        <button class="agent-console-small-btn" id="quota-view-btn" type="button" style="margin-left:6px;">配额</button>
+                                    </div>
+                                    <div id="agent-reservation-list" class="agent-console-list" data-skeleton="加载中...">加载中...</div>
+                                </article>
+                            </div>
+                        </div>
+
+                        <!-- ========== 页面: 工具箱 ========== -->
+                        <div class="agent-console-page-view" data-page="tools">
+                            <div class="agent-console-grid">
+                                <article class="agent-console-card">
+                                    <div class="agent-console-card-title"><h2>流量工作室</h2><span>SdkCTP 流量规格</span></div>
+                                    <textarea id="traffic-intent-input" placeholder="构造 VXLAN over IPv4 5-tuple 随机流，端口1到端口2，持续60秒"></textarea>
+                                    <div class="agent-console-actions-row" style="margin-bottom:8px;">
+                                        <button class="agent-console-btn agent-console-btn-secondary" id="traffic-generate-btn" type="button">生成流量规格</button>
+                                        <button class="agent-console-small-btn" id="traffic-template-btn" type="button">构造报文模板</button>
+                                    </div>
+                                    <pre id="traffic-output" class="agent-console-output"></pre>
+                                </article>
+
+                                <article class="agent-console-card">
+                                    <div class="agent-console-card-title"><h2>SDK CLI 控制台</h2><span>命令计划与干跑</span></div>
+                                    <textarea id="cli-commands-input" placeholder="port enable 1&#10;show counter port 1"></textarea>
+                                    <div class="agent-console-actions-row" style="margin-bottom:8px;">
+                                        <button class="agent-console-btn agent-console-btn-secondary" id="cli-dry-run-btn" type="button">干跑命令</button>
+                                        <button class="agent-console-small-btn" id="cli-snapshot-btn" type="button">快照</button>
+                                        <button class="agent-console-small-btn" id="cli-counters-btn" type="button">查询计数器</button>
+                                        <button class="agent-console-small-btn" id="cli-rollback-btn" type="button">生成回滚</button>
+                                    </div>
+                                    <pre id="cli-output" class="agent-console-output"></pre>
+                                </article>
+
+                                <article class="agent-console-card agent-console-wide">
+                                    <div class="agent-console-card-title">
+                                        <h2>联合判定视图</h2>
+                                        <span>流量统计与 SDK CLI 计数器对齐</span>
+                                    </div>
+                                    <pre id="joint-verdict-output" class="agent-console-output">请选择任务后生成联合判定。</pre>
+                                </article>
+                            </div>
+                        </div>
+
+                        <!-- ========== 页面: 知识中心 ========== -->
+                        <div class="agent-console-page-view" data-page="knowledge">
+                            <div class="agent-console-grid">
+                                <article class="agent-console-card agent-console-wide">
+                                    <div class="agent-console-card-title">
+                                        <h2>Bug 学习中心</h2>
+                                        <span>Bug 方法卡片与缺口报告</span>
+                                    </div>
+                                    <div class="agent-console-actions-row" style="margin-bottom:10px;">
+                                        <input id="bug-card-title-input" type="text" placeholder="Bug 卡片标题" style="flex:1;min-width:200px;padding:8px;border:1px solid #cbd5e1;border-radius:10px;">
+                                        <input id="bug-card-module-input" type="text" placeholder="模块" style="width:120px;padding:8px;border:1px solid #cbd5e1;border-radius:10px;">
+                                        <select id="bug-card-severity-select" style="padding:8px;border:1px solid #cbd5e1;border-radius:10px;">
+                                            <option value="medium">中</option>
+                                            <option value="critical">严重</option>
+                                            <option value="high">高</option>
+                                            <option value="low">低</option>
+                                        </select>
+                                        <button class="agent-console-btn" id="bug-card-create-btn" type="button">新建卡片</button>
+                                    </div>
+                                    <div class="agent-console-actions-row" style="margin-bottom:10px;">
+                                        <input id="bug-retrieve-input" type="text" placeholder="检索关键词（模块/测试方法/测试点）" style="flex:1;min-width:200px;padding:8px;border:1px solid #cbd5e1;border-radius:10px;">
+                                        <button class="agent-console-small-btn" id="bug-retrieve-btn" type="button">检索</button>
+                                        <button class="agent-console-small-btn" id="bug-gaps-btn" type="button">查看缺口报告</button>
+                                        <select id="bug-card-status-filter">
+                                            <option value="">全部</option>
+                                        </select>
+                                    </div>
+                                    <div id="bug-learning-list" class="agent-console-list" data-skeleton="加载中...">加载中...</div>
+                                </article>
+
+                                <article class="agent-console-card agent-console-wide">
+                                    <div class="agent-console-card-title">
+                                        <h2>模块健康度</h2>
+                                        <span>知识健康度 5 维度评分</span>
+                                        <button class="agent-console-small-btn" id="agent-module-health-refresh-btn" type="button">刷新评分</button>
+                                    </div>
+                                    <div id="agent-module-health-list" class="agent-console-list" data-skeleton="加载中...">加载中...</div>
+                                </article>
+
+                                <article class="agent-console-card agent-console-wide">
+                                    <div class="agent-console-card-title">
+                                        <h2>图形中心</h2>
+                                        <span>图形知识层 - drawio/vsdx/svg/pdf/OCR</span>
+                                        <button class="agent-console-small-btn" id="agent-diagram-upload-btn" type="button">上传图形</button>
+                                        <button class="agent-console-small-btn" id="agent-diagram-refresh-btn" type="button">刷新</button>
+                                    </div>
+                                    <div id="agent-diagram-list" class="agent-console-list" data-skeleton="加载中...">加载中...</div>
+                                </article>
+                            </div>
+                        </div>
+
+                        <!-- ========== 页面: CTA 工作流引擎 ========== -->
+                        <div class="agent-console-page-view" data-page="cta">
+                            <div class="agent-console-grid">
+                                <!-- 工作流DAG看板 -->
+                                <article class="agent-console-card agent-console-wide">
+                                    <div class="agent-console-card-title">
+                                        <h2>工作流看板</h2>
+                                        <span>声明式工作流 DAG 可视化</span>
+                                        <div class="cta-task-picker" id="cta-task-picker" style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+                                            <div class="cta-task-picker-wrap" style="position:relative;">
+                                                <input type="text" id="cta-task-search" placeholder="搜索任务目标、ID、模块..." style="width:360px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;background:#f8fafc;" autocomplete="off" />
+                                                <div id="cta-task-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:1000;background:#fff;border:1px solid #e2e8f0;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,0.12);max-height:400px;overflow-y:auto;"></div>
+                                            </div>
+                                            <span id="cta-task-current" style="font-size:12px;color:#64748b;white-space:nowrap;">未选择任务</span>
+                                            <select id="cta-task-status-filter" style="padding:4px 8px;border:1px solid #cbd5e1;border-radius:4px;font-size:12px;">
+                                                <option value="">全部</option>
+                                                <option value="running">运行中</option>
+                                                <option value="diagnosing">诊断中</option>
+                                                <option value="completed">已完成</option>
+                                                <option value="failed">失败</option>
+                                                <option value="draft">草稿</option>
+                                            </select>
+                                            <select id="cta-workflow-type-select" style="padding:4px 8px;border:1px solid #cbd5e1;border-radius:4px;font-size:13px;">
+                                                <option value="default">默认工作流</option>
+                                                <option value="regression">回归测试</option>
+                                                <option value="legacy">传统流水线</option>
+                                            </select>
+                                            <button class="agent-console-small-btn" id="cta-workflow-refresh-btn" type="button">刷新</button>
+                                        </div>
+                                    </div>
+                                    <div id="workflow-canvas-wrap" class="wf-canvas-wrap" style="position:relative;width:100%;min-height:520px;max-height:800px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;overflow-y:auto;">
+                                        <div id="workflow-canvas" style="width:100%;height:100%;"></div>
+                                    </div>
+                                </article>
+
+                                <!-- 覆盖率详情 -->
+                                <article class="agent-console-card">
+                                    <div class="agent-console-card-title">
+                                        <h2>覆盖率详情</h2>
+                                        <span>硬约束覆盖裁决</span>
+                                    </div>
+                                    <div id="coverage-detail" class="cd-overview-wrapper">
+                                        <div style="padding:24px;text-align:center;color:#94a3b8;">
+                                            <p>请选择一个任务后查看覆盖率</p>
+                                            <p style="font-size:12px;margin-top:8px;">在上方"选择任务"下拉框选择，或点击 <a href="#" onclick="event.preventDefault();window.agentConsolePage.switchPage('tasks');" style="color:#6366f1;">任务中心</a> 选择任务</p>
+                                        </div>
+                                    </div>
+                                </article>
+
+                                <!-- 硬约束管理 -->
+                                <article class="agent-console-card">
+                                    <div class="agent-console-card-title">
+                                        <h2>硬约束管理</h2>
+                                        <span>寄存器/状态机/参数矩阵</span>
+                                    </div>
+                                    <div id="hard-constraints-manager">
+                                        <div style="padding:24px;text-align:center;color:#94a3b8;">
+                                            <p>请在任务中心选择一个任务后管理硬约束</p>
+                                            <p style="font-size:12px;margin-top:8px;">或点击 <a href="#" onclick="event.preventDefault();window.agentConsolePage.switchPage('tasks');" style="color:#6366f1;">任务中心</a> 选择任务</p>
+                                        </div>
+                                    </div>
+                                </article>
+
+                                <!-- SSH会话管理 -->
+                                <article class="agent-console-card">
+                                    <div class="agent-console-card-title">
+                                        <h2>SSH 会话</h2>
+                                        <span>真机交互会话管理</span>
+                                        <button class="agent-console-small-btn" id="cta-ssh-refresh-btn" type="button">刷新</button>
+                                        <button class="agent-console-small-btn" id="cta-ssh-create-btn" type="button">新建会话</button>
+                                    </div>
+                                    <div id="cta-ssh-sessions-list" class="agent-console-list">
+                                        <div style="padding:24px;text-align:center;color:#94a3b8;">点击"新建会话"连接设备</div>
+                                    </div>
+                                </article>
+
+                                <!-- 深度测试用例 -->
+                                <article class="agent-console-card agent-console-wide">
+                                    <div class="agent-console-card-title">
+                                        <h2>深度测试用例</h2>
+                                        <span>测试用例列表与执行状态</span>
+                                        <button class="agent-console-small-btn" id="cta-test-cases-refresh-btn" type="button">刷新</button>
+                                    </div>
+                                    <div id="cta-test-cases-list" class="agent-console-list">
+                                        <div style="padding:24px;text-align:center;color:#94a3b8;">请在任务中心选择一个任务后查看测试用例</div>
+                                    </div>
+                                </article>
+
+                                <!-- 测试Bug -->
+                                <article class="agent-console-card agent-console-wide">
+                                    <div class="agent-console-card-title">
+                                        <h2>测试 Bug</h2>
+                                        <span>交叉验证发现的Bug</span>
+                                        <button class="agent-console-small-btn" id="cta-test-bugs-refresh-btn" type="button">刷新</button>
+                                    </div>
+                                    <div id="cta-test-bugs-list" class="agent-console-list">
+                                        <div style="padding:24px;text-align:center;color:#94a3b8;">暂无Bug记录</div>
+                                    </div>
+                                </article>
+                            </div>
+                        </div>
+
+                    </main>
+                    <!-- Agent Console 通用详情模态框 -->
+                    <div id="agent-console-modal" class="agent-console-modal" style="display:none;">
+                        <div class="agent-console-modal-backdrop"></div>
+                        <div class="agent-console-modal-dialog">
+                            <div class="agent-console-modal-header">
+                                <h3 id="agent-console-modal-title">详情</h3>
+                                <button class="agent-console-modal-close" id="agent-console-modal-close" type="button">&times;</button>
+                            </div>
+                            <div class="agent-console-modal-body" id="agent-console-modal-body"></div>
+                            <div class="agent-console-modal-footer" id="agent-console-modal-footer"></div>
+                        </div>
+                    </div>
+                    <div id="agent-console-toast-container" class="agent-console-toast-container"></div>
+                    <!-- Pipeline 任务详情面板 -->
+                    <div id="pipeline-detail-panel" class="pipeline-detail-panel" style="display:none;">
+                        <div class="pipeline-detail-header">
+                            <h3 id="pipeline-detail-title">任务详情</h3>
+                            <div>
+                                <button class="agent-console-small-btn pipeline-detail-tab-btn active" data-tab="timeline" type="button">时间线</button>
+                                <button class="agent-console-small-btn pipeline-detail-tab-btn" data-tab="events" type="button">事件流</button>
+                                <button class="agent-console-small-btn pipeline-detail-tab-btn" data-tab="resources" type="button">资源与锁</button>
+                                <button class="agent-console-small-btn pipeline-detail-tab-btn" data-tab="artifacts" type="button">产物</button>
+                                <button class="agent-console-small-btn pipeline-detail-tab-btn" data-tab="context" type="button">上下文</button>
+                                <button class="agent-console-small-btn pipeline-detail-tab-btn" data-tab="workflow" type="button">工作流</button>
+                                <button class="agent-console-small-btn pipeline-detail-tab-btn" data-tab="coverage" type="button">覆盖率</button>
+                                <button class="agent-console-modal-close" id="pipeline-detail-close" type="button">&times;</button>
+                            </div>
+                        </div>
+                        <div class="pipeline-detail-body" id="pipeline-detail-body"></div>
+                    </div>
+                </section>
+
         <!-- 知识库管理 Section -->
         <section id="knowledge-section" style="display: none;">
     <div class="kl-page">
@@ -4535,6 +4947,7 @@ return rows[0];'></textarea>
             <div class="kl-header-actions">
                 <button class="kl-btn kl-btn-outline" id="btnUpload">📄 上传文件</button>
                 <button class="kl-btn kl-btn-outline" id="btnNewFolder">📁 新建文件夹</button>
+                <button class="kl-btn kl-btn-outline" id="btnRelearnTcl">🤖 重新学习TCL</button>
                 <button class="kl-btn kl-btn-ghost" id="btnCrawl">🌐 爬取网页</button>
             </div>
         </div>
@@ -4590,6 +5003,7 @@ return rows[0];'></textarea>
                         <option value="">全部状态</option>
                         <option value="pending">待解析</option>
                         <option value="parsing">解析中</option>
+                        <option value="learning">学习中</option>
                         <option value="parsed">已解析</option>
                         <option value="failed">解析失败</option>
                     </select>
@@ -4680,12 +5094,57 @@ return rows[0];'></textarea>
                     <option value="">请选择模块</option>
                 </select>
             </div>
+            <div class="kl-form-group">
+                <label>文件分类</label>
+                <select class="kl-select" id="uploadFileCategory">
+                    <option value="design">设计文档</option>
+                    <option value="cli">CLI参考</option>
+                    <option value="methodology">测试方法论</option>
+                    <option value="tcl_convention">TCL规范</option>
+                    <option value="environment">测试环境</option>
+                    <option value="test_plan">测试计划</option>
+                    <option value="tcl_script">已有TCL脚本</option>
+                    <option value="svd">SVD/XML寄存器描述</option>
+                    <option value="sdk_header">SDK头文件</option>
+                    <option value="sdk_source">SDK源码</option>
+                    <option value="errata">芯片Errata</option>
+                    <option value="bug_rag">Bug-RAG经验</option>
+                    <option value="migration_note">芯片迁移说明</option>
+                    <option value="register_map">寄存器映射</option>
+                    <option value="register_field">寄存器字段</option>
+                    <option value="sdk_api">SDK API</option>
+                    <option value="execution_experience">执行经验</option>
+                </select>
+            </div>
+            <div class="kl-form-group">
+                <label>芯片代系</label>
+                <select class="kl-select" id="uploadChipVersionSelect">
+                    <option value="">通用（不绑定芯片代系）</option>
+                </select>
+            </div>
+            <div class="kl-form-group">
+                <label>解析策略</label>
+                <select class="kl-select" id="uploadParseStrategy">
+                    <option value="auto">自动识别</option>
+                    <option value="structure_aware">结构感知切分</option>
+                    <option value="semantic">语义切分</option>
+                    <option value="parent_child">父子切分</option>
+                </select>
+            </div>
+            <div class="kl-form-group">
+                <label>上传后动作</label>
+                <select class="kl-select" id="uploadPostAction">
+                    <option value="auto">按分类自动解析/索引</option>
+                    <option value="parse_only">仅解析文本块</option>
+                    <option value="none">仅上传</option>
+                </select>
+            </div>
             <div class="kl-upload-zone" id="uploadZone">
                 <div class="icon">📤</div>
                 <div class="title">拖拽文件到此处或点击上传</div>
                 <div class="desc">支持 docx, xlsx, pdf, txt, md, png, jpg 等格式，单文件最大20MB</div>
             </div>
-            <input type="file" id="fileInput" multiple style="display:none;" accept=".docx,.doc,.xlsx,.xls,.pdf,.txt,.md,.png,.jpg,.jpeg,.drawio,.vsdx">
+            <input type="file" id="fileInput" multiple style="display:none;" accept=".docx,.doc,.xlsx,.xls,.pdf,.txt,.md,.png,.jpg,.jpeg,.drawio,.vsdx,.tcl,.xml,.svd,.c,.h,.hpp,.cpp,.cc">
             <div class="kl-upload-progress" id="uploadProgress"></div>
         </div>
         <div class="kl-modal-footer">
@@ -9280,6 +9739,11 @@ return rows[0];'></textarea>
     <!-- 知识库和AI生成模块 -->
     <script src="js/modules/knowledge-library.js?v=20260430g"></script>
     <script src="js/modules/ai-generation.js?v=20260428d"></script>
+    <script src="js/agent-console.js?v=20260715w"></script>
+    <!-- CTA: 工作流可视化 + 覆盖率详情 + 硬约束管理 -->
+    <script src="js/workflow-board.js?v=20260715c"></script>
+    <script src="js/coverage-detail.js?v=20260715b"></script>
+    <script src="js/hard-constraints.js?v=20260715b"></script>
     <script src="js/modules/ai-review.js?v=20260429"></script>
     <script src="js/modules/unified-task-manager.js?v=20260508"></script>
     <script src="js/modules/stream-consumer.js?v=20260519"></script>

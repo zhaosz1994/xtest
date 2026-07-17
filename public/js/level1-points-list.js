@@ -12,6 +12,8 @@ class Level1PointsList {
         this.searchKeyword = '';
         this.filters = {};
         this.authToken = localStorage.getItem('authToken');
+        this.chipVersions = [];
+        this.executionEnvs = [];
         
         this.init();
     }
@@ -59,7 +61,34 @@ class Level1PointsList {
     async init() {
         this.bindEvents();
         this.parseUrlParams();
+        await this.loadAdaptiveOptions();
         await this.loadLevel1Points();
+    }
+
+    async loadAdaptiveOptions() {
+        try {
+            const [chipRes, envRes] = await Promise.all([
+                this.apiRequest('/chip-versions'),
+                this.apiRequest('/execution-environments')
+            ]);
+            this.chipVersions = chipRes.success ? (chipRes.data || []) : [];
+            this.executionEnvs = envRes.success ? (envRes.data || []) : [];
+            const chipSelect = document.getElementById('level-chip-version-select');
+            if (chipSelect) {
+                chipSelect.innerHTML = '<option value="">通用芯片</option>' + this.chipVersions.map(chip =>
+                    `<option value="${chip.id}">${this.escapeHtml(chip.name || chip.version_key)}</option>`
+                ).join('');
+            }
+            const envSelect = document.getElementById('level-execution-env-select');
+            if (envSelect) {
+                envSelect.innerHTML = '<option value="">默认执行环境</option>' + this.executionEnvs.map(env =>
+                    `<option value="${env.id}">${this.escapeHtml(env.name || env.env_key)}</option>`
+                ).join('');
+            }
+        } catch (error) {
+            this.chipVersions = [];
+            this.executionEnvs = [];
+        }
     }
 
     parseUrlParams() {
@@ -81,6 +110,8 @@ class Level1PointsList {
         document.getElementById('expand-all-btn').addEventListener('click', () => this.toggleExpandAll());
         document.getElementById('add-level1-btn').addEventListener('click', () => this.addLevel1Point());
         document.getElementById('empty-add-btn').addEventListener('click', () => this.addLevel1Point());
+        document.getElementById('generate-tcl-btn')?.addEventListener('click', () => this.generateTCLForSelected());
+        document.getElementById('expand-points-btn')?.addEventListener('click', () => this.expandPoints());
         
         document.getElementById('drawer-close-btn').addEventListener('click', () => this.closeDrawer());
         document.getElementById('drawer-cancel-btn').addEventListener('click', () => this.closeDrawer());
@@ -89,6 +120,8 @@ class Level1PointsList {
         document.getElementById('drawer-save-btn-bottom').addEventListener('click', () => this.saveTestCase());
         document.getElementById('drawer-save-continue-btn').addEventListener('click', () => this.saveTestCase(true));
         document.getElementById('drawer-delete-btn').addEventListener('click', () => this.deleteTestCase());
+        document.getElementById('evidence-drawer-close')?.addEventListener('click', () => this.closeEvidenceDrawer());
+        document.getElementById('evidence-drawer-overlay')?.addEventListener('click', () => this.closeEvidenceDrawer());
         
         document.getElementById('filter-close-btn').addEventListener('click', () => this.toggleFilterPanel());
         document.getElementById('filter-reset-btn').addEventListener('click', () => this.resetFilters());
@@ -169,6 +202,9 @@ class Level1PointsList {
         return `
             <div class="level1-item ${isExpanded ? 'expanded' : ''}" data-id="${point.id}">
                 <div class="level1-item-header">
+                    <label class="level1-select-cell" title="选择测试点">
+                        <input type="checkbox" class="level1-select-checkbox" data-id="${point.id}">
+                    </label>
                     <button class="expand-btn" data-id="${point.id}">
                         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M9 18l6-6-6-6"/>
@@ -200,6 +236,15 @@ class Level1PointsList {
                                 <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                             </svg>
                         </button>
+                        <button class="level1-action-btn tcl-btn" data-id="${point.id}" data-name="${this.escapeHtml(point.name)}" title="生成TCL脚本">
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="16 18 22 12 16 6"></polyline>
+                                <polyline points="8 6 2 12 8 18"></polyline>
+                            </svg>
+                        </button>
+                        <button class="level1-action-btn sdk-unit-btn" data-id="${point.id}" data-name="${this.escapeHtml(point.name)}" title="生成SDK单测">SDK</button>
+                        <button class="level1-action-btn evidence-btn" data-id="${point.id}" title="查看证据">证</button>
+                        <button class="level1-action-btn migrate-btn" data-id="${point.id}" data-name="${this.escapeHtml(point.name)}" title="迁移到新芯片">迁</button>
                         <button class="level1-action-btn delete-btn" data-id="${point.id}" title="删除">
                             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="3 6 5 6 21 6"></polyline>
@@ -221,6 +266,13 @@ class Level1PointsList {
     }
 
     bindLevel1ItemEvents() {
+        document.querySelectorAll('.level1-select-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('click', (e) => {
+                e.stopPropagation();
+                checkbox.closest('.level1-item')?.classList.toggle('selected', checkbox.checked);
+            });
+        });
+
         document.querySelectorAll('.expand-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -241,6 +293,36 @@ class Level1PointsList {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.editLevel1Point(btn.dataset.id);
+            });
+        });
+        
+        document.querySelectorAll('.tcl-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = btn.dataset.id;
+                const name = btn.dataset.name;
+                this.generateTCL(id, name);
+            });
+        });
+
+        document.querySelectorAll('.sdk-unit-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.createSdkUnitTask(btn.dataset.id, btn.dataset.name);
+            });
+        });
+
+        document.querySelectorAll('.evidence-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.openEvidenceDrawer(btn.dataset.id);
+            });
+        });
+
+        document.querySelectorAll('.migrate-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.createMigrationTask(btn.dataset.id, btn.dataset.name);
             });
         });
         
@@ -536,7 +618,7 @@ class Level1PointsList {
     }
 
     async deleteTestCase() {
-        if (!(await showConfirmMessage('确定要删除这个测试用例吗？此操作无法撤销。'))) {
+        if (!(await this.showConfirm('确定要删除这个测试用例吗？此操作无法撤销。'))) {
             return;
         }
         
@@ -681,6 +763,201 @@ class Level1PointsList {
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
+    async generateTCL(level1PointId, level1PointName) {
+        if (!(await this.showConfirm(`确认要为测试点「${level1PointName}」生成TCL脚本吗？`))) {
+            return;
+        }
+        await this._generateTCLWithoutConfirm(level1PointId);
+    }
+
+    async _generateTCLWithoutConfirm(level1PointId) {
+        try {
+            this.showToast('正在生成TCL脚本...', 'warning');
+
+            const response = await this.apiRequest('/tcl-generation/generate', {
+                method: 'POST',
+                body: JSON.stringify({
+                    moduleId: this.currentModuleId,
+                    level1PointId,
+                    options: {
+                        chipVersionId: document.getElementById('level-chip-version-select')?.value || null,
+                        executionEnvId: document.getElementById('level-execution-env-select')?.value || null,
+                        level1PointId
+                    }
+                })
+            });
+
+            if (response.success && (response.taskId || response.data?.taskId)) {
+                const taskId = response.taskId || response.data.taskId;
+                let attempts = 0;
+                const maxAttempts = 30;
+
+                const pollInterval = setInterval(async () => {
+                    attempts++;
+                    try {
+                        const taskResponse = await this.apiRequest(`/tcl-generation/task/${taskId}`);
+                        const taskData = taskResponse.data || taskResponse;
+                        if (taskResponse.success && (taskData.status === 'completed' || taskData.status === 'failed')) {
+                            clearInterval(pollInterval);
+                            if (taskData.status === 'completed') {
+                                this.showToast('TCL脚本生成成功', 'success');
+                                await this.loadLevel1Points();
+                            } else {
+                                this.showToast(`TCL脚本生成失败：${taskResponse.message || '未知错误'}`, 'error');
+                            }
+                        } else if (attempts >= maxAttempts) {
+                            clearInterval(pollInterval);
+                            this.showToast('TCL脚本生成超时，请稍后查看', 'error');
+                        }
+                    } catch (error) {
+                        if (attempts >= maxAttempts) {
+                            clearInterval(pollInterval);
+                            this.showToast('TCL脚本生成查询失败', 'error');
+                        }
+                    }
+                }, 2000);
+            } else {
+                throw new Error(response.message || '生成任务创建失败');
+            }
+        } catch (error) {
+            console.error('生成TCL失败:', error);
+            this.showToast(error.message, 'error');
+        }
+    }
+
+    async expandPoints() {
+        if (!(await this.showConfirm('确认要对当前模块的测试点进行5维度扩展吗？'))) {
+            return;
+        }
+
+        try {
+            this.showToast('正在进行5维度扩展...', 'warning');
+
+            const response = await this.apiRequest('/tcl-generation/expand-points', {
+                method: 'POST',
+                body: JSON.stringify({
+                    taskId: 'expand-' + Date.now(),
+                    moduleId: this.currentModuleId,
+                    globalContext: ''
+                })
+            });
+
+            if (response.success) {
+                const expandedCount = response.expandedCount || response.newPointsCount || 0;
+                this.showToast(`5维度扩展完成，新增${expandedCount}个测试点`, 'success');
+                await this.loadLevel1Points();
+            } else {
+                throw new Error(response.message || '5维度扩展失败');
+            }
+        } catch (error) {
+            console.error('5维度扩展失败:', error);
+            this.showToast(error.message, 'error');
+        }
+    }
+
+    async generateTCLForSelected() {
+        const selectedItems = document.querySelectorAll('.level1-item.selected');
+        const selectedIds = Array.from(selectedItems).map(item => item.dataset.id);
+
+        if (selectedIds.length > 0) {
+            if (!(await this.showConfirm(`确认为选中的 ${selectedIds.length} 个测试点批量生成TCL脚本吗？`))) {
+                return;
+            }
+            for (const id of selectedIds) {
+                await this._generateTCLWithoutConfirm(id);
+            }
+        } else {
+            this.showToast('请先选择测试点，或点击单个测试点的TCL按钮', 'warning');
+        }
+    }
+
+    async createSdkUnitTask(level1PointId, level1PointName) {
+        try {
+            const response = await this.apiRequest('/adaptive-generation/create', {
+                method: 'POST',
+                body: JSON.stringify({
+                    targetType: 'level1_point',
+                    targetId: level1PointId,
+                    level1PointId,
+                    targetName: level1PointName,
+                    queryText: level1PointName,
+                    moduleId: this.currentModuleId,
+                    chipVersionId: document.getElementById('level-chip-version-select')?.value || null,
+                    executionEnvId: document.getElementById('level-execution-env-select')?.value || null,
+                    categories: ['sdk_api', 'bug_rag', 'execution_experience']
+                })
+            });
+            if (response.success) {
+                this.showToast('SDK单测任务骨架已创建', 'success');
+            } else {
+                throw new Error(response.message || '创建失败');
+            }
+        } catch (error) {
+            this.showToast(error.message, 'error');
+        }
+    }
+
+    async createMigrationTask(level1PointId, level1PointName) {
+        try {
+            const chipVersionId = document.getElementById('level-chip-version-select')?.value || null;
+            const response = await this.apiRequest('/adaptive-generation/create', {
+                method: 'POST',
+                body: JSON.stringify({
+                    targetType: 'level1_point',
+                    targetId: level1PointId,
+                    level1PointId,
+                    targetName: level1PointName,
+                    queryText: `迁移 ${level1PointName}`,
+                    moduleId: this.currentModuleId,
+                    chipVersionId,
+                    executionEnvId: document.getElementById('level-execution-env-select')?.value || null,
+                    categories: ['register_map', 'register_field', 'sdk_api', 'bug_rag', 'migration_note']
+                })
+            });
+            if (response.success) {
+                this.showToast('迁移任务骨架已创建', 'success');
+                window.location.href = '/chip-migration.html';
+            } else {
+                throw new Error(response.message || '创建失败');
+            }
+        } catch (error) {
+            this.showToast(error.message, 'error');
+        }
+    }
+
+    async openEvidenceDrawer(level1PointId) {
+        const drawer = document.getElementById('evidence-drawer');
+        const overlay = document.getElementById('evidence-drawer-overlay');
+        const content = document.getElementById('evidence-drawer-content');
+        if (!drawer || !overlay || !content) return;
+        drawer.classList.add('open');
+        overlay.classList.add('active');
+        content.innerHTML = '<div class="evidence-empty">加载证据中...</div>';
+        try {
+            const response = await this.apiRequest(`/adaptive-generation/evidence/level1_point/${level1PointId}`);
+            if (!response.success) throw new Error(response.message || '加载证据失败');
+            const evidence = response.data?.topEvidence || [];
+            if (evidence.length === 0) {
+                content.innerHTML = '<div class="evidence-empty">暂无证据链</div>';
+                return;
+            }
+            content.innerHTML = evidence.map(item => `
+                <div class="evidence-card">
+                    <div class="evidence-card-title">${this.escapeHtml(item.evidence_title || item.evidence_type || '证据')}</div>
+                    <div class="evidence-card-meta">${this.escapeHtml(item.evidence_type || '-')} · ${this.formatDateTime(item.created_at)}</div>
+                    <div class="evidence-card-excerpt">${this.escapeHtml(item.evidence_excerpt || '')}</div>
+                </div>
+            `).join('');
+        } catch (error) {
+            content.innerHTML = `<div class="evidence-empty">加载失败：${this.escapeHtml(error.message)}</div>`;
+        }
+    }
+
+    closeEvidenceDrawer() {
+        document.getElementById('evidence-drawer')?.classList.remove('open');
+        document.getElementById('evidence-drawer-overlay')?.classList.remove('active');
+    }
+
     addLevel1Point() {
         this.showToast('新建测试点功能开发中...', 'warning');
     }
@@ -748,6 +1025,39 @@ class Level1PointsList {
 
     hideError() {
         document.getElementById('error-state').style.display = 'none';
+    }
+
+    async showConfirm(message) {
+        if (typeof showConfirmMessage === 'function') {
+            return await showConfirmMessage(message);
+        }
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.45);z-index:99999;display:flex;align-items:center;justify-content:center;';
+            const modal = document.createElement('div');
+            modal.style.cssText = 'background:#fff;border-radius:12px;padding:24px;min-width:340px;max-width:92vw;box-shadow:0 12px 40px rgba(0,0,0,0.18);font-family:inherit;';
+            const text = document.createElement('p');
+            text.textContent = message;
+            text.style.cssText = 'margin:0 0 20px;font-size:14px;color:#1e293b;line-height:1.6;white-space:pre-wrap;';
+            const btnRow = document.createElement('div');
+            btnRow.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;';
+            const cancelBtn = document.createElement('button');
+            cancelBtn.textContent = '取消';
+            cancelBtn.style.cssText = 'padding:7px 16px;border:1px solid #e2e8f0;background:#fff;border-radius:8px;cursor:pointer;font-size:13px;color:#64748b;';
+            const okBtn = document.createElement('button');
+            okBtn.textContent = '确定';
+            okBtn.style.cssText = 'padding:7px 16px;border:none;background:#3b82f6;color:#fff;border-radius:8px;cursor:pointer;font-size:13px;';
+            btnRow.appendChild(cancelBtn);
+            btnRow.appendChild(okBtn);
+            modal.appendChild(text);
+            modal.appendChild(btnRow);
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+            const close = (result) => { overlay.remove(); resolve(result); };
+            cancelBtn.addEventListener('click', () => close(false));
+            okBtn.addEventListener('click', () => close(true));
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
+        });
     }
 
     showToast(message, type = 'success') {

@@ -8,10 +8,28 @@ const logger = require('./logger');
 const agentToolUsageLogger = require('./agentToolUsageLogger');
 const aiRequestLogger = require('./aiRequestLogger');
 const axios = require('axios');
+const { AgentErrorHandler } = require('./agentErrorHandler');
 
-const MAX_TOOL_CALL_ROUNDS = 5;
+// CTA 升级：5轮硬限 -> 可配置无限轮 + 5层容错
+// AGENT_MAX_ROUNDS=0 表示无限轮（依赖 consecutiveNoProgress 兜底终止）
+// AGENT_MAX_ROUNDS>0 表示指定轮次上限
+const MAX_TOOL_CALL_ROUNDS = parseInt(process.env.AGENT_MAX_ROUNDS || '0', 10) || 0;
+const AGENT_DEFAULT_TIMEOUT_MS = parseInt(process.env.AGENT_TIMEOUT_MS || '120000', 10);
+const AGENT_MAX_NO_PROGRESS = 5; // 连续无进展次数上限，防止无限轮空转
 
 class AgentExecutionEngine {
+    constructor() {
+        // CTA: 5层容错处理器（L1超时/L2限流/L3瞬断/L4上下文溢出/L5空响应）
+        // 注意：L3瞬断重试需要 sshService 参数，但本引擎用于通用Agent执行（用例生成/QA），
+        // 不直接操作SSH会话。SSH相关的工作流执行通过 pipelineOrchestrator 注入 sshService。
+        this.errorHandler = new AgentErrorHandler({
+            maxRetries: parseInt(process.env.AGENT_MAX_RETRIES || '3', 10),
+            baseDelayMs: parseInt(process.env.AGENT_BASE_DELAY_MS || '1000', 10),
+            maxDelayMs: parseInt(process.env.AGENT_MAX_DELAY_MS || '30000', 10)
+        });
+        this.defaultTimeoutMs = AGENT_DEFAULT_TIMEOUT_MS;
+    }
+
     /**
      * 统一执行入口，根据stream_mode自动选择执行方式
      * @param {string} agentCode - 代理编码
@@ -163,23 +181,58 @@ class AgentExecutionEngine {
                 };
             }
 
-            // 8. 调用LLM
-            let llmResult = await this._callLLM(systemPrompt, userPrompt, tools, aiConfig, userId, 'scene_case_generation', agent);
+            // 8. 调用LLM（CTA: 通过errorHandler包装，支持L1超时/L2限流/L3瞬断重试 + L5空响应修复）
+            let llmResult = await this.errorHandler.executeWithFullResilience(
+                () => this._callLLM(systemPrompt, userPrompt, tools, aiConfig, userId, 'scene_case_generation', agent),
+                { timeoutMs: this.defaultTimeoutMs }
+            );
+            // L5: 空响应修复
+            if (!llmResult.content && (!llmResult.tool_calls || llmResult.tool_calls.length === 0)) {
+                logger.warn('Agent LLM返回空响应，注入提示重试', { agentCode, userId });
+                llmResult = await this.errorHandler.executeWithFullResilience(
+                    () => this._callLLM(systemPrompt, userPrompt + '\n\n注意：请确保生成有效回复或工具调用。', tools, aiConfig, userId, 'scene_case_generation', agent),
+                    { timeoutMs: this.defaultTimeoutMs }
+                );
+            }
 
-            // 9. 处理工具调用（Agentic Loop，最多5轮）
+            // 9. 处理工具调用（CTA: Agentic Loop，可配置无限轮 + 连续无进展兜底）
             const toolCallsLog = [];
             let rounds = 0;
+            let consecutiveNoProgress = 0;
             let totalPromptTokens = llmResult.usage?.prompt_tokens || 0;
             let totalCompletionTokens = llmResult.usage?.completion_tokens || 0;
             let totalTokensAccum = llmResult.usage?.total_tokens || 0;
 
-            while (llmResult.tool_calls && llmResult.tool_calls.length > 0 && rounds < MAX_TOOL_CALL_ROUNDS) {
+            while (llmResult.tool_calls && llmResult.tool_calls.length > 0
+                   && (MAX_TOOL_CALL_ROUNDS === 0 || rounds < MAX_TOOL_CALL_ROUNDS)
+                   && consecutiveNoProgress < AGENT_MAX_NO_PROGRESS) {
                 rounds++;
 
-                const toolResults = await this._executeToolCalls(
-                    llmResult.tool_calls,
-                    { userId, userRole: context.userRole, username: context.username, agentCode }
-                );
+                let toolResults;
+                try {
+                    // CTA: 工具调用通过errorHandler包装，支持L1超时/L2限流/L3瞬断重试
+                    toolResults = await this.errorHandler.executeWithFullResilience(
+                        () => this._executeToolCalls(
+                            llmResult.tool_calls,
+                            { userId, userRole: context.userRole, username: context.username, agentCode }
+                        ),
+                        { timeoutMs: this.defaultTimeoutMs }
+                    );
+                    consecutiveNoProgress = 0;
+                } catch (toolError) {
+                    if (this._isRecoverable(toolError) && consecutiveNoProgress < AGENT_MAX_NO_PROGRESS - 1) {
+                        consecutiveNoProgress++;
+                        logger.warn('Agent工具调用可恢复错误，继续重试', { agentCode, round: rounds, error: toolError.message });
+                        // 构造失败结果，让LLM决定下一步
+                        toolResults = llmResult.tool_calls.map(tc => ({
+                            success: false,
+                            error: `工具执行失败(可恢复): ${toolError.message}`,
+                            result: null
+                        }));
+                    } else {
+                        throw toolError;
+                    }
+                }
 
                 // 记录工具调用日志
                 for (let i = 0; i < llmResult.tool_calls.length; i++) {
@@ -195,16 +248,19 @@ class AgentExecutionEngine {
                 }
 
                 // 将工具结果追加到消息中，继续调用LLM
-                llmResult = await this._callLLMWithToolResults(
-                    systemPrompt,
-                    userPrompt,
-                    llmResult.tool_calls,
-                    toolResults,
-                    tools,
-                    aiConfig,
-                    userId,
-                    'scene_case_generation',
-                    agent
+                llmResult = await this.errorHandler.executeWithFullResilience(
+                    () => this._callLLMWithToolResults(
+                        systemPrompt,
+                        userPrompt,
+                        llmResult.tool_calls,
+                        toolResults,
+                        tools,
+                        aiConfig,
+                        userId,
+                        'scene_case_generation',
+                        agent
+                    ),
+                    { timeoutMs: this.defaultTimeoutMs }
                 );
 
                 totalPromptTokens += llmResult.usage?.prompt_tokens || 0;
@@ -215,7 +271,9 @@ class AgentExecutionEngine {
             // 10. 解析最终结果
             const finalContent = llmResult.content || '';
             const executionTimeMs = Date.now() - startTime;
-            const hitMaxRounds = llmResult.tool_calls && llmResult.tool_calls.length > 0;
+            const hitMaxRounds = llmResult.tool_calls && llmResult.tool_calls.length > 0
+                && MAX_TOOL_CALL_ROUNDS > 0 && rounds >= MAX_TOOL_CALL_ROUNDS;
+            const hitNoProgress = consecutiveNoProgress >= AGENT_MAX_NO_PROGRESS;
 
             logger.info('Agent执行完成', {
                 agentCode,
@@ -224,7 +282,8 @@ class AgentExecutionEngine {
                 rounds,
                 toolCallsCount: toolCallsLog.length,
                 executionTimeMs,
-                hitMaxRounds
+                hitMaxRounds,
+                hitNoProgress
             });
 
             agentToolUsageLogger.logSuccess({
@@ -244,11 +303,15 @@ class AgentExecutionEngine {
                     moduleId: context.moduleId,
                     toolCallsCount: toolCallsLog.length,
                     rounds,
-                    hitMaxRounds
+                    hitMaxRounds,
+                    hitNoProgress
                 }
             });
 
-            if (hitMaxRounds) {
+            if (hitMaxRounds || hitNoProgress) {
+                const stopReason = hitMaxRounds
+                    ? `Agent达到最大工具调用轮次(${MAX_TOOL_CALL_ROUNDS})，任务可能未完成`
+                    : `Agent连续${AGENT_MAX_NO_PROGRESS}次工具调用无进展，终止执行`;
                 aiRequestLogger.logFailure({
                     userId,
                     username: context.username,
@@ -257,13 +320,13 @@ class AgentExecutionEngine {
                     triggerSourceName: agent.display_name,
                     systemPrompt,
                     userPrompt,
-                    aiResponse: finalContent || '(Agent达到最大工具调用轮次，未生成最终回复)',
+                    aiResponse: finalContent || `(${stopReason})`,
                     promptTokens: totalPromptTokens,
                     completionTokens: totalCompletionTokens,
                     totalTokens: totalTokensAccum,
                     modelName: aiConfig.model_name || null,
                     executionTimeMs,
-                    errorMessage: `Agent达到最大工具调用轮次(${MAX_TOOL_CALL_ROUNDS})，任务可能未完成`,
+                    errorMessage: stopReason,
                     libraryId: context.libraryId,
                     moduleId: context.moduleId
                 });
@@ -467,26 +530,53 @@ class AgentExecutionEngine {
                 } catch (e) { return false; }
             } : null;
 
-            let llmResult = await this._callLLMStream(
-                systemPrompt, userPrompt, tools, aiConfig, userId,
-                'scene_case_generation', onContent, streamShouldAbort, agent
+            // CTA: 通过errorHandler包装LLM调用，支持L1超时/L2限流/L3瞬断重试
+            let llmResult = await this.errorHandler.executeWithFullResilience(
+                () => this._callLLMStream(
+                    systemPrompt, userPrompt, tools, aiConfig, userId,
+                    'scene_case_generation', onContent, streamShouldAbort, agent
+                ),
+                { timeoutMs: this.defaultTimeoutMs }
             );
 
             const toolCallsLog = [];
             let rounds = 0;
+            let consecutiveNoProgress = 0;
             let totalPromptTokens = llmResult.usage?.prompt_tokens || 0;
             let totalCompletionTokens = llmResult.usage?.completion_tokens || 0;
             let totalTokensAccum = llmResult.usage?.total_tokens || 0;
 
-            while (llmResult.tool_calls && llmResult.tool_calls.length > 0 && rounds < MAX_TOOL_CALL_ROUNDS) {
+            while (llmResult.tool_calls && llmResult.tool_calls.length > 0
+                   && (MAX_TOOL_CALL_ROUNDS === 0 || rounds < MAX_TOOL_CALL_ROUNDS)
+                   && consecutiveNoProgress < AGENT_MAX_NO_PROGRESS) {
                 rounds++;
-                if (onRound) onRound(rounds, MAX_TOOL_CALL_ROUNDS);
+                if (onRound) onRound(rounds, MAX_TOOL_CALL_ROUNDS || -1);
                 if (onToolCall) onToolCall(llmResult.tool_calls);
 
-                const toolResults = await this._executeToolCalls(
-                    llmResult.tool_calls,
-                    { userId, userRole: context.userRole, username: context.username, agentCode }
-                );
+                let toolResults;
+                try {
+                    // CTA: 工具调用通过errorHandler包装，支持L1超时/L2限流/L3瞬断重试
+                    toolResults = await this.errorHandler.executeWithFullResilience(
+                        () => this._executeToolCalls(
+                            llmResult.tool_calls,
+                            { userId, userRole: context.userRole, username: context.username, agentCode }
+                        ),
+                        { timeoutMs: this.defaultTimeoutMs }
+                    );
+                    consecutiveNoProgress = 0;
+                } catch (toolError) {
+                    if (this._isRecoverable(toolError) && consecutiveNoProgress < AGENT_MAX_NO_PROGRESS - 1) {
+                        consecutiveNoProgress++;
+                        logger.warn('Agent工具调用可恢复错误，继续重试', { agentCode, round: rounds, error: toolError.message });
+                        toolResults = llmResult.tool_calls.map(tc => ({
+                            success: false,
+                            error: `工具执行失败(可恢复): ${toolError.message}`,
+                            result: null
+                        }));
+                    } else {
+                        throw toolError;
+                    }
+                }
 
                 for (let i = 0; i < llmResult.tool_calls.length; i++) {
                     const tc = llmResult.tool_calls[i];
@@ -504,18 +594,21 @@ class AgentExecutionEngine {
                     );
                 }
 
-                llmResult = await this._callLLMWithToolResultsStream(
-                    systemPrompt,
-                    userPrompt,
-                    llmResult.tool_calls,
-                    toolResults,
-                    tools,
-                    aiConfig,
-                    userId,
-                    'scene_case_generation',
-                    onContent,
-                    streamShouldAbort,
-                    agent
+                llmResult = await this.errorHandler.executeWithFullResilience(
+                    () => this._callLLMWithToolResultsStream(
+                        systemPrompt,
+                        userPrompt,
+                        llmResult.tool_calls,
+                        toolResults,
+                        tools,
+                        aiConfig,
+                        userId,
+                        'scene_case_generation',
+                        onContent,
+                        streamShouldAbort,
+                        agent
+                    ),
+                    { timeoutMs: this.defaultTimeoutMs }
                 );
 
                 totalPromptTokens += llmResult.usage?.prompt_tokens || 0;
@@ -525,7 +618,9 @@ class AgentExecutionEngine {
 
             const finalContent = llmResult.content || '';
             const executionTimeMs = Date.now() - startTime;
-            const hitMaxRounds = llmResult.tool_calls && llmResult.tool_calls.length > 0;
+            const hitMaxRounds = llmResult.tool_calls && llmResult.tool_calls.length > 0
+                && MAX_TOOL_CALL_ROUNDS > 0 && rounds >= MAX_TOOL_CALL_ROUNDS;
+            const hitNoProgress = consecutiveNoProgress >= AGENT_MAX_NO_PROGRESS;
 
             logger.info('Agent流式执行完成', {
                 agentCode,
@@ -534,7 +629,8 @@ class AgentExecutionEngine {
                 rounds,
                 toolCallsCount: toolCallsLog.length,
                 executionTimeMs,
-                hitMaxRounds
+                hitMaxRounds,
+                hitNoProgress
             });
 
             agentToolUsageLogger.logSuccess({
@@ -554,11 +650,15 @@ class AgentExecutionEngine {
                     moduleId: context.moduleId,
                     toolCallsCount: toolCallsLog.length,
                     rounds,
-                    hitMaxRounds
+                    hitMaxRounds,
+                    hitNoProgress
                 }
             });
 
-            if (hitMaxRounds) {
+            if (hitMaxRounds || hitNoProgress) {
+                const stopReason = hitMaxRounds
+                    ? `Agent达到最大工具调用轮次(${MAX_TOOL_CALL_ROUNDS})，任务可能未完成`
+                    : `Agent连续${AGENT_MAX_NO_PROGRESS}次工具调用无进展，终止执行`;
                 aiRequestLogger.logFailure({
                     userId,
                     username: context.username,
@@ -567,13 +667,13 @@ class AgentExecutionEngine {
                     triggerSourceName: agent.display_name,
                     systemPrompt,
                     userPrompt,
-                    aiResponse: finalContent || '(Agent达到最大工具调用轮次，未生成最终回复)',
+                    aiResponse: finalContent || `(${stopReason})`,
                     promptTokens: totalPromptTokens,
                     completionTokens: totalCompletionTokens,
                     totalTokens: totalTokensAccum,
                     modelName: aiConfig.model_name || null,
                     executionTimeMs,
-                    errorMessage: `Agent达到最大工具调用轮次(${MAX_TOOL_CALL_ROUNDS})，任务可能未完成`,
+                    errorMessage: stopReason,
                     libraryId: context.libraryId,
                     moduleId: context.moduleId
                 });
@@ -1341,6 +1441,28 @@ class AgentExecutionEngine {
 
 ## 输出格式
 请严格按照JSON格式输出结果。`;
+    }
+
+    /**
+     * CTA: 判断任务是否已完成（用于无限轮模式下的终止检测）
+     * 当LLM回复内容中包含完成标记时，认为任务已完成
+     */
+    _isTaskComplete(content) {
+        if (!content || typeof content !== 'string') return false;
+        const lower = content.toLowerCase();
+        return ['任务完成', 'task complete', 'done', '已完成', '测试已完成', 'all done', 'finished'].some(s => lower.includes(s.toLowerCase()));
+    }
+
+    /**
+     * CTA: 判断错误是否可恢复（瞬断/超时/连接重置等）
+     */
+    _isRecoverable(error) {
+        if (!error) return false;
+        const recoverableCodes = ['TIMEOUT', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ECONNREFUSED', 'EAI_AGAIN'];
+        const recoverableMessages = ['socket hang up', 'connection reset', 'connect etimedout', 'getaddrinfo enotfound', 'read econnreset'];
+        return recoverableCodes.includes(error.code)
+            || recoverableCodes.includes(error.errno)
+            || recoverableMessages.some(m => (error.message || '').toLowerCase().includes(m));
     }
 }
 

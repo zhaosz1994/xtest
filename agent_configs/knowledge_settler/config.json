@@ -1,0 +1,20 @@
+{
+  "agent_type": "program",
+  "name": "knowledge_settler",
+  "description": "知识沉淀Agent，将工作流生成物入库形成知识闭环",
+  "tools": ["knowledge_service"],
+  "input_contract": {
+    "prereq": ["hard_constraint_check"],
+    "handoff": ["hard_constraint_check"],
+    "accumulating": [],
+    "writes": ["knowledge_artifacts"]
+  },
+  "parameters": {
+    "persist_understanding": true,
+    "persist_test_plan": true,
+    "persist_results": true,
+    "persist_coverage": true,
+    "persist_lessons": true,
+    "generate_embedding": true
+  }
+}

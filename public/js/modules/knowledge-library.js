@@ -41,6 +41,7 @@ let klCurrentPreviewFileId = null;
 let klNotificationOffset = 0;
 let klPendingUploadFiles = [];
 let klSelectedFileModuleMap = {};
+let klChipVersions = [];
 
 function klEscapeHtml(str) {
     if (str == null) return '';
@@ -177,8 +178,8 @@ function getFileIcon(ext) {
 }
 
 function getStatusBadge(status) {
-    const map = { pending: '待解析', parsing: '解析中', parsed: '已解析', failed: '解析失败' };
-    const cls = { pending: 'kl-status-pending', parsing: 'kl-status-parsing', parsed: 'kl-status-parsed', failed: 'kl-status-failed' };
+    const map = { pending: '待解析', parsing: '解析中', learning: '学习中', parsed: '已解析', failed: '解析失败' };
+    const cls = { pending: 'kl-status-pending', parsing: 'kl-status-parsing', learning: 'kl-status-learning', parsed: 'kl-status-parsed', failed: 'kl-status-failed' };
     return `<span class="kl-status-badge ${cls[status] || ''}">${map[status] || status || '-'}</span>`;
 }
 
@@ -239,10 +240,28 @@ async function loadKLLibraries() {
                 } catch (e) { klLibraryFoldersMap[lib.id] = []; }
             }
             await loadModuleFileCounts();
+            await loadKLChipVersions();
             renderTree();
         }
     } catch (e) {
         document.getElementById('treeContainer').innerHTML = '<div class="kl-empty"><div class="icon">⚠️</div><p>加载失败，请刷新重试</p></div>';
+    }
+}
+
+async function loadKLChipVersions() {
+    try {
+        const res = await klApiGet('/api/chip-versions');
+        if (res && res.success) {
+            klChipVersions = res.data || [];
+            const select = document.getElementById('uploadChipVersionSelect');
+            if (select) {
+                select.innerHTML = '<option value="">通用（不绑定芯片代系）</option>' + klChipVersions.map(chip =>
+                    `<option value="${chip.id}">${klEscapeHtml(chip.name || chip.version_key)}</option>`
+                ).join('');
+            }
+        }
+    } catch (e) {
+        klChipVersions = [];
     }
 }
 
@@ -1546,7 +1565,19 @@ function addFilesToPreview(files) {
     if (duplicateCount > 0) {
         klNotify(`已跳过 ${duplicateCount} 个同名文件`, 'warning');
     }
+    autoRecommendCategory();
     renderFilePreview();
+}
+
+function autoRecommendCategory() {
+    const categorySelect = document.getElementById('uploadFileCategory');
+    if (!categorySelect || klPendingUploadFiles.length === 0) return;
+    const ext = klPendingUploadFiles[0].name.split('.').pop().toLowerCase();
+    const categoryMap = { tcl: 'tcl_script', xml: 'svd', svd: 'svd', c: 'sdk_source', cc: 'sdk_source', cpp: 'sdk_source', h: 'sdk_header', hpp: 'sdk_header', docx: 'design', doc: 'design', pdf: 'design', xlsx: 'cli', xls: 'cli', md: 'methodology' };
+    const recommended = categoryMap[ext];
+    if (recommended) {
+        categorySelect.value = recommended;
+    }
 }
 
 function renderFilePreview() {
@@ -1736,6 +1767,15 @@ async function klHandleFileUpload(files) {
         }
         if (uploadLibraryId) {
             formData.append('libraryId', uploadLibraryId);
+        }
+        const fileCategorySelect = document.getElementById('uploadFileCategory');
+        if (fileCategorySelect && fileCategorySelect.value) {
+            formData.append('fileCategory', fileCategorySelect.value);
+        }
+
+        const chipSelect = document.getElementById('uploadChipVersionSelect');
+        if (chipSelect && chipSelect.value) {
+            formData.append('chipVersionId', chipSelect.value);
         }
 
         const progressBar = itemEl.querySelector('.upload-progress-bar');
@@ -2081,6 +2121,40 @@ function showAITargetModal(fileCount, libraryCount, moduleCount) {
     klOpenModal('aiGenerateTargetModal');
 }
 
+function handleRelearnTcl() {
+    const tclFiles = klCurrentFiles.filter(f => f.type !== 'folder' && f.file_category === 'tcl_script');
+    if (tclFiles.length === 0) {
+        klNotify('当前知识库中没有TCL脚本文件', 'warning');
+        return;
+    }
+    const fileList = tclFiles.map(f => `  - ${f.name}`).join('\n');
+    klShowConfirm(`将重新学习以下 ${tclFiles.length} 个TCL脚本文件：\n${fileList}\n\n确认继续？`, async () => {
+        try {
+            const token = localStorage.getItem('authToken') || localStorage.getItem('token');
+            if (!token) {
+                klNotify('未登录，请重新登录后再试', 'error');
+                return;
+            }
+            const fileIds = tclFiles.map(f => f.id);
+            const res = await fetch(KL_API_BASE + '/api/tcl-generation/relearn-tcl', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ fileIds })
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            await res.json();
+            klNotify('TCL重新学习任务已提交', 'success');
+            if (klCurrentModuleId) {
+                loadModuleFiles();
+            } else if (klCurrentLibraryId) {
+                loadLibraryFolderFiles();
+            }
+        } catch (e) {
+            klNotify('重新学习TCL失败: ' + e.message, 'error');
+        }
+    });
+}
+
 async function startAIGeneration(moduleId, libraryId) {
     const fileIds = Array.from(klSelectedFiles);
     const params = new URLSearchParams({
@@ -2113,8 +2187,9 @@ function initKLEventListeners() {
         document.getElementById('btnExpandSidebar').classList.remove('visible');
     });
 
-    document.getElementById('btnUpload').addEventListener('click', () => {
+    document.getElementById('btnUpload').addEventListener('click', async () => {
         populateModuleSelects();
+        await loadKLChipVersions();
         document.getElementById('uploadProgress').innerHTML = '';
         klOpenModal('uploadModal');
     });
@@ -2171,6 +2246,11 @@ function initKLEventListeners() {
         document.getElementById('crawlPassword').value = '';
         klOpenModal('crawlModal');
     });
+
+    const btnRelearnTcl = document.getElementById('btnRelearnTcl');
+    if (btnRelearnTcl) {
+        btnRelearnTcl.addEventListener('click', handleRelearnTcl);
+    }
 
     document.getElementById('btnListView').addEventListener('click', () => {
         klViewMode = 'list';

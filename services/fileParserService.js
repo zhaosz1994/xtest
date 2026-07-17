@@ -74,7 +74,7 @@ class FileParserService {
         content = await this.parsePdf(filePath);
       } else if (ext === 'pptx') {
         content = await this.parsePptx(filePath);
-      } else if (['txt', 'md'].includes(ext)) {
+      } else if (['txt', 'md', 'xml', 'svd', 'c', 'h', 'hpp', 'cpp', 'cc'].includes(ext)) {
         content = await fs.readFile(filePath, 'utf-8');
       } else if (['png', 'jpg', 'jpeg'].includes(ext)) {
         content = `[图片文件: ${file.name}]`;
@@ -88,16 +88,20 @@ class FileParserService {
 
       const chunkingResult = await this._applyChunkingStrategy(content, chunkingStrategy, options);
 
+      const fileCategory = options.fileCategory || file.file_category || null;
+      const chipVersionId = options.chipVersionId || file.chip_version_id || null;
+      let parseResult;
       if (chunkingResult.parentChild) {
         const chunkingService = require('./chunkingService');
         const saveResult = await chunkingService.saveParentChildChunks(
-          fileId, file.module_id, chunkingResult.parentChild, file.library_id
+          fileId, file.module_id, chunkingResult.parentChild, file.library_id, { chipVersionId, fileCategory }
         );
 
         await this.retryOnDeadlock(async () => {
           await pool.execute(`
-            UPDATE module_knowledge_files 
-            SET parse_status = 'parsed', 
+            UPDATE module_knowledge_files
+            SET parse_status = 'parsed',
+                review_status = 'auto_parsed',
                 chunk_count = ?,
                 total_tokens = ?,
                 chunking_strategy = ?,
@@ -106,15 +110,16 @@ class FileParserService {
           `, [saveResult.totalChunks, saveResult.totalTokens || 0, chunkingStrategy, fileId]);
         }, `更新文件解析完成状态[fileId=${fileId}]`);
 
-        return { fileId, chunkCount: saveResult.totalChunks, chunkingStrategy };
+        parseResult = { fileId, chunkCount: saveResult.totalChunks, chunkingStrategy };
       } else {
         const chunks = chunkingResult.chunks;
-        await this.saveChunks(fileId, file.module_id, chunks, file.library_id, chunkingStrategy);
+        await this.saveChunks(fileId, file.module_id, chunks, file.library_id, chunkingStrategy, { chipVersionId, fileCategory });
 
         await this.retryOnDeadlock(async () => {
           await pool.execute(`
-            UPDATE module_knowledge_files 
-            SET parse_status = 'parsed', 
+            UPDATE module_knowledge_files
+            SET parse_status = 'parsed',
+                review_status = 'auto_parsed',
                 chunk_count = ?,
                 total_tokens = ?,
                 chunking_strategy = ?,
@@ -123,8 +128,11 @@ class FileParserService {
           `, [chunks.length, chunks.reduce((sum, c) => sum + c.tokenCount, 0), chunkingStrategy, fileId]);
         }, `更新文件解析完成状态[fileId=${fileId}]`);
 
-        return { fileId, chunkCount: chunks.length, chunkingStrategy };
+        parseResult = { fileId, chunkCount: chunks.length, chunkingStrategy };
       }
+
+      await this._runTclLearningPostProcess(fileId);
+      return parseResult;
 
     } catch (error) {
       await this.retryOnDeadlock(async () => {
@@ -138,6 +146,43 @@ class FileParserService {
       });
 
       throw error;
+    }
+  }
+
+  async _runTclLearningPostProcess(fileId) {
+    try {
+      const [files] = await pool.execute(
+        'SELECT file_category, module_id FROM module_knowledge_files WHERE id = ?',
+        [fileId]
+      );
+      if (files.length > 0 && files[0].file_category === 'tcl_script') {
+        await this.retryOnDeadlock(async () => {
+          await pool.execute(
+            "UPDATE module_knowledge_files SET parse_status = 'learning' WHERE id = ?",
+            [fileId]
+          );
+        }, `更新TCL学习状态[fileId=${fileId}]`);
+
+        const tclLearningService = require('./tclLearningService');
+        await tclLearningService.analyzeFromFile(fileId, files[0].module_id);
+
+        await this.retryOnDeadlock(async () => {
+          await pool.execute(
+            "UPDATE module_knowledge_files SET parse_status = 'parsed', review_status = 'auto_parsed' WHERE id = ?",
+            [fileId]
+          );
+        }, `更新TCL学习完成状态[fileId=${fileId}]`);
+      }
+    } catch (tclError) {
+      logger.warn('TCL学习后处理失败，降级为仅原始知识块', { fileId, error: tclError.message });
+      await this.retryOnDeadlock(async () => {
+        await pool.execute(
+          "UPDATE module_knowledge_files SET parse_status = 'parsed', review_status = 'auto_parsed', parse_error = ? WHERE id = ?",
+          [`TCL学习失败: ${tclError.message}`, fileId]
+        );
+      }, `更新TCL学习降级状态[fileId=${fileId}]`).catch(err => {
+        logger.error('更新TCL学习降级状态时出错', { fileId, error: err.message });
+      });
     }
   }
 
@@ -405,9 +450,20 @@ class FileParserService {
     return Math.ceil(chineseChars * 0.6 + englishCharCount * 0.25 + numberCharCount * 0.3 + others * 0.3);
   }
 
-  async saveChunks(fileId, moduleId, chunks, libraryId, chunkingStrategy = 'structure_aware') {
+  async saveChunks(fileId, moduleId, chunks, libraryId, chunkingStrategy = 'structure_aware', options = {}) {
     return this.retryOnDeadlock(async () => {
       const connection = await pool.getConnection();
+
+      const executeWithChunkFallback = async (conn, sql, values, fallbackSql, fallbackValues) => {
+        try {
+          return await conn.execute(sql, values);
+        } catch (error) {
+          if (error.code === 'ER_BAD_FIELD_ERROR' || /Unknown column/i.test(error.message || '')) {
+            return conn.execute(fallbackSql, fallbackValues);
+          }
+          throw error;
+        }
+      };
 
       try {
         await connection.beginTransaction();
@@ -420,22 +476,30 @@ class FileParserService {
           const batchSize = 100;
           for (let i = 0; i < chunks.length; i += batchSize) {
             const batch = chunks.slice(i, i + batchSize);
-            const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+            const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+            const fallbackPlaceholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
             const values = [];
+            const fallbackValues = [];
             for (const chunk of batch) {
               const metadata = chunk.metadata || { chunkingStrategy };
-              values.push(
+              const baseValues = [
                 fileId, moduleId || null, libraryId || null,
                 chunk.chunkIndex, chunk.chunkContent, chunk.tokenCount, chunk.charCount,
                 chunkingStrategy,
                 JSON.stringify(metadata)
-              );
+              ];
+              values.push(...baseValues, options.chipVersionId || null, options.fileCategory || chunk.fileCategory || null);
+              fallbackValues.push(...baseValues);
             }
-            await connection.execute(`
+            await executeWithChunkFallback(connection, `
+              INSERT INTO ai_material_chunks
+                (file_id, module_id, library_id, chunk_index, chunk_content, token_count, char_count, chunking_strategy, metadata, chip_version_id, file_category)
+              VALUES ${placeholders}
+            `, values, `
               INSERT INTO ai_material_chunks
                 (file_id, module_id, library_id, chunk_index, chunk_content, token_count, char_count, chunking_strategy, metadata)
-              VALUES ${placeholders}
-            `, values);
+              VALUES ${fallbackPlaceholders}
+            `, fallbackValues);
           }
         }
 

@@ -440,7 +440,18 @@ class ChunkingService {
     return Math.ceil(chineseChars * 0.6 + englishCharCount * 0.25 + numberCharCount * 0.3 + others * 0.3);
   }
 
-  async saveParentChildChunks(fileId, moduleId, parentChildResult, libraryId) {
+  async _executeWithColumnFallback(connection, sql, values, fallbackSql, fallbackValues) {
+    try {
+      return await connection.execute(sql, values);
+    } catch (error) {
+      if (error.code === 'ER_BAD_FIELD_ERROR' || /Unknown column/i.test(error.message || '')) {
+        return connection.execute(fallbackSql, fallbackValues);
+      }
+      throw error;
+    }
+  }
+
+  async saveParentChildChunks(fileId, moduleId, parentChildResult, libraryId, options = {}) {
     const connection = await pool.getConnection();
 
     try {
@@ -452,7 +463,18 @@ class ChunkingService {
       let globalIndex = 0;
 
       for (const parent of parentChildResult.parents) {
-        const [result] = await connection.execute(`
+        const [result] = await this._executeWithColumnFallback(connection, `
+          INSERT INTO ai_material_chunks
+            (file_id, module_id, library_id, chunk_index, chunk_content, token_count, char_count, chunk_type, chunking_strategy, metadata, chip_version_id, file_category)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'parent', ?, ?, ?, ?)
+        `, [
+          fileId, moduleId || null, libraryId || null,
+          globalIndex, parent.chunkContent, parent.tokenCount, parent.charCount,
+          parent.metadata.chunkingStrategy,
+          JSON.stringify(parent.metadata),
+          options.chipVersionId || null,
+          options.fileCategory || parent.fileCategory || null
+        ], `
           INSERT INTO ai_material_chunks
             (file_id, module_id, library_id, chunk_index, chunk_content, token_count, char_count, chunk_type, chunking_strategy, metadata)
           VALUES (?, ?, ?, ?, ?, ?, ?, 'parent', ?, ?)
@@ -470,7 +492,19 @@ class ChunkingService {
       for (const child of parentChildResult.children) {
         const parentDbId = parentIdMap.get(child.parentId) || null;
 
-        await connection.execute(`
+        await this._executeWithColumnFallback(connection, `
+          INSERT INTO ai_material_chunks
+            (file_id, module_id, library_id, chunk_index, chunk_content, token_count, char_count, chunk_type, parent_chunk_id, chunking_strategy, metadata, chip_version_id, file_category)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'child', ?, ?, ?, ?, ?)
+        `, [
+          fileId, moduleId || null, libraryId || null,
+          globalIndex, child.chunkContent, child.tokenCount, child.charCount,
+          parentDbId,
+          child.metadata.chunkingStrategy,
+          JSON.stringify(child.metadata),
+          options.chipVersionId || null,
+          options.fileCategory || child.fileCategory || null
+        ], `
           INSERT INTO ai_material_chunks
             (file_id, module_id, library_id, chunk_index, chunk_content, token_count, char_count, chunk_type, parent_chunk_id, chunking_strategy, metadata)
           VALUES (?, ?, ?, ?, ?, ?, ?, 'child', ?, ?, ?)

@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/styles-theme.css">
     <link rel="stylesheet" href="/css/level1-points-list.css">
+    <link rel="stylesheet" href="/css/evidence-drawer.css">
 </head>
 <body>
     <div class="level1-page-container">
@@ -50,6 +51,27 @@
                         <line x1="5" y1="12" x2="19" y2="12"></line>
                     </svg>
                     <span>新建测试点</span>
+                </button>
+                <button class="btn btn-secondary" id="expand-points-btn">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"></path>
+                    </svg>
+                    <span>5维度扩展</span>
+                </button>
+                <div class="level1-adaptive-select-group">
+                    <select class="level1-adaptive-select" id="level-chip-version-select">
+                        <option value="">通用芯片</option>
+                    </select>
+                    <select class="level1-adaptive-select" id="level-execution-env-select">
+                        <option value="">默认执行环境</option>
+                    </select>
+                </div>
+                <button class="btn btn-secondary" id="generate-tcl-btn">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="16 18 22 12 16 6"></polyline>
+                        <polyline points="8 6 2 12 8 18"></polyline>
+                    </svg>
+                    <span>生成TCL</span>
                 </button>
             </div>
         </header>
@@ -316,6 +338,15 @@
     <div class="toast-container" id="toast-container"></div>
 
     <script src="/js/modules/core/apiClient.js"></script>
+    <div class="evidence-drawer-overlay" id="evidence-drawer-overlay"></div>
+    <aside class="evidence-drawer" id="evidence-drawer">
+        <div class="evidence-drawer-header">
+            <h2>证据链</h2>
+            <button class="evidence-drawer-close" id="evidence-drawer-close" type="button">✕</button>
+        </div>
+        <div class="evidence-drawer-content" id="evidence-drawer-content"></div>
+    </aside>
+
     <script src="/js/level1-points-list.js"></script>
 </body>
 </html>

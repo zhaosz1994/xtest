@@ -279,6 +279,7 @@ const Router = {
         'reports': { section: 'reports', title: '测试报告', requiresAuth: true },
         'knowledge': { section: 'knowledge', title: '知识库', requiresAuth: true },
         'ai-generation': { section: 'ai-generation', title: 'AI生成', requiresAuth: true },
+        'agent-console': { section: 'agent-console', title: 'Agent控制台', requiresAuth: true },
         'settings': { section: 'settings', title: '配置中心', requiresAuth: true },
         'login': { section: 'login', title: '登录', requiresAuth: false },
         'register': { section: 'register', title: '注册', requiresAuth: false }
@@ -455,6 +456,9 @@ const Router = {
                 if (typeof initAIGeneration === 'function') initAIGeneration();
                 // 从知识库跳转时自动填充上下文
                 if (typeof applyAIGenerationContext === 'function') applyAIGenerationContext();
+                break;
+            case 'agent-console':
+                if (typeof initAgentConsole === 'function') initAgentConsole();
                 break;
             case 'dashboard':
                 loadRecentLogins();
@@ -6572,7 +6576,7 @@ let currentEditingTestCase = null;
 
 async function loadTestCaseToDrawer(testCaseId) {
     try {
-        const response = await apiRequest(`/testcases/${testCaseId}`);
+        const response = await apiRequest(`/testcases/${testCaseId}`, { useCache: false });
         
         if (response.success && response.testCase) {
             currentEditingTestCase = response.testCase;
@@ -6996,7 +7000,7 @@ async function loadDrawerReviewHistory(caseId) {
     }
 
     try {
-        const response = await apiRequest(`/testcases/${caseId}/review-history`);
+        const response = await apiRequest(`/testcases/${caseId}/review-history`, { useCache: false });
 
         if (response.success && response.data) {
             const data = response.data;
@@ -7462,7 +7466,7 @@ async function deleteDrawerScript(scriptId) {
 
 async function loadDrawerScripts(testCaseId) {
     try {
-        const response = await apiRequest(`/testcases/${testCaseId}/scripts`);
+        const response = await apiRequest(`/testcases/${testCaseId}/scripts`, { useCache: false });
         if (response.success && response.scripts) {
             drawerCurrentScripts = response.scripts;
         } else {
@@ -7679,7 +7683,7 @@ async function submitDrawerExecutionRecord() {
 }
 
 async function loadDrawerExecutionRecords(testCaseId) {
-    if (!testCaseId) {
+    if (!testCaseId || isNaN(parseInt(testCaseId))) {
         return;
     }
     try {
@@ -7703,6 +7707,7 @@ function invalidateLevel1CacheForTestCase(testCaseId) {
         if (currentEditingTestCase.level1_id) {
             delete level1TestCasesCache[currentEditingTestCase.level1_id];
         }
+        apiCache.delete(`/testcases/${testCaseId}`);
         DataEventManager.emit(DataEvents.EXECUTION_RECORD_CHANGED, {
             action: 'update',
             caseId: testCaseId
@@ -9694,6 +9699,11 @@ async function submitExecutionRecord() {
 // 加载执行记录
 async function loadExecutionRecords(caseId) {
     try {
+        if (!caseId || isNaN(parseInt(caseId))) {
+            window.currentExecutionRecords = [];
+            renderExecutionRecords([]);
+            return;
+        }
         const response = await apiRequest(`/testpoints/execution-records/${caseId}`, { useCache: false });
 
         if (response.success && response.records) {
@@ -33051,7 +33061,7 @@ function closeRejectReviewModal() {
 async function loadReviewHistory(caseId) {
     currentReviewCaseId = caseId;
     try {
-        const response = await apiRequest(`/testcases/${caseId}/review-history`);
+        const response = await apiRequest(`/testcases/${caseId}/review-history`, { useCache: false });
         
         if (currentReviewCaseId !== caseId) {
             return;
@@ -33854,11 +33864,15 @@ function handleUrlAction() {
         // 处理单个用例评审
         const newUrl = window.location.pathname;
         window.history.replaceState({}, document.title, newUrl);
-        
+        const parsedCaseId = parseInt(caseId);
+
         setTimeout(() => {
             if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
-                // 已登录，打开用例详情页面
-                openTestCaseDetailModal({ id: parseInt(caseId) });
+                if (isNaN(parsedCaseId)) {
+                    showErrorMessage('无效的用例ID: ' + caseId);
+                    return;
+                }
+                openTestCaseDetailModal({ id: parsedCaseId });
             } else {
             }
         }, 1000);
@@ -33866,10 +33880,15 @@ function handleUrlAction() {
         // 查看用例详情
         const newUrl = window.location.pathname;
         window.history.replaceState({}, document.title, newUrl);
-        
+        const parsedCaseId = parseInt(caseId);
+
         setTimeout(() => {
             if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
-                openTestCaseDetailModal({ id: parseInt(caseId) });
+                if (isNaN(parsedCaseId)) {
+                    showErrorMessage('无效的用例ID: ' + caseId);
+                    return;
+                }
+                openTestCaseDetailModal({ id: parsedCaseId });
             } else {
             }
         }, 1000);

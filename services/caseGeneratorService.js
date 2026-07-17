@@ -6,6 +6,7 @@ const aiAuditLogger = require('./aiAuditLogger');
 const aiRequestLogger = require('./aiRequestLogger');
 const { callAIStreamWithRetry, buildAIHeaders } = require('./aiCallWrapper');
 const level1PointService = require('./level1PointService');
+const chipContextService = require('./chipContextService');
 
 class CaseGeneratorService {
   constructor() {
@@ -21,7 +22,7 @@ class CaseGeneratorService {
     this.runningTasks.add(taskId);
     logger.debug('executeMapPhase 开始处理任务', { taskId });
 
-    const { globalContext = '', allValidLevel1 = [] } = globalAwareness;
+    const { globalContext = '', allValidLevel1 = [], chipPromptContext = '' } = globalAwareness;
 
     try {
     const [tasks] = await pool.execute(`
@@ -61,6 +62,11 @@ class CaseGeneratorService {
       const placeholders = selectedFiles.map(() => '?').join(',');
       sql += ` AND f.id IN (${placeholders})`;
       params.push(...selectedFiles);
+    }
+
+    if (task.chip_version_id) {
+      sql += ` AND (c.chip_version_id IS NULL OR c.chip_version_id = ?)`;
+      params.push(task.chip_version_id);
     }
 
     sql += ` ORDER BY c.chunk_index ASC`;
@@ -263,10 +269,12 @@ class CaseGeneratorService {
 
   async generateCasesFromChunk(chunk, task, config, agentPrompt, chunkContext = {}, globalAwareness = {}) {
     const { globalContext = '', allValidLevel1 = [] } = globalAwareness;
+    const chipPromptContext = task.chip_version_id ? await chipContextService.buildPromptContext({ chipVersionId: task.chip_version_id }) : '';
+    const enhancedGlobalAwareness = { ...globalAwareness, chipPromptContext };
     const systemPrompt = agentPrompt?.system || this.getDefaultSystemPrompt();
     const userPrompt = agentPrompt?.userTemplate 
-      ? this.applyTemplate(agentPrompt.userTemplate, chunk, task, config, chunkContext, globalAwareness)
-      : this.buildPrompt(chunk, task, config, chunkContext, globalAwareness);
+      ? this.applyTemplate(agentPrompt.userTemplate, chunk, task, config, chunkContext, enhancedGlobalAwareness)
+      : this.buildPrompt(chunk, task, config, chunkContext, enhancedGlobalAwareness);
 
     const generateStartTime = Date.now();
 
@@ -393,7 +401,7 @@ class CaseGeneratorService {
   }
 
   buildPrompt(chunk, task, config, chunkContext = {}, globalAwareness = {}) {
-    const { globalContext = '', allValidLevel1 = [] } = globalAwareness;
+    const { globalContext = '', allValidLevel1 = [], chipPromptContext = '' } = globalAwareness;
     const caseLimit = config.caseCountLimit || 20;
 
     let contextSection = '';
@@ -414,6 +422,9 @@ class CaseGeneratorService {
     let globalContextSection = '';
     if (globalContext) {
       globalContextSection = `\n## 全局系统背景\n${globalContext}\n`;
+    }
+    if (chipPromptContext) {
+      globalContextSection += `\n${chipPromptContext}\n`;
     }
 
     let level1Section = '';
@@ -458,7 +469,7 @@ remark: 备注(可选，无则不输出此行)`;
   }
 
   applyTemplate(template, chunk, task, config, chunkContext = {}, globalAwareness = {}) {
-    const { globalContext = '', allValidLevel1 = [] } = globalAwareness;
+    const { globalContext = '', allValidLevel1 = [], chipPromptContext = '' } = globalAwareness;
     const moduleDesc = task.module_desc || task.module_name || '无';
     const focusAreas = (config.focusAreas || []).join(', ');
     const caseLimit = config.caseCountLimit || 20;
@@ -494,6 +505,11 @@ remark: 备注(可选，无则不输出此行)`;
       level1EnumStr = allValidLevel1.map((p, i) => `${i + 1}. ${p.name}`).join('\n');
     }
 
+    let effectiveGlobalContext = globalContext;
+    if (chipPromptContext) {
+      effectiveGlobalContext = effectiveGlobalContext ? `${effectiveGlobalContext}\n\n${chipPromptContext}` : chipPromptContext;
+    }
+
     const result = template
       .replace(/\{\{module_name\}\}/g, task.module_name)
       .replace(/\{\{module_description\}\}/g, moduleDesc)
@@ -506,7 +522,9 @@ remark: 备注(可选，无则不输出此行)`;
       .replace(/\{\{next_context\}\}/g, nextContextStr)
       .replace(/\{\{adjacent_context\}\}/g, adjacentContext)
       .replace(/\{\{parent_context\}\}/g, parentContextStr)
-      .replace(/\{\{global_context\}\}/g, globalContext)
+      .replace(/\{\{global_context\}\}/g, effectiveGlobalContext)
+      .replace(/\{\{chip_context\}\}/g, chipPromptContext)
+      .replace(/\{\{chipPromptContext\}\}/g, chipPromptContext)
       .replace(/\{\{level1_enum\}\}/g, level1EnumStr)
       .replace(/\{\{context\}\}/g, context);
     
@@ -1127,18 +1145,36 @@ remark: 备注(可选，无则不输出此行)`;
       focusAreas: options.focusAreas || [],
       level1Mode: options.level1Mode || 'auto',
       selectedLevel1Ids: options.selectedLevel1Ids || [],
-      chunkingStrategy: options.chunkingStrategy || 'structure_aware'
+      chunkingStrategy: options.chunkingStrategy || 'structure_aware',
+      chipVersionId: options.chipVersionId || options.chip_version_id || null
     };
 
-    const [result] = await pool.execute(`
-      INSERT INTO ai_case_generation_tasks 
-        (task_id, module_id, library_id, user_id, config, selected_files, agent_id,
-         expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY))
-    `, [taskId, moduleId, options.libraryId || null, userId,
-        JSON.stringify(config),
-        JSON.stringify(options.selectedFiles || []),
-        options.agentId || null]);
+    let result;
+    try {
+      [result] = await pool.execute(`
+        INSERT INTO ai_case_generation_tasks 
+          (task_id, module_id, library_id, user_id, config, selected_files, agent_id,
+           chip_version_id, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY))
+      `, [taskId, moduleId, options.libraryId || null, userId,
+          JSON.stringify(config),
+          JSON.stringify(options.selectedFiles || []),
+          options.agentId || null,
+          config.chipVersionId]);
+    } catch (error) {
+      if (error.code !== 'ER_BAD_FIELD_ERROR' && !/Unknown column/i.test(error.message)) {
+        throw error;
+      }
+      [result] = await pool.execute(`
+        INSERT INTO ai_case_generation_tasks 
+          (task_id, module_id, library_id, user_id, config, selected_files, agent_id,
+           expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY))
+      `, [taskId, moduleId, options.libraryId || null, userId,
+          JSON.stringify(config),
+          JSON.stringify(options.selectedFiles || []),
+          options.agentId || null]);
+    }
 
     return { taskId, id: result.insertId };
   }

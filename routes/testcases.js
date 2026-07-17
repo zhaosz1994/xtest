@@ -1769,7 +1769,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
         
         const testCase = testCases[0];
         
-        const [environments, phases, methods, projects, executionRecords] = await Promise.all([
+        const [[environments], [phases], [methods], [projects], [executionRecords]] = await Promise.all([
             pool.execute(`
                 SELECT e.id, e.name
                 FROM test_case_environments tce

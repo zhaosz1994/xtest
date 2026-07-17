@@ -8,6 +8,7 @@ const Router = {
         'settings': { section: 'settings', title: '配置中心', requiresAuth: true },
         'knowledge': { section: 'knowledge', title: '知识库', requiresAuth: true },
         'ai-generation': { section: 'ai-generation', title: 'AI生成', requiresAuth: true },
+        'agent-console': { section: 'agent-console', title: 'Agent控制台', requiresAuth: true },
         'login': { section: 'login', title: '登录', requiresAuth: false },
         'register': { section: 'register', title: '注册', requiresAuth: false }
     },
@@ -177,6 +178,9 @@ const Router = {
             case 'ai-generation':
                 if (typeof initAIGeneration === 'function') initAIGeneration();
                 if (typeof applyAIGenerationContext === 'function') applyAIGenerationContext();
+                break;
+            case 'agent-console':
+                if (typeof initAgentConsole === 'function') initAgentConsole();
                 break;
             case 'dashboard':
                 loadRecentLogins();

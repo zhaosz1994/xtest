@@ -1,0 +1,19 @@
+{
+  "agent_type": "ai",
+  "name": "test_hunter",
+  "description": "测试执行Agent，负责执行测试用例并捕获输出",
+  "tools": ["sdk_cli_tool_service", "traffic_tool_service"],
+  "input_contract": {
+    "prereq": [
+      { "node": "test_dispatch", "state_key": "retestCount" }
+    ],
+    "handoff": ["test_dispatch"],
+    "accumulating": ["cliResults", "trafficStats"],
+    "writes": ["testResults", "cliResults"]
+  },
+  "parameters": {
+    "timeout_per_command_ms": 30000,
+    "max_parallel_sessions": 3,
+    "capture_output": true
+  }
+}

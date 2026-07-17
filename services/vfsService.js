@@ -113,7 +113,59 @@ class VFSService {
     return result.insertId;
   }
 
-  async uploadFile(file, moduleId, parentId, userId, libraryId) {
+  _isUnknownColumnError(error) {
+    return error && (error.code === 'ER_BAD_FIELD_ERROR' || /Unknown column/i.test(error.message || ''));
+  }
+
+  async _insertKnowledgeFile(connection, fileData, options = {}) {
+    const fileCategory = options.fileCategory || null;
+    const chipVersionId = options.chipVersionId || null;
+    const hasExtendedFields = fileCategory || chipVersionId;
+
+    if (hasExtendedFields) {
+      try {
+        return await connection.execute(`
+          INSERT INTO module_knowledge_files
+            (library_id, module_id, parent_id, name, type, file_path, file_size,
+             file_ext, mime_type, created_by, file_category, chip_version_id)
+          VALUES (?, ?, ?, ?, 'file', ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          fileData.libraryId || null,
+          fileData.moduleId || null,
+          fileData.parentId || null,
+          fileData.name,
+          fileData.relativePath,
+          fileData.size,
+          fileData.fileExt,
+          fileData.mimeType,
+          fileData.userId,
+          fileCategory,
+          chipVersionId
+        ]);
+      } catch (error) {
+        if (!this._isUnknownColumnError(error)) throw error;
+      }
+    }
+
+    return connection.execute(`
+      INSERT INTO module_knowledge_files
+        (library_id, module_id, parent_id, name, type, file_path, file_size,
+         file_ext, mime_type, created_by)
+      VALUES (?, ?, ?, ?, 'file', ?, ?, ?, ?, ?)
+    `, [
+      fileData.libraryId || null,
+      fileData.moduleId || null,
+      fileData.parentId || null,
+      fileData.name,
+      fileData.relativePath,
+      fileData.size,
+      fileData.fileExt,
+      fileData.mimeType,
+      fileData.userId
+    ]);
+  }
+
+  async uploadFile(file, moduleId, parentId, userId, libraryId, options = {}) {
     const fileUuid = uuidv4();
     const fileExt = path.extname(file.originalname).slice(1).toLowerCase();
     const effectiveModuleId = moduleId || 'library_' + (libraryId || 'unknown');
@@ -130,20 +182,26 @@ class VFSService {
 
       await fs.writeFile(absolutePath, file.buffer);
 
-      const [result] = await connection.execute(`
-        INSERT INTO module_knowledge_files
-          (library_id, module_id, parent_id, name, type, file_path, file_size,
-           file_ext, mime_type, created_by)
-        VALUES (?, ?, ?, ?, 'file', ?, ?, ?, ?, ?)
-      `, [libraryId || null, moduleId || null, parentId || null, file.originalname, relativePath,
-          file.size, fileExt, file.mimetype, userId]);
+      const [result] = await this._insertKnowledgeFile(connection, {
+        libraryId,
+        moduleId,
+        parentId,
+        name: file.originalname,
+        relativePath,
+        size: file.size,
+        fileExt,
+        mimeType: file.mimetype,
+        userId
+      }, options);
 
       await connection.commit();
 
       const fileId = result.insertId;
 
-      const FileParserService = require('./fileParserService');
-      FileParserService.asyncParseFile(fileId);
+      if (!options.skipAutoParse) {
+        const FileParserService = require('./fileParserService');
+        FileParserService.asyncParseFile(fileId);
+      }
 
       return { fileId, path: relativePath };
 
@@ -187,7 +245,7 @@ class VFSService {
     };
   }
 
-  async overwriteFile(existingFileId, newFile, moduleId, parentId, userId, libraryId) {
+  async overwriteFile(existingFileId, newFile, moduleId, parentId, userId, libraryId, options = {}) {
     const connection = await pool.getConnection();
 
     try {
@@ -213,18 +271,24 @@ class VFSService {
       await fs.mkdir(dirPath, { recursive: true });
       await fs.writeFile(absolutePath, newFile.buffer);
 
-      const [result] = await connection.execute(`
-        INSERT INTO module_knowledge_files
-          (library_id, module_id, parent_id, name, type, file_path, file_size,
-           file_ext, mime_type, created_by)
-        VALUES (?, ?, ?, ?, 'file', ?, ?, ?, ?, ?)
-      `, [libraryId || null, moduleId || null, parentId || null, newFile.originalname, relativePath,
-          newFile.size, fileExt, newFile.mimetype, userId]);
+      const [result] = await this._insertKnowledgeFile(connection, {
+        libraryId,
+        moduleId,
+        parentId,
+        name: newFile.originalname,
+        relativePath,
+        size: newFile.size,
+        fileExt,
+        mimeType: newFile.mimetype,
+        userId
+      }, options);
 
       await connection.commit();
 
-      const FileParserService = require('./fileParserService');
-      FileParserService.asyncParseFile(result.insertId);
+      if (!options.skipAutoParse) {
+        const FileParserService = require('./fileParserService');
+        FileParserService.asyncParseFile(result.insertId);
+      }
 
       return { fileId: result.insertId, action: 'overwrite' };
 
@@ -236,7 +300,7 @@ class VFSService {
     }
   }
 
-  async coexistFile(newFile, moduleId, parentId, userId, libraryId) {
+  async coexistFile(newFile, moduleId, parentId, userId, libraryId, options = {}) {
     const fileUuid = uuidv4();
     const fileExt = path.extname(newFile.originalname).slice(1).toLowerCase();
     const effectiveModuleId = moduleId || 'library_' + (libraryId || 'unknown');
@@ -251,18 +315,24 @@ class VFSService {
       await connection.beginTransaction();
       await fs.writeFile(absolutePath, newFile.buffer);
 
-      const [result] = await connection.execute(`
-        INSERT INTO module_knowledge_files
-          (library_id, module_id, parent_id, name, type, file_path, file_size,
-           file_ext, mime_type, created_by)
-        VALUES (?, ?, ?, ?, 'file', ?, ?, ?, ?, ?)
-      `, [libraryId || null, moduleId || null, parentId || null, newFile.originalname, relativePath,
-          newFile.size, fileExt, newFile.mimetype, userId]);
+      const [result] = await this._insertKnowledgeFile(connection, {
+        libraryId,
+        moduleId,
+        parentId,
+        name: newFile.originalname,
+        relativePath,
+        size: newFile.size,
+        fileExt,
+        mimeType: newFile.mimetype,
+        userId
+      }, options);
 
       await connection.commit();
 
-      const FileParserService = require('./fileParserService');
-      FileParserService.asyncParseFile(result.insertId);
+      if (!options.skipAutoParse) {
+        const FileParserService = require('./fileParserService');
+        FileParserService.asyncParseFile(result.insertId);
+      }
 
       return { fileId: result.insertId, action: 'coexist' };
     } catch (error) {

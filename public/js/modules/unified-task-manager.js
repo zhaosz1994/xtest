@@ -978,7 +978,13 @@
 
   window.cancelAITask = async function(taskId) {
     var confirmFn = window.showConfirmMessage || function(msg) {
-      return Promise.resolve(confirm(msg));
+      return new Promise(function(resolve) {
+        if (typeof window.showConfirmModal === 'function') {
+          window.showConfirmModal(msg, resolve);
+        } else {
+          resolve(false);
+        }
+      });
     };
     var confirmed = await confirmFn('确定要取消该任务吗？正在处理的进度将丢失。');
     if (!confirmed) return;

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>芯片迁移中心 - xTest</title>
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/styles-theme.css">
+    <link rel="stylesheet" href="/css/chip-migration.css">
+</head>
+<body>
+    <main class="chip-migration-page">
+        <header class="chip-migration-header">
+            <div>
+                <h1>芯片迁移中心</h1>
+                <p>对比芯片代系差异，识别可继承测试点与高风险知识。</p>
+            </div>
+            <button class="chip-migration-back" id="migration-back-btn" type="button">返回</button>
+        </header>
+
+        <section class="chip-migration-controls">
+            <label>源芯片
+                <select id="source-chip-select"></select>
+            </label>
+            <label>目标芯片
+                <select id="target-chip-select"></select>
+            </label>
+            <button id="run-diff-btn" type="button">分析差异</button>
+            <button id="create-migration-task-btn" type="button">一键创建迁移任务</button>
+        </section>
+
+        <section class="chip-migration-grid">
+            <article class="migration-card">
+                <h2>SVD差异</h2>
+                <div id="svd-diff-content" class="migration-content">请选择源/目标芯片后分析。</div>
+            </article>
+            <article class="migration-card">
+                <h2>SDK差异</h2>
+                <div id="sdk-diff-content" class="migration-content">请选择源/目标芯片后分析。</div>
+            </article>
+            <article class="migration-card">
+                <h2>可继承测试点</h2>
+                <div id="inherit-points-content" class="migration-content">待分析。</div>
+            </article>
+            <article class="migration-card">
+                <h2>需重生成脚本</h2>
+                <div id="regen-scripts-content" class="migration-content">待分析。</div>
+            </article>
+            <article class="migration-card migration-card-wide">
+                <h2>高风险 Bug-RAG</h2>
+                <div id="bug-rag-content" class="migration-content">待分析。</div>
+            </article>
+        </section>
+    </main>
+    <div id="migration-toast-container" class="migration-toast-container"></div>
+    <script src="/js/chip-migration.js"></script>
+</body>
+</html>

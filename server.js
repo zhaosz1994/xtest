@@ -149,6 +149,7 @@ app.use('/api', require('./routes/scripts'));
 app.use('/api/workspace', require('./routes/workspace'));
 app.use('/api', require('./routes/search'));
 app.use('/api/knowledge', require('./routes/knowledge'));
+app.use('/api/tcl-generation', require('./routes/tclGeneration'));
 app.use('/api/ai-generation', require('./routes/aiGeneration'));
 app.use('/api/ai-tasks', require('./routes/aiTasks'));
 app.use('/api/temp-cases', require('./routes/tempCases'));
@@ -159,6 +160,27 @@ app.use('/api/ai-memories', require('./routes/aiMemories'));
 app.use('/api/ai-review', require('./routes/aiReview'));
 app.use('/api/ai-qa', require('./routes/aiQA'));
 app.use('/api/ai-import', require('./routes/aiImportOptimize'));
+app.use('/api/chip-versions', require('./routes/chipVersions'));
+app.use('/api/svd', require('./routes/svd'));
+app.use('/api/sdk-ast', require('./routes/sdkAst'));
+app.use('/api/bug-rag', require('./routes/bugRag'));
+app.use('/api/adaptive-generation', require('./routes/adaptiveGeneration'));
+app.use('/api/execution-environments', require('./routes/executionEnvironments'));
+app.use('/api/agent-console', require('./routes/agentConsole'));
+app.use('/api/resource-scheduler', require('./routes/resourceScheduler'));
+app.use('/api/traffic-agent', require('./routes/trafficAgent'));
+app.use('/api/sdk-cli-agent', require('./routes/sdkCliAgent'));
+app.use('/api/bug-learning', require('./routes/bugLearning'));
+app.use('/api/agent-catalog', require('./routes/agentCatalog'));
+app.use('/api/agent-tools', require('./routes/agentTools'));
+app.use('/api/diagram', require('./routes/diagramUpload'));
+app.use('/api/agent-pipeline', require('./routes/agentPipeline'));
+
+// CTA: 声明式工作流 + 深度测试 + 硬约束 + SSH 真机交互
+app.use('/api/workflow', require('./routes/workflow'));
+app.use('/api/constraints', require('./routes/constraints'));
+app.use('/api/ssh', require('./routes/ssh'));
+app.use('/api/deep-test', require('./routes/deepTest'));
 
 app.get('/api/audit-logs', authenticateToken, requireAdmin, async (req, res) => {
     try {
@@ -7245,6 +7267,287 @@ async function initDatabase() {
         logger.warn('AI Agent/工具使用日志表创建警告:', { error: agentLogError.message });
       }
 
+      // ========== CTA-v2 自动迁移 ==========
+      try {
+        logger.info('开始执行 CTA-v2 自动迁移...');
+
+        // 判断是否可忽略的错误（列已存在、索引已存在等）
+        const isIgnorableError = (err) => {
+          const ignorableCodes = ['ER_DUP_FIELDNAME', 'ER_DUP_KEYNAME', 'ER_MULTIPLE_PRI_KEY'];
+          const ignorableMessages = ['Duplicate column', 'Duplicate key', 'already exists'];
+          if (ignorableCodes.includes(err.code)) return true;
+          if (err.message && ignorableMessages.some(m => err.message.includes(m))) return true;
+          return false;
+        };
+
+        // 执行单条 SQL，忽略"已存在"错误
+        const safeExec = async (sql, label) => {
+          try {
+            await connection.execute(sql);
+            logger.info(`迁移: ${label} - OK`);
+          } catch (err) {
+            if (isIgnorableError(err)) {
+              logger.info(`迁移: ${label} - 已存在，跳过`);
+            } else {
+              logger.warn(`迁移: ${label} - 警告: ${err.message}`);
+            }
+          }
+        };
+
+        // 1. 工作流定义表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS workflow_definitions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            workflow_type VARCHAR(100) NOT NULL,
+            name VARCHAR(200) NOT NULL,
+            description TEXT,
+            definition_json LONGTEXT NOT NULL,
+            version INT DEFAULT 1,
+            status ENUM('active','inactive','draft','archived') DEFAULT 'active',
+            created_by INT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_workflow_type_version (workflow_type, version)
+          )
+        `);
+
+        // 2. 工作流实例表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS workflow_instances (
+            instance_id VARCHAR(100) PRIMARY KEY,
+            task_id VARCHAR(128) NOT NULL,
+            workflow_type VARCHAR(100) NOT NULL DEFAULT 'default',
+            definition_version INT DEFAULT 1,
+            status ENUM('pending','running','paused','awaiting_approval','completed','failed','cancelled') DEFAULT 'pending',
+            context_json LONGTEXT,
+            result_json LONGTEXT,
+            current_node VARCHAR(100),
+            loop_count_json JSON,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP NULL,
+            error_message TEXT,
+            created_by INT,
+            INDEX idx_workflow_instances_task (task_id),
+            INDEX idx_workflow_instances_status (status)
+          )
+        `);
+
+        // 3. 硬约束表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS hard_constraints (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            task_id VARCHAR(128) NOT NULL,
+            constraint_type ENUM('register','state_machine','parameter_matrix') NOT NULL,
+            constraint_key VARCHAR(200) NOT NULL,
+            constraint_value JSON,
+            source_doc VARCHAR(500),
+            coverage_status ENUM('pending','covered','uncovered') DEFAULT 'pending',
+            coverage_evidence TEXT,
+            covered_by_case_id INT,
+            covered_at TIMESTAMP NULL,
+            checked_at TIMESTAMP NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_hard_constraints_task (task_id),
+            INDEX idx_hard_constraints_type (constraint_type),
+            INDEX idx_hard_constraints_status (coverage_status)
+          )
+        `);
+
+        // 4. SSH 会话表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS ssh_sessions (
+            session_id VARCHAR(100) PRIMARY KEY,
+            host VARCHAR(200) NOT NULL,
+            port INT DEFAULT 22,
+            username VARCHAR(100) NOT NULL,
+            device_type VARCHAR(50) DEFAULT 'generic',
+            resource_id VARCHAR(128),
+            task_id VARCHAR(128),
+            status ENUM('active','error','closed','expired') DEFAULT 'active',
+            reconnect_count INT DEFAULT 0,
+            last_reconnect_at TIMESTAMP NULL,
+            closed_at TIMESTAMP NULL,
+            created_by INT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_ssh_sessions_task (task_id),
+            INDEX idx_ssh_sessions_status (status)
+          )
+        `);
+
+        // 5. SDK 快照表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS sdk_snapshots (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            session_id VARCHAR(100) NOT NULL,
+            task_id VARCHAR(128),
+            snapshot_type VARCHAR(50) DEFAULT 'config',
+            config_json LONGTEXT,
+            diff_json LONGTEXT,
+            created_by INT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_sdk_snapshots_session (session_id),
+            INDEX idx_sdk_snapshots_task (task_id)
+          )
+        `);
+
+        // 6. 测试用例表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS test_cases (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            task_id VARCHAR(128) NOT NULL DEFAULT '',
+            testpoint_id INT NULL,
+            name VARCHAR(200) NOT NULL,
+            description TEXT NULL,
+            command_list JSON NULL,
+            expected_result JSON NULL,
+            actual_output JSON NULL,
+            priority INT DEFAULT 5,
+            path_type VARCHAR(32) DEFAULT 'cli_command',
+            status ENUM('pending','running','pass','fail','error','skipped') DEFAULT 'pending',
+            output LONGTEXT NULL,
+            execution_time_ms INT NULL,
+            retest_count INT DEFAULT 0,
+            created_by INT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            executed_at TIMESTAMP NULL,
+            INDEX idx_test_cases_task (task_id),
+            INDEX idx_test_cases_status (status),
+            INDEX idx_test_cases_testpoint (testpoint_id)
+          )
+        `);
+
+        // 7. 测试Bug表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS test_bugs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            task_id VARCHAR(128) NOT NULL DEFAULT '',
+            test_case_id INT NULL,
+            bug_type VARCHAR(50) DEFAULT 'other',
+            severity VARCHAR(20) DEFAULT 'minor',
+            description TEXT NULL,
+            path_a VARCHAR(200) NULL,
+            path_a_result TEXT NULL,
+            path_b VARCHAR(200) NULL,
+            path_results JSON NULL,
+            status ENUM('open','confirmed','fixed','wontfix') DEFAULT 'open',
+            created_by INT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_test_bugs_task (task_id),
+            INDEX idx_test_bugs_case (test_case_id),
+            INDEX idx_test_bugs_status (status)
+          )
+        `);
+
+        // 8. Agent 配置表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS agent_configs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            agent_name VARCHAR(100) NOT NULL,
+            agent_type VARCHAR(50) DEFAULT 'ai',
+            config_json JSON NOT NULL,
+            soul_md LONGTEXT,
+            user_md LONGTEXT,
+            version INT DEFAULT 1,
+            status ENUM('active','inactive','draft') DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_agent_name_version (agent_name, version),
+            INDEX idx_agent_configs_name (agent_name)
+          )
+        `);
+
+        // 9. 知识沉淀表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS knowledge_artifacts (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            task_id VARCHAR(128) NOT NULL,
+            artifact_type ENUM('design_understanding','test_plan','test_results','coverage_report','lessons_learned','cross_validation') NOT NULL,
+            title VARCHAR(500),
+            content LONGTEXT,
+            metadata_json JSON,
+            embedding LONGBLOB NULL,
+            embedding_status ENUM('pending','processing','completed','failed') DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_knowledge_artifacts_task (task_id),
+            INDEX idx_knowledge_artifacts_type (artifact_type)
+          )
+        `);
+
+        // 10. 补列（fixup 迁移）
+        const fixupStatements = [
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN task_id VARCHAR(128) NOT NULL DEFAULT \'\''],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN testpoint_id INT NULL'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN description TEXT NULL'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN command_list JSON NULL'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN expected_result JSON NULL'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN actual_output JSON NULL'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN priority INT DEFAULT 5'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN path_type VARCHAR(32) DEFAULT \'cli_command\''],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN retest_count INT DEFAULT 0'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN output LONGTEXT NULL'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN execution_time_ms INT NULL'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN executed_at TIMESTAMP NULL'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN created_by INT NULL'],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN task_id VARCHAR(128) NOT NULL DEFAULT \'\''],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN test_case_id INT NULL'],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN bug_type VARCHAR(50) DEFAULT \'other\''],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN severity VARCHAR(20) DEFAULT \'minor\''],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN description TEXT NULL'],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN path_a VARCHAR(200) NULL'],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN path_a_result TEXT NULL'],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN path_b VARCHAR(200) NULL'],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN path_results JSON NULL'],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN created_by INT NULL'],
+          ['hard_constraints', 'ALTER TABLE hard_constraints ADD COLUMN source_doc VARCHAR(500) NULL'],
+          ['hard_constraints', 'ALTER TABLE hard_constraints ADD COLUMN coverage_evidence TEXT NULL'],
+          ['hard_constraints', 'ALTER TABLE hard_constraints ADD COLUMN covered_by_case_id INT NULL'],
+          ['hard_constraints', 'ALTER TABLE hard_constraints ADD COLUMN covered_at TIMESTAMP NULL'],
+          ['hard_constraints', 'ALTER TABLE hard_constraints ADD COLUMN checked_at TIMESTAMP NULL'],
+          ['agent_tasks', 'ALTER TABLE agent_tasks ADD COLUMN workflow_type VARCHAR(100) DEFAULT \'default\''],
+          ['agent_tasks', 'ALTER TABLE agent_tasks ADD COLUMN workflow_instance_id VARCHAR(100) NULL'],
+          ['agent_tool_registry', 'ALTER TABLE agent_tool_registry ADD COLUMN timeout_ms INT DEFAULT 30000'],
+          ['agent_tool_registry', 'ALTER TABLE agent_tool_registry ADD COLUMN handler VARCHAR(200) NULL'],
+          ['workflow_instances', 'ALTER TABLE workflow_instances ADD COLUMN definition_version INT DEFAULT 1'],
+          ['workflow_instances', 'ALTER TABLE workflow_instances ADD COLUMN result_json LONGTEXT NULL'],
+          ['workflow_instances', 'ALTER TABLE workflow_instances ADD COLUMN loop_count_json JSON NULL'],
+          ['ssh_sessions', 'ALTER TABLE ssh_sessions ADD COLUMN reconnect_count INT DEFAULT 0'],
+          ['ssh_sessions', 'ALTER TABLE ssh_sessions ADD COLUMN last_reconnect_at TIMESTAMP NULL'],
+          ['ssh_sessions', 'ALTER TABLE ssh_sessions ADD COLUMN closed_at TIMESTAMP NULL'],
+          ['knowledge_artifacts', 'ALTER TABLE knowledge_artifacts ADD COLUMN embedding LONGBLOB NULL'],
+          ['knowledge_artifacts', 'ALTER TABLE knowledge_artifacts ADD COLUMN embedding_status ENUM(\'pending\',\'processing\',\'completed\',\'failed\') DEFAULT \'pending\''],
+        ];
+        for (const [table, sql] of fixupStatements) {
+          await safeExec(sql, `补列 ${table}`);
+        }
+
+        // 11. 工作流种子数据
+        try {
+          await connection.execute(`
+            INSERT INTO workflow_definitions (workflow_type, name, description, definition_json, version, status)
+            VALUES ('default', '默认测试工作流', '完整的深度测试闭环工作流', '{"nodes":[{"id":"env_prepare","label":"环境准备","handler":"env_prepare","agent":"env_preparer"},{"id":"learn_context","label":"学习上下文","handler":"learn_context","agent":"context_learner"},{"id":"approval_gate","label":"审批门控","handler":"approval_gate","agent":"approver","requires_approval":true},{"id":"test_dispatch","label":"测试派发","handler":"test_dispatch","agent":"test_dispatcher"},{"id":"test_hunt","label":"测试执行","handler":"test_hunt","agent":"test_hunter"},{"id":"test_completeness_gate","label":"完整性门控","handler":"test_completeness_gate","agent":"completeness_checker"},{"id":"hard_constraint_check","label":"硬约束裁决","handler":"hard_constraint_check","agent":"constraint_checker"},{"id":"knowledge_settle","label":"知识沉淀","handler":"knowledge_settle","agent":"knowledge_settler"}],"edges":[{"from":"__START__","to":"env_prepare"},{"from":"env_prepare","to":"learn_context"},{"from":"learn_context","to":"approval_gate"},{"from":"approval_gate","to":"test_dispatch","condition":"nodeResults.approval_gate.output.decision == approved"},{"from":"test_dispatch","to":"test_hunt"},{"from":"test_hunt","to":"test_completeness_gate"},{"from":"test_completeness_gate","to":"hard_constraint_check","condition":"nodeResults.test_completeness_gate.output.coverage_met == true"},{"from":"test_completeness_gate","to":"test_dispatch","condition":"nodeResults.test_completeness_gate.output.coverage_met == false && nodeResults.test_completeness_gate.output.retest_count < 3"},{"from":"test_hunt","to":"test_dispatch","on_error":true},{"from":"hard_constraint_check","to":"knowledge_settle"},{"from":"knowledge_settle","to":"__END__"}],"max_loops_per_node":10}', 1, 'active')
+            ON DUPLICATE KEY UPDATE status = 'active'
+          `);
+          await connection.execute(`
+            INSERT INTO workflow_definitions (workflow_type, name, description, definition_json, version, status)
+            VALUES ('regression', '回归测试工作流', '简化版回归测试工作流', '{"nodes":[{"id":"env_prepare","label":"环境准备","handler":"env_prepare","agent":"env_preparer"},{"id":"learn_context","label":"学习上下文","handler":"learn_context","agent":"context_learner"},{"id":"test_dispatch","label":"测试分发","handler":"test_dispatch","agent":"test_dispatcher"},{"id":"test_hunt","label":"测试执行","handler":"test_hunt","agent":"test_hunter"},{"id":"critic_gate","label":"评审门","handler":"critic_gate","agent":"critic"},{"id":"knowledge_settle","label":"知识沉淀","handler":"knowledge_settle","agent":"knowledge_settler"}],"edges":[{"from":"__START__","to":"env_prepare"},{"from":"env_prepare","to":"learn_context"},{"from":"learn_context","to":"test_dispatch"},{"from":"test_dispatch","to":"test_hunt"},{"from":"test_hunt","to":"critic_gate"},{"from":"critic_gate","to":"knowledge_settle"},{"from":"knowledge_settle","to":"__END__"}],"max_loops_per_node":5}', 1, 'active')
+            ON DUPLICATE KEY UPDATE status = 'active'
+          `);
+          await connection.execute(`
+            INSERT INTO workflow_definitions (workflow_type, name, description, definition_json, version, status)
+            VALUES ('legacy', '传统流水线工作流', '兼容旧7阶段流水线的工作流定义', '{"nodes":[{"id":"learn_context","label":"学习上下文","handler":"learn_context","agent":"context_learner"},{"id":"approval_gate","label":"审批门","handler":"approval_gate","agent":"approver","requires_approval":true},{"id":"execute_config","label":"SDK配置","handler":"execute_config","agent":"config_executor"},{"id":"execute_traffic","label":"流量执行","handler":"execute_traffic","agent":"traffic_executor"},{"id":"critic_gate","label":"评审门","handler":"critic_gate","agent":"critic"},{"id":"completed","label":"完成","handler":"completed","agent":"completer"}],"edges":[{"from":"__START__","to":"learn_context"},{"from":"learn_context","to":"approval_gate"},{"from":"approval_gate","to":"execute_config","condition":"nodeResults.approval_gate.output.decision == approved"},{"from":"execute_config","to":"execute_traffic"},{"from":"execute_traffic","to":"critic_gate"},{"from":"critic_gate","to":"completed"},{"from":"completed","to":"__END__"}],"max_loops_per_node":3}', 1, 'active')
+            ON DUPLICATE KEY UPDATE status = 'active'
+          `);
+          logger.info('工作流种子数据初始化完成');
+        } catch (seedErr) {
+          logger.info('工作流种子数据已存在，跳过');
+        }
+
+        logger.info('CTA-v2 自动迁移完成');
+      } catch (ctaError) {
+        logger.warn('CTA-v2 自动迁移警告:', { error: ctaError.message });
+      }
+
       logger.info('数据库初始化完成');
     } finally {
       connection.release();
@@ -9351,10 +9654,56 @@ async function ensureAITablesExist() {
   }
 }
 
+// 初始化 Python 虚拟环境（SSH CLI Bridge 依赖）
+async function initPythonVenv() {
+  const venvPythonPath = path.join(__dirname, 'venv', 'bin', 'python');
+  const setupScript = path.join(__dirname, 'scripts', 'setup_venv.sh');
+  const fs = require('fs');
+
+  // 如果 venv 已存在且 paramiko 可用，跳过
+  if (fs.existsSync(venvPythonPath)) {
+    try {
+      const { execFileSync } = require('child_process');
+      execFileSync(venvPythonPath, ['-c', 'import paramiko'], { stdio: 'pipe', timeout: 5000 });
+      logger.info('Python venv 已就绪，paramiko 可用');
+      return;
+    } catch (e) {
+      logger.warn('venv 存在但 paramiko 不可用，尝试重新初始化...');
+    }
+  }
+
+  // 检查是否已安装 venv 模块
+  if (!fs.existsSync(setupScript)) {
+    logger.warn('未找到 setup_venv.sh，跳过 Python venv 初始化');
+    return;
+  }
+
+  logger.info('开始初始化 Python 虚拟环境...');
+  try {
+    const { execFile } = require('child_process');
+    const { promisify } = require('util');
+    const execFileAsync = promisify(execFile);
+    // 如果存在离线包目录，使用 --offline 模式
+    const pkgDir = path.join(__dirname, 'scripts', 'cta_extensions', 'python_packages');
+    const hasOfflinePackages = fs.existsSync(pkgDir) && fs.readdirSync(pkgDir).length > 0;
+    const args = hasOfflinePackages ? [setupScript, '--offline'] : [setupScript];
+    logger.info(`Python venv 初始化模式: ${hasOfflinePackages ? '离线' : '在线'}`);
+    await execFileAsync('bash', args, { timeout: 120000, maxBuffer: 2 * 1024 * 1024 });
+    logger.info('Python 虚拟环境初始化完成');
+  } catch (error) {
+    logger.warn('Python 虚拟环境初始化失败（不影响服务器启动）:', { error: error.message });
+    logger.warn('SSH 功能将不可用，请手动执行: bash scripts/setup_venv.sh --offline');
+  }
+}
+
 // 启动服务器
 async function startServer() {
   try {
     logger.info('开始启动服务器...');
+
+    // 初始化 Python 虚拟环境
+    await initPythonVenv();
+
     await initDatabase();
     logger.info('数据库初始化完成，开始监听端口...');
     

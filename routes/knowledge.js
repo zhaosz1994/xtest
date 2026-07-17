@@ -7,6 +7,8 @@ const rateLimit = require('express-rate-limit');
 const { authenticateToken, fixFilenameEncoding } = require('../middleware');
 const vfsService = require('../services/vfsService');
 const fileParserService = require('../services/fileParserService');
+const svdParserService = require('../services/svdParserService');
+const sdkAstService = require('../services/sdkAstService');
 const webCrawlerService = require('../services/webCrawlerService');
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
@@ -55,12 +57,18 @@ const crawlLimiter = rateLimit({
   legacyHeaders: false
 });
 
+const AGENT_KNOWLEDGE_CATEGORIES = ['sdkctp_template', 'cli_command_pattern', 'env_adapter_profile', 'joint_failure_signature', 'rollback_recipe', 'bug_method_card', 'bug_test_gap_report', 'bug_execution_hint', 'drv'];
+
+function getValidKnowledgeCategories() {
+  return ['design', 'cli', 'methodology', 'tcl_convention', 'environment', 'test_plan', 'tcl_script', 'svd', 'sdk_source', 'sdk_header', 'errata', 'bug_rag', 'migration_note', 'register_map', 'register_field', 'sdk_api', 'execution_experience', ...AGENT_KNOWLEDGE_CATEGORIES];
+}
+
 const storage = multer.memoryStorage();
 const upload = multer({
   storage,
   limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowedExts = ['docx', 'doc', 'xlsx', 'xls', 'pdf', 'png', 'jpg', 'jpeg', 'txt', 'md', 'drawio', 'vsdx', 'pptx'];
+    const allowedExts = ['docx', 'doc', 'xlsx', 'xls', 'pdf', 'png', 'jpg', 'jpeg', 'txt', 'md', 'drawio', 'vsdx', 'pptx', 'tcl', 'xml', 'svd', 'c', 'h', 'hpp', 'cpp', 'cc'];
     const ext = path.extname(file.originalname).slice(1).toLowerCase();
     if (allowedExts.includes(ext)) {
       cb(null, true);
@@ -151,7 +159,7 @@ router.post('/upload', authenticateToken, (req, res, next) => {
   });
 }, fixFilenameEncoding, async (req, res) => {
   try {
-    const { moduleId, parentId, conflictAction, libraryId } = req.body;
+    const { moduleId, parentId, conflictAction, libraryId, fileCategory, chipVersionId } = req.body;
     if (!req.file) {
       return res.status(400).json({ success: false, message: '缺少文件' });
     }
@@ -162,17 +170,40 @@ router.post('/upload', authenticateToken, (req, res, next) => {
     const parsedModuleId = moduleId ? parseInt(moduleId) : null;
     const parsedParentId = parentId ? parseInt(parentId) : null;
     const parsedLibraryId = libraryId ? parseInt(libraryId) : null;
+    const validCategories = getValidKnowledgeCategories();
+    const effectiveCategory = validCategories.includes(fileCategory) ? fileCategory : null;
+    const parsedChipVersionId = chipVersionId ? parseInt(chipVersionId, 10) : null;
+    const uploadOptions = {
+      fileCategory: effectiveCategory,
+      chipVersionId: parsedChipVersionId && !Number.isNaN(parsedChipVersionId) ? parsedChipVersionId : null,
+      skipAutoParse: effectiveCategory === 'svd' || effectiveCategory === 'sdk_header' || effectiveCategory === 'sdk_source'
+    };
+
+    const runSpecialParser = async (fileId) => {
+      if (!fileId) return;
+      if (effectiveCategory === 'svd') {
+        svdParserService.parse(fileId, uploadOptions.chipVersionId).catch(error => console.warn('SVD解析触发失败:', error.message));
+      } else if (effectiveCategory === 'sdk_header' || effectiveCategory === 'sdk_source') {
+        sdkAstService.index([fileId], uploadOptions.chipVersionId).catch(error => console.warn('SDK索引触发失败:', error.message));
+      }
+    };
 
     const conflict = await vfsService.handleSameNameFile(parsedModuleId, parsedParentId, req.file.originalname, parsedLibraryId);
+
+    const postProcessUploadedFile = async (fileId) => {
+      await runSpecialParser(fileId);
+    };
 
     if (conflict.hasConflict) {
       if (conflictAction === 'overwrite') {
         const result = await vfsService.overwriteFile(
-          conflict.existingFile.id, req.file, parsedModuleId, parsedParentId, req.user.username, parsedLibraryId
+          conflict.existingFile.id, req.file, parsedModuleId, parsedParentId, req.user.username, parsedLibraryId, uploadOptions
         );
-    return res.json({ success: true, data: result });
+        await postProcessUploadedFile(result.fileId);
+        return res.json({ success: true, data: result });
       } else if (conflictAction === 'coexist') {
-        const result = await vfsService.coexistFile(req.file, parsedModuleId, parsedParentId, req.user.username, parsedLibraryId);
+        const result = await vfsService.coexistFile(req.file, parsedModuleId, parsedParentId, req.user.username, parsedLibraryId, uploadOptions);
+        await postProcessUploadedFile(result.fileId);
         return res.json({ success: true, data: result });
       } else {
         return res.json({
@@ -183,7 +214,8 @@ router.post('/upload', authenticateToken, (req, res, next) => {
       }
     }
 
-    const result = await vfsService.uploadFile(req.file, parsedModuleId, parsedParentId, req.user.username, parsedLibraryId);
+    const result = await vfsService.uploadFile(req.file, parsedModuleId, parsedParentId, req.user.username, parsedLibraryId, uploadOptions);
+    await postProcessUploadedFile(result.fileId);
     res.json({ success: true, data: result });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -202,7 +234,7 @@ router.post('/upload-batch', authenticateToken, (req, res, next) => {
   });
 }, fixFilenameEncoding, async (req, res) => {
   try {
-    const { moduleId, parentId, libraryId } = req.body;
+    const { moduleId, parentId, libraryId, fileCategory, chipVersionId } = req.body;
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ success: false, message: '缺少文件' });
     }
@@ -210,14 +242,31 @@ router.post('/upload-batch', authenticateToken, (req, res, next) => {
       return res.status(400).json({ success: false, message: '缺少模块ID或用例库ID' });
     }
 
+    const parsedModuleId = moduleId ? parseInt(moduleId) : null;
+    const parsedParentId = parentId ? parseInt(parentId) : null;
     const parsedLibraryId = libraryId ? parseInt(libraryId) : null;
+    const validCategories = getValidKnowledgeCategories();
+    const effectiveCategory = validCategories.includes(fileCategory) ? fileCategory : null;
+    const parsedChipVersionId = chipVersionId ? parseInt(chipVersionId, 10) : null;
+    const uploadOptions = {
+      fileCategory: effectiveCategory,
+      chipVersionId: parsedChipVersionId && !Number.isNaN(parsedChipVersionId) ? parsedChipVersionId : null,
+      skipAutoParse: effectiveCategory === 'svd' || effectiveCategory === 'sdk_header' || effectiveCategory === 'sdk_source'
+    };
 
     const results = [];
     for (const file of req.files) {
       try {
         const result = await vfsService.uploadFile(
-          file, parseInt(moduleId), parentId ? parseInt(parentId) : null, req.user.username, parsedLibraryId
+          file, parsedModuleId, parsedParentId, req.user.username, parsedLibraryId, uploadOptions
         );
+        if (result.fileId) {
+          if (effectiveCategory === 'svd') {
+            svdParserService.parse(result.fileId, uploadOptions.chipVersionId).catch(error => console.warn('SVD解析触发失败:', error.message));
+          } else if (effectiveCategory === 'sdk_header' || effectiveCategory === 'sdk_source') {
+            sdkAstService.index([result.fileId], uploadOptions.chipVersionId).catch(error => console.warn('SDK索引触发失败:', error.message));
+          }
+        }
         results.push({ filename: file.originalname, ...result });
       } catch (error) {
         results.push({ filename: file.originalname, error: error.message });
@@ -351,6 +400,93 @@ router.post('/reparse/:fileId', authenticateToken, async (req, res) => {
     }
     const result = await fileParserService.reparseFile(parseInt(fileId), options);
     res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ===== Part 3: 知识导入审核流程 =====
+// 列出待审核文件(review_status 为 auto_parsed 或 under_review)
+router.get('/review/pending', authenticateToken, async (req, res) => {
+  try {
+    const pool = require('../db');
+    const { moduleId, status, limit } = req.query;
+    const params = [];
+    let where = "WHERE deleted_at IS NULL AND review_status IN ('auto_parsed','under_review')";
+    if (moduleId) {
+      where += ' AND module_id = ?';
+      params.push(parseInt(moduleId));
+    }
+    if (status) {
+      where += ' AND review_status = ?';
+      params.push(status);
+    }
+    const sqlLimit = Math.max(1, Math.min(parseInt(limit) || 50, 200));
+    const [rows] = await pool.execute(
+      `SELECT id, name, file_ext, file_category, module_id, library_id, parse_status, review_status, reviewer_id, reviewed_at, conflict_flags, created_at, updated_at
+       FROM module_knowledge_files
+       ${where}
+       ORDER BY updated_at DESC
+       LIMIT ${sqlLimit}`,
+      params
+    );
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    // review_status 列可能未迁移,容错返回空列表
+    if (error.code === 'ER_BAD_FIELD_ERROR' || /Unknown column 'review_status'/.test(error.message)) {
+      return res.json({ success: true, data: [], message: '审核功能未启用(review_status 列未迁移)' });
+    }
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 审核单个文件: decision = approved | rejected | changes_requested
+router.post('/files/:fileId/review', authenticateToken, async (req, res) => {
+  try {
+    const pool = require('../db');
+    const { fileId } = req.params;
+    const { decision, comment } = req.body;
+    if (!['approved', 'rejected', 'changes_requested'].includes(decision)) {
+      return res.status(400).json({ success: false, message: 'decision 必须为 approved/rejected/changes_requested' });
+    }
+    const parsedFileId = parseInt(fileId);
+    const status = decision === 'approved' ? 'published'
+      : decision === 'rejected' ? 'rejected'
+      : 'under_review';
+    await pool.execute(
+      'UPDATE module_knowledge_files SET review_status = ?, reviewer_id = ?, reviewed_at = NOW() WHERE id = ?',
+      [status, req.user.id, parsedFileId]
+    );
+    if (decision === 'approved') {
+      await pool.execute(
+        "UPDATE module_knowledge_files SET parse_status = 'parsed' WHERE id = ?",
+        [parsedFileId]
+      );
+    }
+    res.json({ success: true, status, fileId: parsedFileId });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 查询单个文件的审核状态与冲突日志
+router.get('/files/:fileId/review', authenticateToken, async (req, res) => {
+  try {
+    const pool = require('../db');
+    const { fileId } = req.params;
+    const parsedFileId = parseInt(fileId);
+    const [fileRows] = await pool.execute(
+      'SELECT id, name, file_category, parse_status, review_status, reviewer_id, reviewed_at, supersedes, conflict_flags FROM module_knowledge_files WHERE id = ?',
+      [parsedFileId]
+    );
+    if (fileRows.length === 0) {
+      return res.status(404).json({ success: false, message: '文件不存在' });
+    }
+    const [conflicts] = await pool.execute(
+      'SELECT id, conflict_type, severity, description, detected_at, resolved_at FROM knowledge_conflict_log WHERE file_id = ? ORDER BY detected_at DESC',
+      [parsedFileId]
+    ).catch(() => [[]]);
+    res.json({ success: true, data: { file: fileRows[0], conflicts } });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
