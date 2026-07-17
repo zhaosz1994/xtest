@@ -1,11 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
-const { authenticateToken } = require('../middleware');
+const { authenticateToken, requireAdmin, fixFilenameEncoding } = require('../middleware');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const logger = require('../services/logger');
+const { generateSummaryForMultipleLevel1 } = require('../services/summaryGenerator');
 
 // 安全解析 JSON 字段（处理 MySQL2 可能已自动解析的情况）
 function safeParseJSON(value) {
@@ -19,7 +21,7 @@ function safeParseJSON(value) {
         try {
             return JSON.parse(value);
         } catch (e) {
-            console.error('JSON 解析错误:', e);
+            logger.error('JSON 解析错误:', { error: e.message });
             return null;
         }
     }
@@ -30,9 +32,7 @@ function safeParseJSON(value) {
 const recordImageStorage = multer.diskStorage({
     destination: (req, file, cb) => {
         const uploadDir = path.join(__dirname, '../public/uploads/records');
-        if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
-        }
+        fs.mkdirSync(uploadDir, { recursive: true });
         cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
@@ -68,7 +68,7 @@ const recordImageUpload = multer({
 });
 
 // 执行记录图片上传接口
-router.post('/execution-records/upload-image', authenticateToken, recordImageUpload.single('image'), (req, res) => {
+router.post('/execution-records/upload-image', authenticateToken, recordImageUpload.single('image'), fixFilenameEncoding, (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ success: false, message: '请选择图片文件' });
@@ -83,7 +83,7 @@ router.post('/execution-records/upload-image', authenticateToken, recordImageUpl
             size: req.file.size
         });
     } catch (error) {
-        console.error('图片上传错误:', error);
+        logger.error('图片上传错误:', { error: error.message });
         res.status(500).json({ success: false, message: '图片上传失败' });
     }
 });
@@ -94,7 +94,7 @@ router.get('/list', authenticateToken, async (req, res) => {
     const [testpoints] = await pool.execute('SELECT * FROM level2_points');
     res.json({ success: true, testpoints });
   } catch (error) {
-    console.error('获取测试点列表错误:', error);
+    logger.error('获取测试点列表错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -110,15 +110,18 @@ router.get('/level1/:moduleId', authenticateToken, async (req, res) => {
         l1.id, 
         l1.name, 
         l1.test_type, 
+        l1.summary,
         l1.created_at, 
         l1.updated_at,
         l1.order_index,
-        COUNT(tc.id) as test_case_count,
+        COUNT(DISTINCT tc.id) as test_case_count,
+        COUNT(DISTINCT cer.id) as bug_count,
         m.name as module_name,
         m.id as module_id
       FROM level1_points l1
       JOIN modules m ON l1.module_id = m.id
       LEFT JOIN test_cases tc ON l1.id = tc.level1_id
+      LEFT JOIN case_execution_records cer ON tc.id = cer.case_id AND cer.record_type = 'defect'
       WHERE l1.module_id = ?
     `;
     
@@ -130,12 +133,12 @@ router.get('/level1/:moduleId', authenticateToken, async (req, res) => {
       params.push(`%${keyword.trim()}%`);
     }
     
-    query += ` GROUP BY l1.id, l1.name, l1.test_type, l1.created_at, l1.updated_at, l1.order_index, m.name, m.id ORDER BY l1.order_index ASC`;
+    query += ` GROUP BY l1.id, l1.name, l1.test_type, l1.summary, l1.created_at, l1.updated_at, l1.order_index, m.name, m.id ORDER BY l1.order_index ASC`;
     
     const [points] = await pool.execute(query, params);
     res.json({ success: true, level1Points: points });
   } catch (error) {
-    console.error('获取一级测试点列表错误:', error);
+    logger.error('获取一级测试点列表错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -150,15 +153,18 @@ router.post('/level1/all', authenticateToken, async (req, res) => {
         l1.id, 
         l1.name, 
         l1.test_type, 
+        l1.summary,
         l1.created_at, 
         l1.updated_at,
         l1.order_index,
-        COUNT(tc.id) as test_case_count,
+        COUNT(DISTINCT tc.id) as test_case_count,
+        COUNT(DISTINCT cer.id) as bug_count,
         m.name as module_name, 
         m.id as module_id
       FROM level1_points l1
       JOIN modules m ON l1.module_id = m.id
       LEFT JOIN test_cases tc ON l1.id = tc.level1_id
+      LEFT JOIN case_execution_records cer ON tc.id = cer.case_id AND cer.record_type = 'defect'
       WHERE m.library_id = ?
     `;
     
@@ -170,12 +176,12 @@ router.post('/level1/all', authenticateToken, async (req, res) => {
       params.push(`%${keyword.trim()}%`);
     }
     
-    query += ` GROUP BY l1.id, l1.name, l1.test_type, l1.created_at, l1.updated_at, l1.order_index, m.name, m.id ORDER BY m.order_index ASC, l1.order_index ASC`;
+    query += ` GROUP BY l1.id, l1.name, l1.test_type, l1.summary, l1.created_at, l1.updated_at, l1.order_index, m.name, m.id ORDER BY m.order_index ASC, l1.order_index ASC`;
     
     const [points] = await pool.execute(query, params);
     res.json({ success: true, level1Points: points });
   } catch (error) {
-    console.error('获取所有一级测试点错误:', error);
+    logger.error('获取所有一级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -229,25 +235,149 @@ router.post('/level1/add', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('添加一级测试点错误:', error);
+    logger.error('添加一级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+// 批量创建一级测试点和测试用例
+router.post('/level1/batch-create', authenticateToken, async (req, res) => {
+  const { moduleId, libraryId, level1Points } = req.body;
+  const userId = req.user?.id || req.user?.userId;
+
+  if (!moduleId || !libraryId) {
+    return res.json({ success: false, message: '模块ID和用例库ID不能为空' });
+  }
+
+  if (!level1Points || !Array.isArray(level1Points) || level1Points.length === 0) {
+    return res.json({ success: false, message: '测试点数据不能为空' });
+  }
+
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+
+    let totalCaseCount = 0;
+    const createdLevel1Points = [];
+
+    for (const level1Point of level1Points) {
+      const { name, priority, owner, cases } = level1Point;
+
+      if (!name || !name.trim()) {
+        await connection.rollback();
+        return res.json({ success: false, message: '测试点名称不能为空' });
+      }
+
+      // 检查同一模块下测试点名称是否重复
+      const [existing] = await connection.execute(
+        'SELECT id FROM level1_points WHERE name = ? AND module_id = ?',
+        [name, moduleId]
+      );
+      if (existing.length > 0) {
+        await connection.rollback();
+        return res.json({ 
+          success: false, 
+          message: `测试点「${name}」已存在，请使用其他名称` 
+        });
+      }
+
+      // 获取当前模块下的最大order_index
+      const [maxOrderResult] = await connection.execute(
+        'SELECT IFNULL(MAX(order_index), -1) as max_order FROM level1_points WHERE module_id = ?',
+        [moduleId]
+      );
+      const orderIndex = maxOrderResult[0].max_order + 1 + createdLevel1Points.length;
+
+      // 插入一级测试点
+      const [level1Result] = await connection.execute(
+        'INSERT INTO level1_points (module_id, name, test_type, order_index, priority, owner) VALUES (?, ?, ?, ?, ?, ?)',
+        [moduleId, name, '功能测试', orderIndex, priority || '中', owner || '']
+      );
+      
+      const level1Id = level1Result.insertId;
+      createdLevel1Points.push({ id: level1Id, name });
+
+      // 插入测试用例
+      if (cases && Array.isArray(cases) && cases.length > 0) {
+        for (const caseItem of cases) {
+          const { name: caseName, priority: casePriority, type, owner: caseOwner, phase, env, 
+                  precondition, purpose, steps, expected, key_config, remark, 
+                  projects, environments, methods, sources } = caseItem;
+
+          if (!caseName || !caseName.trim()) {
+            await connection.rollback();
+            return res.json({ success: false, message: `测试点「${name}」下的用例名称不能为空` });
+          }
+
+          // 生成用例ID
+          const date = new Date();
+          const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+          const randomStr = crypto.randomBytes(4).toString('hex');
+          const caseId = `CASE-${dateStr}-${randomStr}-0`;
+
+          await connection.execute(
+            `INSERT INTO test_cases (
+              case_id, name, module_id, level1_id, library_id, priority, type, owner, 
+              phase, env, precondition, purpose, steps, expected, key_config, remark,
+              projects, environments, methods, sources, creator, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+            [
+              caseId, caseName, moduleId, level1Id, libraryId, 
+              casePriority || '中', type || '功能测试', caseOwner || owner || '',
+              phase || '集成测试', env || '测试环境',
+              precondition || '', purpose || '', steps || '', expected || '', 
+              key_config || '', remark || '',
+              projects || '', environments || '', methods || '', sources || '',
+              userId
+            ]
+          );
+          
+          totalCaseCount++;
+        }
+      }
+    }
+
+    await connection.commit();
+
+    const level1Ids = createdLevel1Points.map(p => p.id);
+    if (level1Ids.length > 0) {
+      generateSummaryForMultipleLevel1(level1Ids, userId, req.user?.username)
+        .catch(err => logger.error('批量生成概述失败:', { error: err.message }));
+    }
+
+    res.json({ 
+      success: true,
+      message: '批量创建成功',
+      data: {
+        level1Count: createdLevel1Points.length,
+        caseCount: totalCaseCount,
+        level1Points: createdLevel1Points
+      }
+    });
+  } catch (error) {
+    await connection.rollback();
+    logger.error('批量创建一级测试点错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误: ' + error.message });
+  } finally {
+    connection.release();
   }
 });
 
 // 编辑一级测试点
 router.put('/level1/edit/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
-  const { name, test_type } = req.body;
+  const { name, test_type, summary } = req.body;
 
   try {
     await pool.execute(
-      'UPDATE level1_points SET name = ?, test_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [name, test_type || '功能测试', id]
+      'UPDATE level1_points SET name = ?, test_type = ?, summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [name, test_type || '功能测试', summary || null, id]
     );
 
     res.json({ success: true, message: '一级测试点编辑成功' });
   } catch (error) {
-    console.error('编辑一级测试点错误:', error);
+    logger.error('编辑一级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -258,7 +388,7 @@ router.get('/level1/detail/:id', authenticateToken, async (req, res) => {
 
   try {
     const [points] = await pool.execute(
-      'SELECT id, name, test_type, module_id, created_at, updated_at FROM level1_points WHERE id = ?',
+      'SELECT id, name, test_type, summary, module_id, created_at, updated_at FROM level1_points WHERE id = ?',
       [id]
     );
 
@@ -268,42 +398,60 @@ router.get('/level1/detail/:id', authenticateToken, async (req, res) => {
       res.status(404).json({ success: false, message: '测试点不存在' });
     }
   } catch (error) {
-    console.error('获取一级测试点详情错误:', error);
+    logger.error('获取一级测试点详情错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
 // 删除一级测试点
-router.delete('/level1/delete/:id', authenticateToken, async (req, res) => {
+router.delete('/level1/delete/:id', authenticateToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
 
   try {
-    // 开始事务
     const connection = await pool.getConnection();
     await connection.beginTransaction();
 
     try {
-      // 删除关联的测试用例
-      await connection.execute('DELETE FROM test_cases WHERE level1_id = ?', [id]);
+      const [caseIds] = await connection.execute(
+        'SELECT id FROM test_cases WHERE level1_id = ?',
+        [id]
+      );
+
+      if (caseIds.length > 0) {
+        const batchSize = 1000;
+        const ids = caseIds.map(c => c.id);
+        for (let i = 0; i < ids.length; i += batchSize) {
+          const batch = ids.slice(i, i + batchSize);
+          const placeholders = batch.map(() => '?').join(',');
+          await connection.execute(
+            `DELETE FROM test_case_projects WHERE test_case_id IN (${placeholders})`,
+            batch
+          );
+        }
+
+        for (let i = 0; i < ids.length; i += batchSize) {
+          const batch = ids.slice(i, i + batchSize);
+          const placeholders = batch.map(() => '?').join(',');
+          await connection.execute(
+            `UPDATE test_cases SET is_deleted = 1, deleted_at = NOW() WHERE id IN (${placeholders})`,
+            batch
+          );
+        }
+      }
       
-      // 删除关联的二级测试点
       await connection.execute('DELETE FROM level2_points WHERE level1_id = ?', [id]);
-      
-      // 删除一级测试点
       await connection.execute('DELETE FROM level1_points WHERE id = ?', [id]);
       
-      // 提交事务
       await connection.commit();
-      res.json({ success: true, message: '一级测试点删除成功' });
+      res.json({ success: true, message: '一级测试点删除成功，关联用例已软删除' });
     } catch (error) {
-      // 回滚事务
       await connection.rollback();
       throw error;
     } finally {
       connection.release();
     }
   } catch (error) {
-    console.error('删除一级测试点错误:', error);
+    logger.error('删除一级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -337,7 +485,7 @@ router.post('/level1/reorder', authenticateToken, async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error('重新排序一级测试点错误:', error);
+    logger.error('重新排序一级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -350,7 +498,7 @@ router.get('/level2/:level1Id', authenticateToken, async (req, res) => {
     const [points] = await pool.execute('SELECT * FROM level2_points WHERE level1_id = ?', [level1Id]);
     res.json(points);
   } catch (error) {
-    console.error('获取二级测试点列表错误:', error);
+    logger.error('获取二级测试点列表错误:', { error: error.message });
     res.status(500).json({ message: '服务器错误' });
   }
 });
@@ -397,13 +545,13 @@ router.post('/level2/add', authenticateToken, async (req, res) => {
     } catch (error) {
       // 回滚事务
       await connection.rollback();
-      console.error('添加二级测试点事务错误:', error);
+      logger.error('添加二级测试点事务错误:', { error: error.message });
       throw error;
     } finally {
       connection.release();
     }
   } catch (error) {
-    console.error('添加二级测试点错误:', error);
+    logger.error('添加二级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误: ' + error.message });
   }
 });
@@ -460,7 +608,7 @@ router.put('/level2/edit/:id', authenticateToken, async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error('编辑二级测试点错误:', error);
+    logger.error('编辑二级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -486,7 +634,7 @@ router.get('/level2/:id/chips', authenticateToken, async (req, res) => {
 
     res.json({ success: true, chips });
   } catch (error) {
-    console.error('获取测试点关联芯片错误:', error);
+    logger.error('获取测试点关联芯片错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -504,7 +652,7 @@ router.put('/level2/:id/chip-status', authenticateToken, async (req, res) => {
 
     res.json({ success: true, message: '测试点芯片状态更新成功' });
   } catch (error) {
-    console.error('更新测试点芯片状态错误:', error);
+    logger.error('更新测试点芯片状态错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -570,7 +718,7 @@ router.get('/stats/overall', authenticateToken, async (req, res) => {
 
     res.json({ success: true, stats });
   } catch (error) {
-    console.error('获取总体测试统计数据错误:', error);
+    logger.error('获取总体测试统计数据错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -605,7 +753,7 @@ router.delete('/level2/delete/:id', authenticateToken, async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error('删除二级测试点错误:', error);
+    logger.error('删除二级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -641,7 +789,7 @@ router.get('/execution-records/:caseId', authenticateToken, async (req, res) => 
     
     res.json({ success: true, records: parsedRecords });
   } catch (error) {
-    console.error('获取执行记录错误:', error);
+    logger.error('获取执行记录错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -697,7 +845,7 @@ router.post('/execution-records', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('添加执行记录错误:', error);
+    logger.error('添加执行记录错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -722,7 +870,7 @@ router.delete('/execution-records/:recordId', authenticateToken, async (req, res
     
     res.json({ success: true, message: '执行记录删除成功' });
   } catch (error) {
-    console.error('删除执行记录错误:', error);
+    logger.error('删除执行记录错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -786,7 +934,44 @@ router.put('/execution-records/:recordId', authenticateToken, async (req, res) =
       }
     });
   } catch (error) {
-    console.error('编辑执行记录错误:', error);
+    logger.error('编辑执行记录错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+// 获取一级测试点下的缺陷列表
+router.get('/level1/bugs/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const [bugs] = await pool.execute(`
+      SELECT 
+        cer.id,
+        cer.case_id,
+        cer.record_type,
+        cer.bug_id,
+        cer.bug_type,
+        cer.description,
+        cer.images,
+        cer.creator,
+        cer.created_at,
+        cer.updated_at,
+        tc.case_id as case_code,
+        tc.name as case_name
+      FROM case_execution_records cer
+      JOIN test_cases tc ON cer.case_id = tc.id
+      WHERE tc.level1_id = ? AND cer.record_type = 'defect'
+      ORDER BY cer.created_at DESC
+    `, [id]);
+
+    const parsedBugs = bugs.map(bug => ({
+      ...bug,
+      images: safeParseJSON(bug.images) || []
+    }));
+
+    res.json({ success: true, bugs: parsedBugs });
+  } catch (error) {
+    logger.error('获取一级测试点缺陷列表错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });

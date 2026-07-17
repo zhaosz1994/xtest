@@ -1,12 +1,14 @@
 const pool = require('../db');
-const fs = require('fs');
-const fsPromises = require('fs').promises;
+const fsp = require('fs').promises;
 const path = require('path');
 
 const REPORTS_DIR = path.join(process.cwd(), 'uploads', 'reports');
-
-if (!fs.existsSync(REPORTS_DIR)) {
-    fs.mkdirSync(REPORTS_DIR, { recursive: true });
+let _reportsDirReady = false;
+async function ensureReportsDir() {
+    if (!_reportsDirReady) {
+        await fsp.mkdir(REPORTS_DIR, { recursive: true });
+        _reportsDirReady = true;
+    }
 }
 
 // ==================== 统一的状态判定函数 ====================
@@ -108,7 +110,7 @@ async function assembleReportData(testPlanId) {
         const testPlan = testPlans[0];
         
         const [testCases] = await connection.execute(`
-            SELECT tc.*, 
+            SELECT tc.id, tc.case_id, tc.name, tc.priority, tc.type, tc.status, tc.owner, tc.creator, tc.precondition, tc.purpose, tc.steps, tc.expected, tc.key_config, tc.remark, tc.method, tc.level1_id, tc.module_id, tc.library_id, tc.created_at, tc.updated_at,
                    m.name as module_name,
                    l1.name as level1_name,
                    tpc.status as execution_status,
@@ -121,24 +123,29 @@ async function assembleReportData(testPlanId) {
             LEFT JOIN modules m ON tc.module_id = m.id
             LEFT JOIN level1_points l1 ON tc.level1_id = l1.id
             LEFT JOIN test_statuses ts ON tpc.status = ts.name
-            WHERE tpc.plan_id = ?
+            WHERE tpc.plan_id = ? LIMIT 5000
         `, [testPlanId]);
+        if (testCases.length === 5000) {
+            const logger = require('./logger');
+            logger.warn('assembleReportData: 查询结果达到LIMIT 5000上限，数据可能被截断', { testPlanId });
+        }
         
         const stats = calculateStatistics(testCases);
         
         const moduleStats = {};
         const ownerStats = {};
-        
+        const priorityStats = {};
+
         testCases.forEach(tc => {
+            const status = tc.execution_status || tc.status_name || '';
+            const category = getStatusCategory(status);
+
+            // Module stats
             const moduleName = tc.module_name || '未分类';
             if (!moduleStats[moduleName]) {
                 moduleStats[moduleName] = { total: 0, passed: 0, failed: 0, blocked: 0, notRun: 0 };
             }
             moduleStats[moduleName].total++;
-            
-            const status = tc.execution_status || tc.status_name || '';
-            const category = getStatusCategory(status);
-            
             if (category === 'passed') {
                 moduleStats[moduleName].passed++;
             } else if (category === 'failed') {
@@ -148,23 +155,20 @@ async function assembleReportData(testPlanId) {
             } else {
                 moduleStats[moduleName].notRun++;
             }
-            
+
+            // Owner stats
             const owner = tc.owner || tc.executor_id || '未分配';
             if (!ownerStats[owner]) {
                 ownerStats[owner] = 0;
             }
             ownerStats[owner]++;
-        });
-        
-        const priorityStats = {};
-        testCases.forEach(tc => {
+
+            // Priority stats
             const priority = tc.priority || 'P2';
             if (!priorityStats[priority]) {
                 priorityStats[priority] = { total: 0, passed: 0, failed: 0 };
             }
             priorityStats[priority].total++;
-            
-            const status = tc.execution_status || tc.status_name || '';
             if (isStatusPassed(status)) {
                 priorityStats[priority].passed++;
             } else if (isStatusFailed(status)) {
@@ -349,7 +353,55 @@ function calculateStatistics(testCases) {
     return stats;
 }
 
-function generateMarkdownReport(reportData, aiAnalysis) {
+// 获取报告模板配置
+function getTemplateConfig(template) {
+    const templates = {
+        'standard': {
+            title: '测试报告',
+            description: '常规汇总与回归测试报告',
+            sections: ['basicInfo', 'statistics', 'modules', 'failedCases', 'summary', 'bugs'],
+            focusAreas: ['功能验证', '回归测试', '用例覆盖']
+        },
+        'hardware': {
+            title: '硬件测试报告',
+            description: '硬件底层专项分析报告',
+            sections: ['basicInfo', 'statistics', 'modules', 'failedCases', 'hardwareAnalysis', 'summary'],
+            focusAreas: ['硬件兼容性', '底层驱动', '性能指标', '稳定性'],
+            extraPrompt: `请特别关注以下硬件相关测试场景：
+- PFC (Priority Flow Control) 流控测试
+- Buffer 溢出和丢包测试
+- ASIC 状态和寄存器测试
+- Traffic Drop 分析
+- Core Dump 和 ASIC Hang 问题`
+        },
+        'performance': {
+            title: '性能测试报告',
+            description: '性能测试专项报告',
+            sections: ['basicInfo', 'performanceMetrics', 'statistics', 'bottlenecks', 'summary'],
+            focusAreas: ['响应时间', '吞吐量', '并发性能', '资源利用率'],
+            extraPrompt: `请特别关注以下性能相关指标：
+- 响应时间和延迟分析
+- 吞吐量和处理能力
+- 资源利用率（CPU、内存、网络）
+- 性能瓶颈识别`
+        },
+        'ai-deep': {
+            title: 'AI深度分析报告',
+            description: 'AI深度分析报告',
+            sections: ['basicInfo', 'statistics', 'aiInsights', 'riskAnalysis', 'recommendations', 'summary'],
+            focusAreas: ['智能分析', '风险评估', '优化建议', '趋势预测'],
+            extraPrompt: `请进行深度AI分析，包括：
+- 测试质量评估和改进建议
+- 风险点识别和优先级排序
+- 测试覆盖率分析
+- 后续测试策略建议`
+        }
+    };
+    
+    return templates[template] || templates['standard'];
+}
+
+function generateMarkdownReport(reportData, aiAnalysis, template = 'standard') {
     const { testPlan, statistics, moduleDistribution, priorityDistribution, ownerDistribution, failedCases } = reportData;
     
     const formatDate = (date) => {
@@ -371,7 +423,15 @@ function generateMarkdownReport(reportData, aiAnalysis) {
         ? `${testPlan.software} (v${testPlan.softwareVersion})`
         : (testPlan.software || '-');
     
-    let markdown = `# ${testPlan.project || '测试项目'} 测试报告
+    // 根据模板类型生成不同的报告标题和结构
+    const templateConfig = getTemplateConfig(template);
+    
+    let markdown = `# ${testPlan.project || '测试项目'} ${templateConfig.title}
+
+---
+
+> **报告类型**: ${templateConfig.description}
+> **生成时间**: ${new Date().toLocaleString('zh-CN')}
 
 ---
 
@@ -473,34 +533,6 @@ ${aiAnalysis?.suggestions || `### 测试限制
     });
     
     markdown += `
-### 3.2 失败用例清单
-
-| 用例ID | 用例名称 | 模块 | 优先级 | 失败原因 |
-|--------|----------|------|--------|----------|
-`;
-    
-    const allFailedCases = reportData.testCases.filter(tc => {
-        const status = tc.status || tc.execution_status || tc.status_name || '';
-        return isStatusFailed(status);
-    });
-    
-    // 限制显示数量，防止内存爆炸
-    const MAX_FAILED_CASES_DISPLAY = 100;
-    
-    if (allFailedCases.length > 0) {
-        const displayCases = allFailedCases.slice(0, MAX_FAILED_CASES_DISPLAY);
-        displayCases.forEach(tc => {
-            markdown += `| ${tc.caseId || tc.id} | ${tc.name} | ${tc.module || '-'} | ${tc.priority} | 待分析 |\n`;
-        });
-        
-        if (allFailedCases.length > MAX_FAILED_CASES_DISPLAY) {
-            markdown += `| ... | **还有 ${allFailedCases.length - MAX_FAILED_CASES_DISPLAY} 条失败用例未显示** | ... | ... | 请在 xTest 平台上查看详情 |\n`;
-        }
-    } else {
-        markdown += `| - | 暂无失败用例 | - | - | - |\n`;
-    }
-    
-    markdown += `
 ---
 
 *报告生成时间: ${new Date().toLocaleString('zh-CN')}*
@@ -515,16 +547,17 @@ function getHardwareKnowledge() {
 }
 
 async function saveReportToFile(reportId, markdownContent) {
+    await ensureReportsDir();
     const fileName = `report-${reportId}-${Date.now()}.md`;
     const filePath = path.join(REPORTS_DIR, fileName);
-    await fsPromises.writeFile(filePath, markdownContent, 'utf8');
+    await fsp.writeFile(filePath, markdownContent, 'utf8');
     return filePath;
 }
 
 async function readReportFromFile(filePath) {
     try {
-        await fsPromises.access(filePath);
-        return await fsPromises.readFile(filePath, 'utf8');
+        await fsp.access(filePath);
+        return await fsp.readFile(filePath, 'utf8');
     } catch {
         return null;
     }
@@ -532,7 +565,7 @@ async function readReportFromFile(filePath) {
 
 async function deleteReportFile(filePath) {
     try {
-        await fsPromises.unlink(filePath);
+        await fsp.unlink(filePath);
     } catch {
         // 文件不存在或删除失败，忽略
     }

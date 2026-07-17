@@ -1,0 +1,1119 @@
+class Level1PointsList {
+    constructor() {
+        this.level1Points = [];
+        this.testCases = {};
+        this.currentPage = 1;
+        this.pageSize = 20;
+        this.totalPages = 0;
+        this.expandedItems = new Set();
+        this.currentLibraryId = null;
+        this.currentModuleId = null;
+        this.currentTestCase = null;
+        this.searchKeyword = '';
+        this.filters = {};
+        this.authToken = localStorage.getItem('authToken');
+        this.chipVersions = [];
+        this.executionEnvs = [];
+        
+        this.init();
+    }
+
+    async apiRequest(endpoint, options = {}) {
+        const url = endpoint.startsWith('http') ? endpoint : 
+                    endpoint.startsWith('/api') ? endpoint : 
+                    endpoint.startsWith('/') ? `/api${endpoint}` : `/api/${endpoint}`;
+        
+        this.authToken = localStorage.getItem('authToken');
+        const headers = {
+            'Content-Type': 'application/json',
+            ...options.headers
+        };
+        
+        if (this.authToken) {
+            headers['Authorization'] = `Bearer ${this.authToken}`;
+        }
+        
+        try {
+            const response = await fetch(url, {
+                ...options,
+                headers
+            });
+            
+            if (!response.ok) {
+                let errorMessage = '请求失败';
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.message || errorMessage;
+                } catch (e) {
+                    errorMessage = `请求失败 (${response.status})`;
+                }
+                throw new Error(errorMessage);
+            }
+            
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error('API请求失败:', error);
+            throw error;
+        }
+    }
+
+    async init() {
+        this.bindEvents();
+        this.parseUrlParams();
+        await this.loadAdaptiveOptions();
+        await this.loadLevel1Points();
+    }
+
+    async loadAdaptiveOptions() {
+        try {
+            const [chipRes, envRes] = await Promise.all([
+                this.apiRequest('/chip-versions'),
+                this.apiRequest('/execution-environments')
+            ]);
+            this.chipVersions = chipRes.success ? (chipRes.data || []) : [];
+            this.executionEnvs = envRes.success ? (envRes.data || []) : [];
+            const chipSelect = document.getElementById('level-chip-version-select');
+            if (chipSelect) {
+                chipSelect.innerHTML = '<option value="">通用芯片</option>' + this.chipVersions.map(chip =>
+                    `<option value="${chip.id}">${this.escapeHtml(chip.name || chip.version_key)}</option>`
+                ).join('');
+            }
+            const envSelect = document.getElementById('level-execution-env-select');
+            if (envSelect) {
+                envSelect.innerHTML = '<option value="">默认执行环境</option>' + this.executionEnvs.map(env =>
+                    `<option value="${env.id}">${this.escapeHtml(env.name || env.env_key)}</option>`
+                ).join('');
+            }
+        } catch (error) {
+            this.chipVersions = [];
+            this.executionEnvs = [];
+        }
+    }
+
+    parseUrlParams() {
+        const urlParams = new URLSearchParams(window.location.search);
+        this.currentLibraryId = urlParams.get('libraryId');
+        this.currentModuleId = urlParams.get('moduleId');
+        
+        const libraryName = urlParams.get('libraryName') || '用例库';
+        const moduleName = urlParams.get('moduleName') || '模块';
+        
+        document.getElementById('breadcrumb-library').textContent = libraryName;
+        document.getElementById('breadcrumb-module').textContent = moduleName;
+    }
+
+    bindEvents() {
+        document.getElementById('back-btn').addEventListener('click', () => this.goBack());
+        document.getElementById('search-input').addEventListener('input', (e) => this.handleSearch(e));
+        document.getElementById('filter-btn').addEventListener('click', () => this.toggleFilterPanel());
+        document.getElementById('expand-all-btn').addEventListener('click', () => this.toggleExpandAll());
+        document.getElementById('add-level1-btn').addEventListener('click', () => this.addLevel1Point());
+        document.getElementById('empty-add-btn').addEventListener('click', () => this.addLevel1Point());
+        document.getElementById('generate-tcl-btn')?.addEventListener('click', () => this.generateTCLForSelected());
+        document.getElementById('expand-points-btn')?.addEventListener('click', () => this.expandPoints());
+        
+        document.getElementById('drawer-close-btn').addEventListener('click', () => this.closeDrawer());
+        document.getElementById('drawer-cancel-btn').addEventListener('click', () => this.closeDrawer());
+        document.getElementById('drawer-overlay').addEventListener('click', () => this.closeDrawer());
+        document.getElementById('drawer-save-btn').addEventListener('click', () => this.saveTestCase());
+        document.getElementById('drawer-save-btn-bottom').addEventListener('click', () => this.saveTestCase());
+        document.getElementById('drawer-save-continue-btn').addEventListener('click', () => this.saveTestCase(true));
+        document.getElementById('drawer-delete-btn').addEventListener('click', () => this.deleteTestCase());
+        document.getElementById('evidence-drawer-close')?.addEventListener('click', () => this.closeEvidenceDrawer());
+        document.getElementById('evidence-drawer-overlay')?.addEventListener('click', () => this.closeEvidenceDrawer());
+        
+        document.getElementById('filter-close-btn').addEventListener('click', () => this.toggleFilterPanel());
+        document.getElementById('filter-reset-btn').addEventListener('click', () => this.resetFilters());
+        document.getElementById('filter-apply-btn').addEventListener('click', () => this.applyFilters());
+        
+        document.getElementById('retry-btn').addEventListener('click', () => this.loadLevel1Points());
+        
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                this.closeDrawer();
+                this.closeFilterPanel();
+            }
+        });
+    }
+
+    async loadLevel1Points() {
+        try {
+            this.showLoading();
+            
+            const body = {};
+            
+            if (this.currentLibraryId) {
+                body.libraryId = this.currentLibraryId;
+            }
+            
+            if (this.searchKeyword) {
+                body.keyword = this.searchKeyword;
+            }
+            
+            const response = await this.apiRequest('/testpoints/level1/all', {
+                method: 'POST',
+                body: JSON.stringify(body)
+            });
+            
+            if (response.success && response.level1Points) {
+                this.level1Points = response.level1Points;
+                this.totalPages = Math.ceil(this.level1Points.length / this.pageSize);
+                this.renderLevel1List();
+            } else {
+                throw new Error(response.message || '加载失败');
+            }
+        } catch (error) {
+            console.error('加载一级测试点失败:', error);
+            this.showError(error.message);
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    renderLevel1List() {
+        const container = document.getElementById('level1-list');
+        const startIndex = (this.currentPage - 1) * this.pageSize;
+        const endIndex = startIndex + this.pageSize;
+        const pageData = this.level1Points.slice(startIndex, endIndex);
+        
+        if (pageData.length === 0) {
+            this.showEmpty();
+            return;
+        }
+        
+        this.hideEmpty();
+        this.hideError();
+        
+        container.innerHTML = pageData.map((point, index) => this.renderLevel1Item(point, startIndex + index + 1)).join('');
+        
+        this.renderPagination();
+        this.bindLevel1ItemEvents();
+    }
+
+    renderLevel1Item(point, index) {
+        const isExpanded = this.expandedItems.has(point.id);
+        const testCaseCount = point.test_case_count || 0;
+        const bugCount = point.bug_count || 0;
+        const testType = point.test_type || '功能测试';
+        const summary = point.summary || point.overview || '';
+        const updatedAt = point.updated_at || point.updateTime || '';
+        
+        return `
+            <div class="level1-item ${isExpanded ? 'expanded' : ''}" data-id="${point.id}">
+                <div class="level1-item-header">
+                    <label class="level1-select-cell" title="选择测试点">
+                        <input type="checkbox" class="level1-select-checkbox" data-id="${point.id}">
+                    </label>
+                    <button class="expand-btn" data-id="${point.id}">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 18l6-6-6-6"/>
+                        </svg>
+                    </button>
+                    <div class="level1-number">TP-${String(index).padStart(3, '0')}</div>
+                    <div class="level1-name" title="${this.escapeHtml(point.name)}">${this.escapeHtml(point.name)}</div>
+                    <div class="level1-summary" title="${this.escapeHtml(summary)}">${this.escapeHtml(summary)}</div>
+                    <div class="level1-count">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                        </svg>
+                        <span class="level1-count-value">${testCaseCount}</span>
+                        <span>用例</span>
+                    </div>
+                    <div class="level1-bug-count ${bugCount === 0 ? 'hidden' : ''}">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="M12 8v4M12 16h.01"></path>
+                        </svg>
+                        <span class="level1-bug-value">${bugCount}</span>
+                        <span>缺陷</span>
+                    </div>
+                    <div class="level1-updated-time">${this.formatDateTime(updatedAt)}</div>
+                    <div class="level1-actions">
+                        <button class="level1-action-btn edit-btn" data-id="${point.id}" title="编辑">
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                            </svg>
+                        </button>
+                        <button class="level1-action-btn tcl-btn" data-id="${point.id}" data-name="${this.escapeHtml(point.name)}" title="生成TCL脚本">
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="16 18 22 12 16 6"></polyline>
+                                <polyline points="8 6 2 12 8 18"></polyline>
+                            </svg>
+                        </button>
+                        <button class="level1-action-btn sdk-unit-btn" data-id="${point.id}" data-name="${this.escapeHtml(point.name)}" title="生成SDK单测">SDK</button>
+                        <button class="level1-action-btn evidence-btn" data-id="${point.id}" title="查看证据">证</button>
+                        <button class="level1-action-btn migrate-btn" data-id="${point.id}" data-name="${this.escapeHtml(point.name)}" title="迁移到新芯片">迁</button>
+                        <button class="level1-action-btn delete-btn" data-id="${point.id}" title="删除">
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="test-cases-container ${isExpanded ? 'expanded' : ''}" data-id="${point.id}">
+                    <div class="test-cases-list" data-id="${point.id}">
+                        <div class="loading-state" style="padding: 20px; text-align: center;">
+                            <div class="loading-spinner"></div>
+                            <p style="margin: 12px 0 0; font-size: 13px; color: var(--color-text-secondary, #64748b);">加载测试用例...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    bindLevel1ItemEvents() {
+        document.querySelectorAll('.level1-select-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('click', (e) => {
+                e.stopPropagation();
+                checkbox.closest('.level1-item')?.classList.toggle('selected', checkbox.checked);
+            });
+        });
+
+        document.querySelectorAll('.expand-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleExpand(btn.dataset.id);
+            });
+        });
+        
+        document.querySelectorAll('.level1-item-header').forEach(header => {
+            header.addEventListener('click', (e) => {
+                if (!e.target.closest('.level1-action-btn') && !e.target.closest('.ai-task-batch-checkbox-cell')) {
+                    const id = header.closest('.level1-item').dataset.id;
+                    this.toggleExpand(id);
+                }
+            });
+        });
+        
+        document.querySelectorAll('.edit-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.editLevel1Point(btn.dataset.id);
+            });
+        });
+        
+        document.querySelectorAll('.tcl-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = btn.dataset.id;
+                const name = btn.dataset.name;
+                this.generateTCL(id, name);
+            });
+        });
+
+        document.querySelectorAll('.sdk-unit-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.createSdkUnitTask(btn.dataset.id, btn.dataset.name);
+            });
+        });
+
+        document.querySelectorAll('.evidence-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.openEvidenceDrawer(btn.dataset.id);
+            });
+        });
+
+        document.querySelectorAll('.migrate-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.createMigrationTask(btn.dataset.id, btn.dataset.name);
+            });
+        });
+        
+        document.querySelectorAll('.delete-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.deleteLevel1Point(btn.dataset.id);
+            });
+        });
+    }
+
+    async toggleExpand(level1Id) {
+        const item = document.querySelector(`.level1-item[data-id="${level1Id}"]`);
+        const container = document.querySelector(`.test-cases-container[data-id="${level1Id}"]`);
+        
+        if (this.expandedItems.has(level1Id)) {
+            this.expandedItems.delete(level1Id);
+            item.classList.remove('expanded');
+            container.classList.remove('expanded');
+        } else {
+            this.expandedItems.add(level1Id);
+            item.classList.add('expanded');
+            container.classList.add('expanded');
+            
+            if (!this.testCases[level1Id]) {
+                await this.loadTestCases(level1Id);
+            } else {
+                this.renderTestCases(level1Id, this.testCases[level1Id]);
+            }
+        }
+        
+        this.updateExpandAllButton();
+    }
+
+    async loadTestCases(level1Id) {
+        try {
+            const listContainer = document.querySelector(`.test-cases-list[data-id="${level1Id}"]`);
+            listContainer.innerHTML = `
+                <div class="loading-state" style="padding: 20px; text-align: center;">
+                    <div class="loading-spinner"></div>
+                    <p style="margin: 12px 0 0; font-size: 13px; color: var(--color-text-secondary, #64748b);">加载测试用例...</p>
+                </div>
+            `;
+            
+            const response = await this.apiRequest('/api/cases/list', {
+                method: 'POST',
+                body: JSON.stringify({
+                    level1Id: level1Id,
+                    page: 1,
+                    pageSize: 1000
+                })
+            });
+            
+            if (response.success && response.testCases) {
+                this.testCases[level1Id] = response.testCases;
+                this.renderTestCases(level1Id, response.testCases);
+            } else {
+                throw new Error(response.message || '加载测试用例失败');
+            }
+        } catch (error) {
+            console.error('加载测试用例失败:', error);
+            const listContainer = document.querySelector(`.test-cases-list[data-id="${level1Id}"]`);
+            listContainer.innerHTML = `
+                <div class="error-state" style="padding: 20px; text-align: center;">
+                    <p style="margin: 0; font-size: 13px; color: #ef4444;">加载失败：${this.escapeHtml(error.message)}</p>
+                </div>
+            `;
+        }
+    }
+
+    renderTestCases(level1Id, testCases) {
+        const listContainer = document.querySelector(`.test-cases-list[data-id="${level1Id}"]`);
+        
+        if (testCases.length === 0) {
+            listContainer.innerHTML = `
+                <div style="padding: 20px; text-align: center;">
+                    <p style="margin: 0 0 12px; font-size: 13px; color: #94a3b8;">暂无测试用例</p>
+                </div>
+                <button class="add-test-case-btn" data-level1-id="${level1Id}">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    <span>添加测试用例</span>
+                </button>
+            `;
+        } else {
+            listContainer.innerHTML = `
+                <div class="test-case-header">
+                    <div class="test-case-header-status"></div>
+                    <div class="test-case-header-name">名称</div>
+                    <div class="test-case-header-purpose">测试目的</div>
+                    <div class="test-case-header-type">测试类型</div>
+                    <div class="test-case-header-priority">优先级</div>
+                    <div class="test-case-header-bug">缺陷</div>
+                    <div class="test-case-header-owner">负责人</div>
+                    <div class="test-case-header-actions">操作</div>
+                </div>
+            ` + testCases.map(tc => this.renderTestCaseItem(tc)).join('') + `
+                <button class="add-test-case-btn" data-level1-id="${level1Id}">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    <span>添加测试用例</span>
+                </button>
+            `;
+        }
+        
+        this.bindTestCaseEvents();
+    }
+
+    renderTestCaseItem(testCase) {
+        const status = this.getTestCaseStatus(testCase);
+        const priority = testCase.priority || '中';
+        const testType = testCase.type || '功能测试';
+        const bugCount = testCase.bug_count || 0;
+        const purpose = testCase.purpose ? testCase.purpose.replace(/\n/g, ' ').substring(0, 60) : '-';
+        
+        return `
+            <div class="test-case-item" data-id="${testCase.id}">
+                <div class="test-case-status ${status}">
+                    ${this.getStatusIcon(status)}
+                </div>
+                <div class="test-case-name" title="${this.escapeHtml(testCase.name)}">${this.escapeHtml(testCase.name)}</div>
+                <div class="test-case-purpose" title="${this.escapeHtml(testCase.purpose || '')}">${this.escapeHtml(purpose)}</div>
+                <div class="test-case-type ${testType}">${this.escapeHtml(testType)}</div>
+                <div class="test-case-priority ${priority}">${priority}</div>
+                <div class="test-case-bug-count ${bugCount > 0 ? 'has-bug' : ''}">${bugCount}</div>
+                <div class="test-case-owner">${this.escapeHtml(testCase.owner || '-')}</div>
+                <div class="test-case-actions">
+                    <button class="test-case-action-btn edit-testcase-btn" data-id="${testCase.id}" title="编辑">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    getTestCaseStatus(testCase) {
+        if (testCase.has_defect) return 'has-defect';
+        if (testCase.executed) return 'executed';
+        return 'not-executed';
+    }
+
+    getStatusIcon(status) {
+        const icons = {
+            'executed': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>',
+            'not-executed': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle></svg>',
+            'has-defect': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v4M12 16h.01"></path></svg>'
+        };
+        return icons[status] || icons['not-executed'];
+    }
+
+    bindTestCaseEvents() {
+        document.querySelectorAll('.test-case-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                if (!e.target.closest('.test-case-action-btn')) {
+                    this.openDrawer(item.dataset.id);
+                }
+            });
+        });
+        
+        document.querySelectorAll('.edit-testcase-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.openDrawer(btn.dataset.id);
+            });
+        });
+        
+        document.querySelectorAll('.add-test-case-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.addTestCase(btn.dataset.level1Id);
+            });
+        });
+    }
+
+    async openDrawer(testCaseId) {
+        try {
+            const response = await this.apiRequest(`/testcases/${testCaseId}`);
+            
+            if (response.success && response.testCase) {
+                this.currentTestCase = response.testCase;
+                this.fillDrawerForm(response.testCase);
+                this.showDrawer();
+            } else {
+                throw new Error(response.message || '加载测试用例详情失败');
+            }
+        } catch (error) {
+            console.error('加载测试用例详情失败:', error);
+            this.showToast(error.message, 'error');
+        }
+    }
+
+    fillDrawerForm(testCase) {
+        document.getElementById('testcase-id').value = testCase.id;
+        document.getElementById('testcase-name').value = testCase.name || '';
+        document.getElementById('testcase-priority').value = testCase.priority || '中';
+        document.getElementById('testcase-type').value = testCase.type || '功能测试';
+        document.getElementById('testcase-phase').value = testCase.phase || '集成测试';
+        document.getElementById('testcase-env').value = testCase.env || '测试环境';
+        document.getElementById('testcase-owner').value = testCase.owner || '';
+        document.getElementById('testcase-precondition').value = testCase.precondition || '';
+        document.getElementById('testcase-purpose').value = testCase.purpose || '';
+        document.getElementById('testcase-steps').value = testCase.steps || '';
+        document.getElementById('testcase-expected').value = testCase.expected || '';
+        document.getElementById('testcase-key-config').value = testCase.key_config || '';
+        document.getElementById('testcase-remark').value = testCase.remark || '';
+        
+        document.getElementById('drawer-created-time').textContent = this.formatDateTime(testCase.created_at);
+        document.getElementById('drawer-updated-time').textContent = this.formatDateTime(testCase.updated_at);
+    }
+
+    showDrawer() {
+        document.getElementById('drawer-overlay').classList.add('active');
+        document.getElementById('testcase-drawer').classList.add('open');
+        document.body.style.overflow = 'hidden';
+    }
+
+    closeDrawer() {
+        document.getElementById('drawer-overlay').classList.remove('active');
+        document.getElementById('testcase-drawer').classList.remove('open');
+        document.body.style.overflow = '';
+        this.currentTestCase = null;
+    }
+
+    async saveTestCase(continueEditing = false) {
+        try {
+            const testCaseId = document.getElementById('testcase-id').value;
+            const data = {
+                name: document.getElementById('testcase-name').value,
+                priority: document.getElementById('testcase-priority').value,
+                type: document.getElementById('testcase-type').value,
+                phase: document.getElementById('testcase-phase').value,
+                env: document.getElementById('testcase-env').value,
+                owner: document.getElementById('testcase-owner').value,
+                precondition: document.getElementById('testcase-precondition').value,
+                purpose: document.getElementById('testcase-purpose').value,
+                steps: document.getElementById('testcase-steps').value,
+                expected: document.getElementById('testcase-expected').value,
+                key_config: document.getElementById('testcase-key-config').value,
+                remark: document.getElementById('testcase-remark').value
+            };
+            
+            if (!data.name || !data.name.trim()) {
+                throw new Error('用例名称不能为空');
+            }
+            
+            const saveBtn = continueEditing ? 
+                document.getElementById('drawer-save-continue-btn') : 
+                document.getElementById('drawer-save-btn');
+            const btnText = saveBtn.querySelector('.btn-text');
+            const btnLoading = saveBtn.querySelector('.btn-loading');
+            
+            if (btnText) btnText.style.display = 'none';
+            if (btnLoading) btnLoading.style.display = 'inline-flex';
+            
+            const response = await this.apiRequest(`/testcases/${testCaseId}`, {
+                method: 'PUT',
+                body: JSON.stringify(data)
+            });
+            
+            if (response.success) {
+                this.showToast('保存成功', 'success');
+                
+                if (!continueEditing) {
+                    this.closeDrawer();
+                }
+                
+                await this.loadLevel1Points();
+                
+                if (this.currentTestCase && this.currentTestCase.level1_id) {
+                    delete this.testCases[this.currentTestCase.level1_id];
+                }
+            } else {
+                throw new Error(response.message || '保存失败');
+            }
+        } catch (error) {
+            console.error('保存测试用例失败:', error);
+            this.showToast(error.message, 'error');
+        } finally {
+            const saveBtns = [document.getElementById('drawer-save-btn'), document.getElementById('drawer-save-continue-btn')];
+            saveBtns.forEach(btn => {
+                const btnText = btn.querySelector('.btn-text');
+                const btnLoading = btn.querySelector('.btn-loading');
+                if (btnText) btnText.style.display = 'inline';
+                if (btnLoading) btnLoading.style.display = 'none';
+            });
+        }
+    }
+
+    async deleteTestCase() {
+        if (!(await this.showConfirm('确定要删除这个测试用例吗？此操作无法撤销。'))) {
+            return;
+        }
+        
+        try {
+            const testCaseId = document.getElementById('testcase-id').value;
+            const response = await this.apiRequest(`/testcases/${testCaseId}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.success) {
+                this.showToast('删除成功', 'success');
+                this.closeDrawer();
+                
+                if (this.currentTestCase && this.currentTestCase.level1_id) {
+                    delete this.testCases[this.currentTestCase.level1_id];
+                }
+                
+                await this.loadLevel1Points();
+            } else {
+                throw new Error(response.message || '删除失败');
+            }
+        } catch (error) {
+            console.error('删除测试用例失败:', error);
+            this.showToast(error.message, 'error');
+        }
+    }
+
+    toggleExpandAll() {
+        const btn = document.getElementById('expand-all-btn');
+        const btnText = btn.querySelector('.btn-text');
+        const allExpanded = this.expandedItems.size === this.level1Points.length;
+        
+        if (allExpanded) {
+            this.expandedItems.clear();
+            document.querySelectorAll('.level1-item').forEach(item => {
+                item.classList.remove('expanded');
+            });
+            document.querySelectorAll('.test-cases-container').forEach(container => {
+                container.classList.remove('expanded');
+            });
+            btnText.textContent = '全展开';
+        } else {
+            this.level1Points.forEach((point, index) => {
+                setTimeout(() => {
+                    if (!this.expandedItems.has(point.id)) {
+                        this.toggleExpand(point.id);
+                    }
+                }, index * 50);
+            });
+            btnText.textContent = '全收起';
+        }
+    }
+
+    updateExpandAllButton() {
+        const btn = document.getElementById('expand-all-btn');
+        const btnText = btn.querySelector('.btn-text');
+        const allExpanded = this.expandedItems.size === this.level1Points.length && this.level1Points.length > 0;
+        
+        btnText.textContent = allExpanded ? '全收起' : '全展开';
+    }
+
+    handleSearch(e) {
+        clearTimeout(this.searchTimeout);
+        this.searchTimeout = setTimeout(() => {
+            this.searchKeyword = e.target.value.trim();
+            this.currentPage = 1;
+            this.loadLevel1Points();
+        }, 300);
+    }
+
+    toggleFilterPanel() {
+        const panel = document.getElementById('filter-panel');
+        const overlay = document.getElementById('drawer-overlay');
+        
+        if (panel.style.display === 'none') {
+            panel.style.display = 'flex';
+            overlay.classList.add('active');
+        } else {
+            panel.style.display = 'none';
+            overlay.classList.remove('active');
+        }
+    }
+
+    closeFilterPanel() {
+        document.getElementById('filter-panel').style.display = 'none';
+        document.getElementById('drawer-overlay').classList.remove('active');
+    }
+
+    resetFilters() {
+        document.querySelectorAll('#filter-panel input[type="checkbox"]').forEach(cb => {
+            cb.checked = false;
+        });
+        document.getElementById('filter-case-count-min').value = '';
+        document.getElementById('filter-case-count-max').value = '';
+        document.getElementById('filter-date-start').value = '';
+        document.getElementById('filter-date-end').value = '';
+    }
+
+    applyFilters() {
+        this.filters = {
+            testTypes: Array.from(document.querySelectorAll('#filter-test-type input:checked')).map(cb => cb.value),
+            caseCountMin: document.getElementById('filter-case-count-min').value,
+            caseCountMax: document.getElementById('filter-case-count-max').value,
+            dateStart: document.getElementById('filter-date-start').value,
+            dateEnd: document.getElementById('filter-date-end').value
+        };
+        
+        this.closeFilterPanel();
+        this.currentPage = 1;
+        this.loadLevel1Points();
+    }
+
+    renderPagination() {
+        const container = document.getElementById('pagination');
+        
+        if (this.totalPages <= 1) {
+            container.innerHTML = '';
+            return;
+        }
+        
+        let html = '';
+        
+        html += `<button class="pagination-btn" ${this.currentPage === 1 ? 'disabled' : ''} onclick="app.goToPage(${this.currentPage - 1})">上一页</button>`;
+        
+        for (let i = 1; i <= this.totalPages; i++) {
+            if (i === 1 || i === this.totalPages || (i >= this.currentPage - 2 && i <= this.currentPage + 2)) {
+                html += `<button class="pagination-btn ${i === this.currentPage ? 'active' : ''}" onclick="app.goToPage(${i})">${i}</button>`;
+            } else if (i === this.currentPage - 3 || i === this.currentPage + 3) {
+                html += `<span style="padding: 0 8px;">...</span>`;
+            }
+        }
+        
+        html += `<button class="pagination-btn" ${this.currentPage === this.totalPages ? 'disabled' : ''} onclick="app.goToPage(${this.currentPage + 1})">下一页</button>`;
+        
+        container.innerHTML = html;
+    }
+
+    goToPage(page) {
+        if (page < 1 || page > this.totalPages) return;
+        this.currentPage = page;
+        this.renderLevel1List();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    async generateTCL(level1PointId, level1PointName) {
+        if (!(await this.showConfirm(`确认要为测试点「${level1PointName}」生成TCL脚本吗？`))) {
+            return;
+        }
+        await this._generateTCLWithoutConfirm(level1PointId);
+    }
+
+    async _generateTCLWithoutConfirm(level1PointId) {
+        try {
+            this.showToast('正在生成TCL脚本...', 'warning');
+
+            const response = await this.apiRequest('/tcl-generation/generate', {
+                method: 'POST',
+                body: JSON.stringify({
+                    moduleId: this.currentModuleId,
+                    level1PointId,
+                    options: {
+                        chipVersionId: document.getElementById('level-chip-version-select')?.value || null,
+                        executionEnvId: document.getElementById('level-execution-env-select')?.value || null,
+                        level1PointId
+                    }
+                })
+            });
+
+            if (response.success && (response.taskId || response.data?.taskId)) {
+                const taskId = response.taskId || response.data.taskId;
+                let attempts = 0;
+                const maxAttempts = 30;
+
+                const pollInterval = setInterval(async () => {
+                    attempts++;
+                    try {
+                        const taskResponse = await this.apiRequest(`/tcl-generation/task/${taskId}`);
+                        const taskData = taskResponse.data || taskResponse;
+                        if (taskResponse.success && (taskData.status === 'completed' || taskData.status === 'failed')) {
+                            clearInterval(pollInterval);
+                            if (taskData.status === 'completed') {
+                                this.showToast('TCL脚本生成成功', 'success');
+                                await this.loadLevel1Points();
+                            } else {
+                                this.showToast(`TCL脚本生成失败：${taskResponse.message || '未知错误'}`, 'error');
+                            }
+                        } else if (attempts >= maxAttempts) {
+                            clearInterval(pollInterval);
+                            this.showToast('TCL脚本生成超时，请稍后查看', 'error');
+                        }
+                    } catch (error) {
+                        if (attempts >= maxAttempts) {
+                            clearInterval(pollInterval);
+                            this.showToast('TCL脚本生成查询失败', 'error');
+                        }
+                    }
+                }, 2000);
+            } else {
+                throw new Error(response.message || '生成任务创建失败');
+            }
+        } catch (error) {
+            console.error('生成TCL失败:', error);
+            this.showToast(error.message, 'error');
+        }
+    }
+
+    async expandPoints() {
+        if (!(await this.showConfirm('确认要对当前模块的测试点进行5维度扩展吗？'))) {
+            return;
+        }
+
+        try {
+            this.showToast('正在进行5维度扩展...', 'warning');
+
+            const response = await this.apiRequest('/tcl-generation/expand-points', {
+                method: 'POST',
+                body: JSON.stringify({
+                    taskId: 'expand-' + Date.now(),
+                    moduleId: this.currentModuleId,
+                    globalContext: ''
+                })
+            });
+
+            if (response.success) {
+                const expandedCount = response.expandedCount || response.newPointsCount || 0;
+                this.showToast(`5维度扩展完成，新增${expandedCount}个测试点`, 'success');
+                await this.loadLevel1Points();
+            } else {
+                throw new Error(response.message || '5维度扩展失败');
+            }
+        } catch (error) {
+            console.error('5维度扩展失败:', error);
+            this.showToast(error.message, 'error');
+        }
+    }
+
+    async generateTCLForSelected() {
+        const selectedItems = document.querySelectorAll('.level1-item.selected');
+        const selectedIds = Array.from(selectedItems).map(item => item.dataset.id);
+
+        if (selectedIds.length > 0) {
+            if (!(await this.showConfirm(`确认为选中的 ${selectedIds.length} 个测试点批量生成TCL脚本吗？`))) {
+                return;
+            }
+            for (const id of selectedIds) {
+                await this._generateTCLWithoutConfirm(id);
+            }
+        } else {
+            this.showToast('请先选择测试点，或点击单个测试点的TCL按钮', 'warning');
+        }
+    }
+
+    async createSdkUnitTask(level1PointId, level1PointName) {
+        try {
+            const response = await this.apiRequest('/adaptive-generation/create', {
+                method: 'POST',
+                body: JSON.stringify({
+                    targetType: 'level1_point',
+                    targetId: level1PointId,
+                    level1PointId,
+                    targetName: level1PointName,
+                    queryText: level1PointName,
+                    moduleId: this.currentModuleId,
+                    chipVersionId: document.getElementById('level-chip-version-select')?.value || null,
+                    executionEnvId: document.getElementById('level-execution-env-select')?.value || null,
+                    categories: ['sdk_api', 'bug_rag', 'execution_experience']
+                })
+            });
+            if (response.success) {
+                this.showToast('SDK单测任务骨架已创建', 'success');
+            } else {
+                throw new Error(response.message || '创建失败');
+            }
+        } catch (error) {
+            this.showToast(error.message, 'error');
+        }
+    }
+
+    async createMigrationTask(level1PointId, level1PointName) {
+        try {
+            const chipVersionId = document.getElementById('level-chip-version-select')?.value || null;
+            const response = await this.apiRequest('/adaptive-generation/create', {
+                method: 'POST',
+                body: JSON.stringify({
+                    targetType: 'level1_point',
+                    targetId: level1PointId,
+                    level1PointId,
+                    targetName: level1PointName,
+                    queryText: `迁移 ${level1PointName}`,
+                    moduleId: this.currentModuleId,
+                    chipVersionId,
+                    executionEnvId: document.getElementById('level-execution-env-select')?.value || null,
+                    categories: ['register_map', 'register_field', 'sdk_api', 'bug_rag', 'migration_note']
+                })
+            });
+            if (response.success) {
+                this.showToast('迁移任务骨架已创建', 'success');
+                window.location.href = '/chip-migration.html';
+            } else {
+                throw new Error(response.message || '创建失败');
+            }
+        } catch (error) {
+            this.showToast(error.message, 'error');
+        }
+    }
+
+    async openEvidenceDrawer(level1PointId) {
+        const drawer = document.getElementById('evidence-drawer');
+        const overlay = document.getElementById('evidence-drawer-overlay');
+        const content = document.getElementById('evidence-drawer-content');
+        if (!drawer || !overlay || !content) return;
+        drawer.classList.add('open');
+        overlay.classList.add('active');
+        content.innerHTML = '<div class="evidence-empty">加载证据中...</div>';
+        try {
+            const response = await this.apiRequest(`/adaptive-generation/evidence/level1_point/${level1PointId}`);
+            if (!response.success) throw new Error(response.message || '加载证据失败');
+            const evidence = response.data?.topEvidence || [];
+            if (evidence.length === 0) {
+                content.innerHTML = '<div class="evidence-empty">暂无证据链</div>';
+                return;
+            }
+            content.innerHTML = evidence.map(item => `
+                <div class="evidence-card">
+                    <div class="evidence-card-title">${this.escapeHtml(item.evidence_title || item.evidence_type || '证据')}</div>
+                    <div class="evidence-card-meta">${this.escapeHtml(item.evidence_type || '-')} · ${this.formatDateTime(item.created_at)}</div>
+                    <div class="evidence-card-excerpt">${this.escapeHtml(item.evidence_excerpt || '')}</div>
+                </div>
+            `).join('');
+        } catch (error) {
+            content.innerHTML = `<div class="evidence-empty">加载失败：${this.escapeHtml(error.message)}</div>`;
+        }
+    }
+
+    closeEvidenceDrawer() {
+        document.getElementById('evidence-drawer')?.classList.remove('open');
+        document.getElementById('evidence-drawer-overlay')?.classList.remove('active');
+    }
+
+    addLevel1Point() {
+        this.showToast('新建测试点功能开发中...', 'warning');
+    }
+
+    editLevel1Point(id) {
+        this.showToast('编辑测试点功能开发中...', 'warning');
+    }
+
+    deleteLevel1Point(id) {
+        this.showToast('删除测试点功能开发中...', 'warning');
+    }
+
+    addTestCase(level1Id) {
+        const level1Point = this.level1Points.find(p => p.id == level1Id);
+        const level1Name = level1Point ? encodeURIComponent(level1Point.name) : '';
+        
+        let moduleIdVal = this.currentModuleId || '';
+        let moduleNameVal = document.getElementById('breadcrumb-module').textContent || '';
+        
+        if (!moduleIdVal && level1Point) {
+            moduleIdVal = level1Point.module_id || level1Point.moduleId || '';
+            if (level1Point.module_name || level1Point.moduleName) {
+                moduleNameVal = level1Point.module_name || level1Point.moduleName;
+            }
+        }
+        
+        const urlParams = new URLSearchParams();
+        urlParams.append('libraryId', this.currentLibraryId || '');
+        urlParams.append('moduleId', moduleIdVal);
+        urlParams.append('level1Id', level1Id);
+        urlParams.append('libraryName', encodeURIComponent(document.getElementById('breadcrumb-library').textContent));
+        urlParams.append('moduleName', encodeURIComponent(moduleNameVal));
+        if (level1Name) {
+            urlParams.append('level1Name', level1Name);
+        }
+        
+        window.location.href = `/batch-create-cases.html?${urlParams.toString()}`;
+    }
+
+    showLoading() {
+        document.getElementById('loading-state').style.display = 'flex';
+        document.getElementById('level1-list').innerHTML = '';
+    }
+
+    hideLoading() {
+        document.getElementById('loading-state').style.display = 'none';
+    }
+
+    showEmpty() {
+        document.getElementById('empty-state').style.display = 'flex';
+        document.getElementById('level1-list').innerHTML = '';
+        document.getElementById('pagination').innerHTML = '';
+    }
+
+    hideEmpty() {
+        document.getElementById('empty-state').style.display = 'none';
+    }
+
+    showError(message) {
+        document.getElementById('error-state').style.display = 'flex';
+        document.getElementById('error-message').textContent = message;
+        document.getElementById('level1-list').innerHTML = '';
+        document.getElementById('pagination').innerHTML = '';
+    }
+
+    hideError() {
+        document.getElementById('error-state').style.display = 'none';
+    }
+
+    async showConfirm(message) {
+        if (typeof showConfirmMessage === 'function') {
+            return await showConfirmMessage(message);
+        }
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.45);z-index:99999;display:flex;align-items:center;justify-content:center;';
+            const modal = document.createElement('div');
+            modal.style.cssText = 'background:#fff;border-radius:12px;padding:24px;min-width:340px;max-width:92vw;box-shadow:0 12px 40px rgba(0,0,0,0.18);font-family:inherit;';
+            const text = document.createElement('p');
+            text.textContent = message;
+            text.style.cssText = 'margin:0 0 20px;font-size:14px;color:#1e293b;line-height:1.6;white-space:pre-wrap;';
+            const btnRow = document.createElement('div');
+            btnRow.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;';
+            const cancelBtn = document.createElement('button');
+            cancelBtn.textContent = '取消';
+            cancelBtn.style.cssText = 'padding:7px 16px;border:1px solid #e2e8f0;background:#fff;border-radius:8px;cursor:pointer;font-size:13px;color:#64748b;';
+            const okBtn = document.createElement('button');
+            okBtn.textContent = '确定';
+            okBtn.style.cssText = 'padding:7px 16px;border:none;background:#3b82f6;color:#fff;border-radius:8px;cursor:pointer;font-size:13px;';
+            btnRow.appendChild(cancelBtn);
+            btnRow.appendChild(okBtn);
+            modal.appendChild(text);
+            modal.appendChild(btnRow);
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+            const close = (result) => { overlay.remove(); resolve(result); };
+            cancelBtn.addEventListener('click', () => close(false));
+            okBtn.addEventListener('click', () => close(true));
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
+        });
+    }
+
+    showToast(message, type = 'success') {
+        const container = document.getElementById('toast-container');
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        toast.innerHTML = `
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                ${type === 'success' ? '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>' : ''}
+                ${type === 'error' ? '<circle cx="12" cy="12" r="10"></circle><path d="M12 8v4M12 16h.01"></path>' : ''}
+                ${type === 'warning' ? '<path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>' : ''}
+            </svg>
+            <span>${this.escapeHtml(message)}</span>
+        `;
+        
+        container.appendChild(toast);
+        
+        setTimeout(() => {
+            toast.style.animation = 'slideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) reverse';
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    }
+
+    goBack() {
+        if (document.referrer) {
+            window.history.back();
+        } else {
+            window.location.href = '/';
+        }
+    }
+
+    escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML.replace(/'/g, '&#039;');
+    }
+
+    formatDateTime(dateString) {
+        if (!dateString) return '-';
+        try {
+            const date = new Date(dateString);
+            if (isNaN(date.getTime())) return dateString;
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            return `${year}/${month}/${day} ${hours}:${minutes}`;
+        } catch (e) {
+            return dateString;
+        }
+    }
+}
+
+let app;
+document.addEventListener('DOMContentLoaded', () => {
+    app = new Level1PointsList();
+});

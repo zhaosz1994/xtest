@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 const { authenticateToken, requireAdmin } = require('../middleware');
+const logger = require('../services/logger');
 
 // 获取芯片列表
 router.get('/list', authenticateToken, async (req, res) => {
@@ -9,7 +10,7 @@ router.get('/list', authenticateToken, async (req, res) => {
     const [chips] = await pool.execute('SELECT * FROM chips');
     res.json({ success: true, chips });
   } catch (error) {
-    console.error('获取芯片列表错误:', error);
+    logger.error('获取芯片列表错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -33,7 +34,7 @@ router.post('/add', authenticateToken, requireAdmin, async (req, res) => {
 
     res.json({ success: true, message: '芯片添加成功' });
   } catch (error) {
-    console.error('添加芯片错误:', error);
+    logger.error('添加芯片错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -51,7 +52,7 @@ router.put('/edit/:id', authenticateToken, requireAdmin, async (req, res) => {
 
     res.json({ success: true, message: '芯片编辑成功' });
   } catch (error) {
-    console.error('编辑芯片错误:', error);
+    logger.error('编辑芯片错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -72,7 +73,7 @@ router.delete('/delete/:id', authenticateToken, requireAdmin, async (req, res) =
 
     res.json({ success: true, message: '芯片删除成功' });
   } catch (error) {
-    console.error('删除芯片错误:', error);
+    logger.error('删除芯片错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -90,7 +91,7 @@ router.get('/stats/testpoint-count', authenticateToken, async (req, res) => {
 
     res.json({ success: true, stats });
   } catch (error) {
-    console.error('按芯片统计测试点数量错误:', error);
+    logger.error('按芯片统计测试点数量错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -118,7 +119,7 @@ router.get('/stats/pass-rate', authenticateToken, async (req, res) => {
 
     res.json({ success: true, stats });
   } catch (error) {
-    console.error('按芯片统计测试通过率错误:', error);
+    logger.error('按芯片统计测试通过率错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -155,7 +156,7 @@ router.get('/stats/status-distribution', authenticateToken, async (req, res) => 
 
     res.json({ success: true, stats: Object.values(result) });
   } catch (error) {
-    console.error('按芯片统计测试状态分布错误:', error);
+    logger.error('按芯片统计测试状态分布错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });

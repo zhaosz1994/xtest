@@ -120,14 +120,9 @@ async function deleteTag(tagId, tagName) {
     }
     
     try {
-        const response = await fetch(`/api/forum/tags/${tagId}`, {
-            method: 'DELETE',
-            headers: {
-                'Authorization': `Bearer ${Forum.authToken}`
-            }
+        const result = await apiRequest(`/forum/tags/${tagId}`, {
+            method: 'DELETE'
         });
-        
-        const result = await response.json();
         
         if (result.success) {
             showToast('标签已删除', 'success');
@@ -282,6 +277,15 @@ function renderPosts(posts, pagination) {
                     ${post.isPinned ? '<span class="pinned-badge">置顶</span>' : ''}
                     <a href="post-detail.html?id=${post.id}">${escapeHtml(post.title)}</a>
                 </h3>
+                ${post.tags && post.tags.length > 0 ? `
+                    <div class="post-tags">
+                        ${post.tags.map(tag => `
+                            <span class="post-tag" style="background-color: ${tag.color}20; color: ${tag.color}; border: 1px solid ${tag.color}40;">
+                                ${escapeHtml(tag.name)}
+                            </span>
+                        `).join('')}
+                    </div>
+                ` : ''}
                 <p class="post-summary">${window.NotificationManager ? window.NotificationManager.parseMentions(escapeHtml(post.summary)) : escapeHtml(post.summary)}...</p>
                 <div class="post-meta">
                     <span class="post-author">@${escapeHtml(post.author.name)}</span>
@@ -432,6 +436,9 @@ async function handleLike(btn) {
         return;
     }
     
+    if (btn.dataset.liking === 'true') return;
+    btn.dataset.liking = 'true';
+    
     const postId = btn.dataset.postId;
     const isLiked = btn.classList.contains('liked');
     
@@ -450,15 +457,9 @@ async function handleLike(btn) {
     }
     
     try {
-        const response = await fetch(`/api/forum/posts/${postId}/like`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${Forum.authToken}`
-            }
+        const result = await apiRequest(`/forum/posts/${postId}/like`, {
+            method: 'POST'
         });
-        
-        const result = await response.json();
         
         if (result.success) {
             countEl.textContent = result.data.likeCount;
@@ -481,6 +482,8 @@ async function handleLike(btn) {
         iconEl.textContent = isLiked ? '❤️' : '🤍';
         countEl.textContent = currentCount;
         showToast('网络错误，请重试', 'error');
+    } finally {
+        btn.dataset.liking = 'false';
     }
 }
 
@@ -511,16 +514,10 @@ async function handlePin(btn, postId) {
     const newPinned = !isPinned;
     
     try {
-        const response = await fetch(`/api/forum/posts/${postId}/pin`, {
+        const result = await apiRequest(`/forum/posts/${postId}/pin`, {
             method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${Forum.authToken}`
-            },
             body: JSON.stringify({ pinned: newPinned })
         });
-        
-        const result = await response.json();
         
         if (result.success) {
             showToast(result.message, 'success');
@@ -540,14 +537,9 @@ async function handleDelete(postId) {
     }
     
     try {
-        const response = await fetch(`/api/forum/posts/${postId}`, {
-            method: 'DELETE',
-            headers: {
-                'Authorization': `Bearer ${Forum.authToken}`
-            }
+        const result = await apiRequest(`/forum/posts/${postId}`, {
+            method: 'DELETE'
         });
-        
-        const result = await response.json();
         
         if (result.success) {
             showToast(result.message, 'success');
@@ -603,16 +595,10 @@ async function submitMute(authorId) {
     }
     
     try {
-        const response = await fetch(`/api/forum/users/${authorId}/mute`, {
+        const result = await apiRequest(`/forum/users/${authorId}/mute`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${Forum.authToken}`
-            },
             body: JSON.stringify({ days })
         });
-        
-        const result = await response.json();
         
         if (result.success) {
             showToast(result.message, 'success');
@@ -645,7 +631,7 @@ function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML.replace(/'/g, '&#039;').replace(/"/g, '&quot;');
 }
 
 function formatTime(dateStr) {
@@ -664,9 +650,19 @@ function formatTime(dateStr) {
     if (hours < 24) return `${hours}小时前`;
     if (days < 7) return `${days}天前`;
     
-    return date.toLocaleDateString('zh-CN', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-    });
+    return formatDate(date);
+}
+
+function formatDate(date) {
+    if (!date) return '-';
+    if (!(date instanceof Date)) {
+        date = new Date(date);
+    }
+    if (isNaN(date.getTime())) return '-';
+    
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    
+    return `${year}-${month}-${day}`;
 }

@@ -405,17 +405,23 @@ function closeEditModal() {
 }
 
 async function saveEditPost() {
+    const saveBtn = document.querySelector('#edit-modal .save-btn');
+    if (saveBtn && saveBtn.disabled) return;
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '保存中...'; }
+
     const postId = document.getElementById('edit-post-id').value;
     const title = document.getElementById('edit-title').value.trim();
     const content = document.getElementById('edit-content').value.trim();
     
     if (!title) {
         showToast('请输入标题', 'error');
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '保存'; }
         return;
     }
     
     if (!content) {
         showToast('请输入内容', 'error');
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '保存'; }
         return;
     }
     
@@ -435,6 +441,8 @@ async function saveEditPost() {
     } catch (error) {
         console.error('更新帖子失败:', error);
         showToast('更新失败', 'error');
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '保存'; }
     }
 }
 
@@ -464,7 +472,7 @@ function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML.replace(/'/g, '&#039;').replace(/"/g, '&quot;');
 }
 
 function escapeForJs(text) {
@@ -488,14 +496,41 @@ function formatTime(dateStr) {
     if (hours < 24) return `${hours}小时前`;
     if (days < 7) return `${days}天前`;
     
-    return date.toLocaleDateString('zh-CN', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-    });
+    return formatDate(date);
 }
 
-// ==================== 用户管理功能 ====================
+function formatDate(date) {
+    if (!date) return '-';
+    if (!(date instanceof Date)) {
+        date = new Date(date);
+    }
+    if (isNaN(date.getTime())) return '-';
+    
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    
+    return `${year}-${month}-${day}`;
+}
+
+function formatDateTime(dateStr) {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return '-';
+    
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    
+    return `${year}-${month}-${day} ${hours}:${minutes}`;
+}
+
+function formatMutedTime(dateStr) {
+    if (!dateStr) return '';
+    return formatDateTime(dateStr);
+}
 
 async function loadUsers() {
     const userListEl = document.getElementById('user-list');
@@ -597,18 +632,6 @@ function renderUsers(users) {
             </div>
         `;
     }).join('');
-}
-
-function formatMutedTime(dateStr) {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    return date.toLocaleString('zh-CN', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
 }
 
 function searchUsers() {

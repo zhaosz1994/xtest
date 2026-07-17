@@ -1,3 +1,37 @@
+// ==================== 工具函数 ====================
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML.replace(/'/g, '&#039;').replace(/"/g, '&quot;');
+}
+
+// ==================== 日志级别控制系统 ====================
+const LOG_LEVELS = {
+    ERROR: 0,
+    WARN: 1,
+    INFO: 2,
+    DEBUG: 3
+};
+
+const currentLogLevel = LOG_LEVELS.WARN; // 生产环境设置为WARN，开发环境可改为DEBUG
+
+function log(level, ...args) {
+    if (level <= currentLogLevel) {
+        const levelNames = ['ERROR', 'WARN', 'INFO', 'DEBUG'];
+        const timestamp = new Date().toISOString();
+        console.log(`[${timestamp}] [${levelNames[level]}]`, ...args);
+    }
+}
+
+// 便捷方法
+const logger = {
+    error: (...args) => log(LOG_LEVELS.ERROR, ...args),
+    warn: (...args) => log(LOG_LEVELS.WARN, ...args),
+    info: (...args) => log(LOG_LEVELS.INFO, ...args),
+    debug: (...args) => log(LOG_LEVELS.DEBUG, ...args)
+};
+
 // 全局变量
 let currentUser = null;
 let authToken = null;
@@ -9,6 +43,14 @@ let mockUsers = [];
 let historyRecords = [];
 let chips = [];
 let projects = [];
+
+// 批量操作相关变量
+let selectedCaseIds = [];
+let selectedReviewCaseIds = [];
+let selectedReviewerId = null;
+
+// AI助手相关变量
+let aiModalDragInitialized = false;
 
 // 切换登录和注册页面视图
 function toggleAuthPage(page) {
@@ -47,7 +89,7 @@ const DataEventManager = {
             try {
                 callback(data);
             } catch (error) {
-                console.error(`事件处理器错误 [${event}]:`, error);
+                logger.error(`事件处理器错误 [${event}]:`, error);
             }
         });
     }
@@ -58,23 +100,192 @@ const DataEvents = {
     MODULE_CHANGED: 'moduleDataChanged',
     LEVEL1_POINT_CHANGED: 'level1PointChanged',
     EXECUTION_RECORD_CHANGED: 'executionRecordChanged',
-    DASHBOARD_REFRESH: 'dashboardRefresh'
+    DASHBOARD_REFRESH: 'dashboardRefresh',
+    TEST_PLAN_CHANGED: 'testPlanDataChanged',
+    TEST_REPORT_CHANGED: 'testReportDataChanged'
+};
+
+// ==================== 测试用例编辑状态持久化管理器 ====================
+const TestCaseEditState = {
+    STORAGE_KEY: 'testCaseEditState',
+    SAVE_DELAY: 500,
+    saveTimer: null,
+
+    save(state) {
+        try {
+            const stateToSave = {
+                ...state,
+                timestamp: Date.now()
+            };
+            sessionStorage.setItem(this.STORAGE_KEY, JSON.stringify(stateToSave));
+        } catch (error) {
+            logger.error('保存编辑状态失败:', error);
+        }
+    },
+
+    saveWithDelay(state) {
+        if (this.saveTimer) {
+            clearTimeout(this.saveTimer);
+        }
+        this.saveTimer = setTimeout(() => {
+            this.save(state);
+        }, this.SAVE_DELAY);
+    },
+
+    load() {
+        try {
+            const savedState = sessionStorage.getItem(this.STORAGE_KEY);
+            if (savedState) {
+                const state = JSON.parse(savedState);
+                return state;
+            }
+        } catch (error) {
+            logger.error('加载编辑状态失败:', error);
+        }
+        return null;
+    },
+
+    clear() {
+        try {
+            sessionStorage.removeItem(this.STORAGE_KEY);
+        } catch (error) {
+            logger.error('清除编辑状态失败:', error);
+        }
+    },
+
+    collectFormData() {
+        const formFields = [
+            'detail-case-name',
+            'detail-case-id',
+            'detail-case-priority',
+            'detail-case-type',
+            'detail-case-owner',
+            'detail-case-precondition',
+            'detail-case-purpose',
+            'detail-case-steps',
+            'detail-case-expected',
+            'detail-case-key-config',
+            'detail-case-remark'
+        ];
+
+        const formData = {};
+        formFields.forEach(fieldId => {
+            const element = document.getElementById(fieldId);
+            if (element) {
+                formData[fieldId] = element.value;
+            }
+        });
+
+        const selectedPhases = TagSelector.getValues('detail-case-phases-selector') || [];
+        const selectedEnvironments = TagSelector.getValues('detail-case-environments-selector') || [];
+        const selectedMethods = TagSelector.getValues('detail-case-methods-selector') || [];
+        const selectedSources = TagSelector.getValues('detail-case-sources-selector') || [];
+
+        formData['detail-case-phases'] = selectedPhases;
+        formData['detail-case-environments'] = selectedEnvironments;
+        formData['detail-case-methods'] = selectedMethods;
+        formData['detail-case-sources'] = selectedSources;
+
+        return formData;
+    },
+
+    restoreFormData(formData) {
+        if (!formData) return;
+
+        Object.keys(formData).forEach(fieldId => {
+            if (fieldId.startsWith('detail-case-phases') ||
+                fieldId.startsWith('detail-case-environments') ||
+                fieldId.startsWith('detail-case-methods') ||
+                fieldId.startsWith('detail-case-sources')) {
+                return;
+            }
+
+            const element = document.getElementById(fieldId);
+            if (element) {
+                element.value = formData[fieldId] || '';
+            }
+        });
+
+        return {
+            phases: formData['detail-case-phases'] || [],
+            environments: formData['detail-case-environments'] || [],
+            methods: formData['detail-case-methods'] || [],
+            sources: formData['detail-case-sources'] || []
+        };
+    },
+
+    setupAutoSave(testCase) {
+        const formFields = [
+            'detail-case-name',
+            'detail-case-id',
+            'detail-case-priority',
+            'detail-case-type',
+            'detail-case-owner',
+            'detail-case-precondition',
+            'detail-case-purpose',
+            'detail-case-steps',
+            'detail-case-expected',
+            'detail-case-key-config',
+            'detail-case-remark'
+        ];
+
+        formFields.forEach(fieldId => {
+            const element = document.getElementById(fieldId);
+            if (element) {
+                element.addEventListener('input', () => {
+                    const formData = this.collectFormData();
+                    this.saveWithDelay({
+                        testCase: testCase,
+                        formData: formData
+                    });
+                });
+            }
+        });
+
+        const tagSelectors = [
+            'detail-case-phases-selector',
+            'detail-case-environments-selector',
+            'detail-case-methods-selector',
+            'detail-case-sources-selector'
+        ];
+
+        tagSelectors.forEach(selectorId => {
+            const container = document.getElementById(selectorId);
+            if (container) {
+                const originalOnChange = container._onChange;
+                container._onChange = (values) => {
+                    if (originalOnChange) {
+                        originalOnChange(values);
+                    }
+                    const formData = this.collectFormData();
+                    this.saveWithDelay({
+                        testCase: testCase,
+                        formData: formData
+                    });
+                };
+            }
+        });
+    }
 };
 
 // ==================== 轻量级 Hash 路由系统 ====================
 
 const Router = {
     routes: {
-        'dashboard': { section: 'dashboard', title: '测试管理', requiresAuth: true },
+        'workspace': { section: 'workspace', title: '工作台', requiresAuth: true },
+        'dashboard': { section: 'dashboard', title: '数据面板', requiresAuth: true },
         'cases': { section: 'cases', title: '用例库', requiresAuth: true },
         'testplans': { section: 'testplans', title: '测试计划', requiresAuth: true },
         'reports': { section: 'reports', title: '测试报告', requiresAuth: true },
+        'knowledge': { section: 'knowledge', title: '知识库', requiresAuth: true },
+        'ai-generation': { section: 'ai-generation', title: 'AI生成', requiresAuth: true },
+        'agent-console': { section: 'agent-console', title: 'Agent控制台', requiresAuth: true },
         'settings': { section: 'settings', title: '配置中心', requiresAuth: true },
         'login': { section: 'login', title: '登录', requiresAuth: false },
         'register': { section: 'register', title: '注册', requiresAuth: false }
     },
 
-    defaultRoute: 'dashboard',
+    defaultRoute: 'workspace',
     loginRoute: 'login',
 
     init() {
@@ -111,23 +322,19 @@ const Router = {
         const routeName = this.getCurrentRoute();
         const route = this.routes[routeName];
 
-        console.log('[Router] 路由变化:', routeName, route);
-        console.log('[Router] 是否已认证:', this.isAuthenticated());
 
         if (!route) {
-            console.warn('[Router] 未知路由，跳转到默认页面');
+            logger.warn('[Router] 未知路由，跳转到默认页面');
             this.navigateTo(this.defaultRoute);
             return;
         }
 
         if (route.requiresAuth && !this.isAuthenticated()) {
-            console.log('[Router] 需要登录，跳转到登录页');
             this.navigateTo('login');
             return;
         }
 
         if (route.requiresAdmin && !this.isAdmin()) {
-            console.log('[Router] 需要管理员权限');
             showErrorMessage('只有管理员才能访问此页面');
             this.navigateTo(this.defaultRoute);
             return;
@@ -135,13 +342,16 @@ const Router = {
 
         if (!route.requiresAuth && this.isAuthenticated()) {
             if (routeName === 'login' || routeName === 'register') {
-                console.log('[Router] 已登录，跳转到首页');
                 this.navigateTo(this.defaultRoute);
                 return;
             }
         }
 
-        console.log('[Router] 显示页面:', route.section);
+        if (route.external && route.url) {
+            window.location.href = route.url;
+            return;
+        }
+
         this.showSection(route.section, route.title);
 
         document.title = route.title + ' - xTest';
@@ -167,13 +377,34 @@ const Router = {
             return;
         }
 
+        // 检查URL hash中是否包含libraryId参数，用于恢复用例库详情页
+        const hash = window.location.hash;
+        const libraryIdMatch = hash.match(/libraryId=(\d+)/);
+        if (sectionId === 'cases' && libraryIdMatch) {
+            const urlLibraryId = parseInt(libraryIdMatch[1]);
+            const library = caseLibraries.find(lib => lib.id == urlLibraryId);
+            if (library) {
+                currentCaseLibraryId = urlLibraryId;
+
+                // 更新当前用例库名称显示
+                const currentCaseLibraryElement = document.getElementById('current-case-library');
+                if (currentCaseLibraryElement) {
+                    currentCaseLibraryElement.textContent = library.name;
+                }
+
+                // 切换到用例管理详情页
+                sectionId = 'case-management';
+            }
+        }
+
         document.querySelectorAll('section').forEach(section => {
             section.style.display = 'none';
         });
 
         const targetSection = document.getElementById(`${sectionId}-section`);
         if (targetSection) {
-            targetSection.style.display = 'block';
+            const flexSections = ['knowledge-section', 'ai-generation-section'];
+            targetSection.style.display = flexSections.includes(targetSection.id) ? 'flex' : 'block';
         }
 
         const loginSection = document.getElementById('login-section');
@@ -183,7 +414,7 @@ const Router = {
 
         const testlinkContainer = document.querySelector('.testlink-container');
         if (testlinkContainer) {
-            testlinkContainer.style.display = 'block';
+            testlinkContainer.style.display = 'flex';
         }
 
         // 根据不同页面加载对应数据
@@ -192,6 +423,11 @@ const Router = {
                 initModuleData().then(() => {
                     loadAllLevel1Points();
                 });
+                break;
+            case 'case-management':
+                clearLevel1PointsDisplay();
+                currentModulePage = 1;
+                initModuleData();
                 break;
             case 'testplans':
                 loadTestPlans().then(() => {
@@ -210,6 +446,20 @@ const Router = {
                 loadProjects();
                 initConfigCenter();
                 break;
+            case 'workspace':
+                initWorkspace();
+                break;
+            case 'knowledge':
+                if (typeof initKnowledgeLibrary === 'function') initKnowledgeLibrary();
+                break;
+            case 'ai-generation':
+                if (typeof initAIGeneration === 'function') initAIGeneration();
+                // 从知识库跳转时自动填充上下文
+                if (typeof applyAIGenerationContext === 'function') applyAIGenerationContext();
+                break;
+            case 'agent-console':
+                if (typeof initAgentConsole === 'function') initAgentConsole();
+                break;
             case 'dashboard':
                 loadRecentLogins();
                 updateStats();
@@ -218,7 +468,6 @@ const Router = {
     },
 
     showLoginSection() {
-        console.log('[Router] 显示登录页面');
         
         document.querySelectorAll('section').forEach(section => {
             section.style.display = 'none';
@@ -227,20 +476,18 @@ const Router = {
         const testlinkContainer = document.querySelector('.testlink-container');
         if (testlinkContainer) {
             testlinkContainer.style.display = 'none';
-            console.log('[Router] 隐藏testlink-container');
         }
 
         const loginSection = document.getElementById('login-section');
         if (loginSection) {
             loginSection.style.display = 'flex';
-            console.log('[Router] 显示login-section');
         } else {
-            console.error('[Router] 未找到login-section元素');
+            logger.error('[Router] 未找到login-section元素');
         }
     },
 
     updateNavigation(routeName) {
-        document.querySelectorAll('.nav-item, .sidebar-link').forEach(link => {
+        document.querySelectorAll('.nav-item, .sidebar-link, .nav-action-btn').forEach(link => {
             link.classList.remove('active');
             const href = link.getAttribute('href');
             if (href === `#${routeName}` || href === `#/${routeName}`) {
@@ -261,6 +508,8 @@ function handleRouteChange() {
 // ==================== 结束 Hash 路由系统 ====================
 
 // API响应缓存
+let _authExpiredHandling = false;
+
 const apiCache = {
     data: {},
     timestamps: {},
@@ -290,7 +539,6 @@ const apiCache = {
         if (this.timestamps.hasOwnProperty(key)) {
             delete this.timestamps[key];
         }
-        console.log(`[缓存清除] ${key}`);
     },
 
     deleteByPrefix(prefix) {
@@ -303,7 +551,6 @@ const apiCache = {
             }
         });
         if (count > 0) {
-            console.log(`[缓存批量清除] 前缀 "${prefix}" 匹配 ${count} 条缓存`);
         }
     },
 
@@ -329,6 +576,10 @@ let selectedModules = [];
 let moduleList = [];
 let currentModulePage = 1;
 const modulesPerPage = 32;
+
+// 模块导航收起/展开状态
+let isModuleNavCollapsed = false;
+let savedNavWidth = 220;
 
 // 一级测试点相关变量
 let level1Points = [];
@@ -364,6 +615,101 @@ function debounce(func, wait) {
         timeout = setTimeout(later, wait);
     };
 }
+
+// ========================================
+// 全局请求队列（限制并发数，防止429错误）
+// ========================================
+const RequestQueue = {
+    maxConcurrent: 5,
+    currentCount: 0,
+    queue: [],
+
+    async execute(requestFn) {
+        if (this.currentCount < this.maxConcurrent) {
+            this.currentCount++;
+            try {
+                return await requestFn();
+            } finally {
+                this.currentCount--;
+                this.processQueue();
+            }
+        } else {
+            return new Promise((resolve) => {
+                this.queue.push(() => {
+                    this.currentCount++;
+                    requestFn().then(resolve).finally(() => {
+                        this.currentCount--;
+                        this.processQueue();
+                    });
+                });
+            });
+        }
+    },
+
+    processQueue() {
+        while (this.queue.length > 0 && this.currentCount < this.maxConcurrent) {
+            const nextRequest = this.queue.shift();
+            nextRequest();
+        }
+    }
+};
+
+// Dashboard 数据缓存（避免重复请求）
+const dashboardDataCache = {
+    libraries: null,
+    projects: null,
+    cases: null,
+    testPlans: null,
+    reports: null,
+    timestamp: null,
+    TTL: 10000,
+
+    isExpired() {
+        return !this.timestamp || (Date.now() - this.timestamp) > this.TTL;
+    },
+
+    set(key, data) {
+        this[key] = data;
+        this.timestamp = Date.now();
+    },
+
+    get(key) {
+        if (this.isExpired()) {
+            this.clear();
+            return null;
+        }
+        return this[key];
+    },
+
+    clear() {
+        Object.keys(this).forEach(k => {
+            if (k !== 'isExpired' && k !== 'set' && k !== 'get' && k !== 'timestamp' && k !== 'TTL' && k !== 'invalidateKey' && k !== 'clear' && k !== 'invalidateOnDataChange') {
+                this[k] = null;
+            }
+        });
+        this.timestamp = null;
+    },
+
+    invalidateKey(key) {
+        this[key] = null;
+    },
+
+    invalidateOnDataChange(changeType) {
+        const keyMapping = {
+            'library': 'libraries',
+            'project': 'projects',
+            'case': 'cases',
+            'testPlan': 'testPlans',
+            'report': 'reports'
+        };
+
+        if (changeType === 'any') {
+            this.clear();
+        } else if (keyMapping[changeType]) {
+            this.invalidateKey(keyMapping[changeType]);
+        }
+    }
+};
 
 // 节流函数
 // ========================================
@@ -516,7 +862,6 @@ function initSearchEvents() {
     const testCaseSearchInput = document.getElementById('testcase-search-input');
     if (testCaseSearchInput) {
         const debouncedTestCaseSearch = debounce((value) => {
-            console.log('🔍 触发[测试用例]搜索，关键字:', value);
             testCaseSearchKeyword = value.trim();
             currentTestCasePage = 1; // 重置页码
             // 重新加载测试用例列表
@@ -585,17 +930,33 @@ const ThemeSystem = {
 };
 
 // ========================================
-// 命令面板系统
+// 命令面板系统（支持全局搜索）
 // ========================================
 
 const CommandPalette = {
     isOpen: false,
+    mode: 'command',
     selectedIndex: 0,
+    selectedCategory: 0,
     commands: [],
     filteredCommands: [],
+    searchResults: null,
+    searchKeyword: '',
+    searchDebounce: null,
+    isLoading: false,
+    searchHistory: [],
+    abortController: null,
+    
+    config: {
+        debounceDelay: 300,
+        minSearchLength: 2,
+        maxHistoryItems: 10,
+        searchLimit: 5
+    },
 
     init() {
         this.commands = this.getCommands();
+        this.loadSearchHistory();
         this.render();
         this.bindEvents();
     },
@@ -603,12 +964,28 @@ const CommandPalette = {
     getCommands() {
         return [
             {
+                id: 'global-search',
+                title: '全局搜索',
+                description: '搜索测试计划、用例、帖子、智能体、工具、记忆',
+                icon: '🔍',
+                shortcut: ['/'],
+                action: () => this.switchToSearchMode()
+            },
+            {
                 id: 'new-testplan',
                 title: '新建测试计划',
                 description: '创建一个新的测试计划',
                 icon: '📋',
                 shortcut: ['N', 'P'],
-                action: () => { addTestPlan(); }
+                action: async () => { 
+                    this.close(); 
+                    if (typeof openAdvancedTestPlanModal === 'function') {
+                        await openAdvancedTestPlanModal();
+                    } else {
+                        logger.warn('openAdvancedTestPlanModal function not found');
+                        addTestPlan();
+                    }
+                }
             },
             {
                 id: 'new-testcase',
@@ -616,20 +993,7 @@ const CommandPalette = {
                 description: '创建一个新的测试用例',
                 icon: '📝',
                 shortcut: ['N', 'C'],
-                action: () => { addTestCase(); }
-            },
-            {
-                id: 'search-testplan',
-                title: '搜索测试计划',
-                description: '快速查找测试计划',
-                icon: '🔍',
-                shortcut: ['/'],
-                action: () => {
-                    navigateTo('testplans');
-                    setTimeout(() => {
-                        document.getElementById('testplan-search-input')?.focus();
-                    }, 100);
-                }
+                action: () => { this.close(); addTestCase(); }
             },
             {
                 id: 'dashboard',
@@ -637,7 +1001,7 @@ const CommandPalette = {
                 description: '查看测试概览',
                 icon: '📊',
                 shortcut: ['G', 'D'],
-                action: () => { navigateTo('dashboard'); }
+                action: () => { this.close(); Router.navigateTo('dashboard'); }
             },
             {
                 id: 'testplans',
@@ -645,7 +1009,7 @@ const CommandPalette = {
                 description: '管理测试计划',
                 icon: '📋',
                 shortcut: ['G', 'P'],
-                action: () => { navigateTo('testplans'); }
+                action: () => { this.close(); Router.navigateTo('testplans'); }
             },
             {
                 id: 'cases',
@@ -653,7 +1017,7 @@ const CommandPalette = {
                 description: '管理测试用例',
                 icon: '📁',
                 shortcut: ['G', 'C'],
-                action: () => { navigateTo('cases'); }
+                action: () => { this.close(); Router.navigateTo('cases'); }
             },
             {
                 id: 'reports',
@@ -661,7 +1025,7 @@ const CommandPalette = {
                 description: '查看测试报告',
                 icon: '📈',
                 shortcut: ['G', 'R'],
-                action: () => { navigateTo('reports'); }
+                action: () => { this.close(); Router.navigateTo('reports'); }
             },
             {
                 id: 'settings',
@@ -669,7 +1033,7 @@ const CommandPalette = {
                 description: '系统配置管理',
                 icon: '⚙️',
                 shortcut: ['G', 'S'],
-                action: () => { navigateTo('settings'); }
+                action: () => { this.close(); Router.navigateTo('settings'); }
             },
             {
                 id: 'toggle-theme',
@@ -681,11 +1045,35 @@ const CommandPalette = {
             },
             {
                 id: 'ai-assistant',
-                title: 'AI知识问答',
+                title: 'AI问答',
                 description: '打开AI助手',
                 icon: '🤖',
                 shortcut: ['A', 'I'],
-                action: () => { openAIAssistant(); }
+                action: () => { this.close(); openAIAssistant(); }
+            },
+            {
+                id: 'ai-generation',
+                title: 'AI生成',
+                description: 'AI用例生成',
+                icon: '✨',
+                shortcut: ['G', 'A'],
+                action: () => { this.close(); Router.navigateTo('ai-generation'); }
+            },
+            {
+                id: 'knowledge',
+                title: '知识库',
+                description: '管理知识库文件',
+                icon: '📚',
+                shortcut: ['G', 'K'],
+                action: () => { this.close(); Router.navigateTo('knowledge'); }
+            },
+            {
+                id: 'forum',
+                title: '技术论坛',
+                description: '访问技术讨论区',
+                icon: '💬',
+                shortcut: ['G', 'F'],
+                action: () => { this.close(); window.open('/forum.html', '_blank'); }
             }
         ];
     },
@@ -697,11 +1085,17 @@ const CommandPalette = {
         palette.innerHTML = `
             <div class="command-palette-container">
                 <div class="command-palette-input-wrapper">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="11" cy="11" r="8"></circle>
                         <path d="m21 21-4.35-4.35"></path>
                     </svg>
-                    <input type="text" class="command-palette-input" id="command-input" placeholder="输入命令或搜索..." autocomplete="off">
+                    <input type="text" 
+                           class="command-palette-input" 
+                           id="command-input" 
+                           placeholder="输入命令或搜索... (按 / 进入搜索模式)" 
+                           autocomplete="off"
+                           spellcheck="false">
+                    <span class="mode-indicator" id="mode-indicator"></span>
                     <div class="shortcut-hint">
                         <kbd>ESC</kbd> 关闭
                     </div>
@@ -709,11 +1103,90 @@ const CommandPalette = {
                 <div class="command-palette-results" id="command-results"></div>
             </div>
         `;
-
+        
         document.body.appendChild(palette);
+        
         this.element = palette;
         this.input = palette.querySelector('#command-input');
         this.results = palette.querySelector('#command-results');
+        this.modeIndicator = palette.querySelector('#mode-indicator');
+    },
+
+    bindEvents() {
+        document.addEventListener('keydown', (e) => this.handleGlobalKeydown(e));
+        
+        this.input.addEventListener('input', (e) => this.handleInput(e));
+        
+        this.element.addEventListener('click', (e) => {
+            if (e.target === this.element) {
+                this.close();
+            }
+        });
+    },
+
+    handleGlobalKeydown(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            if (this.isOpen) {
+                this.close();
+            } else {
+                this.open();
+            }
+            return;
+        }
+        
+        if (this.isOpen) {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                if (this.mode === 'search') {
+                    this.switchToCommandMode();
+                } else {
+                    this.close();
+                }
+                return;
+            }
+            
+            if (e.key === '/' && this.mode === 'command') {
+                e.preventDefault();
+                this.switchToSearchMode();
+                return;
+            }
+            
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                this.selectNext();
+                return;
+            }
+            
+            if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                this.selectPrev();
+                return;
+            }
+            
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.execute();
+                return;
+            }
+            
+            if (e.key === 'Tab' && this.mode === 'search') {
+                e.preventDefault();
+                this.switchCategory(e.shiftKey ? -1 : 1);
+                return;
+            }
+        }
+    },
+
+    handleInput(e) {
+        const value = e.target.value;
+        
+        if (this.mode === 'search') {
+            this.searchKeyword = value;
+            this.performSearch(value);
+        } else {
+            this.filterCommands(value);
+        }
     },
 
     open() {
@@ -721,18 +1194,53 @@ const CommandPalette = {
         this.selectedIndex = 0;
         this.element.classList.add('active');
         this.input.value = '';
-        this.filter('');
         this.input.focus();
+        
+        if (this.mode === 'command') {
+            this.filterCommands('');
+        } else {
+            this.renderSearchPrompt();
+        }
     },
 
     close() {
         this.isOpen = false;
         this.element.classList.remove('active');
+        this.mode = 'command';
+        this.input.value = '';
+        this.modeIndicator.textContent = '';
+        this.input.placeholder = '输入命令或搜索... (按 / 进入搜索模式)';
+        
+        if (this.abortController) {
+            this.abortController.abort();
+            this.abortController = null;
+        }
     },
 
-    filter(query) {
-        const q = query.toLowerCase().trim();
+    switchToSearchMode() {
+        this.mode = 'search';
+        this.selectedIndex = 0;
+        this.selectedCategory = 0;
+        this.input.placeholder = '搜索测试计划、用例、帖子、智能体、工具、记忆...';
+        this.input.value = '';
+        this.modeIndicator.textContent = '搜索';
+        this.modeIndicator.classList.add('active');
+        this.input.focus();
+        this.renderSearchPrompt();
+    },
 
+    switchToCommandMode() {
+        this.mode = 'command';
+        this.input.value = '';
+        this.modeIndicator.textContent = '';
+        this.modeIndicator.classList.remove('active');
+        this.input.placeholder = '输入命令或搜索... (按 / 进入搜索模式)';
+        this.filterCommands('');
+    },
+
+    filterCommands(query) {
+        const q = query.toLowerCase().trim();
+        
         if (!q) {
             this.filteredCommands = this.commands;
         } else {
@@ -742,22 +1250,23 @@ const CommandPalette = {
                 cmd.id.toLowerCase().includes(q)
             );
         }
-
-        this.renderResults();
+        
+        this.selectedIndex = 0;
+        this.renderCommandResults();
     },
 
-    renderResults() {
+    renderCommandResults() {
         if (this.filteredCommands.length === 0) {
             this.results.innerHTML = `
-                <div class="empty-state" style="padding: 32px;">
+                <div class="empty-state">
                     <div class="empty-state-emoji">🔍</div>
                     <div class="empty-state-title">未找到匹配的命令</div>
-                    <div class="empty-state-description">尝试其他关键词</div>
+                    <div class="empty-state-description">尝试其他关键词或按 / 进行全局搜索</div>
                 </div>
             `;
             return;
         }
-
+        
         this.results.innerHTML = this.filteredCommands.map((cmd, index) => `
             <div class="command-palette-item ${index === this.selectedIndex ? 'selected' : ''}" 
                  data-index="${index}">
@@ -773,79 +1282,561 @@ const CommandPalette = {
                 ` : ''}
             </div>
         `).join('');
+        
+        this.bindCommandItemEvents();
+    },
 
-        // 绑定点击事件
+    bindCommandItemEvents() {
         this.results.querySelectorAll('.command-palette-item').forEach(item => {
             item.addEventListener('click', () => {
                 const index = parseInt(item.dataset.index);
-                this.execute(index);
+                this.executeCommand(index);
+            });
+            
+            item.addEventListener('mouseenter', () => {
+                this.selectedIndex = parseInt(item.dataset.index);
+                this.updateCommandSelection();
             });
         });
     },
 
-    execute(index) {
+    async performSearch(query) {
+        clearTimeout(this.searchDebounce);
+        
+        if (query.length < this.config.minSearchLength) {
+            this.renderSearchPrompt();
+            return;
+        }
+        
+        this.renderSearching();
+        
+        this.searchDebounce = setTimeout(async () => {
+            try {
+                this.isLoading = true;
+                
+                if (this.abortController) {
+                    this.abortController.abort();
+                }
+                this.abortController = new AbortController();
+                
+                const data = await apiRequest(
+                    `/search?keyword=${encodeURIComponent(query)}&limit=${this.config.searchLimit}`,
+                    { signal: this.abortController.signal }
+                );
+                
+                if (data.success) {
+                    this.searchResults = data.data;
+                    this.renderSearchResults(query);
+                    this.saveSearchHistory(query);
+                } else {
+                    this.renderSearchError(data.error?.message || '搜索失败');
+                }
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    return;
+                }
+                logger.error('搜索错误:', error);
+                this.renderSearchError('搜索服务暂时不可用');
+            } finally {
+                this.isLoading = false;
+            }
+        }, this.config.debounceDelay);
+    },
+
+    renderSearchPrompt() {
+        const history = this.getSearchHistory();
+        
+        let html = '<div class="search-prompt">';
+        
+        if (history.length > 0) {
+            html += `
+                <div class="search-history">
+                    <div class="search-history-header">
+                        <span class="history-title">最近搜索</span>
+                        <button class="clear-history-btn" id="clear-history-btn">清除</button>
+                    </div>
+                    <div class="search-history-tags">
+                        ${history.map(h => `
+                            <span class="history-tag" data-keyword="${this.escapeHtml(h)}">${this.escapeHtml(h)}</span>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
+        html += `
+            <div class="search-hints">
+                <div class="search-hint-title">搜索提示</div>
+                <div class="search-hint-items">
+                    <div class="search-hint-item">
+                        <span class="hint-icon">💡</span>
+                        <span>输入至少 2 个字符开始搜索</span>
+                    </div>
+                    <div class="search-hint-item">
+                        <span class="hint-icon">⌨️</span>
+                        <span>使用 <kbd>↑</kbd> <kbd>↓</kbd> 导航，<kbd>Enter</kbd> 选择</span>
+                    </div>
+                    <div class="search-hint-item">
+                        <span class="hint-icon">🔄</span>
+                        <span>按 <kbd>Tab</kbd> 切换搜索分类</span>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        html += '</div>';
+        
+        this.results.innerHTML = html;
+        this.bindSearchPromptEvents();
+    },
+
+    bindSearchPromptEvents() {
+        this.results.querySelectorAll('.history-tag').forEach(tag => {
+            tag.addEventListener('click', () => {
+                const keyword = tag.dataset.keyword;
+                this.input.value = keyword;
+                this.searchKeyword = keyword;
+                this.performSearch(keyword);
+            });
+        });
+        
+        const clearBtn = this.results.querySelector('#clear-history-btn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                this.clearSearchHistory();
+                this.renderSearchPrompt();
+            });
+        }
+    },
+
+    renderSearching() {
+        this.results.innerHTML = `
+            <div class="search-loading">
+                <div class="loading-spinner"></div>
+                <div class="loading-text">搜索中...</div>
+            </div>
+        `;
+    },
+
+    renderSearchResults(keyword) {
+        const { testPlans, testCases, posts, comments, agents, aiTools, memories } = this.searchResults;
+        
+        const categories = [
+            { key: 'testPlans', data: testPlans, icon: '📋', title: '测试计划' },
+            { key: 'testCases', data: testCases, icon: '📝', title: '测试用例' },
+            { key: 'posts', data: posts, icon: '💬', title: '论坛帖子' },
+            { key: 'comments', data: comments, icon: '💭', title: '评论' },
+            { key: 'agents', data: agents, icon: '🤖', title: 'AI智能体' },
+            { key: 'aiTools', data: aiTools, icon: '🔧', title: 'AI技能与工具' },
+            { key: 'memories', data: memories, icon: '🧠', title: 'AI记忆' }
+        ].filter(c => c.data && c.data.items && c.data.items.length > 0);
+        
+        if (categories.length === 0) {
+            this.results.innerHTML = `
+                <div class="search-empty">
+                    <div class="search-empty-icon">🔍</div>
+                    <div class="search-empty-title">未找到 "${this.escapeHtml(keyword)}" 相关结果</div>
+                    <div class="search-empty-hint">尝试其他关键词或检查拼写</div>
+                </div>
+            `;
+            return;
+        }
+        
+        let html = '';
+        
+        categories.forEach((category, catIndex) => {
+            const isSelected = catIndex === this.selectedCategory;
+            
+            html += `
+                <div class="search-category ${isSelected ? 'selected' : ''}" data-category="${category.key}">
+                    <div class="search-category-header">
+                        <span class="category-icon">${category.icon}</span>
+                        <span class="category-title">${category.title}</span>
+                        <span class="category-count">${category.data.total} 个结果</span>
+                        ${category.data.hasMore ? '<span class="category-more">更多</span>' : ''}
+                    </div>
+                    <div class="search-category-items">
+                        ${category.data.items.map((item, itemIndex) => `
+                            <div class="search-item ${isSelected && itemIndex === this.selectedIndex ? 'selected' : ''}" 
+                                 data-type="${category.key.slice(0, -1).replace('testPlan', 'testplan').replace('testCase', 'case')}"
+                                 data-id="${item.id}"
+                                 ${item.postId ? `data-post-id="${item.postId}"` : ''}>
+                                <div class="search-item-icon">${category.icon}</div>
+                                <div class="search-item-content">
+                                    <div class="search-item-title">${this.highlightText(
+                                        item.name || item.title || item.contentPreview || item.content,
+                                        keyword
+                                    )}</div>
+                                    <div class="search-item-meta">
+                                        ${this.renderItemMeta(category.key, item)}
+                                    </div>
+                                </div>
+                                <div class="search-item-arrow">${category.key === 'posts' || category.key === 'comments' ? '↗' : '→'}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        });
+        
+        this.results.innerHTML = html;
+        this.bindSearchItemEvents();
+    },
+
+    renderItemMeta(categoryKey, item) {
+        switch (categoryKey) {
+            case 'testPlans':
+                return `
+                    <span>${item.projectName || item.project}</span>
+                    <span class="meta-separator">·</span>
+                    <span class="status-badge status-${item.status}">${item.status}</span>
+                    <span class="meta-separator">·</span>
+                    <span>${item.owner}</span>
+                `;
+            case 'testCases':
+                return `
+                    <span>${item.module}</span>
+                    <span class="meta-separator">·</span>
+                    <span class="priority-badge priority-${item.priority}">${item.priority}</span>
+                    <span class="meta-separator">·</span>
+                    <span>${item.type}</span>
+                `;
+            case 'posts':
+                return `
+                    <span>${item.author}</span>
+                    <span class="meta-separator">·</span>
+                    <span>💬 ${item.commentCount}</span>
+                    <span class="meta-separator">·</span>
+                    <span>${this.formatTime(item.createdAt)}</span>
+                `;
+            case 'comments':
+                return `
+                    <span>回复: ${item.postTitle}</span>
+                    <span class="meta-separator">·</span>
+                    <span>${item.author}</span>
+                    <span class="meta-separator">·</span>
+                    <span>${this.formatTime(item.createdAt)}</span>
+                `;
+            case 'agents':
+                return `
+                    <span>${item.category || item.agentType || ''}</span>
+                    ${item.description ? '<span class="meta-separator">·</span>' : ''}
+                    ${item.description ? `<span>${this.escapeHtml(item.description.substring(0, 50))}</span>` : ''}
+                    <span class="meta-separator">·</span>
+                    <span>${item.isEnabled ? '已启用' : '已禁用'}</span>
+                `;
+            case 'aiTools':
+                return `
+                    <span>${item.language || ''}</span>
+                    ${item.description ? '<span class="meta-separator">·</span>' : ''}
+                    ${item.description ? `<span>${this.escapeHtml(item.description.substring(0, 50))}</span>` : ''}
+                    <span class="meta-separator">·</span>
+                    <span>${item.isPublic ? '公开' : '私有'}</span>
+                `;
+            case 'memories':
+                return `
+                    <span>${item.agentName || ''}</span>
+                    <span class="meta-separator">·</span>
+                    <span>${item.memoryType || ''}</span>
+                    <span class="meta-separator">·</span>
+                    <span>${item.level || ''}</span>
+                `;
+            default:
+                return '';
+        }
+    },
+
+    bindSearchItemEvents() {
+        this.results.querySelectorAll('.search-item').forEach(item => {
+            item.addEventListener('click', () => {
+                this.navigateToResult(
+                    item.dataset.type,
+                    item.dataset.id,
+                    item.dataset.postId
+                );
+            });
+            
+            item.addEventListener('mouseenter', () => {
+                const categoryEl = item.closest('.search-category');
+                const categoryIndex = Array.from(
+                    this.results.querySelectorAll('.search-category')
+                ).indexOf(categoryEl);
+                
+                const itemIndex = Array.from(
+                    categoryEl.querySelectorAll('.search-item')
+                ).indexOf(item);
+                
+                this.selectedCategory = categoryIndex;
+                this.selectedIndex = itemIndex;
+                this.updateSearchSelection();
+            });
+        });
+    },
+
+    renderSearchError(message) {
+        this.results.innerHTML = `
+            <div class="search-error">
+                <div class="error-icon">⚠️</div>
+                <div class="error-title">搜索出错</div>
+                <div class="error-message">${this.escapeHtml(message)}</div>
+                <button class="retry-btn" id="search-retry-btn">重试</button>
+            </div>
+        `;
+        
+        this.results.querySelector('#search-retry-btn').addEventListener('click', () => {
+            this.performSearch(this.searchKeyword);
+        });
+    },
+
+    selectNext() {
+        if (this.mode === 'command') {
+            this.selectedIndex = Math.min(this.selectedIndex + 1, this.filteredCommands.length - 1);
+            this.updateCommandSelection();
+        } else {
+            this.selectNextSearchItem();
+        }
+    },
+
+    selectPrev() {
+        if (this.mode === 'command') {
+            this.selectedIndex = Math.max(this.selectedIndex - 1, 0);
+            this.updateCommandSelection();
+        } else {
+            this.selectPrevSearchItem();
+        }
+    },
+
+    selectNextSearchItem() {
+        const categories = this.results.querySelectorAll('.search-category');
+        if (categories.length === 0) return;
+        
+        const currentCategory = categories[this.selectedCategory];
+        const items = currentCategory.querySelectorAll('.search-item');
+        
+        if (this.selectedIndex < items.length - 1) {
+            this.selectedIndex++;
+        } else if (this.selectedCategory < categories.length - 1) {
+            this.selectedCategory++;
+            this.selectedIndex = 0;
+        }
+        
+        this.updateSearchSelection();
+    },
+
+    selectPrevSearchItem() {
+        if (this.selectedIndex > 0) {
+            this.selectedIndex--;
+        } else if (this.selectedCategory > 0) {
+            this.selectedCategory--;
+            const prevCategory = this.results.querySelectorAll('.search-category')[this.selectedCategory];
+            this.selectedIndex = prevCategory.querySelectorAll('.search-item').length - 1;
+        }
+        
+        this.updateSearchSelection();
+    },
+
+    switchCategory(direction) {
+        const categories = this.results.querySelectorAll('.search-category');
+        if (categories.length === 0) return;
+        
+        this.selectedCategory = Math.max(0, Math.min(
+            this.selectedCategory + direction,
+            categories.length - 1
+        ));
+        this.selectedIndex = 0;
+        this.updateSearchSelection();
+    },
+
+    updateCommandSelection() {
+        this.results.querySelectorAll('.command-palette-item').forEach((item, index) => {
+            item.classList.toggle('selected', index === this.selectedIndex);
+        });
+    },
+
+    updateSearchSelection() {
+        this.results.querySelectorAll('.search-category').forEach((cat, catIndex) => {
+            cat.classList.toggle('selected', catIndex === this.selectedCategory);
+        });
+        
+        const selectedCategory = this.results.querySelectorAll('.search-category')[this.selectedCategory];
+        if (selectedCategory) {
+            selectedCategory.querySelectorAll('.search-item').forEach((item, itemIndex) => {
+                item.classList.toggle('selected', itemIndex === this.selectedIndex);
+            });
+        }
+    },
+
+    executeCommand(index) {
         const cmd = this.filteredCommands[index];
         if (cmd && cmd.action) {
-            this.close();
+            if (cmd.id !== 'global-search') {
+                this.close();
+            }
             cmd.action();
         }
     },
 
-    selectNext() {
-        this.selectedIndex = Math.min(this.selectedIndex + 1, this.filteredCommands.length - 1);
-        this.renderResults();
-    },
-
-    selectPrev() {
-        this.selectedIndex = Math.max(this.selectedIndex - 1, 0);
-        this.renderResults();
-    },
-
-    bindEvents() {
-        // 全局快捷键
-        document.addEventListener('keydown', (e) => {
-            // Ctrl+K 或 Cmd+K 打开命令面板
-            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-                e.preventDefault();
-                if (this.isOpen) {
-                    this.close();
-                } else {
-                    this.open();
+    execute() {
+        if (this.mode === 'command') {
+            this.executeCommand(this.selectedIndex);
+        } else {
+            const categories = this.results.querySelectorAll('.search-category');
+            const selectedCategory = categories[this.selectedCategory];
+            if (selectedCategory) {
+                const selectedItem = selectedCategory.querySelectorAll('.search-item')[this.selectedIndex];
+                if (selectedItem) {
+                    this.navigateToResult(
+                        selectedItem.dataset.type,
+                        selectedItem.dataset.id,
+                        selectedItem.dataset.postId
+                    );
                 }
             }
+        }
+    },
 
-            // ESC 关闭
-            if (e.key === 'Escape' && this.isOpen) {
-                e.preventDefault();
-                this.close();
-            }
+    navigateToResult(type, id, postId) {
+        this.close();
+        
+        switch (type) {
+            case 'testplan':
+                Router.navigateTo('testplans');
+                setTimeout(async () => {
+                    if (typeof viewTestPlanDetail === 'function') {
+                        await viewTestPlanDetail(id);
+                    } else {
+                        logger.warn('viewTestPlanDetail function not found');
+                        const testplan = document.querySelector(`[data-testplan-id="${id}"]`);
+                        if (testplan) {
+                            testplan.click();
+                            testplan.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                    }
+                }, 800);
+                break;
+            case 'case':
+                Router.navigateTo('cases');
+                setTimeout(async () => {
+                    if (typeof openDrawerCaseDetail === 'function') {
+                        await openDrawerCaseDetail(id);
+                    } else {
+                        logger.warn('openDrawerCaseDetail function not found');
+                        const testCase = document.querySelector(`[data-case-id="${id}"]`);
+                        if (testCase) {
+                            testCase.click();
+                            testCase.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                    }
+                }, 800);
+                break;
+            case 'post':
+                window.open(`/post-detail.html?id=${id}`, '_blank');
+                break;
+            case 'comment':
+                window.open(`/post-detail.html?id=${postId}&comment=${id}`, '_blank');
+                break;
+            case 'agent':
+                Router.navigateTo('settings');
+                setTimeout(() => {
+                    const agentTab = document.querySelector('[data-tab="ai-agents"]') || document.querySelector('[data-settings-tab="ai-agents"]');
+                    if (agentTab) agentTab.click();
+                    setTimeout(() => {
+                        const agentEl = document.querySelector(`[data-agent-id="${id}"]`) || document.querySelector(`[data-agent-code="${id}"]`);
+                        if (agentEl) {
+                            agentEl.click();
+                            agentEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                    }, 500);
+                }, 800);
+                break;
+            case 'aitool':
+                Router.navigateTo('settings');
+                setTimeout(() => {
+                    const toolTab = document.querySelector('[data-tab="ai-tools"]') || document.querySelector('[data-settings-tab="ai-tools"]');
+                    if (toolTab) toolTab.click();
+                    setTimeout(() => {
+                        const toolEl = document.querySelector(`[data-tool-id="${id}"]`) || document.querySelector(`[data-tool-name="${id}"]`);
+                        if (toolEl) {
+                            toolEl.click();
+                            toolEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                    }, 500);
+                }, 800);
+                break;
+            case 'memory':
+                Router.navigateTo('settings');
+                setTimeout(() => {
+                    const memoryTab = document.querySelector('[data-tab="ai-memories"]') || document.querySelector('[data-settings-tab="ai-memories"]');
+                    if (memoryTab) memoryTab.click();
+                }, 800);
+                break;
+        }
+    },
 
-            // 命令面板内的键盘导航
-            if (this.isOpen) {
-                if (e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    this.selectNext();
-                } else if (e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    this.selectPrev();
-                } else if (e.key === 'Enter') {
-                    e.preventDefault();
-                    this.execute(this.selectedIndex);
-                }
-            }
+    highlightText(text, keyword) {
+        if (!text || !keyword) return this.escapeHtml(text || '');
+        const escapedText = this.escapeHtml(text);
+        const escapedKeyword = this.escapeHtml(keyword);
+        const regex = new RegExp(`(${this.escapeRegex(escapedKeyword)})`, 'gi');
+        return escapedText.replace(regex, '<mark class="highlight">$1</mark>');
+    },
+
+    escapeRegex(string) {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    },
+
+    escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML.replace(/'/g, '&#039;');
+    },
+
+    formatTime(dateStr) {
+        if (!dateStr) return '';
+        
+        const date = new Date(dateStr);
+        const now = new Date();
+        const diff = now - date;
+        
+        const minutes = Math.floor(diff / 60000);
+        const hours = Math.floor(diff / 3600000);
+        const days = Math.floor(diff / 86400000);
+        
+        if (minutes < 1) return '刚刚';
+        if (minutes < 60) return `${minutes}分钟前`;
+        if (hours < 24) return `${hours}小时前`;
+        if (days < 7) return `${days}天前`;
+        
+        return date.toLocaleDateString('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
         });
+    },
 
-        // 输入过滤
-        this.input.addEventListener('input', (e) => {
-            this.filter(e.target.value);
-        });
+    loadSearchHistory() {
+        this.searchHistory = JSON.parse(localStorage.getItem('globalSearchHistory') || '[]');
+    },
 
-        // 点击背景关闭
-        this.element.addEventListener('click', (e) => {
-            if (e.target === this.element) {
-                this.close();
-            }
-        });
+    getSearchHistory() {
+        return this.searchHistory || [];
+    },
+
+    saveSearchHistory(keyword) {
+        if (!keyword || keyword.length < 2) return;
+        
+        let history = this.searchHistory.filter(h => h !== keyword);
+        history.unshift(keyword);
+        history = history.slice(0, this.config.maxHistoryItems);
+        
+        this.searchHistory = history;
+        localStorage.setItem('globalSearchHistory', JSON.stringify(history));
+    },
+
+    clearSearchHistory() {
+        this.searchHistory = [];
+        localStorage.removeItem('globalSearchHistory');
     }
 };
 
@@ -1033,6 +2024,13 @@ const API_BASE_URL = (function () {
 
 // 显示加载状态
 function showLoading(message = '加载中...') {
+    const existing = document.getElementById('loading-overlay');
+    if (existing) {
+        const textEl = existing.querySelector('.loading-text');
+        if (textEl) textEl.textContent = message;
+        return;
+    }
+    
     const loadingElement = document.createElement('div');
     loadingElement.id = 'loading-overlay';
     loadingElement.style.cssText = `
@@ -1041,15 +2039,19 @@ function showLoading(message = '加载中...') {
         left: 0;
         width: 100%;
         height: 100%;
-        background: rgba(255, 255, 255, 0.8);
+        background: rgba(255, 255, 255, 0.9);
         display: flex;
+        flex-direction: column;
         justify-content: center;
         align-items: center;
         z-index: 10000;
         font-size: 18px;
         font-weight: bold;
     `;
-    loadingElement.textContent = message;
+    loadingElement.innerHTML = `
+        <div class="loading-spinner" style="width: 40px; height: 40px; border: 3px solid #e0e0e0; border-top-color: #1890ff; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 16px;"></div>
+        <span class="loading-text" style="color: #333;">${message}</span>
+    `;
     document.body.appendChild(loadingElement);
 }
 
@@ -1233,7 +2235,7 @@ function showSuccessMessage(message) {
         toast.style.display = 'block';
         toast.classList.remove('fade-out');
 
-        // 1秒后开始淡出
+        // 2秒后开始淡出（批量操作等重要提示需要更长时间）
         setTimeout(() => {
             toast.classList.add('fade-out');
 
@@ -1241,9 +2243,8 @@ function showSuccessMessage(message) {
             setTimeout(() => {
                 toast.style.display = 'none';
             }, 300);
-        }, 1000);
+        }, 2000);
     } else {
-        console.log('成功:', message);
     }
 }
 
@@ -1257,11 +2258,10 @@ function showToast(message, type = 'info') {
             showErrorMessage(message);
             break;
         case 'warning':
-            console.warn('警告:', message);
+            logger.warn('警告:', message);
             showErrorMessage(message);
             break;
         default:
-            console.log('提示:', message);
             showSuccessMessage(message);
     }
 }
@@ -1274,9 +2274,9 @@ function showErrorMessage(message) {
         errorMessage.textContent = message;
         modal.style.display = 'block';
     } else {
-        console.error('错误模态框元素未找到:', { modalExists: !!modal, errorMessageExists: !!errorMessage });
-        console.error('错误消息:', message);
-        console.warn('showErrorMessage: 模态框元素不存在，已在控制台输出错误');
+        logger.error('错误模态框元素未找到:', { modalExists: !!modal, errorMessageExists: !!errorMessage });
+        logger.error('错误消息:', message);
+        logger.warn('showErrorMessage: 模态框元素不存在，已在控制台输出错误');
     }
 }
 
@@ -1297,7 +2297,6 @@ function showConfirmModal(message, callback) {
     const confirmMessage = document.getElementById('confirm-message');
 
     if (!modal || !confirmMessage) {
-        // 如果模态框不存在，使用原生确认框
         const result = confirm(message);
         if (callback) callback(result);
         return;
@@ -1371,30 +2370,27 @@ async function refreshToken() {
             localStorage.setItem('authToken', authToken);
             localStorage.setItem('currentUser', JSON.stringify(currentUser));
             
-            console.log('[Token刷新] Token已自动刷新');
             return true;
         }
         
         return false;
     } catch (error) {
-        console.error('[Token刷新] 刷新失败:', error);
+        logger.error('[Token刷新] 刷新失败:', error);
         return false;
     }
 }
 
 // 发送API请求（支持缓存和自动刷新token）
 async function apiRequest(endpoint, options = {}) {
-    const { useCache = true, cacheTtl, method = 'GET', skipRetry = false } = options;
+    const { useCache = true, cacheTtl, method = 'GET', skipRetry = false, signal } = options;
 
     // 对于GET请求，检查缓存
     if (method === 'GET' && useCache) {
         const cached = apiCache.get(endpoint);
         if (cached) {
-            console.log(`[缓存命中] ${endpoint}`);
             return cached;
         }
     } else if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
-        console.log(`[API请求] ${method} ${endpoint}`);
     }
 
     const url = `${API_BASE_URL}${endpoint}`;
@@ -1410,21 +2406,41 @@ async function apiRequest(endpoint, options = {}) {
     try {
         const response = await fetch(url, {
             ...options,
-            headers
+            headers,
+            ...(signal && { signal })
         });
 
-        // 检查响应状态
         if (!response.ok) {
-            // 如果是403错误且不是刷新token的请求，尝试刷新token
+            if (response.status === 401) {
+                if (authToken) {
+                    authToken = null;
+                    currentUser = null;
+                    localStorage.removeItem('authToken');
+                    localStorage.removeItem('currentUser');
+                }
+
+                if (!_authExpiredHandling) {
+                    _authExpiredHandling = true;
+                    showNetworkError('请先登录');
+
+                    setTimeout(() => {
+                        if (typeof showLoginSection === 'function') {
+                            showLoginSection();
+                        }
+                        _authExpiredHandling = false;
+                    }, 1500);
+                }
+
+                return { success: false, message: '请先登录', _authExpired: true };
+            }
+
             if (response.status === 403 && !skipRetry && authToken) {
-                console.log('[API请求] Token可能已过期，尝试刷新...');
                 
                 const refreshed = await refreshToken();
                 
                 if (refreshed) {
                     // 使用新token重试请求
                     headers['Authorization'] = `Bearer ${authToken}`;
-                    console.log('[API请求] 使用新token重试请求');
                     
                     const retryResponse = await fetch(url, {
                         ...options,
@@ -1443,7 +2459,6 @@ async function apiRequest(endpoint, options = {}) {
                     }
                 } else {
                     // Token刷新失败，清除登录状态并跳转到登录页
-                    console.log('[API请求] Token刷新失败，需要重新登录');
                     authToken = null;
                     currentUser = null;
                     localStorage.removeItem('authToken');
@@ -1510,7 +2525,7 @@ async function apiRequest(endpoint, options = {}) {
 
         return result;
     } catch (error) {
-        console.error('API请求错误:', error);
+        logger.error('API请求错误:', error);
 
         if (error.name === 'TypeError' || error.message.includes('fetch')) {
             showNetworkError('网络连接失败，请检查网络设置');
@@ -1584,7 +2599,7 @@ async function loadData() {
                 ];
             }
         } catch (error) {
-            console.error('加载用户数据失败:', error);
+            logger.error('加载用户数据失败:', error);
             // 加载失败时使用默认数据
             mockUsers = [
                 { username: 'admin', password: 'ctc@2026.', role: '管理员', email: 'admin@example.com' },
@@ -1605,7 +2620,7 @@ async function loadData() {
                 ];
             }
         } catch (error) {
-            console.error('加载历史记录失败:', error);
+            logger.error('加载历史记录失败:', error);
             // 加载失败时使用默认数据
             historyRecords = [
                 { time: '2026-01-13 10:00:00', user: 'admin', action: '添加', content: '添加了模块1', version: 'v1.0' },
@@ -1630,7 +2645,7 @@ async function loadData() {
                 ];
             }
         } catch (error) {
-            console.error('加载模块数据失败:', error);
+            logger.error('加载模块数据失败:', error);
             // 加载失败时使用默认数据
             modules = [
                 { id: 'module1', name: '模块1' },
@@ -1653,7 +2668,7 @@ async function loadData() {
                 ];
             }
         } catch (error) {
-            console.error('加载芯片数据失败:', error);
+            logger.error('加载芯片数据失败:', error);
             // 加载失败时使用默认数据
             chips = [
                 { id: 1, chip_id: 'chip1', name: '芯片1', description: '默认测试芯片1' },
@@ -1662,7 +2677,7 @@ async function loadData() {
             ];
         }
     } catch (error) {
-        console.error('加载数据失败:', error);
+        logger.error('加载数据失败:', error);
         // 加载失败时使用默认数据
         mockUsers = [
             { username: 'admin', password: 'ctc@2026.', role: '管理员', email: 'admin@example.com' },
@@ -1687,31 +2702,59 @@ function initWebSocket() {
     try {
         // 创建WebSocket连接 - 动态获取当前主机地址，支持跨平台部署
         const wsOrigin = window.location.origin;
-        socket = io(wsOrigin);
+        socket = io(wsOrigin, {
+            reconnection: true,
+            reconnectionAttempts: 10,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            timeout: 20000,
+            transports: ['websocket', 'polling']
+        });
 
         // 连接成功
         socket.on('connect', () => {
-            console.log('WebSocket连接成功');
             // 如果用户已登录，发送登录事件
             if (currentUser && currentUser.username) {
-                socket.emit('login', currentUser);
+                socket.emit('login', {
+                    ...currentUser,
+                    userId: currentUser.id
+                });
             }
+            initReviewSocketListeners();
         });
 
         // 连接失败
         socket.on('disconnect', () => {
-            console.log('WebSocket连接断开');
+        });
+
+        // 连接错误
+        socket.on('connect_error', (error) => {
+            console.warn('WebSocket连接错误:', error.message);
+        });
+
+        // 重连成功
+        socket.on('reconnect', (attemptNumber) => {
+            // 如果用户已登录，重新发送登录事件
+            if (currentUser && currentUser.username) {
+                socket.emit('login', {
+                    ...currentUser,
+                    userId: currentUser.id
+                });
+            }
+        });
+
+        // 重连失败
+        socket.on('reconnect_failed', () => {
+            console.warn('WebSocket重连失败，已达到最大重试次数');
         });
 
         // 监听用户登录
         socket.on('userConnected', (user) => {
-            console.log(`${user.username} 登录了`);
             updateOnlineUsersDisplay();
         });
 
         // 监听用户登出
         socket.on('userDisconnected', (user) => {
-            console.log(`${user.username} 登出了`);
             updateOnlineUsersDisplay();
         });
 
@@ -1729,19 +2772,20 @@ function initWebSocket() {
 
         // 监听测试点更新
         socket.on('testPointUpdated', (data) => {
-            console.log('测试点更新:', data);
             // 这里可以添加更新测试点的逻辑
         });
 
         // 监听模块更新
         socket.on('moduleUpdated', (data) => {
-            console.log('模块更新:', data);
             // 这里可以添加更新模块的逻辑
             // 重新加载模块数据，确保显示最新的模块列表
             initModuleData();
         });
+
+        // 注意: ai_task_complete 事件已由 unified-task-manager.js 统一处理
+        // 不在此处重复监听，避免双重处理导致UI重复更新和数据追加错误
     } catch (error) {
-        console.error('WebSocket初始化失败:', error);
+        logger.error('WebSocket初始化失败:', error);
         // WebSocket连接失败不影响其他功能
     }
 }
@@ -1749,7 +2793,6 @@ function initWebSocket() {
 // 更新在线用户显示
 function updateOnlineUsersDisplay() {
     // 这里可以添加更新在线用户显示的逻辑
-    console.log('在线用户:', onlineUsers.map(user => user.username));
 }
 
 // 测试计划数据
@@ -1851,7 +2894,7 @@ async function loadTestPlans() {
         // 渲染测试计划表格
         renderTestPlansTable();
     } catch (error) {
-        console.error('加载测试计划错误:', error);
+        logger.error('加载测试计划错误:', error);
         // 使用默认数据
         testPlans = [
             {
@@ -1950,7 +2993,7 @@ async function loadTestPlanFilters() {
         }
 
     } catch (error) {
-        console.error('加载过滤组件数据错误:', error);
+        logger.error('加载过滤组件数据错误:', error);
     }
 }
 
@@ -2062,7 +3105,8 @@ function renderTestPlansTable(filteredPlans = null) {
                 </td>
                 <td>${plan.projectName || plan.project || '-'}</td>
                 <td>${plan.iteration || '-'}</td>
-                <td class="actions-cell">
+                <td class="col-actions">
+                    <div class="actions-cell">
                     ${executeBtnHtml}
                     <button class="action-btn report-btn" onclick="generateReportFromTestPlan(${plan.id})" title="生成报告">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2092,6 +3136,7 @@ function renderTestPlansTable(filteredPlans = null) {
                             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                         </svg>
                     </button>
+                    </div>
                 </td>
             </tr>
         `;
@@ -2127,8 +3172,8 @@ function calculatePlanStatus(plan) {
     const endDate = plan.end_date ? new Date(plan.end_date) : null;
     const progressPercent = plan.totalCases > 0 ? Math.round((plan.testedCases / plan.totalCases) * 100) : 0;
 
-    // 如果已完成（进度100%或通过率100%）
-    if (progressPercent >= 100 || plan.passRate >= 100) {
+    // 如果已完成（进度100%）
+    if (progressPercent >= 100) {
         return 'completed';
     }
 
@@ -2223,13 +3268,79 @@ async function pauseTestPlan(planId) {
     }
 }
 
+// 继续执行测试计划（从暂停状态恢复）
+async function resumeTestPlan(planId) {
+    try {
+        showLoading('恢复测试计划...');
+
+        const updateResponse = await apiRequest(`/testplans/${planId}/status`, {
+            method: 'POST',
+            body: JSON.stringify({ status: 'running' })
+        });
+
+        hideLoading();
+
+        if (updateResponse.success) {
+            showSuccessMessage('测试计划已恢复执行');
+            await loadTestPlans();
+            if (currentDrawerPlanId === planId) {
+                await loadTestPlanDrawerData(planId);
+            }
+        } else {
+            showErrorMessage('恢复失败: ' + (updateResponse.message || '未知错误'));
+        }
+    } catch (error) {
+        hideLoading();
+        showErrorMessage('恢复失败: ' + error.message);
+    }
+}
+
+// 重新执行测试计划（重置所有用例状态）
+async function restartTestPlan(planId) {
+    try {
+        const plan = testPlans.find(p => p.id === planId);
+        if (!plan) {
+            showErrorMessage('测试计划不存在');
+            return;
+        }
+
+        showConfirmModal(
+            `确定要重新执行测试计划「${plan.name}」吗？\n\n这将重置所有用例状态为"未执行"，此操作不可撤销。`,
+            async (confirmed) => {
+                if (confirmed) {
+                    showLoading('重置测试计划...');
+
+                    const response = await apiRequest(`/testplans/${planId}/reset`, {
+                        method: 'POST'
+                    });
+
+                    hideLoading();
+
+                    if (response.success) {
+                        showSuccessMessage('测试计划已重置，可以重新执行');
+                        await loadTestPlans();
+                        if (currentDrawerPlanId === planId) {
+                            await loadTestPlanDrawerData(planId);
+                        }
+                    } else {
+                        showErrorMessage('重置失败: ' + (response.message || '未知错误'));
+                    }
+                }
+            }
+        );
+    } catch (error) {
+        hideLoading();
+        showErrorMessage('重置失败: ' + error.message);
+    }
+}
+
 // 编辑测试计划
 async function editTestPlan(planId) {
     try {
         showLoading('加载测试计划...');
 
         // 获取测试计划详情
-        const response = await apiRequest(`/testplans/detail/${planId}`);
+        const response = await apiRequest(`/testplans/detail/${planId}`, { useCache: false });
 
         hideLoading();
 
@@ -2257,8 +3368,6 @@ async function editTestPlan(planId) {
 
                 window.parentSelectedCounts = computeParentSelectedCounts(plan.cases);
 
-                console.log('编辑模式: 已加载用例ID数量:', window.selectedCases.size);
-                console.log('编辑模式: 父节点选中计数:', window.parentSelectedCounts);
             } else {
                 window.selectedCases = new Set();
                 window.selectedCasesHierarchy = {
@@ -2729,13 +3838,16 @@ async function deleteTestPlan(planId) {
 
                 if (response.success) {
                     showSuccessMessage('测试计划删除成功');
+                    dashboardDataCache.invalidateOnDataChange('testPlan');
+                    apiCache.delete(`/testplans/detail/${planId}`);
+                    apiCache.deleteByPrefix('/workspace');
                     await loadTestPlans();
                 } else {
                     showErrorMessage(response.message || '删除失败');
                 }
             } catch (error) {
                 hideLoading();
-                console.error('删除测试计划错误:', error);
+                logger.error('删除测试计划错误:', error);
                 showErrorMessage('删除失败: ' + error.message);
             }
         }
@@ -2747,7 +3859,6 @@ function renderTestCasesTable() {
     const tableBody = document.getElementById('testplan-cases-body');
     
     if (!tableBody) {
-        console.log('[renderTestCasesTable] 当前页面不包含表格元素，跳过渲染');
         return;
     }
 
@@ -2807,11 +3918,11 @@ function renderTestCasesTable() {
     tableBody.innerHTML = testCasesData.map(testCase => `
         <tr>
             <td>${testCase.id}</td>
-            <td>${testCase.name}</td>
-            <td>${testCase.maintainer}</td>
+            <td>${escapeHtml(testCase.name)}</td>
+            <td>${escapeHtml(testCase.maintainer)}</td>
             <td><span class="priority-badge ${testCase.priority}">${getPriorityText(testCase.priority)}</span></td>
-            <td>${testCase.type}</td>
-            <td>${testCase.executor}</td>
+            <td>${escapeHtml(testCase.type)}</td>
+            <td>${escapeHtml(testCase.executor)}</td>
             <td><span class="status-badge ${testCase.result}">${getStatusText(testCase.result)}</span></td>
             <td>${testCase.lastExecuted || '未执行'}</td>
         </tr>
@@ -2892,10 +4003,9 @@ async function loadTestCases() {
         if (document.getElementById('cases-table-body')) {
             renderCasesTable();
         } else {
-            console.log('cases-table-body not found, skipping render');
         }
     } catch (error) {
-        console.error('加载用例错误:', error);
+        logger.error('加载用例错误:', error);
         // 使用默认数据，确保包含remark字段
         testCases = [
             {
@@ -2957,7 +4067,6 @@ async function loadTestCases() {
 function renderCasesTable(filteredCases = null) {
     const tableBody = document.getElementById('cases-table-body');
     if (!tableBody) {
-        console.log('cases-table-body not found, skipping render');
         return;
     }
 
@@ -2974,8 +4083,8 @@ function renderCasesTable(filteredCases = null) {
 
     tableBody.innerHTML = casesToRender.map(testCase => `
         <tr>
-            <td>${testCase.name}</td>
-            <td>${testCase.creator}</td>
+            <td>${escapeHtml(testCase.name)}</td>
+            <td>${escapeHtml(testCase.creator)}</td>
             <td>${testCase.createdAt}</td>
             <td>${testCase.updatedAt}</td>
             <td>
@@ -3006,7 +4115,7 @@ async function loadTestReports() {
         updateReportsStats(testReports);
 
     } catch (error) {
-        console.error('加载测试报告失败:', error);
+        logger.error('加载测试报告失败:', error);
         testReports = [];
         loadReportsData();
     } finally {
@@ -3020,7 +4129,6 @@ function renderProjectsList() {
     const reportsPanel = document.getElementById('reports-panel');
 
     if (!tableBody) {
-        console.log('projects-table-body元素不存在，跳过渲染');
         return;
     }
 
@@ -3030,12 +4138,17 @@ function renderProjectsList() {
 
     if (projects && projects.length > 0) {
         tableBody.innerHTML = projects.map(project => `
-            <tr onclick="selectProject('${project.name}')">
-                <td>${project.name}</td>
-                <td>${currentUser ? currentUser.username : 'admin'}</td>
+            <tr class="project-row" data-project-name="${escapeHtml(project.name)}">
+                <td>${escapeHtml(project.name)}</td>
+                <td>${currentUser ? escapeHtml(currentUser.username) : 'admin'}</td>
                 <td>${formatDateTime(project.createdAt || project.created_at || '')}</td>
             </tr>
         `).join('');
+        tableBody.querySelectorAll('.project-row').forEach(row => {
+            row.addEventListener('click', function() {
+                selectProject(this.dataset.projectName);
+            });
+        });
     } else {
         tableBody.innerHTML = `
             <tr>
@@ -3046,7 +4159,6 @@ function renderProjectsList() {
 }
 // 选择项目并显示相关报告
 function selectProject(projectName) {
-    console.log('selectProject called with:', projectName);
     // 更新选中项目名称
     const selectedProjectNameElement = document.getElementById('selected-project-name');
     if (selectedProjectNameElement) {
@@ -3055,22 +4167,18 @@ function selectProject(projectName) {
 
     // 筛选该项目的报告
     const projectReports = testReports.filter(report => report.project === projectName);
-    console.log('Project reports found:', projectReports.length);
 
     // 显示右侧面板
     const reportsPanel = document.getElementById('reports-panel');
     if (reportsPanel) {
         reportsPanel.style.display = 'block';
-        console.log('Reports panel displayed');
     }
 
     // 渲染报告表格（带分页）
-    console.log('Calling renderProjectReports');
     renderProjectReports(projectReports, 1, 50);
 }
 // 渲染项目报告表格（支持分页）
 function renderProjectReports(reports, page = 1, pageSize = 50) {
-    console.log('renderProjectReports called with:', reports.length, 'reports');
     const tableBody = document.getElementById('project-reports-body');
     const reportsPanel = document.getElementById('reports-panel');
 
@@ -3117,7 +4225,6 @@ function renderProjectReports(reports, page = 1, pageSize = 50) {
     }
 
     // 渲染分页控件
-    console.log('Calling renderPagination');
     renderPagination('reports-pagination', page, totalPages, (newPage) => {
         renderProjectReports(reports, newPage, pageSize);
     });
@@ -3157,20 +4264,16 @@ function getStatusText(status) {
 
 // 渲染分页控件
 function renderPagination(containerId, currentPage, totalPages, pageChangeCallback, totalItems = 0) {
-    console.log('renderPagination called with:', containerId, currentPage, totalPages, totalItems);
     const container = document.getElementById(containerId);
     if (!container) {
-        console.log('Container not found, creating one');
         const parent = document.getElementById('project-reports-table');
         if (parent) {
-            console.log('Parent found:', parent.id);
             const paginationDiv = document.createElement('div');
             paginationDiv.id = containerId;
             paginationDiv.className = 'pagination-container';
             parent.parentNode.insertBefore(paginationDiv, parent.nextSibling);
-            console.log('Pagination container created');
         } else {
-            console.error('Parent element not found for pagination');
+            logger.error('Parent element not found for pagination');
         }
         return;
     }
@@ -3343,16 +4446,6 @@ function getPriorityText(priority) {
 }
 
 // 格式化日期时间
-function formatDateTime(dateString) {
-    if (!dateString) return '';
-    // 处理 ISO 格式日期
-    if (dateString.includes('T') && dateString.includes('Z')) {
-        return dateString.replace('T', ' ').replace(/\.\d+Z$/, '');
-    }
-    // 处理普通日期格式
-    return dateString;
-}
-
 // 获取当前日期时间（格式：YYYY-MM-DD HH:MM:SS，北京时间）
 function getCurrentDateTime() {
     const now = new Date();
@@ -3491,10 +4584,9 @@ async function initModuleSelection() {
         }
 
         // 这里可以添加模块选择UI的初始化逻辑
-        console.log('可用模块:', availableModules);
 
     } catch (error) {
-        console.error('初始化模块选择错误:', error);
+        logger.error('初始化模块选择错误:', error);
     } finally {
         hideLoading();
     }
@@ -3504,8 +4596,6 @@ async function initModuleSelection() {
 async function testLargeDatasets() {
     try {
         showLoading('测试大数据集...');
-
-        console.log('开始测试大数据集');
 
         // 测试创建大量模块
         const testModules = [];
@@ -3524,8 +4614,6 @@ async function testLargeDatasets() {
             })
         });
 
-        console.log('批量创建模块结果:', createData);
-
         // 测试加载大量模块
         const loadData = await apiRequest('/modules/list', {
             method: 'POST',
@@ -3536,15 +4624,10 @@ async function testLargeDatasets() {
             })
         });
 
-        console.log('加载模块结果:', loadData);
-        if (loadData.success && loadData.modules) {
-            console.log('加载的模块数量:', loadData.modules.length);
-        }
-
         showSuccessMessage('大数据集测试完成');
 
     } catch (error) {
-        console.error('大数据集测试错误:', error);
+        logger.error('大数据集测试错误:', error);
         showErrorMessage('大数据集测试失败: ' + error.message);
     } finally {
         hideLoading();
@@ -3570,7 +4653,7 @@ async function batchOperation(operation, data, batchSize = 100) {
 
         return { success: true, results };
     } catch (error) {
-        console.error('批量操作错误:', error);
+        logger.error('批量操作错误:', error);
         return { success: false, error: error.message };
     }
 }
@@ -3641,7 +4724,7 @@ async function loadLibrariesForClone() {
             });
         }
     } catch (error) {
-        console.error('加载用例库列表失败:', error);
+        logger.error('加载用例库列表失败:', error);
     }
 }
 
@@ -3666,7 +4749,7 @@ async function loadModulesForClone(libraryId) {
             moduleSelect.disabled = false;
         }
     } catch (error) {
-        console.error('加载模块列表失败:', error);
+        logger.error('加载模块列表失败:', error);
     }
 }
 
@@ -3730,7 +4813,6 @@ async function submitNewModuleForm() {
             })
         });
 
-        console.log('添加模块:', moduleName, createData);
 
         if (createData.success) {
             closeAddModuleModal();
@@ -3747,7 +4829,7 @@ async function submitNewModuleForm() {
             showErrorMessage('模块添加失败: ' + (createData.message || '未知错误'));
         }
     } catch (error) {
-        console.error('添加模块错误:', error);
+        logger.error('添加模块错误:', error);
         showErrorMessage('添加模块失败: ' + (error.message || '未知错误'));
     } finally {
         hideLoading();
@@ -3761,11 +4843,6 @@ async function submitCloneModuleForm() {
         const sourceModuleId = document.getElementById('clone-source-module').value;
         const sourceLibraryId = document.getElementById('clone-source-library').value;
 
-        console.log('[克隆模块] 表单数据:', {
-            newModuleName,
-            sourceModuleId,
-            sourceLibraryId
-        });
 
         if (!newModuleName) {
             showErrorMessage('请输入新模块名称');
@@ -3787,14 +4864,6 @@ async function submitCloneModuleForm() {
         const clearProjects = document.getElementById('clone-clear-projects').checked;
         const clearExecutionRecords = document.getElementById('clone-clear-records').checked;
 
-        console.log('[克隆模块] 复选框状态:', {
-            includeLevel1Points,
-            includeTestCases,
-            clearTestStatus,
-            clearOwner,
-            clearProjects,
-            clearExecutionRecords
-        });
 
         // 如果勾选了测试用例但没有勾选一级测试点，提示用户
         if (includeTestCases && !includeLevel1Points) {
@@ -3822,14 +4891,12 @@ async function submitCloneModuleForm() {
             clearExecutionRecords
         };
 
-        console.log('[克隆模块] 请求参数:', requestBody);
 
         const result = await apiRequest('/modules/clone', {
             method: 'POST',
             body: JSON.stringify(requestBody)
         });
 
-        console.log('[克隆模块] API返回结果:', result);
 
         hideLoading();
 
@@ -3846,7 +4913,7 @@ async function submitCloneModuleForm() {
         }
     } catch (error) {
         hideLoading();
-        console.error('克隆模块错误:', error);
+        logger.error('克隆模块错误:', error);
         showErrorMessage('克隆模块失败: ' + error.message);
     }
 }
@@ -3870,7 +4937,7 @@ function closeReorderModulesModal() {
 async function loadModulesForReordering() {
     const reorderList = document.getElementById('reorder-list');
     if (!reorderList) {
-        console.error('reorder-list元素不存在');
+        logger.error('reorder-list元素不存在');
         return;
     }
 
@@ -3880,118 +4947,50 @@ async function loadModulesForReordering() {
         // 清空现有选项
         reorderList.innerHTML = '';
 
-        // 打印调试信息
-        console.log('=== 加载模块数据用于重排序 ===');
 
-        // 1. 直接测试使用模块列表API
-        console.log('直接测试API调用:');
-
-        try {
-            const testUrl = 'http://localhost:3000/api/modules/list';
-            const testData = {
-                libraryId: 2, // 尝试使用固定libraryId
+        // 使用apiRequest调用模块列表API
+        const modulesData = await apiRequest('/modules/list', {
+            method: 'POST',
+            body: JSON.stringify({
+                libraryId: currentCaseLibraryId || 2,
                 page: 1,
                 pageSize: 100
-            };
+            })
+        });
 
-            console.log('测试URL:', testUrl);
-            console.log('测试数据:', testData);
 
-            const response = await fetch(testUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(testData)
-            });
+        let modules = [];
+        if (modulesData && modulesData.success && modulesData.modules) {
+            modules = modulesData.modules;
+        } else {
+        }
 
-            console.log('响应状态:', response.status);
-            console.log('响应头:', response.headers);
+        // 渲染模块
+        modules.forEach((module, index) => {
+            const li = document.createElement('li');
+            li.className = 'reorder-item';
+            li.dataset.moduleId = module.id;
+            li.innerHTML = `
+                <span class="reorder-item-name">${escapeHtml(module.name)}</span>
+            `;
+            li.draggable = true;
 
-            const responseText = await response.text();
-            console.log('响应文本:', responseText);
+            // 添加拖拽事件监听器
+            li.addEventListener('dragstart', handleDragStart);
+            li.addEventListener('dragover', handleDragOver);
+            li.addEventListener('drop', handleDrop);
 
-            // 尝试解析JSON
-            let responseJson = null;
-            try {
-                responseJson = JSON.parse(responseText);
-                console.log('解析后的JSON:', responseJson);
-            } catch (parseError) {
-                console.error('JSON解析错误:', parseError);
-            }
+            reorderList.appendChild(li);
+        });
 
-            let modules = [];
-            if (responseJson && responseJson.success && responseJson.modules) {
-                modules = responseJson.modules;
-                console.log('从API获取到的模块:', modules);
-            } else {
-                // 2. API调用失败，使用硬编码测试数据作为备用
-                console.log('API调用失败，使用测试数据');
-                modules = [
-                    { id: 1, name: 'IPC', orderIndex: 0 },
-                    { id: 2, name: 'IPMC', orderIndex: 1 },
-                    { id: 3, name: '无线编解码', orderIndex: 2 },
-                    { id: 4, name: '云平台管理', orderIndex: 3 },
-                    { id: 5, name: 'IPUC', orderIndex: 4 },
-                    { id: 6, name: 'FDB', orderIndex: 5 },
-                    { id: 7, name: 'SSS', orderIndex: 6 }
-                ];
-            }
 
-            // 3. 渲染模块
-            console.log('准备渲染模块:', modules.length, '个');
-            modules.forEach((module, index) => {
-                const li = document.createElement('li');
-                li.className = 'reorder-item';
-                li.innerHTML = `
-                    <span class="reorder-item-name">${module.name}</span>
-                `;
-                li.draggable = true;
-
-                // 添加拖拽事件监听器
-                li.addEventListener('dragstart', handleDragStart);
-                li.addEventListener('dragover', handleDragOver);
-                li.addEventListener('drop', handleDrop);
-
-                reorderList.appendChild(li);
-                console.log('已渲染模块:', module.name);
-            });
-
-            console.log('渲染完成，列表子元素数量:', reorderList.children.length);
-
-        } catch (apiError) {
-            console.error('API测试错误:', apiError);
-
-            // 直接显示测试数据
-            const testModules = [
-                { id: 1, name: 'IPC', orderIndex: 0 },
-                { id: 2, name: 'IPMC', orderIndex: 1 },
-                { id: 3, name: '无线编解码', orderIndex: 2 },
-                { id: 4, name: '云平台管理', orderIndex: 3 },
-                { id: 5, name: 'IPUC', orderIndex: 4 },
-                { id: 6, name: 'FDB', orderIndex: 5 },
-                { id: 7, name: 'SSS', orderIndex: 6 }
-            ];
-
-            testModules.forEach((module, index) => {
-                const li = document.createElement('li');
-                li.className = 'reorder-item';
-                li.innerHTML = `
-                    <span class="reorder-item-name">${module.name}</span>
-                `;
-                li.draggable = true;
-
-                li.addEventListener('dragstart', handleDragStart);
-                li.addEventListener('dragover', handleDragOver);
-                li.addEventListener('drop', handleDrop);
-
-                reorderList.appendChild(li);
-            });
+        if (modules.length === 0) {
+            reorderList.innerHTML = '<li class="reorder-empty">暂无模块数据</li>';
         }
 
     } catch (error) {
-        console.error('加载模块数据用于重排序错误:', error);
-        console.error('错误堆栈:', error.stack);
+        logger.error('加载模块数据用于重排序错误:', error);
+        logger.error('错误堆栈:', error.stack);
         showErrorMessage('加载模块数据失败: ' + (error.message || '未知错误'));
     } finally {
         hideLoading();
@@ -4041,10 +5040,9 @@ async function submitReorderModulesForm() {
         const items = reorderList.querySelectorAll('.reorder-item');
 
         const reorderedModules = Array.from(items).map(item => {
-            return item.querySelector('.reorder-item-name').textContent;
+            return item.dataset.moduleId;
         });
 
-        console.log('调整后的模块顺序:', reorderedModules);
 
         // API调用逻辑
         const updateData = await apiRequest('/modules/reorder', {
@@ -4055,7 +5053,6 @@ async function submitReorderModulesForm() {
             })
         });
 
-        console.log('调整模块顺序结果:', updateData);
 
         if (updateData.success) {
             // 关闭模态框
@@ -4070,7 +5067,7 @@ async function submitReorderModulesForm() {
             showErrorMessage('模块顺序调整失败: ' + (updateData.message || '未知错误'));
         }
     } catch (error) {
-        console.error('调整模块顺序错误:', error);
+        logger.error('调整模块顺序错误:', error);
         showErrorMessage('调整模块顺序失败: ' + (error.message || '未知错误'));
     } finally {
         hideLoading();
@@ -4117,16 +5114,26 @@ async function initModuleData() {
         // 初始化搜索功能
         initModuleSearch();
 
+        // 初始化拖拽调整宽度功能
+        initNavResizer();
+
+        // 加载用户偏好设置
+        loadNavPreferences();
+
         // 初始化事件监听器（只初始化一次）
         if (!window.dataEventListenersInitialized) {
             initDataEventListeners();
             window.dataEventListenersInitialized = true;
         }
 
-        // 自动加载当前用例库的所有一级测试点
-        await loadAllLevel1Points();
+        // 智能加载一级测试点：如果已有模块选择，保持当前选择；否则加载全部
+        if (selectedModuleId && window.currentModule) {
+            await loadLevel1Points(selectedModuleId);
+        } else {
+            await loadAllLevel1Points();
+        }
     } catch (error) {
-        console.error('初始化模块数据错误:', error);
+        logger.error('初始化模块数据错误:', error);
         // 没有默认模块数据，只显示"所有用例"
         moduleList = [];
 
@@ -4136,8 +5143,18 @@ async function initModuleData() {
         // 初始化搜索功能
         initModuleSearch();
 
+        // 初始化拖拽调整宽度功能
+        initNavResizer();
+
+        // 加载用户偏好设置
+        loadNavPreferences();
+
         // 即使出错也尝试加载所有一级测试点
-        await loadAllLevel1Points();
+        if (selectedModuleId && window.currentModule) {
+            await loadLevel1Points(selectedModuleId);
+        } else {
+            await loadAllLevel1Points();
+        }
     } finally {
         // 隐藏加载状态
         const moduleSection = document.querySelector('.case-nav-section');
@@ -4151,7 +5168,8 @@ async function initModuleData() {
 // 初始化模块搜索功能
 function initModuleSearch() {
     const searchInput = document.querySelector('.case-nav-section .search-input');
-    if (searchInput) {
+    if (searchInput && !searchInput._moduleSearchBound) {
+        searchInput._moduleSearchBound = true;
         searchInput.addEventListener('input', debounce(async function () {
             const searchTerm = this.value.toLowerCase().trim();
             await filterModules(searchTerm);
@@ -4163,21 +5181,18 @@ function initModuleSearch() {
 function initDataEventListeners() {
     // 监听测试用例变更事件 - 刷新模块树统计
     DataEventManager.on(DataEvents.TEST_CASE_CHANGED, async (data) => {
-        console.log('[事件] 测试用例变更:', data);
         // 刷新模块树统计数字
         await initModuleData();
     });
 
     // 监听一级测试点变更事件 - 刷新模块树统计
     DataEventManager.on(DataEvents.LEVEL1_POINT_CHANGED, async (data) => {
-        console.log('[事件] 一级测试点变更:', data);
         // 刷新模块树统计数字
         await initModuleData();
     });
 
     // 监听执行记录变更事件 - 刷新测试用例列表
     DataEventManager.on(DataEvents.EXECUTION_RECORD_CHANGED, async (data) => {
-        console.log('[事件] 执行记录变更:', data);
         // 刷新测试用例列表
         if (selectedLevel1PointId) {
             const testCases = await getLevel2TestPoints(selectedLevel1PointId);
@@ -4187,7 +5202,6 @@ function initDataEventListeners() {
 
     // 监听仪表盘刷新事件
     DataEventManager.on(DataEvents.DASHBOARD_REFRESH, async (data) => {
-        console.log('[事件] 仪表盘刷新:', data);
         // 刷新仪表盘数据
         if (typeof loadDashboardData === 'function') {
             await loadDashboardData();
@@ -4196,7 +5210,6 @@ function initDataEventListeners() {
 
     // 监听模块变更事件 - 刷新模块树和仪表盘
     DataEventManager.on(DataEvents.MODULE_CHANGED, async (data) => {
-        console.log('[事件] 模块变更:', data);
         // 刷新模块树
         await initModuleData();
         // 同时触发仪表盘刷新
@@ -4266,7 +5279,7 @@ async function filterModules(searchTerm) {
             const li = document.createElement('li');
             li.className = 'case-nav-item';
             li.innerHTML = `
-                <span class="case-nav-name">${module.name}</span><span class="case-nav-count">(${module.level1Count || 0})</span>
+                <span class="case-nav-name">${escapeHtml(module.name)}</span><span class="case-nav-count">(${module.level1Count || 0})</span>
             `;
 
             // 添加点击事件
@@ -4305,7 +5318,7 @@ async function filterModules(searchTerm) {
         // 更新分页控件
         updateModulePagination(totalPages);
     } catch (error) {
-        console.error('过滤模块错误:', error);
+        logger.error('过滤模块错误:', error);
         // 降级到本地过滤
         const caseNavList = document.querySelector('.case-nav-list');
         if (!caseNavList) return;
@@ -4334,12 +5347,12 @@ function updateModuleDisplay() {
 
     // 保存当前选中状态
     const activeItem = caseNavList.querySelector('.case-nav-item.active');
-    const activeName = activeItem ? activeItem.querySelector('.case-nav-name').textContent : '所有用例';
+    const activeName = activeItem ? activeItem.querySelector('.case-nav-name').textContent.trim() : '所有用例';
 
     // 清空现有模块（只保留"所有用例"）
     const items = caseNavList.querySelectorAll('.case-nav-item');
     items.forEach(item => {
-        const itemName = item.querySelector('.case-nav-name').textContent;
+        const itemName = item.querySelector('.case-nav-name').textContent.trim();
         if (itemName !== '所有用例') {
             item.remove();
         }
@@ -4352,23 +5365,27 @@ function updateModuleDisplay() {
         allCasesItem.className = 'case-nav-item active';
         allCasesItem.innerHTML = '<span class="case-nav-name">所有用例</span>';
         caseNavList.appendChild(allCasesItem);
-    } else {
-        // 确保"所有用例"是活跃状态
-        allCasesItem.classList.add('active');
     }
 
-    // 为"所有用例"项添加点击事件
-    allCasesItem.addEventListener('click', function () {
-        // 移除其他项的活跃状态
-        caseNavList.querySelectorAll('.case-nav-item').forEach(item => {
-            item.classList.remove('active');
-        });
-        // 添加当前项的活跃状态
-        this.classList.add('active');
+    // 为"所有用例"项添加点击事件（先移除旧的，避免重复绑定）
+    if (!allCasesItem._allCasesClickBound) {
+        allCasesItem._allCasesClickBound = true;
+        allCasesItem.addEventListener('click', function () {
+            // 移除其他项的活跃状态
+            caseNavList.querySelectorAll('.case-nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            // 添加当前项的活跃状态
+            this.classList.add('active');
 
-        // 加载当前用例库下的所有一级测试用例
-        loadAllLevel1Points();
-    });
+            // 重置模块选择
+            selectedModuleId = null;
+            window.currentModule = null;
+
+            // 加载当前用例库下的所有一级测试用例
+            loadAllLevel1Points();
+        });
+    }
 
     // 计算分页
     const totalPages = Math.ceil(moduleList.length / modulesPerPage);
@@ -4384,14 +5401,14 @@ function updateModuleDisplay() {
         const li = document.createElement('li');
         li.className = 'case-nav-item';
         li.innerHTML = `
-                <span class="case-nav-name">${module.name}</span><span class="case-nav-count">(${module.level1Count || 0})</span>
+                <span class="case-nav-name">${escapeHtml(module.name)}</span><span class="case-nav-count">(${module.level1Count || 0})</span>
                 <span class="module-actions">
                     <button class="module-action-btn" data-module-id="${module.id}" title="操作">...</button>
                 </span>
             `;
 
         // 添加点击事件
-        li.addEventListener('click', function () {
+        li.addEventListener('click', function (e) {
             // 移除其他项的活跃状态
             caseNavList.querySelectorAll('.case-nav-item').forEach(item => {
                 item.classList.remove('active');
@@ -4414,7 +5431,7 @@ function updateModuleDisplay() {
 
     // 恢复活跃状态
     caseNavList.querySelectorAll('.case-nav-item').forEach(item => {
-        const itemName = item.querySelector('.case-nav-name').textContent;
+        const itemName = item.querySelector('.case-nav-name').textContent.trim();
         if (itemName === activeName) {
             item.classList.add('active');
         }
@@ -4527,9 +5544,11 @@ function updateModulePagination(totalPages) {
 
 // 初始化模块操作按钮
 function initModuleActionButtons() {
-    // 添加样式
-    const style = document.createElement('style');
-    style.textContent = `
+    // 添加样式（只添加一次）
+    if (!document.getElementById('module-action-buttons-style')) {
+        const style = document.createElement('style');
+        style.id = 'module-action-buttons-style';
+        style.textContent = `
         .case-nav-item {
             position: relative;
             padding: 8px 16px;
@@ -4543,15 +5562,25 @@ function initModuleActionButtons() {
             background-color: #f5f7fa;
         }
         
+        .case-nav-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .case-nav-count {
+            margin-right: 40px;
+            color: #909399;
+            font-size: 13px;
+        }
+        
         .module-actions {
             position: absolute;
             right: 16px;
-            opacity: 0;
-            transition: opacity 0.2s ease;
-        }
-        
-        .case-nav-item:hover .module-actions {
             opacity: 1;
+            transition: opacity 0.2s ease;
+            pointer-events: none;
         }
         
         .module-action-btn {
@@ -4561,6 +5590,7 @@ function initModuleActionButtons() {
             cursor: pointer;
             padding: 4px 8px;
             border-radius: 4px;
+            pointer-events: auto;
         }
         
         .module-action-btn:hover {
@@ -4599,7 +5629,8 @@ function initModuleActionButtons() {
             background: none;
         }
     `;
-    document.head.appendChild(style);
+        document.head.appendChild(style);
+    }
 
     // 添加模块操作按钮事件
     const actionButtons = document.querySelectorAll('.module-action-btn');
@@ -4615,27 +5646,39 @@ function initModuleActionButtons() {
 
 // 显示模块菜单
 function showModuleMenu(x, y, moduleId, moduleName) {
-    // 移除已存在的菜单
     const existingMenu = document.querySelector('.module-menu');
     if (existingMenu) {
         existingMenu.remove();
     }
 
-    // 创建菜单
+    const module = moduleList.find(m => m.id == moduleId);
+    const hasAssociatedData = module && (module.level1Count > 0 || module.caseCount > 0);
+    const isAdminUser = Router.isAdmin();
+    const isCreator = module && currentUser && module.createdBy === currentUser.username;
+    const canOperate = isAdminUser || (!hasAssociatedData && isCreator);
+
     const menu = document.createElement('div');
     menu.className = 'module-menu';
     menu.style.left = x + 'px';
     menu.style.top = y + 'px';
-    menu.innerHTML = `
-        <div class="module-menu-item" data-action="rename" data-module-id="${moduleId}">重命名</div>
-        <div class="module-menu-item" data-action="add-submodule" data-module-id="${moduleId}">新建子模块</div>
-        <div class="module-menu-item" data-action="delete" data-module-id="${moduleId}">删除</div>
-    `;
 
+    let menuHtml = '';
+    
+    if (canOperate) {
+        menuHtml += `<div class="module-menu-item" data-action="rename" data-module-id="${moduleId}">重命名</div>`;
+        menuHtml += `<div class="module-menu-item" data-action="delete" data-module-id="${moduleId}">删除</div>`;
+    } else if (isAdminUser && hasAssociatedData) {
+        menuHtml += `<div class="module-menu-item" data-action="rename" data-module-id="${moduleId}">重命名</div>`;
+        menuHtml += `<div class="module-menu-item" data-action="delete" data-module-id="${moduleId}">删除</div>`;
+    } else {
+        menuHtml += `<div class="module-menu-item disabled" style="color: #c0c4cc; cursor: not-allowed;">重命名 (无权限)</div>`;
+        menuHtml += `<div class="module-menu-item disabled" style="color: #c0c4cc; cursor: not-allowed;">删除 (无权限)</div>`;
+    }
+    
+    menu.innerHTML = menuHtml;
     document.body.appendChild(menu);
 
-    // 点击菜单项
-    menu.querySelectorAll('.module-menu-item').forEach(item => {
+    menu.querySelectorAll('.module-menu-item:not(.disabled)').forEach(item => {
         item.addEventListener('click', function () {
             const action = this.getAttribute('data-action');
             handleModuleAction(action, moduleId, moduleName);
@@ -4643,7 +5686,6 @@ function showModuleMenu(x, y, moduleId, moduleName) {
         });
     });
 
-    // 点击外部关闭菜单
     document.addEventListener('click', function closeMenu(e) {
         if (!menu.contains(e.target)) {
             menu.remove();
@@ -4681,10 +5723,9 @@ function openEditModuleModal(moduleId, currentName) {
     nameInput.value = currentName;
     counter.textContent = `${currentName.length}/32`;
 
-    // 添加输入事件监听器
-    nameInput.addEventListener('input', function () {
+    nameInput.oninput = function () {
         counter.textContent = `${this.value.length}/32`;
-    });
+    };
 
     modal.style.display = 'block';
 }
@@ -4741,7 +5782,7 @@ async function submitEditModuleForm() {
             showErrorMessage('模块重命名失败: ' + (renameData.message || '重命名失败，请稍后重试'));
         }
     } catch (error) {
-        console.error('重命名模块错误:', error);
+        logger.error('重命名模块错误:', error);
         showErrorMessage('模块重命名失败: ' + error.message);
     } finally {
         hideLoading();
@@ -4833,7 +5874,7 @@ async function submitAddSubModuleForm() {
             showErrorMessage('子模块创建失败: ' + (createData.message || '创建失败，请稍后重试'));
         }
     } catch (error) {
-        console.error('创建子模块错误:', error);
+        logger.error('创建子模块错误:', error);
         showErrorMessage('子模块创建失败: ' + error.message);
     } finally {
         hideLoading();
@@ -4879,10 +5920,153 @@ async function deleteModule(moduleId, moduleName) {
             showErrorMessage('模块删除失败: ' + (deleteData.message || '删除失败，请稍后重试'));
         }
     } catch (error) {
-        console.error('删除模块错误:', error);
+        logger.error('删除模块错误:', error);
         showErrorMessage('模块删除失败: ' + error.message);
     } finally {
         hideLoading();
+    }
+}
+
+// ========================================
+// 模块导航收起/展开和拖拽调整功能
+// ========================================
+
+// 切换模块导航收起/展开状态
+function toggleModuleNavCollapse() {
+    const caseNavWrapper = document.getElementById('case-nav-wrapper');
+    const caseManagementContent = document.getElementById('case-management-content');
+    const collapseBtn = document.getElementById('collapse-nav-btn');
+    const collapsedToggle = document.getElementById('nav-collapsed-toggle');
+    
+    if (!caseNavWrapper || !caseManagementContent) return;
+    
+    if (isModuleNavCollapsed) {
+        // 展开
+        caseNavWrapper.classList.remove('collapsed');
+        caseManagementContent.style.gridTemplateColumns = `${savedNavWidth}px 1fr`;
+        caseManagementContent.style.gap = '24px';
+        if (collapseBtn) {
+            collapseBtn.title = '收起模块列表';
+        }
+    } else {
+        // 收起
+        const caseNav = document.getElementById('case-nav');
+        if (caseNav) savedNavWidth = caseNav.offsetWidth;
+        caseNavWrapper.classList.add('collapsed');
+        caseManagementContent.style.gridTemplateColumns = '20px 1fr';
+        caseManagementContent.style.gap = '4px';
+        if (collapseBtn) {
+            collapseBtn.title = '展开模块列表';
+        }
+    }
+    
+    isModuleNavCollapsed = !isModuleNavCollapsed;
+    
+    // 保存用户偏好
+    saveNavPreferences();
+    
+    // 触发右侧内容区域重新布局
+    setTimeout(() => {
+        triggerContentResize();
+    }, 350);
+}
+
+// 初始化导航拖拽调整宽度功能
+function initNavResizer() {
+    const caseNav = document.getElementById('case-nav');
+    const resizer = document.getElementById('nav-resizer');
+    const caseManagementContent = document.getElementById('case-management-content');
+    
+    if (!caseNav || !resizer || !caseManagementContent) return;
+    
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 0;
+    const minWidth = 180;
+    const maxWidth = 400;
+    
+    resizer.addEventListener('mousedown', (e) => {
+        // 如果已收起，不允许拖拽
+        if (isModuleNavCollapsed) return;
+        
+        isResizing = true;
+        startX = e.clientX;
+        startWidth = caseNav.offsetWidth;
+        
+        resizer.classList.add('dragging');
+        document.body.classList.add('nav-resizing');
+        
+        e.preventDefault();
+    });
+    
+    document.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+        
+        const deltaX = e.clientX - startX;
+        let newWidth = startWidth + deltaX;
+        
+        // 限制宽度范围
+        newWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
+        
+        // 更新Grid布局
+        caseManagementContent.style.gridTemplateColumns = `${newWidth}px 1fr`;
+        
+        // 保存宽度
+        savedNavWidth = newWidth;
+    });
+    
+    document.addEventListener('mouseup', () => {
+        if (isResizing) {
+            isResizing = false;
+            resizer.classList.remove('dragging');
+            document.body.classList.remove('nav-resizing');
+            
+            // 保存用户偏好
+            saveNavPreferences();
+            
+            // 触发右侧内容区域重新布局
+            triggerContentResize();
+        }
+    });
+    
+    // 双击恢复默认宽度
+    resizer.addEventListener('dblclick', () => {
+        if (isModuleNavCollapsed) return;
+        
+        caseManagementContent.style.gridTemplateColumns = '220px 1fr';
+        savedNavWidth = 220;
+        saveNavPreferences();
+        triggerContentResize();
+    });
+}
+
+// 触发右侧内容区域重新布局
+function triggerContentResize() {
+    // 触发 window resize 事件，让右侧内容区域重新计算布局
+    window.dispatchEvent(new Event('resize'));
+}
+
+// 保存用户偏好设置
+function saveNavPreferences() {
+    try {
+        const preferences = {
+            collapsed: isModuleNavCollapsed,
+            width: savedNavWidth
+        };
+        localStorage.setItem('moduleNavPreferences', JSON.stringify(preferences));
+    } catch (e) {
+        // 忽略存储错误
+    }
+}
+
+// 加载用户偏好设置
+function loadNavPreferences() {
+    try {
+        localStorage.removeItem('moduleNavPreferences');
+        
+        const caseManagementContent = document.getElementById('case-management-content');
+        if (caseManagementContent) caseManagementContent.style.gridTemplateColumns = `${savedNavWidth}px 1fr`;
+    } catch (e) {
     }
 }
 
@@ -4890,6 +6074,10 @@ async function deleteModule(moduleId, moduleName) {
 async function loadAllLevel1Points() {
     try {
         showLoading('加载所有一级测试用例中...');
+
+        // 重置展开状态和缓存
+        level1ExpandedItems = new Set();
+        level1TestCasesCache = {};
 
         selectedModuleId = null;
         currentLevel1Page = 1;
@@ -4908,13 +6096,13 @@ async function loadAllLevel1Points() {
             fetchedPoints = pointsData;
         } else if (pointsData && pointsData.testpoints) {
             fetchedPoints = pointsData.testpoints;
+        } else if (pointsData && pointsData.success && pointsData.points) {
+            fetchedPoints = pointsData.points;
         } else if (pointsData && pointsData.success && pointsData.data) {
             fetchedPoints = pointsData.data;
         } else if (pointsData && pointsData.success && pointsData.level1Points) {
             fetchedPoints = pointsData.level1Points;
         } else {
-            // 加载失败时使用空数据
-            console.log('API调用失败，使用空数据');
             fetchedPoints = [];
         }
 
@@ -4932,18 +6120,17 @@ async function loadAllLevel1Points() {
 
             // 保存到localStorage
             localStorage.setItem('level1Points', JSON.stringify(level1PointsWithModule));
-            console.log('一级测试点数据已保存到本地缓存');
 
             // 保存当前用例库ID
             localStorage.setItem('currentCaseLibraryId', JSON.stringify(currentCaseLibraryId));
         } catch (error) {
-            console.error('保存一级测试点数据到本地缓存失败:', error);
+            logger.error('保存一级测试点数据到本地缓存失败:', error);
         }
 
         // 更新一级测试点显示
         updateLevel1PointsDisplay();
     } catch (error) {
-        console.error('加载所有一级测试用例错误:', error);
+        logger.error('加载所有一级测试用例错误:', error);
         // 加载失败时使用空数据
         level1Points = [];
 
@@ -4958,6 +6145,10 @@ async function loadAllLevel1Points() {
 async function loadLevel1Points(moduleId) {
     try {
         showLoading('加载一级测试点中...');
+
+        // 重置展开状态和缓存
+        level1ExpandedItems = new Set();
+        level1TestCasesCache = {};
 
         if (!moduleId) {
             // 当moduleId为null时，加载所有一级测试用例
@@ -4974,36 +6165,28 @@ async function loadLevel1Points(moduleId) {
             url += `?keyword=${encodeURIComponent(level1SearchKeyword)}`;
         }
 
-        console.log('[一级测试点] 请求URL:', url);
 
         // API调用逻辑 - 禁用缓存以获取最新数据
         const pointsData = await apiRequest(url, { useCache: false });
 
-        console.log('[一级测试点] API返回数据:', pointsData);
-        console.log('[一级测试点] 数据类型:', typeof pointsData);
 
         let fetchedPoints = [];
         if (Array.isArray(pointsData)) {
             fetchedPoints = pointsData;
-            console.log('[一级测试点] 数据是数组，长度:', fetchedPoints.length);
         } else if (pointsData && pointsData.testpoints) {
             fetchedPoints = pointsData.testpoints;
-            console.log('[一级测试点] 使用 testpoints 字段，长度:', fetchedPoints.length);
+        } else if (pointsData && pointsData.success && pointsData.points) {
+            fetchedPoints = pointsData.points;
         } else if (pointsData && pointsData.success && pointsData.data) {
             fetchedPoints = pointsData.data;
-            console.log('[一级测试点] 使用 data 字段，长度:', fetchedPoints.length);
         } else if (pointsData && pointsData.success && pointsData.level1Points) {
             fetchedPoints = pointsData.level1Points;
-            console.log('[一级测试点] 使用 level1Points 字段，长度:', fetchedPoints.length);
         } else {
-            // 加载失败时使用空数据
-            console.log('[一级测试点] API调用失败，使用空数据');
             fetchedPoints = [];
         }
 
         // 保存到全局变量
         level1Points = fetchedPoints;
-        console.log('[一级测试点] 已保存到全局变量，长度:', level1Points.length);
 
         // 将数据保存到本地缓存
         try {
@@ -5016,18 +6199,17 @@ async function loadLevel1Points(moduleId) {
 
             // 保存到localStorage
             localStorage.setItem('level1Points', JSON.stringify(level1PointsWithModule));
-            console.log('一级测试点数据已保存到本地缓存');
 
             // 保存当前用例库ID
             localStorage.setItem('currentCaseLibraryId', JSON.stringify(currentCaseLibraryId));
         } catch (error) {
-            console.error('保存一级测试点数据到本地缓存失败:', error);
+            logger.error('保存一级测试点数据到本地缓存失败:', error);
         }
 
         // 更新一级测试点显示
         updateLevel1PointsDisplay();
     } catch (error) {
-        console.error('加载一级测试点错误:', error);
+        logger.error('加载一级测试点错误:', error);
         // 加载失败时使用空数据
         level1Points = [];
 
@@ -5042,28 +6224,32 @@ async function loadLevel1Points(moduleId) {
 function updateLevel1PointsDisplay() {
     const level1List = document.getElementById('level1-list');
     if (!level1List) {
-        console.error('[一级测试点] 未找到 level1-list 元素');
+        logger.error('[一级测试点] 未找到 level1-list 元素');
         return;
     }
 
-    console.log('[一级测试点] 开始更新显示，总数据量:', level1Points.length);
 
     const totalPages = Math.ceil(level1Points.length / level1PointsPerPage);
     const startIndex = (currentLevel1Page - 1) * level1PointsPerPage;
     const endIndex = startIndex + level1PointsPerPage;
     const currentPagePoints = level1Points.slice(startIndex, endIndex);
 
-    console.log('[一级测试点] 当前页数据量:', currentPagePoints.length, '总页数:', totalPages);
+
+    const headerHtml = `
+        <div class="level1-list-header">
+            <div>编号</div>
+            <div>名称</div>
+            <div>概述</div>
+            <div>用例数量</div>
+            <div>缺陷统计</div>
+            <div>更新时间</div>
+            <div>操作</div>
+        </div>
+    `;
 
     if (currentPagePoints.length === 0) {
         level1List.innerHTML = `
-            <div class="level1-list-header">
-                <div>编号</div>
-                <div>名称</div>
-                <div>测试类型</div>
-                <div>用例数量</div>
-                <div>更新时间</div>
-            </div>
+            ${headerHtml}
             <div class="level1-empty-state">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                     <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
@@ -5073,31 +6259,34 @@ function updateLevel1PointsDisplay() {
         `;
     } else {
         level1List.innerHTML = `
-            <div class="level1-list-header">
-                <div>编号</div>
-                <div>名称</div>
-                <div>测试类型</div>
-                <div>用例数量</div>
-                <div>更新时间</div>
-            </div>
+            ${headerHtml}
             ${currentPagePoints.map((point, index) => {
             const testCaseCount = point.test_case_count || point.testCaseCount || 0;
-            const testType = point.test_type || '功能测试';
-            const typeClass = testType.includes('性能') ? 'performance' :
-                testType.includes('兼容') ? 'compatibility' :
-                    testType.includes('安全') ? 'security' : 'functional';
+            const bugCount = point.bug_count || 0;
+            const summary = point.summary || '';
             const updateTime = formatDateTime(point.updated_at || point.updatedAt || point.created_at || point.createdAt || '');
+            const pointId = point.id;
+            const pointName = escapeHtml(point.name || '');
 
             return `
-                    <div class="level1-list-item" data-point-id="${point.id}">
-                        <div class="level1-number">${startIndex + index + 1}</div>
-                        <div class="level1-name">${point.name}</div>
-                        <div>
-                            <span class="level1-type-badge ${typeClass}">${testType}</span>
+                    <div class="level1-list-item" data-point-id="${pointId}">
+                        <div style="display: flex; align-items: center;">
+                            <button class="level1-expand-btn" data-point-id="${pointId}" title="展开/收起测试用例">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M9 18l6-6-6-6"/>
+                                </svg>
+                            </button>
+                            <div class="level1-number">${startIndex + index + 1}</div>
                         </div>
+                        <div class="level1-name">${pointName}</div>
+                        <div class="level1-summary" title="${escapeHtml(summary)}">${summary ? escapeHtml(summary) : '<span style="color:#94a3b8">暂无概述</span>'}</div>
                         <div class="level1-count">
                             <span class="level1-count-value">${testCaseCount}</span>
                             <span class="level1-count-label">用例</span>
+                        </div>
+                        <div class="level1-bug-count" data-point-id="${pointId}">
+                            <span class="level1-bug-value">${bugCount}</span>
+                            <span class="level1-bug-label">缺陷</span>
                         </div>
                         <div class="level1-time">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -5105,6 +6294,34 @@ function updateLevel1PointsDisplay() {
                                 <path d="M12 6v6l4 2"></path>
                             </svg>
                             ${updateTime}
+                        </div>
+                        <div class="level1-actions">
+                            <button class="level1-action-btn view-btn" data-action="view" data-point-id="${pointId}" data-point-name="${pointName}" title="查看详情">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                    <path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                                </svg>
+                            </button>
+                            <button class="level1-action-btn edit-btn" data-action="edit" data-point-id="${pointId}" data-point-name="${pointName}" title="编辑">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path>
+                                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                </svg>
+                            </button>
+                            <button class="level1-action-btn delete-btn" data-action="delete" data-point-id="${pointId}" data-point-name="${pointName}" title="删除">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="3 6 5 6 21 6"></polyline>
+                                    <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="level1-test-cases-container" data-point-id="${pointId}">
+                        <div class="level1-test-cases-list" data-point-id="${pointId}">
+                            <div style="padding: 20px; text-align: center;">
+                                <div class="loading-spinner" style="width: 24px; height: 24px; margin: 0 auto; border: 2px solid #e2e8f0; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+                                <p style="margin: 8px 0 0; font-size: 13px; color: #64748b;">加载测试用例...</p>
+                            </div>
                         </div>
                     </div>
                 `;
@@ -5114,6 +6331,1614 @@ function updateLevel1PointsDisplay() {
 
     updateLevel1Pagination(totalPages);
     initLevel1PointClickEvents();
+    initLevel1ExpandEvents();
+    updateExpandAllLevel1Button();
+}
+
+let level1ExpandedItems = new Set();
+let level1TestCasesCache = {};
+let level1ExpandLock = false;
+
+function initLevel1ExpandEvents() {
+    document.querySelectorAll('.level1-expand-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const pointId = String(btn.dataset.pointId);
+            toggleLevel1Expand(pointId);
+        });
+    });
+    
+    document.querySelectorAll('.level1-list-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+            if (!e.target.closest('.level1-action-btn') && !e.target.closest('.level1-expand-btn') && !e.target.closest('.ai-task-batch-checkbox-cell')) {
+                const pointId = String(item.dataset.pointId);
+                toggleLevel1Expand(pointId);
+            }
+        });
+    });
+}
+
+async function toggleLevel1Expand(pointId) {
+    pointId = String(pointId);
+    const item = document.querySelector(`.level1-list-item[data-point-id="${pointId}"]`);
+    const container = document.querySelector(`.level1-test-cases-container[data-point-id="${pointId}"]`);
+    
+    if (!item || !container) return;
+    
+    if (level1ExpandedItems.has(pointId)) {
+        level1ExpandedItems.delete(pointId);
+        item.classList.remove('expanded');
+        container.classList.remove('expanded');
+    } else {
+        level1ExpandedItems.add(pointId);
+        item.classList.add('expanded');
+        container.classList.add('expanded');
+        
+        if (!level1TestCasesCache[pointId]) {
+            await loadLevel1TestCases(pointId);
+        } else {
+            renderLevel1TestCases(pointId, level1TestCasesCache[pointId]);
+        }
+    }
+    
+    updateExpandAllLevel1Button();
+}
+
+async function loadLevel1TestCases(level1Id) {
+    try {
+        const response = await apiRequest('/cases/list', {
+            method: 'POST',
+            body: JSON.stringify({
+                level1Id: level1Id,
+                page: 1,
+                pageSize: 1000
+            })
+        });
+        
+        if (response.success && response.testCases) {
+            level1TestCasesCache[level1Id] = response.testCases;
+            renderLevel1TestCases(level1Id, response.testCases);
+        } else {
+            throw new Error(response.message || '加载测试用例失败');
+        }
+    } catch (error) {
+        console.error('加载测试用例失败:', error);
+        const listContainer = document.querySelector(`.level1-test-cases-list[data-point-id="${level1Id}"]`);
+        if (listContainer) {
+            listContainer.innerHTML = `
+                <div style="padding: 20px; text-align: center;">
+                    <p style="margin: 0; font-size: 13px; color: #ef4444;">加载失败：${escapeHtml(error.message)}</p>
+                </div>
+            `;
+        }
+    }
+}
+
+function renderLevel1TestCases(level1Id, testCases) {
+    const listContainer = document.querySelector(`.level1-test-cases-list[data-point-id="${level1Id}"]`);
+    if (!listContainer) return;
+    
+    if (testCases.length === 0) {
+        listContainer.innerHTML = `
+            <div style="padding: 20px; text-align: center;">
+                <p style="margin: 0 0 12px; font-size: 13px; color: #94a3b8;">暂无测试用例</p>
+            </div>
+            <button class="level1-add-test-case-btn" onclick="openAddTestCaseModalForLevel1(${level1Id})">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                <span>添加测试用例</span>
+            </button>
+        `;
+    } else {
+        listContainer.innerHTML = `
+            <div class="level1-test-case-header">
+                <div class="level1-test-case-header-status"></div>
+                <div class="level1-test-case-header-name">名称</div>
+                <div class="level1-test-case-header-purpose">测试目的</div>
+                <div class="level1-test-case-header-type">测试类型</div>
+                <div class="level1-test-case-header-priority">优先级</div>
+                <div class="level1-test-case-header-bug">缺陷</div>
+                <div class="level1-test-case-header-owner">负责人</div>
+                <div class="level1-test-case-header-actions">操作</div>
+            </div>
+        ` + testCases.map(tc => {
+            const status = tc.has_defect ? 'has-defect' : (tc.executed ? 'executed' : 'not-executed');
+            const priority = tc.priority || '中';
+            const testType = tc.type || '功能测试';
+            const bugCount = tc.bug_count || 0;
+            const purpose = tc.purpose ? tc.purpose.replace(/\n/g, ' ').substring(0, 160) : '-';
+            const statusIcon = tc.has_defect ? 
+                '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v4M12 16h.01"></path></svg>' :
+                (tc.executed ? 
+                    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>' :
+                    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle></svg>'
+                );
+            
+            return `
+                <div class="level1-test-case-item" onclick="openEditTestCaseDrawer(${tc.id})">
+                    <div class="level1-test-case-status ${status}">${statusIcon}</div>
+                    <div class="level1-test-case-name" title="${escapeHtml(tc.name)}">${escapeHtml(tc.name)}</div>
+                    <div class="level1-test-case-purpose" title="${escapeHtml(tc.purpose || '')}">${escapeHtml(purpose)}</div>
+                    <div class="level1-test-case-type ${testType}">${escapeHtml(testType)}</div>
+                    <div class="level1-test-case-priority ${priority}">${priority}</div>
+                    <div class="level1-test-case-bug-count ${bugCount > 0 ? 'has-bug' : ''}">${bugCount}</div>
+                    <div class="level1-test-case-owner">${escapeHtml(tc.owner || '-')}</div>
+                    <div style="display: flex; align-items: center; gap: 4px; align-self: center;">
+                        <button class="level1-action-btn" onclick="event.stopPropagation(); openEditTestCaseDrawer(${tc.id})" title="编辑">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('') + `
+            <button class="level1-add-test-case-btn" onclick="openAddTestCaseModalForLevel1(${level1Id})">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                <span>添加测试用例</span>
+            </button>
+        `;
+    }
+}
+
+function toggleExpandAllLevel1() {
+    if (level1ExpandLock) return;
+    
+    const btn = document.getElementById('expand-all-level1-btn');
+    const visiblePointIds = [];
+    document.querySelectorAll('.level1-list-item[data-point-id]').forEach(item => {
+        visiblePointIds.push(String(item.dataset.pointId));
+    });
+    
+    const allVisibleExpanded = visiblePointIds.length > 0 && 
+        visiblePointIds.every(id => level1ExpandedItems.has(id));
+    
+    if (allVisibleExpanded) {
+        level1ExpandedItems.clear();
+        document.querySelectorAll('.level1-list-item').forEach(item => {
+            item.classList.remove('expanded');
+        });
+        document.querySelectorAll('.level1-test-cases-container').forEach(container => {
+            container.classList.remove('expanded');
+        });
+        btn.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
+    } else {
+        level1ExpandLock = true;
+        const promises = [];
+        visiblePointIds.forEach(pointId => {
+            if (!level1ExpandedItems.has(pointId)) {
+                promises.push(toggleLevel1Expand(pointId));
+            }
+        });
+        btn.style.background = 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)';
+        Promise.all(promises).finally(() => {
+            level1ExpandLock = false;
+        });
+    }
+}
+
+function updateExpandAllLevel1Button() {
+    const btn = document.getElementById('expand-all-level1-btn');
+    if (!btn) return;
+    
+    const visiblePointIds = [];
+    document.querySelectorAll('.level1-list-item[data-point-id]').forEach(item => {
+        visiblePointIds.push(String(item.dataset.pointId));
+    });
+    
+    const allVisibleExpanded = visiblePointIds.length > 0 && 
+        visiblePointIds.every(id => level1ExpandedItems.has(id));
+    btn.style.background = allVisibleExpanded ? 
+        'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' : 
+        'linear-gradient(135deg, #10b981 0%, #059669 100%)';
+}
+
+function openAddTestCaseModalForLevel1(level1Id) {
+    const level1Point = level1Points.find(p => p.id == level1Id);
+    const level1Name = level1Point ? level1Point.name : '';
+    
+    const currentLibraryIdVal = currentCaseLibraryId || '';
+    let currentLibraryNameVal = '';
+    
+    if (caseLibraries && currentCaseLibraryId) {
+        const currentLib = caseLibraries.find(lib => lib.id == currentCaseLibraryId);
+        if (currentLib) {
+            currentLibraryNameVal = currentLib.name || '';
+        }
+    }
+    
+    let moduleIdVal = selectedModuleId || '';
+    let moduleNameVal = window.currentModule ? window.currentModule.name : '';
+    
+    if (!moduleIdVal && level1Point) {
+        moduleIdVal = level1Point.module_id || level1Point.moduleId || '';
+        if (level1Point.module_name || level1Point.moduleName) {
+            moduleNameVal = level1Point.module_name || level1Point.moduleName;
+        }
+    }
+    
+    let url = `/batch-create-cases.html?moduleId=${moduleIdVal}&libraryId=${currentLibraryIdVal}&moduleName=${encodeURIComponent(moduleNameVal)}&libraryName=${encodeURIComponent(currentLibraryNameVal)}&level1Id=${level1Id}&level1Name=${encodeURIComponent(level1Name)}&returnUrl=${encodeURIComponent(window.location.href)}`;
+    
+    window.location.href = url;
+}
+
+function openEditTestCaseDrawer(testCaseId) {
+    loadTestCaseToDrawer(testCaseId);
+}
+
+let currentEditingTestCase = null;
+
+async function loadTestCaseToDrawer(testCaseId) {
+    try {
+        const response = await apiRequest(`/testcases/${testCaseId}`, { useCache: false });
+        
+        if (response.success && response.testCase) {
+            currentEditingTestCase = response.testCase;
+            
+            // 更新头部显示
+            document.getElementById('drawer-testcase-name-display').textContent = response.testCase.name || '测试用例';
+            document.getElementById('drawer-owner-display').textContent = response.testCase.owner || '-';
+            document.getElementById('drawer-created-time').textContent = formatDateTime(response.testCase.created_at);
+            
+            // 更新优先级和类型徽章
+            const priority = response.testCase.priority || '中';
+            const priorityBadge = document.getElementById('drawer-priority-badge');
+            priorityBadge.textContent = priority;
+            priorityBadge.className = 'drawer-priority-badge';
+            if (priority === '高') priorityBadge.classList.add('priority-high');
+            else if (priority === '中') priorityBadge.classList.add('priority-medium');
+            else priorityBadge.classList.add('priority-low');
+            
+            document.getElementById('drawer-type-badge').textContent = response.testCase.type || '功能测试';
+            
+            // 填充表单字段
+            document.getElementById('drawer-testcase-id').value = response.testCase.id;
+            document.getElementById('drawer-testcase-name').value = response.testCase.name || '';
+            document.getElementById('drawer-testcase-caseid').value = response.testCase.case_id || '';
+            document.getElementById('drawer-testcase-priority').value = response.testCase.priority || '中';
+            document.getElementById('drawer-testcase-type').value = response.testCase.type || '功能测试';
+            document.getElementById('drawer-testcase-owner').value = response.testCase.owner || '';
+            document.getElementById('drawer-testcase-creator').value = response.testCase.creator || '';
+            document.getElementById('drawer-testcase-created-at').value = formatDateTime(response.testCase.created_at);
+            document.getElementById('drawer-testcase-updated-at').value = formatDateTime(response.testCase.updated_at);
+            document.getElementById('drawer-testcase-precondition').value = response.testCase.precondition || '';
+            document.getElementById('drawer-testcase-purpose').value = response.testCase.purpose || '';
+            document.getElementById('drawer-testcase-steps').value = response.testCase.steps || '';
+            document.getElementById('drawer-testcase-expected').value = response.testCase.expected || '';
+            document.getElementById('drawer-testcase-key-config').value = response.testCase.key_config || '';
+            document.getElementById('drawer-testcase-remark').value = response.testCase.remark || '';
+            document.getElementById('drawer-testcase-method').value = response.testCase.method || '';
+            document.getElementById('drawer-testcase-status').value = response.testCase.status || '';
+            
+            await loadDrawerConfigSelects(response.testCase);
+            
+            // 渲染关联项目
+            renderDrawerProjects(response.projects || []);
+            
+            // 渲染执行记录
+            window._drawerExecutionRecords = response.executionRecords || [];
+            renderDrawerExecutionRecords(response.executionRecords || []);
+            
+            // 渲染关联脚本
+            drawerCurrentScripts = response.scripts || [];
+            renderDrawerScriptsTable();
+            
+            // 渲染评审信息
+            renderDrawerReviewInfo(response.testCase);
+            
+            // 初始化编辑操作
+            initDrawerEditActions();
+            
+            openTestCaseDrawer();
+        } else {
+            throw new Error(response.message || '加载测试用例详情失败');
+        }
+    } catch (error) {
+        console.error('加载测试用例详情失败:', error);
+        showToast(error.message, 'error');
+    }
+}
+
+function renderDrawerProjects(projects) {
+    const emptyState = document.getElementById('drawer-projects-empty');
+    const listContainer = document.getElementById('drawer-projects-list');
+    
+    if (projects.length === 0) {
+        emptyState.style.display = 'block';
+        listContainer.style.display = 'none';
+    } else {
+        emptyState.style.display = 'none';
+        listContainer.style.display = 'block';
+        listContainer.innerHTML = projects.map(project => `
+            <div class="drawer-item-card">
+                <div class="drawer-item-header">
+                    <span class="drawer-item-icon">📁</span>
+                    <span class="drawer-item-title">${escapeHtml(project.project_name || '未命名项目')}</span>
+                </div>
+                <div class="drawer-item-body">
+                    <div class="drawer-item-row">
+                        <span class="drawer-item-label">负责人:</span>
+                        <span class="drawer-item-value">${escapeHtml(project.owner || '-')}</span>
+                    </div>
+                    <div class="drawer-item-row">
+                        <span class="drawer-item-label">进度:</span>
+                        <span class="drawer-item-value">${escapeHtml(project.progress_name || '-')}</span>
+                    </div>
+                    <div class="drawer-item-row">
+                        <span class="drawer-item-label">状态:</span>
+                        <span class="drawer-item-value">${escapeHtml(project.status_name || '-')}</span>
+                    </div>
+                    ${project.remark ? `
+                    <div class="drawer-item-row">
+                        <span class="drawer-item-label">备注:</span>
+                        <span class="drawer-item-value">${escapeHtml(project.remark)}</span>
+                    </div>
+                    ` : ''}
+                </div>
+            </div>
+        `).join('');
+    }
+}
+
+function renderDrawerExecutionRecords(records) {
+    const emptyState = document.getElementById('drawer-history-empty');
+    const listContainer = document.getElementById('drawer-history-list');
+    
+    if (records.length === 0) {
+        emptyState.style.display = 'block';
+        listContainer.style.display = 'none';
+    } else {
+        emptyState.style.display = 'none';
+        listContainer.style.display = 'block';
+        listContainer.innerHTML = records.map(record => {
+            let imagesHtml = '';
+            if (record.images) {
+                try {
+                    let images = record.images;
+                    if (typeof images === 'string') {
+                        images = JSON.parse(images);
+                    }
+                    if (Array.isArray(images) && images.length > 0) {
+                        imagesHtml = `
+                            <div class="drawer-item-row">
+                                <span class="drawer-item-label">图片:</span>
+                                <div class="drawer-images-grid">
+                                    ${images.map(img => {
+                                        const imgUrl = typeof img === 'object' ? (img.url || '') : img;
+                                        if (!imgUrl) return '';
+                                        return `<img src="${escapeHtml(imgUrl)}" 
+                                             class="drawer-thumbnail" 
+                                             data-preview-url="${escapeHtml(imgUrl)}"
+                                             alt="执行记录图片">`;
+                                    }).join('')}
+                                </div>
+                            </div>
+                        `;
+                    }
+                } catch (e) {
+                    console.error('解析图片数据失败:', e);
+                }
+            }
+            
+            return `
+                <div class="drawer-item-card" data-record-id="${record.id}">
+                    <div class="drawer-item-header">
+                        <span class="drawer-item-icon">${record.record_type === 'defect' || record.type === 'defect' ? '🐛' : '📋'}</span>
+                        <span class="drawer-item-title">${record.record_type === 'defect' || record.type === 'defect' ? '缺陷记录' : '执行记录'}</span>
+                        <span class="drawer-item-time">${formatDateTime(record.created_at || record.createdAt)}</span>
+                        <div style="margin-left: auto; display: flex; gap: 4px;">
+                            <button type="button" class="drawer-action-btn" style="padding: 4px 8px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; color: #374151;" data-edit-record="${record.id}">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                </svg>
+                            </button>
+                            <button type="button" class="drawer-action-btn" style="padding: 4px 8px; font-size: 12px; border: 1px solid #fecaca; border-radius: 6px; background: #fff; color: #ef4444;" data-delete-record="${record.id}">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="3 6 5 6 21 6"></polyline>
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="drawer-item-body">
+                        ${(record.bug_id || record.bugId) ? `
+                        <div class="drawer-item-row">
+                            <span class="drawer-item-label">Bug ID:</span>
+                            <span class="drawer-item-value">${escapeHtml(record.bug_id || record.bugId)}</span>
+                        </div>
+                        ` : ''}
+                        ${(record.bug_type || record.bugType) ? `
+                        <div class="drawer-item-row">
+                            <span class="drawer-item-label">Bug类型:</span>
+                            <span class="drawer-item-value">${escapeHtml(record.bug_type || record.bugType)}</span>
+                        </div>
+                        ` : ''}
+                        ${record.description ? `
+                        <div class="drawer-item-row">
+                            <span class="drawer-item-label">描述:</span>
+                            <span class="drawer-item-value">${escapeHtml(record.description)}</span>
+                        </div>
+                        ` : ''}
+                        ${imagesHtml}
+                        <div class="drawer-item-row">
+                            <span class="drawer-item-label">创建人:</span>
+                            <span class="drawer-item-value">${escapeHtml(record.creator)}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        listContainer.querySelectorAll('.drawer-thumbnail').forEach(img => {
+            img.addEventListener('click', () => {
+                openImagePreview(img.dataset.previewUrl || img.src);
+            });
+        });
+
+        listContainer.querySelectorAll('[data-edit-record]').forEach(btn => {
+            btn.addEventListener('click', () => editDrawerExecutionRecord(parseInt(btn.dataset.editRecord)));
+        });
+
+        listContainer.querySelectorAll('[data-delete-record]').forEach(btn => {
+            btn.addEventListener('click', () => deleteDrawerExecutionRecord(parseInt(btn.dataset.deleteRecord)));
+        });
+    }
+}
+
+function openImagePreview(imageUrl) {
+    const modal = document.createElement('div');
+    modal.className = 'image-preview-modal';
+    modal.innerHTML = `
+        <div class="image-preview-overlay"></div>
+        <img src="${escapeHtml(imageUrl)}" alt="预览" id="drawer-preview-image" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(1); max-width: 90vw; max-height: 90vh; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); cursor: zoom-in; transform-origin: center center; transition: transform 0.15s ease; z-index: 1; user-select: none; -webkit-user-drag: none;">
+        <div style="position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); display: flex; gap: 12px; background: rgba(0,0,0,0.6); padding: 8px 16px; border-radius: 20px; z-index: 2;">
+            <button id="drawer-zoom-out-btn" style="background: none; border: none; color: #fff; font-size: 20px; cursor: pointer;" title="缩小">−</button>
+            <span id="drawer-zoom-level" style="color: #fff; font-size: 14px; line-height: 24px;">100%</span>
+            <button id="drawer-zoom-in-btn" style="background: none; border: none; color: #fff; font-size: 20px; cursor: pointer;" title="放大">+</button>
+            <button id="drawer-zoom-reset-btn" style="background: none; border: none; color: #fff; font-size: 14px; cursor: pointer; margin-left: 8px;" title="重置">重置</button>
+        </div>
+        <div style="position: fixed; top: 16px; right: 16px; z-index: 2;">
+            <button id="drawer-preview-close-btn" style="width: 40px; height: 40px; background: rgba(0,0,0,0.5); border: none; border-radius: 50%; font-size: 24px; cursor: pointer; color: #fff; display: flex; align-items: center; justify-content: center; transition: background 0.2s;">×</button>
+        </div>
+        <div style="position: fixed; top: 20px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.5); font-size: 12px; pointer-events: none; z-index: 2;">滚轮缩放 · 点击放大 · 拖拽移动 · ESC 关闭</div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const img = modal.querySelector('#drawer-preview-image');
+    const zoomLevel = modal.querySelector('#drawer-zoom-level');
+    let scale = 1;
+    let panX = 0;
+    let panY = 0;
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+
+    function updateTransform() {
+        if (scale === 1) {
+            img.style.transform = `translate(-50%, -50%) scale(1)`;
+            img.style.maxWidth = '90vw';
+            img.style.maxHeight = '90vh';
+            img.style.cursor = 'zoom-in';
+        } else {
+            img.style.transform = `translate(calc(-50% + ${panX}px), calc(-50% + ${panY}px)) scale(${scale})`;
+            img.style.maxWidth = 'none';
+            img.style.maxHeight = 'none';
+            img.style.cursor = isDragging ? 'grabbing' : 'grab';
+        }
+        zoomLevel.textContent = Math.round(scale * 100) + '%';
+    }
+
+    modal.querySelector('#drawer-zoom-in-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        scale = Math.max(0.5, Math.min(10, scale + 0.2));
+        updateTransform();
+    });
+
+    modal.querySelector('#drawer-zoom-out-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        scale = Math.max(0.5, Math.min(10, scale - 0.2));
+        if (scale <= 1) { scale = 1; panX = 0; panY = 0; }
+        updateTransform();
+    });
+
+    modal.querySelector('#drawer-zoom-reset-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        scale = 1;
+        panX = 0;
+        panY = 0;
+        updateTransform();
+    });
+
+    modal.querySelector('#drawer-preview-close-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        modal.remove();
+    });
+
+    modal.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -0.1 : 0.1;
+        scale = Math.max(0.5, Math.min(10, scale + delta));
+        if (scale <= 1) { scale = 1; panX = 0; panY = 0; }
+        updateTransform();
+    }, { passive: false });
+
+    img.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        if (scale > 1) {
+            isDragging = true;
+            startX = e.clientX - panX;
+            startY = e.clientY - panY;
+            img.style.cursor = 'grabbing';
+        } else {
+            scale = 2;
+            updateTransform();
+        }
+    });
+
+    const onMouseMove = (e) => {
+        if (isDragging) {
+            panX = e.clientX - startX;
+            panY = e.clientY - startY;
+            img.style.transition = 'none';
+            updateTransform();
+        }
+    };
+
+    const onMouseUp = () => {
+        if (isDragging) {
+            isDragging = false;
+            img.style.transition = 'transform 0.15s ease';
+            updateTransform();
+        }
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+
+    const handleEsc = (e) => {
+        if (e.key === 'Escape') {
+            modal.remove();
+        }
+    };
+    document.addEventListener('keydown', handleEsc);
+
+    const originalRemove = modal.remove.bind(modal);
+    modal.remove = () => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        document.removeEventListener('keydown', handleEsc);
+        originalRemove();
+    };
+}
+
+function renderDrawerScripts(scripts) {
+    const emptyState = document.getElementById('drawer-scripts-empty');
+    const listContainer = document.getElementById('drawer-scripts-list');
+    
+    if (scripts.length === 0) {
+        emptyState.style.display = 'block';
+        listContainer.style.display = 'none';
+    } else {
+        emptyState.style.display = 'none';
+        listContainer.style.display = 'block';
+        listContainer.innerHTML = scripts.map(script => `
+            <div class="drawer-item-card">
+                <div class="drawer-item-header">
+                    <span class="drawer-item-icon">📜</span>
+                    <span class="drawer-item-title">${escapeHtml(script.script_name || '未命名脚本')}</span>
+                </div>
+                <div class="drawer-item-body">
+                    <div class="drawer-item-row">
+                        <span class="drawer-item-label">路径:</span>
+                        <span class="drawer-item-value">${escapeHtml(script.script_path || '-')}</span>
+                    </div>
+                    <div class="drawer-item-row">
+                        <span class="drawer-item-label">类型:</span>
+                        <span class="drawer-item-value">${escapeHtml(script.script_type || '-')}</span>
+                    </div>
+                    ${script.description ? `
+                    <div class="drawer-item-row">
+                        <span class="drawer-item-label">描述:</span>
+                        <span class="drawer-item-value">${escapeHtml(script.description)}</span>
+                    </div>
+                    ` : ''}
+                </div>
+            </div>
+        `).join('');
+    }
+}
+
+function renderDrawerReviewInfo(testCase) {
+    const statusBadge = document.getElementById('drawer-review-status-badge');
+    const reviewerName = document.getElementById('drawer-reviewer-name');
+    const submittedTime = document.getElementById('drawer-review-submitted-time');
+    const historyEmpty = document.getElementById('drawer-review-history-empty');
+    const historyList = document.getElementById('drawer-review-history-list');
+
+    const statusMap = {
+        'draft': { icon: '📝', text: '草稿', cls: 'draft' },
+        'pending': { icon: '⏳', text: '待评审', cls: 'pending' },
+        'approved': { icon: '✅', text: '已通过', cls: 'approved' },
+        'rejected': { icon: '❌', text: '被驳回', cls: 'rejected' }
+    };
+
+    const reviewStatus = testCase.review_status || testCase.status || 'draft';
+    const status = statusMap[reviewStatus] || statusMap['draft'];
+
+    if (statusBadge) {
+        statusBadge.className = `drawer-status-badge drawer-status-${status.cls}`;
+        statusBadge.innerHTML = `${status.icon} ${status.text}`;
+    }
+
+    if (reviewerName) {
+        reviewerName.textContent = testCase.reviewer_name || '-';
+    }
+
+    if (submittedTime) {
+        submittedTime.textContent = testCase.review_submitted_at ? formatDateTime(testCase.review_submitted_at) : '-';
+    }
+
+    loadDrawerReviewHistory(testCase.id);
+}
+
+async function loadDrawerReviewHistory(caseId) {
+    const historyEmpty = document.getElementById('drawer-review-history-empty');
+    const historyList = document.getElementById('drawer-review-history-list');
+
+    if (!caseId) {
+        historyEmpty.style.display = 'block';
+        historyList.style.display = 'none';
+        return;
+    }
+
+    try {
+        const response = await apiRequest(`/testcases/${caseId}/review-history`, { useCache: false });
+
+        if (response.success && response.data) {
+            const data = response.data;
+
+            const statusBadge = document.getElementById('drawer-review-status-badge');
+            const reviewerName = document.getElementById('drawer-reviewer-name');
+            const submittedTime = document.getElementById('drawer-review-submitted-time');
+
+            const statusMap = {
+                'draft': { icon: '📝', text: '草稿', cls: 'draft' },
+                'pending': { icon: '⏳', text: '待评审', cls: 'pending' },
+                'approved': { icon: '✅', text: '已通过', cls: 'approved' },
+                'rejected': { icon: '❌', text: '被驳回', cls: 'rejected' }
+            };
+
+            const st = statusMap[data.current_status] || statusMap['draft'];
+            if (statusBadge) {
+                statusBadge.className = `drawer-status-badge drawer-status-${st.cls}`;
+                statusBadge.innerHTML = `${st.icon} ${st.text}`;
+            }
+            if (reviewerName) {
+                reviewerName.textContent = data.reviewer_name || '-';
+            }
+            if (submittedTime) {
+                submittedTime.textContent = data.review_submitted_at ? formatDateTime(data.review_submitted_at) : '-';
+            }
+
+            const records = data.review_records || [];
+            if (records.length === 0) {
+                historyEmpty.style.display = 'block';
+                historyList.style.display = 'none';
+            } else {
+                historyEmpty.style.display = 'none';
+                historyList.style.display = 'block';
+
+                const groupedRecords = {};
+                records.forEach(record => {
+                    const dateStr = formatDate(new Date(record.created_at));
+                    if (!groupedRecords[dateStr]) groupedRecords[dateStr] = [];
+                    groupedRecords[dateStr].push(record);
+                });
+
+                let html = '';
+                Object.keys(groupedRecords).forEach(dateStr => {
+                    html += `<div style="margin-bottom: 16px;">
+                        <div style="font-size: 12px; color: #94a3b8; margin-bottom: 8px; font-weight: 600;">${dateStr}</div>`;
+                    groupedRecords[dateStr].forEach(record => {
+                        const timeStr = formatDateTime(record.created_at).split(' ')[1] || '';
+                        const actionText = getActionText(record.action);
+                        const actionDesc = getActionDesc(record.action);
+                        const actionColor = record.action === 'approve' ? '#10b981' : record.action === 'reject' ? '#ef4444' : '#3b82f6';
+
+                        html += `
+                        <div style="display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f1f5f9;">
+                            <div style="width: 4px; border-radius: 2px; background: ${actionColor}; flex-shrink: 0;"></div>
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                                    <span style="font-size: 13px; font-weight: 600; color: #1e293b;">${escapeHtml(actionText)}</span>
+                                    <span style="font-size: 12px; color: #94a3b8;">${timeStr}</span>
+                                </div>
+                                <div style="font-size: 13px; color: #64748b;">
+                                    <span style="color: #475569; font-weight: 500;">${escapeHtml(record.operator_name || record.reviewer_name || '未知')}</span>
+                                    ${escapeHtml(actionDesc)}
+                                    ${record.reviewer_name && record.action !== 'submit' && record.action !== 'resubmit' ? ` → <span style="color: #667eea; font-weight: 500;">${escapeHtml(record.reviewer_name)}</span>` : ''}
+                                </div>
+                                ${record.comment ? `<div style="font-size: 13px; color: #64748b; margin-top: 4px; padding: 6px 10px; background: #f8fafc; border-radius: 6px;">${escapeHtml(record.comment)}</div>` : ''}
+                            </div>
+                        </div>`;
+                    });
+                    html += '</div>';
+                });
+
+                historyList.innerHTML = html;
+            }
+        } else {
+            historyEmpty.style.display = 'block';
+            historyList.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('加载评审历史失败:', error);
+        historyEmpty.style.display = 'block';
+        historyList.style.display = 'none';
+    }
+}
+
+function openTestCaseDrawer() {
+    document.getElementById('testcase-drawer-overlay').classList.add('active');
+    document.getElementById('testcase-edit-drawer').classList.add('open');
+    document.body.style.overflow = 'hidden';
+    
+    initDrawerTabs();
+    initDrawerResize();
+}
+
+function initDrawerTabs() {
+    const tabs = document.querySelectorAll('.drawer-tab');
+    const contents = document.querySelectorAll('.drawer-tab-content');
+    
+    tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            const targetTab = tab.dataset.tab;
+            
+            // 更新标签状态
+            tabs.forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            
+            // 更新内容显示
+            contents.forEach(content => {
+                content.classList.remove('active');
+                if (content.id === `drawer-tab-${targetTab}`) {
+                    content.classList.add('active');
+                }
+            });
+        });
+    });
+}
+
+function closeTestCaseDrawer() {
+    document.getElementById('testcase-drawer-overlay').classList.remove('active');
+    document.getElementById('testcase-edit-drawer').classList.remove('open');
+    document.body.style.overflow = '';
+    currentEditingTestCase = null;
+}
+
+function initDrawerResize() {
+    const drawer = document.getElementById('testcase-edit-drawer');
+    const handle = document.getElementById('drawer-resize-handle');
+    if (!drawer || !handle) return;
+
+    let isResizing = false;
+
+    handle.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        handle.classList.add('active');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+        const newWidth = window.innerWidth - e.clientX;
+        const minWidth = 480;
+        const maxWidth = Math.round(window.innerWidth * 0.9);
+        const clampedWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
+        drawer.style.width = clampedWidth + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!isResizing) return;
+        isResizing = false;
+        handle.classList.remove('active');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+    });
+}
+
+let drawerCurrentScripts = [];
+let drawerRecordImages = [];
+
+async function loadDrawerConfigSelects(testCase) {
+    try {
+        const [prioritiesRes, typesRes, phasesRes, envsRes, methodsRes, statusesRes] = await Promise.all([
+            apiRequest('/priorities/list').catch(() => null),
+            apiRequest('/test-types/list').catch(() => null),
+            apiRequest('/test-phases/list').catch(() => null),
+            apiRequest('/environments/list').catch(() => null),
+            apiRequest('/test-methods/list').catch(() => null),
+            apiRequest('/test-statuses/list').catch(() => null)
+        ]);
+
+        loadDrawerPrioritySelect(prioritiesRes, testCase.priority);
+        loadDrawerTypeSelect(typesRes, testCase.type);
+        loadDrawerPhaseSelect(phasesRes, testCase);
+        loadDrawerEnvSelect(envsRes, testCase);
+        loadDrawerMethodSelect(methodsRes, testCase.method || testCase.test_method || '');
+        loadDrawerStatusSelect(statusesRes, testCase.status || '');
+    } catch (error) {
+        console.error('加载抽屉配置数据失败:', error);
+    }
+}
+
+function loadDrawerPrioritySelect(res, selectedPriority) {
+    const select = document.getElementById('drawer-testcase-priority');
+    if (!select) return;
+    select.innerHTML = '<option value="">请选择优先级</option>';
+
+    let list = [];
+    if (res && res.success && res.priorities) list = res.priorities;
+    else if (Array.isArray(res)) list = res;
+
+    if (list.length === 0) {
+        select.innerHTML = `
+            <option value="高" ${selectedPriority === '高' ? 'selected' : ''}>高</option>
+            <option value="中" ${selectedPriority === '中' ? 'selected' : ''}>中</option>
+            <option value="低" ${selectedPriority === '低' ? 'selected' : ''}>低</option>
+        `;
+        if (selectedPriority) select.value = selectedPriority;
+        return;
+    }
+
+    list.forEach(item => {
+        const option = document.createElement('option');
+        option.value = item.name;
+        option.textContent = item.description ? `${item.name} - ${item.description}` : item.name;
+        if (item.name === selectedPriority) option.selected = true;
+        select.appendChild(option);
+    });
+    if (selectedPriority) select.value = selectedPriority;
+}
+
+function loadDrawerTypeSelect(res, selectedType) {
+    const select = document.getElementById('drawer-testcase-type');
+    if (!select) return;
+    select.innerHTML = '<option value="">请选择测试类型</option>';
+
+    let list = [];
+    if (res && res.success && res.testTypes) list = res.testTypes;
+    else if (Array.isArray(res)) list = res;
+
+    if (list.length === 0) {
+        select.innerHTML = `
+            <option value="功能测试" ${selectedType === '功能测试' ? 'selected' : ''}>功能测试</option>
+            <option value="性能测试" ${selectedType === '性能测试' ? 'selected' : ''}>性能测试</option>
+            <option value="安全测试" ${selectedType === '安全测试' ? 'selected' : ''}>安全测试</option>
+            <option value="兼容性测试" ${selectedType === '兼容性测试' ? 'selected' : ''}>兼容性测试</option>
+            <option value="其他" ${selectedType === '其他' ? 'selected' : ''}>其他</option>
+        `;
+        if (selectedType) select.value = selectedType;
+        return;
+    }
+
+    list.forEach(item => {
+        const option = document.createElement('option');
+        option.value = item.name;
+        option.textContent = item.description ? `${item.name} - ${item.description}` : item.name;
+        if (item.name === selectedType) option.selected = true;
+        select.appendChild(option);
+    });
+    if (selectedType) select.value = selectedType;
+}
+
+function loadDrawerPhaseSelect(res, testCase) {
+    const select = document.getElementById('drawer-testcase-phase');
+    if (!select) return;
+    select.innerHTML = '<option value="">请选择</option>';
+
+    let list = [];
+    if (res && res.success && res.testPhases) list = res.testPhases;
+    else if (Array.isArray(res)) list = res;
+
+    if (list.length === 0) {
+        select.innerHTML = `
+            <option value="">请选择</option>
+            <option value="单元测试">单元测试</option>
+            <option value="集成测试">集成测试</option>
+            <option value="系统测试">系统测试</option>
+            <option value="验收测试">验收测试</option>
+        `;
+    } else {
+        list.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.name;
+            option.textContent = item.name;
+            select.appendChild(option);
+        });
+    }
+
+    const phases = testCase.phases || [];
+    if (phases.length > 0) {
+        select.value = phases[0].name;
+    } else {
+        const phaseStr = testCase.test_phase || testCase.phase || '';
+        if (phaseStr) select.value = phaseStr.split(',')[0].trim();
+    }
+}
+
+function loadDrawerEnvSelect(res, testCase) {
+    const select = document.getElementById('drawer-testcase-env');
+    if (!select) return;
+    select.innerHTML = '<option value="">请选择</option>';
+
+    let list = [];
+    if (res && res.success && res.environments) list = res.environments;
+    else if (Array.isArray(res)) list = res;
+
+    if (list.length === 0) {
+        select.innerHTML = `
+            <option value="">请选择</option>
+            <option value="开发环境">开发环境</option>
+            <option value="测试环境">测试环境</option>
+            <option value="预发布环境">预发布环境</option>
+            <option value="生产环境">生产环境</option>
+        `;
+    } else {
+        list.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.name;
+            option.textContent = item.name;
+            select.appendChild(option);
+        });
+    }
+
+    const environments = testCase.environments || [];
+    if (environments.length > 0) {
+        select.value = environments[0].name;
+    } else {
+        const envStr = testCase.test_environment || '';
+        if (envStr) select.value = envStr.split(',')[0].trim();
+    }
+}
+
+function loadDrawerMethodSelect(res, selectedMethod) {
+    const select = document.getElementById('drawer-testcase-method');
+    if (!select) return;
+    select.innerHTML = '<option value="">请选择</option>';
+
+    let list = [];
+    if (res && res.success && res.testMethods) list = res.testMethods;
+    else if (Array.isArray(res)) list = res;
+
+    if (list.length === 0) {
+        select.innerHTML = `
+            <option value="">请选择</option>
+            <option value="手工测试">手工测试</option>
+            <option value="自动化测试">自动化测试</option>
+            <option value="半自动化">半自动化</option>
+        `;
+    } else {
+        list.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.name;
+            option.textContent = item.name;
+            select.appendChild(option);
+        });
+    }
+
+    if (selectedMethod) {
+        const methodNames = selectedMethod.split(',').map(m => m.trim()).filter(m => m);
+        if (methodNames.length > 0) select.value = methodNames[0];
+    }
+}
+
+function loadDrawerStatusSelect(res, selectedStatus) {
+    const select = document.getElementById('drawer-testcase-status');
+    if (!select) return;
+    select.innerHTML = '<option value="">请选择</option>';
+
+    let list = [];
+    if (res && res.success && res.statuses) list = res.statuses;
+    else if (Array.isArray(res)) list = res;
+
+    if (list.length === 0) {
+        select.innerHTML = `
+            <option value="">请选择</option>
+            <option value="设计中">设计中</option>
+            <option value="评审中">评审中</option>
+            <option value="维护中">维护中</option>
+            <option value="已废弃">已废弃</option>
+        `;
+    } else {
+        list.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.name;
+            option.textContent = item.name;
+            select.appendChild(option);
+        });
+    }
+
+    if (selectedStatus) select.value = selectedStatus;
+}
+
+let drawerEditActionsInitialized = false;
+
+function initDrawerEditActions() {
+    if (drawerEditActionsInitialized) return;
+    drawerEditActionsInitialized = true;
+
+    const addScriptBtn = document.getElementById('drawer-add-script-btn');
+    const addScriptBtnEmpty = document.getElementById('drawer-add-script-btn-empty');
+    const editProjectsBtn = document.getElementById('drawer-edit-projects-btn');
+    const editProjectsBtnEmpty = document.getElementById('drawer-edit-projects-btn-empty');
+    const addRecordBtn = document.getElementById('drawer-add-record-btn');
+    const addRecordBtnEmpty = document.getElementById('drawer-add-record-btn-empty');
+    const cancelRecordBtn = document.getElementById('drawer-cancel-record-btn');
+    const submitRecordBtn = document.getElementById('drawer-submit-record-btn');
+
+    if (addScriptBtn) addScriptBtn.addEventListener('click', () => openDrawerScriptModal());
+    if (addScriptBtnEmpty) addScriptBtnEmpty.addEventListener('click', () => openDrawerScriptModal());
+    if (editProjectsBtn) editProjectsBtn.addEventListener('click', () => openDrawerProjectAssociations());
+    if (editProjectsBtnEmpty) editProjectsBtnEmpty.addEventListener('click', () => openDrawerProjectAssociations());
+    if (addRecordBtn) addRecordBtn.addEventListener('click', () => toggleDrawerRecordForm(true));
+    if (addRecordBtnEmpty) addRecordBtnEmpty.addEventListener('click', () => toggleDrawerRecordForm(true));
+    if (cancelRecordBtn) cancelRecordBtn.addEventListener('click', () => toggleDrawerRecordForm(false));
+    if (submitRecordBtn) submitRecordBtn.addEventListener('click', () => submitDrawerExecutionRecord());
+
+    document.querySelectorAll('input[name="drawer-record-type"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            const bugIdRow = document.getElementById('drawer-bug-id-row');
+            if (bugIdRow) {
+                bugIdRow.style.display = radio.value === 'defect' && radio.checked ? 'block' : 'none';
+            }
+        });
+    });
+
+    const uploadHint = document.getElementById('drawer-record-upload-hint');
+    const imageInput = document.getElementById('drawer-record-image-input');
+    if (uploadHint && imageInput) {
+        uploadHint.addEventListener('click', () => imageInput.click());
+        imageInput.addEventListener('change', (e) => handleDrawerRecordImageSelect(e));
+    }
+
+    const uploadArea = document.getElementById('drawer-record-upload-area');
+    if (uploadArea) {
+        uploadArea.addEventListener('paste', (e) => {
+            const items = e.clipboardData && e.clipboardData.items;
+            if (!items) return;
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                    e.preventDefault();
+                    const file = items[i].getAsFile();
+                    addDrawerRecordImage(file);
+                    break;
+                }
+            }
+        });
+    }
+}
+
+function openDrawerScriptModal() {
+    const testCaseId = document.getElementById('drawer-testcase-id').value;
+    if (!testCaseId) {
+        showErrorMessage('请先保存测试用例');
+        return;
+    }
+    currentEditingTestCaseId = testCaseId;
+    openAddScriptModal();
+}
+
+function editDrawerScript(scriptId) {
+    const script = drawerCurrentScripts.find(s => s.id === scriptId);
+    if (!script) return;
+    currentEditingTestCaseId = document.getElementById('drawer-testcase-id').value;
+    currentScripts = drawerCurrentScripts;
+    editScript(scriptId);
+}
+
+async function deleteDrawerScript(scriptId) {
+    if (!(await showConfirmMessage('确定要删除这个关联脚本吗？'))) return;
+    try {
+        const testCaseId = document.getElementById('drawer-testcase-id').value;
+        const response = await apiRequest(`/testcases/scripts/${scriptId}`, { method: 'DELETE' });
+        if (response.success) {
+            showSuccessMessage('删除成功');
+            await loadDrawerScripts(testCaseId);
+        } else {
+            showErrorMessage(response.message || '删除失败');
+        }
+    } catch (error) {
+        showErrorMessage('删除脚本失败');
+    }
+}
+
+async function loadDrawerScripts(testCaseId) {
+    try {
+        const response = await apiRequest(`/testcases/${testCaseId}/scripts`, { useCache: false });
+        if (response.success && response.scripts) {
+            drawerCurrentScripts = response.scripts;
+        } else {
+            drawerCurrentScripts = [];
+        }
+        renderDrawerScriptsTable();
+    } catch (error) {
+        drawerCurrentScripts = [];
+        renderDrawerScriptsTable();
+    }
+}
+
+function renderDrawerScriptsTable() {
+    const emptyState = document.getElementById('drawer-scripts-empty');
+    const listContainer = document.getElementById('drawer-scripts-list');
+
+    if (drawerCurrentScripts.length === 0) {
+        emptyState.style.display = 'block';
+        listContainer.style.display = 'none';
+    } else {
+        emptyState.style.display = 'none';
+        listContainer.style.display = 'block';
+        listContainer.innerHTML = drawerCurrentScripts.map((script, index) => `
+            <div class="drawer-item-card">
+                <div class="drawer-item-header">
+                    <span class="drawer-item-icon">📜</span>
+                    <span class="drawer-item-title">${escapeHtml(script.script_name || '未命名脚本')}</span>
+                    <div style="margin-left: auto; display: flex; gap: 4px;">
+                        <button type="button" class="drawer-action-btn" style="padding: 4px 8px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; color: #374151;" data-drawer-edit-script="${script.id}">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                            </svg>
+                        </button>
+                        <button type="button" class="drawer-action-btn" style="padding: 4px 8px; font-size: 12px; border: 1px solid #fecaca; border-radius: 6px; background: #fff; color: #ef4444;" data-drawer-delete-script="${script.id}">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="drawer-item-body">
+                    <div class="drawer-item-row">
+                        <span class="drawer-item-label">类型:</span>
+                        <span class="drawer-item-value">${escapeHtml(getScriptTypeLabel(script.script_type))}</span>
+                    </div>
+                    ${script.description ? `<div class="drawer-item-row"><span class="drawer-item-label">描述:</span><span class="drawer-item-value">${escapeHtml(script.description)}</span></div>` : ''}
+                    <div class="drawer-item-row">
+                        <span class="drawer-item-label">路径:</span>
+                        <span class="drawer-item-value">${escapeHtml(script.script_path || '-')}</span>
+                    </div>
+                    ${script.file_path ? `<div class="drawer-item-row"><span class="drawer-item-label">文件:</span><span class="drawer-item-value">${escapeHtml(script.original_filename || script.script_name)}</span></div>` : ''}
+                    ${script.link_url ? `<div class="drawer-item-row"><span class="drawer-item-label">链接:</span><a href="${escapeHtml(script.link_url)}" target="_blank" style="color: #3b82f6; font-size: 13px;">${escapeHtml(script.link_title || '链接')}</a></div>` : ''}
+                </div>
+            </div>
+        `).join('');
+
+        listContainer.querySelectorAll('[data-drawer-edit-script]').forEach(btn => {
+            btn.addEventListener('click', () => editDrawerScript(parseInt(btn.dataset.drawerEditScript)));
+        });
+        listContainer.querySelectorAll('[data-drawer-delete-script]').forEach(btn => {
+            btn.addEventListener('click', () => deleteDrawerScript(parseInt(btn.dataset.drawerDeleteScript)));
+        });
+    }
+}
+
+function openDrawerProjectAssociations() {
+    const testCaseId = document.getElementById('drawer-testcase-id').value;
+    if (!testCaseId) {
+        showErrorMessage('请先保存测试用例');
+        return;
+    }
+    currentEditingTestCaseId = testCaseId;
+    openEditTestCaseProjectAssociationsModal();
+}
+
+async function refreshDrawerProjects() {
+    const testCaseId = document.getElementById('drawer-testcase-id').value;
+    if (!testCaseId) return;
+    try {
+        const projects = await getTestCaseProjectDetails(testCaseId);
+        renderDrawerProjects(projects || []);
+    } catch (error) {
+        console.error('刷新关联项目失败:', error);
+    }
+}
+
+function toggleDrawerRecordForm(show) {
+    const form = document.getElementById('drawer-execution-record-form');
+    if (!form) return;
+    if (show) {
+        form.style.display = 'block';
+        form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        drawerRecordImages = [];
+        const preview = document.getElementById('drawer-record-images-preview');
+        if (preview) preview.innerHTML = '';
+        document.querySelectorAll('input[name="drawer-record-type"]').forEach(r => r.checked = false);
+        const bugIdRow = document.getElementById('drawer-bug-id-row');
+        if (bugIdRow) bugIdRow.style.display = 'none';
+        const descInput = document.getElementById('drawer-record-description');
+        if (descInput) descInput.value = '';
+        const bugIdInput = document.getElementById('drawer-record-bug-id');
+        if (bugIdInput) bugIdInput.value = '';
+    } else {
+        form.style.display = 'none';
+    }
+}
+
+function handleDrawerRecordImageSelect(e) {
+    const files = e.target.files;
+    if (files) {
+        Array.from(files).forEach(file => addDrawerRecordImage(file));
+    }
+    e.target.value = '';
+}
+
+function addDrawerRecordImage(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        drawerRecordImages.push({ file: file, dataUrl: e.target.result, name: file.name });
+        renderDrawerRecordImagePreviews();
+    };
+    reader.readAsDataURL(file);
+}
+
+function renderDrawerRecordImagePreviews() {
+    const preview = document.getElementById('drawer-record-images-preview');
+    if (!preview) return;
+    preview.innerHTML = drawerRecordImages.map((img, index) => `
+        <div style="position: relative; width: 60px; height: 60px;">
+            <img src="${img.dataUrl}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 6px; border: 1px solid #e2e8f0;">
+            <button type="button" style="position: absolute; top: -4px; right: -4px; width: 18px; height: 18px; border-radius: 50%; background: #ef4444; color: #fff; border: none; cursor: pointer; font-size: 10px; display: flex; align-items: center; justify-content: center;" data-remove-drawer-image="${index}">×</button>
+        </div>
+    `).join('');
+    preview.querySelectorAll('[data-remove-drawer-image]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            drawerRecordImages.splice(parseInt(btn.dataset.removeDrawerImage), 1);
+            renderDrawerRecordImagePreviews();
+        });
+    });
+}
+
+async function submitDrawerExecutionRecord() {
+    const testCaseId = document.getElementById('drawer-testcase-id').value;
+    if (!testCaseId) {
+        showErrorMessage('请先保存测试用例');
+        return;
+    }
+
+    const typeRadio = document.querySelector('input[name="drawer-record-type"]:checked');
+    if (!typeRadio) {
+        showErrorMessage('请选择记录类型');
+        return;
+    }
+
+    const recordType = typeRadio.value;
+    const bugId = document.getElementById('drawer-record-bug-id')?.value || '';
+    const description = document.getElementById('drawer-record-description')?.value || '';
+
+    if (recordType === 'defect' && !bugId.trim()) {
+        showErrorMessage('缺陷记录请输入Bug ID');
+        return;
+    }
+
+    try {
+        const images = [];
+
+        if (drawerRecordImages.length > 0) {
+            for (const img of drawerRecordImages) {
+                try {
+                    const fd = new FormData();
+                    fd.append('image', img.file);
+                    const uploadRes = await fetch('/api/testpoints/execution-records/upload-image', {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${authToken}` },
+                        body: fd
+                    });
+                    const result = await uploadRes.json();
+                    if (result.success && result.url) {
+                        images.push({ url: result.url, name: img.name });
+                    }
+                } catch (uploadErr) {
+                    console.error('上传图片失败:', uploadErr);
+                }
+            }
+        }
+
+        const recordData = {
+            caseId: testCaseId,
+            type: recordType,
+            bugId: recordType === 'defect' ? bugId.trim() : null,
+            description: description.trim(),
+            images: images
+        };
+
+        const submitResponse = await apiRequest('/testpoints/execution-records', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(recordData)
+        });
+
+        if (submitResponse.success) {
+            showSuccessMessage('添加执行记录成功');
+            toggleDrawerRecordForm(false);
+            invalidateLevel1CacheForTestCase(testCaseId);
+            await loadDrawerExecutionRecords(testCaseId);
+        } else {
+            showErrorMessage(submitResponse.message || '添加执行记录失败');
+        }
+    } catch (error) {
+        showErrorMessage('添加执行记录失败');
+    }
+}
+
+async function loadDrawerExecutionRecords(testCaseId) {
+    if (!testCaseId || isNaN(parseInt(testCaseId))) {
+        return;
+    }
+    try {
+        const response = await apiRequest(`/testpoints/execution-records/${testCaseId}`, { useCache: false });
+        if (response.success && response.records) {
+            window._drawerExecutionRecords = response.records;
+            renderDrawerExecutionRecords(response.records);
+        } else {
+            window._drawerExecutionRecords = [];
+            renderDrawerExecutionRecords([]);
+        }
+    } catch (error) {
+        window._drawerExecutionRecords = [];
+        renderDrawerExecutionRecords([]);
+    }
+}
+
+function invalidateLevel1CacheForTestCase(testCaseId) {
+    if (!testCaseId || !currentEditingTestCase) return;
+    try {
+        if (currentEditingTestCase.level1_id) {
+            delete level1TestCasesCache[currentEditingTestCase.level1_id];
+        }
+        apiCache.delete(`/testcases/${testCaseId}`);
+        DataEventManager.emit(DataEvents.EXECUTION_RECORD_CHANGED, {
+            action: 'update',
+            caseId: testCaseId
+        });
+    } catch (e) {
+        console.error('清除缓存失败:', e);
+    }
+}
+
+function editDrawerExecutionRecord(recordId) {
+    const testCaseId = document.getElementById('drawer-testcase-id').value;
+    if (!testCaseId) return;
+
+    const listContainer = document.getElementById('drawer-history-list');
+    if (!listContainer) return;
+
+    const recordCard = listContainer.querySelector(`[data-record-id="${recordId}"]`);
+    if (!recordCard) return;
+
+    const currentRecords = window._drawerExecutionRecords || [];
+    const record = currentRecords.find(r => r.id === recordId);
+    if (!record) return;
+
+    const bodyEl = recordCard.querySelector('.drawer-item-body');
+    if (!bodyEl) return;
+
+    if (recordCard.querySelector('.drawer-edit-record-form')) return;
+
+    const formHtml = `
+        <div class="drawer-edit-record-form" style="margin-top: 12px; padding: 16px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
+            <div class="drawer-form-group">
+                <label class="drawer-form-label required">记录类型</label>
+                <div style="display: flex; gap: 16px; padding: 8px 0;">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 14px;">
+                        <input type="radio" name="drawer-edit-type-${recordId}" value="defect" ${(record.type || record.record_type) === 'defect' ? 'checked' : ''}>
+                        <span>缺陷</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 14px;">
+                        <input type="radio" name="drawer-edit-type-${recordId}" value="other" ${(record.type || record.record_type) !== 'defect' ? 'checked' : ''}>
+                        <span>其他</span>
+                    </label>
+                </div>
+            </div>
+            <div class="drawer-form-group" id="drawer-edit-bug-row-${recordId}" style="display: ${(record.type || record.record_type) === 'defect' ? 'block' : 'none'};">
+                <label class="drawer-form-label required">Bug ID</label>
+                <input type="text" class="drawer-form-input" id="drawer-edit-bug-id-${recordId}" value="${escapeHtml(record.bugId || record.bug_id || '')}" placeholder="请输入Bug ID">
+            </div>
+            <div class="drawer-form-group">
+                <label class="drawer-form-label">详细描述</label>
+                <textarea class="drawer-form-textarea" id="drawer-edit-desc-${recordId}" rows="3" placeholder="请输入详细描述...">${escapeHtml(record.description || '')}</textarea>
+            </div>
+            <div style="display: flex; gap: 8px; justify-content: flex-end; padding-top: 8px;">
+                <button type="button" class="drawer-action-btn" style="padding: 6px 14px; font-size: 13px; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; color: #374151;" id="drawer-edit-cancel-${recordId}">取消</button>
+                <button type="button" class="drawer-action-btn drawer-action-btn-primary" style="padding: 6px 14px; font-size: 13px;" id="drawer-edit-save-${recordId}">保存</button>
+            </div>
+        </div>
+    `;
+
+    bodyEl.insertAdjacentHTML('beforeend', formHtml);
+
+    const typeRadios = recordCard.querySelectorAll(`input[name="drawer-edit-type-${recordId}"]`);
+    typeRadios.forEach(radio => {
+        radio.addEventListener('change', () => {
+            const bugRow = document.getElementById(`drawer-edit-bug-row-${recordId}`);
+            if (bugRow) {
+                bugRow.style.display = radio.value === 'defect' && radio.checked ? 'block' : 'none';
+            }
+        });
+    });
+
+    document.getElementById(`drawer-edit-cancel-${recordId}`).addEventListener('click', () => {
+        const form = recordCard.querySelector('.drawer-edit-record-form');
+        if (form) form.remove();
+    });
+
+    document.getElementById(`drawer-edit-save-${recordId}`).addEventListener('click', async () => {
+        const typeRadio = recordCard.querySelector(`input[name="drawer-edit-type-${recordId}"]:checked`);
+        if (!typeRadio) {
+            showErrorMessage('请选择记录类型');
+            return;
+        }
+        const recordType = typeRadio.value;
+        const bugId = document.getElementById(`drawer-edit-bug-id-${recordId}`)?.value || '';
+        const description = document.getElementById(`drawer-edit-desc-${recordId}`)?.value || '';
+
+        if (recordType === 'defect' && !bugId.trim()) {
+            showErrorMessage('缺陷记录请输入Bug ID');
+            return;
+        }
+
+        try {
+            const currentImages = record.images || [];
+            const updateData = {
+                type: recordType,
+                bugId: recordType === 'defect' ? bugId.trim() : null,
+                description: description.trim(),
+                images: currentImages
+            };
+
+            const result = await apiRequest(`/testpoints/execution-records/${recordId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updateData)
+            });
+
+            if (result.success) {
+                showSuccessMessage('更新成功');
+                invalidateLevel1CacheForTestCase(testCaseId);
+                await loadDrawerExecutionRecords(testCaseId);
+            } else {
+                showErrorMessage(result.message || '更新失败');
+            }
+        } catch (error) {
+            showErrorMessage('更新执行记录失败');
+        }
+    });
+}
+
+async function deleteDrawerExecutionRecord(recordId) {
+    if (!(await showConfirmMessage('确定要删除这条执行记录吗？'))) return;
+
+    const testCaseId = document.getElementById('drawer-testcase-id').value;
+    if (!testCaseId) return;
+
+    try {
+        const result = await apiRequest(`/testpoints/execution-records/${recordId}`, { method: 'DELETE' });
+        if (result.success) {
+            showSuccessMessage('删除成功');
+            invalidateLevel1CacheForTestCase(testCaseId);
+            await loadDrawerExecutionRecords(testCaseId);
+        } else {
+            showErrorMessage(result.message || '删除失败');
+        }
+    } catch (error) {
+        showErrorMessage('删除执行记录失败');
+    }
+}
+
+async function saveTestCaseFromDrawer() {
+    try {
+        const testCaseId = document.getElementById('drawer-testcase-id').value;
+        const data = {
+            name: document.getElementById('drawer-testcase-name').value,
+            priority: document.getElementById('drawer-testcase-priority').value,
+            type: document.getElementById('drawer-testcase-type').value,
+            owner: document.getElementById('drawer-testcase-owner').value,
+            precondition: document.getElementById('drawer-testcase-precondition').value,
+            purpose: document.getElementById('drawer-testcase-purpose').value,
+            steps: document.getElementById('drawer-testcase-steps').value,
+            expected: document.getElementById('drawer-testcase-expected').value,
+            key_config: document.getElementById('drawer-testcase-key-config').value,
+            remark: document.getElementById('drawer-testcase-remark').value,
+            method: document.getElementById('drawer-testcase-method').value,
+            status: document.getElementById('drawer-testcase-status').value,
+            phase: document.getElementById('drawer-testcase-phase').value,
+            environments: document.getElementById('drawer-testcase-env').value
+        };
+        
+        if (!data.name || !data.name.trim()) {
+            showToast('用例名称不能为空', 'error');
+            return;
+        }
+        
+        const saveBtn = document.querySelector('.drawer-action-btn-primary');
+        const btnText = saveBtn.querySelector('.drawer-btn-text');
+        const btnLoading = saveBtn.querySelector('.drawer-btn-loading');
+        
+        if (btnText) btnText.style.display = 'none';
+        if (btnLoading) btnLoading.style.display = 'inline-flex';
+        
+        const response = await apiRequest(`/testcases/${testCaseId}`, {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        });
+        
+        if (response.success) {
+            showToast('保存成功', 'success');
+            closeTestCaseDrawer();
+            
+            if (currentEditingTestCase && currentEditingTestCase.level1_id) {
+                delete level1TestCasesCache[currentEditingTestCase.level1_id];
+                if (level1ExpandedItems.has(String(currentEditingTestCase.level1_id))) {
+                    await loadLevel1TestCases(String(currentEditingTestCase.level1_id));
+                }
+            }
+            
+            await loadLevel1Points(currentLevel1Page);
+        } else {
+            throw new Error(response.message || '保存失败');
+        }
+    } catch (error) {
+        console.error('保存测试用例失败:', error);
+        showToast(error.message, 'error');
+    } finally {
+        const saveBtn = document.querySelector('.drawer-action-btn-primary');
+        const btnText = saveBtn.querySelector('.drawer-btn-text');
+        const btnLoading = saveBtn.querySelector('.drawer-btn-loading');
+        if (btnText) btnText.style.display = 'inline';
+        if (btnLoading) btnLoading.style.display = 'none';
+    }
+}
+
+async function deleteTestCaseFromDrawer() {
+    if (!(await showConfirmMessage('确定要删除这个测试用例吗？此操作无法撤销。'))) {
+        return;
+    }
+    
+    try {
+        const testCaseId = document.getElementById('drawer-testcase-id').value;
+        const response = await apiRequest(`/testcases/${testCaseId}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.success) {
+            showToast('删除成功', 'success');
+            
+            const level1Id = currentEditingTestCase ? currentEditingTestCase.level1_id : null;
+            closeTestCaseDrawer();
+            
+            if (level1Id) {
+                delete level1TestCasesCache[level1Id];
+            }
+            
+            await loadLevel1Points(currentLevel1Page);
+        } else {
+            throw new Error(response.message || '删除失败');
+        }
+    } catch (error) {
+        console.error('删除测试用例失败:', error);
+        showToast(error.message, 'error');
+    }
 }
 
 // 更新一级测试点分页控件
@@ -5216,117 +8041,52 @@ function updateLevel1Pagination(totalPages) {
 // 初始化一级测试点事件
 function initLevel1PointClickEvents() {
     const level1ListItems = document.querySelectorAll('.level1-list-item');
-    const panel = document.getElementById('test-points-floating-panel');
 
-    let showPanelTimer = null;
-    let hidePanelTimer = null;
-    let currentPointId = null;
+    document.querySelectorAll('.level1-action-btn').forEach(btn => {
+        btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            const action = this.dataset.action;
+            const pointId = this.dataset.pointId;
 
-    level1ListItems.forEach(item => {
-        item.addEventListener('click', function () {
-            level1ListItems.forEach(otherItem => {
-                otherItem.classList.remove('active');
-            });
-            this.classList.add('active');
-
-            const pointId = this.getAttribute('data-point-id');
-            const pointName = this.querySelector('.level1-name')?.textContent || '';
-            if (pointId) {
-                console.log('Selected level 1 point:', pointId, pointName);
-                selectedLevel1PointId = pointId;
-                selectedLevel1PointName = pointName;
-                currentLibraryId = currentCaseLibraryId;
-                currentModuleId = selectedModuleId;
-
-                toggleFloatingPanel(pointId, this);
-            }
-        });
-
-        item.addEventListener('mouseenter', function () {
-            clearTimeout(showPanelTimer);
-            clearTimeout(hidePanelTimer);
-
-            const pointId = this.getAttribute('data-point-id');
-            const pointName = this.querySelector('.level1-name')?.textContent || '';
-            if (pointId) {
-                currentPointId = pointId;
-
-                showPanelTimer = setTimeout(() => {
-                    selectedLevel1PointId = pointId;
-                    selectedLevel1PointName = pointName;
-                    currentLibraryId = currentCaseLibraryId;
-                    currentModuleId = selectedModuleId;
-
-                    showFloatingPanel(pointId, this);
-                }, 200);
-            }
-        });
-
-        item.addEventListener('mouseleave', function (event) {
-            clearTimeout(showPanelTimer);
-
-            if (panel && !panel.classList.contains('fixed')) {
-                hidePanelTimer = setTimeout(() => {
-                    let isMouseOverPanel = false;
-                    try {
-                        const elements = document.elementsFromPoint(event.clientX, event.clientY);
-                        isMouseOverPanel = elements.some(el => el === panel || panel.contains(el));
-                    } catch (error) {
-                        console.error('检查鼠标位置错误:', error);
-                        return;
-                    }
-
-                    if (!isMouseOverPanel) {
-                        hideFloatingPanel();
-                    }
-                }, 300);
+            if (action === 'view') {
+                viewLevel1PointDetail(pointId);
+            } else if (action === 'edit') {
+                openEditLevel1PointFromList(pointId);
+            } else if (action === 'delete') {
+                deleteLevel1Point(pointId);
             }
         });
     });
 
-    if (panel) {
-        panel.addEventListener('mouseenter', function () {
-            clearTimeout(showPanelTimer);
-            clearTimeout(hidePanelTimer);
+    document.querySelectorAll('.level1-bug-count').forEach(bugEl => {
+        bugEl.addEventListener('click', function (e) {
+            e.stopPropagation();
+            const pointId = this.dataset.pointId;
+            showBugListModal(pointId);
         });
-
-        panel.addEventListener('mouseleave', function () {
-            if (!this.classList.contains('fixed')) {
-                hidePanelTimer = setTimeout(() => {
-                    hideFloatingPanel();
-                }, 200);
-            }
-        });
-
-        panel.addEventListener('click', function (event) {
-            if (!event.target.closest('.close-panel-btn') && !event.target.closest('.add-case-btn')) {
-                if (!this.classList.contains('fixed')) {
-                    this.classList.add('fixed');
-                }
-            }
-        });
-    }
-
-    const caseListContent = document.querySelector('.case-list-content');
-    if (caseListContent) {
-        caseListContent.addEventListener('mouseleave', function (event) {
-            if (panel && !panel.classList.contains('fixed')) {
-                let isMouseOverPanel = false;
-                try {
-                    const elements = document.elementsFromPoint(event.clientX, event.clientY);
-                    isMouseOverPanel = elements.some(el => el === panel || panel.contains(el));
-                } catch (error) {
-                    console.error('检查鼠标位置错误:', error);
-                }
-
-                if (!isMouseOverPanel) {
-                    clearTimeout(hidePanelTimer);
-                    hideFloatingPanel();
-                }
-            }
-        });
-    }
+    });
 }
+
+    // 注释掉caseListContent的鼠标离开事件
+    // const caseListContent = document.querySelector('.case-list-content');
+    // if (caseListContent) {
+    //     caseListContent.addEventListener('mouseleave', function (event) {
+    //         if (panel && !panel.classList.contains('fixed')) {
+    //             let isMouseOverPanel = false;
+    //             try {
+    //                 const elements = document.elementsFromPoint(event.clientX, event.clientY);
+    //                 isMouseOverPanel = elements.some(el => el === panel || panel.contains(el));
+    //             } catch (error) {
+    //                 logger.error('检查鼠标位置错误:', error);
+    //             }
+
+    //             if (!isMouseOverPanel) {
+    //                 clearTimeout(hidePanelTimer);
+    //                 hideFloatingPanel();
+    //             }
+    //         }
+    //     });
+    // }
 
 // 显示悬浮面板
 async function showFloatingPanel(pointId, rowElement) {
@@ -5362,7 +8122,7 @@ async function showFloatingPanel(pointId, rowElement) {
         initFloatingPanelDrag();
 
     } catch (error) {
-        console.error('显示悬浮面板错误:', error);
+        logger.error('显示悬浮面板错误:', error);
         const panel = document.getElementById('test-points-floating-panel');
         if (panel) {
             panel.classList.remove('show');
@@ -5488,7 +8248,6 @@ function resetFloatingPanelPosition() {
 // 刷新测试用例列表（搜索时调用）
 async function refreshTestCasesList() {
     if (!selectedLevel1PointId) {
-        console.log('没有选中的一级测试点，无法刷新');
         return;
     }
 
@@ -5520,7 +8279,7 @@ async function refreshTestCasesList() {
         if (table) table.style.display = 'table';
 
     } catch (error) {
-        console.error('刷新测试用例列表错误:', error);
+        logger.error('刷新测试用例列表错误:', error);
     }
 }
 
@@ -5528,7 +8287,6 @@ async function refreshTestCasesList() {
 async function getLevel2TestPoints(level1Id) {
     try {
         // 验证必要的ID
-        console.log('getLevel2TestPoints called with:', { level1Id, currentLibraryId, currentModuleId });
 
         let moduleId = currentModuleId;
         let libraryId = currentLibraryId;
@@ -5540,23 +8298,17 @@ async function getLevel2TestPoints(level1Id) {
 
         // 如果缺少moduleId，尝试从本地缓存中获取对应测试点的模块ID
         if (!moduleId && level1Id) {
-            console.log('尝试从本地缓存获取测试点的模块ID，level1Id:', level1Id);
 
             // 打印当前level1Points数组的内容，检查数据结构
-            console.log('当前level1Points数组长度:', level1Points.length);
             if (level1Points.length > 0) {
-                console.log('第一个测试点数据:', level1Points[0]);
             }
 
             try {
                 // 从本地缓存获取一级测试点数据
                 const cachedPointsJson = localStorage.getItem('level1Points');
-                console.log('本地缓存中的level1Points:', cachedPointsJson);
                 const cachedPoints = JSON.parse(cachedPointsJson || '[]');
 
-                console.log('解析后的本地缓存数据长度:', cachedPoints.length);
                 if (cachedPoints.length > 0) {
-                    console.log('本地缓存中第一个测试点数据:', cachedPoints[0]);
                 }
 
                 // 查找测试点，处理ID类型不匹配的情况
@@ -5565,12 +8317,10 @@ async function getLevel2TestPoints(level1Id) {
                 );
 
                 if (targetPoint) {
-                    console.log('找到的测试点数据:', targetPoint);
                     if (targetPoint.module_id) {
                         moduleId = targetPoint.module_id;
-                        console.log('从本地缓存获取到模块ID:', moduleId);
                     } else {
-                        console.error('测试点数据中没有module_id字段:', targetPoint);
+                        logger.error('测试点数据中没有module_id字段:', targetPoint);
                     }
                 } else {
                     // 尝试从当前level1Points数组中查找，同样处理ID类型不匹配
@@ -5579,32 +8329,28 @@ async function getLevel2TestPoints(level1Id) {
                     );
 
                     if (currentPoint) {
-                        console.log('从当前数据数组找到的测试点:', currentPoint);
                         if (currentPoint.module_id) {
                             moduleId = currentPoint.module_id;
-                            console.log('从当前数据数组获取到模块ID:', moduleId);
                         } else {
-                            console.error('当前数据数组中的测试点没有module_id字段:', currentPoint);
+                            logger.error('当前数据数组中的测试点没有module_id字段:', currentPoint);
                         }
                     } else {
                         // 尝试遍历查找，打印更多信息
-                        console.log('遍历所有当前测试点查找:', level1Id);
                         level1Points.forEach((point, index) => {
-                            console.log(`测试点${index}: id=${point.id}, type=${typeof point.id}, level1Id=${level1Id}, type=${typeof level1Id}, match=${String(point.id) === String(level1Id)}`);
                         });
 
-                        console.error('无法获取测试点的模块ID，测试点不在缓存或当前数据中');
+                        logger.error('无法获取测试点的模块ID，测试点不在缓存或当前数据中');
                         return [];
                     }
                 }
             } catch (cacheError) {
-                console.error('读取本地缓存失败:', cacheError);
+                logger.error('读取本地缓存失败:', cacheError);
                 return [];
             }
         }
 
         if (!libraryId || !moduleId || !level1Id) {
-            console.error('仍然缺少必要的ID信息:', { libraryId, moduleId, level1Id });
+            logger.error('仍然缺少必要的ID信息:', { libraryId, moduleId, level1Id });
             return [];
         }
 
@@ -5616,21 +8362,17 @@ async function getLevel2TestPoints(level1Id) {
 
         const pointsData = await apiRequest(url, { useCache: false });
 
-        console.log('API返回的测试用例数据:', pointsData);
 
         if (pointsData && pointsData.success && pointsData.testCases) {
-            console.log('获取到匹配的测试用例:', pointsData.testCases);
             return pointsData.testCases;
         } else if (Array.isArray(pointsData)) {
-            console.log('获取到匹配的测试用例数组:', pointsData);
             return pointsData;
         } else {
             // 加载失败时使用空数据
-            console.log('API调用失败，使用空数据');
             return [];
         }
     } catch (error) {
-        console.error('获取匹配测试用例错误:', error);
+        logger.error('获取匹配测试用例错误:', error);
         return [];
     }
 }
@@ -5643,7 +8385,7 @@ function updateFloatingPanelContent(testItems) {
     if (testItems.length === 0) {
         testPointsBody.innerHTML = `
             <tr>
-                <td colspan="7" class="no-data">
+                <td colspan="8" class="no-data">
                     <div style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px;">
                         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5">
                             <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
@@ -5659,19 +8401,37 @@ function updateFloatingPanelContent(testItems) {
             const typeClass = testType.includes('性能') ? 'performance' :
                 testType.includes('兼容') ? 'compatibility' :
                     testType.includes('安全') ? 'security' : 'functional';
+            
+            const reviewStatus = item.review_status || 'draft';
+            const canSubmit = reviewStatus === 'draft' || reviewStatus === 'rejected';
+            const statusText = {
+                'draft': '草稿',
+                'pending': '待评审',
+                'approved': '已通过',
+                'rejected': '被驳回'
+            }[reviewStatus] || '草稿';
 
             return `
                 <tr class="test-case-row" data-case-id="${item.id}" style="cursor: pointer;">
+                    <td style="text-align: center;" onclick="event.stopPropagation();">
+                        <input type="checkbox" 
+                               class="case-checkbox" 
+                               data-case-id="${item.id}" 
+                               data-review-status="${reviewStatus}"
+                               ${!canSubmit ? 'disabled' : ''}
+                               onchange="updateBatchSelection()"
+                               style="width: 16px; height: 16px; cursor: ${canSubmit ? 'pointer' : 'not-allowed'}; opacity: ${canSubmit ? '1' : '0.4'};">
+                    </td>
                     <td style="font-weight: 500; color: #64748b;">${index + 1}</td>
                     <td style="font-weight: 500; color: #1e293b;">${item.name || '-'}</td>
                     <td style="color: #64748b; font-size: 12px;">${item.purpose || '-'}</td>
                     <td style="color: #64748b;">${item.owner || item.creator || '-'}</td>
+                    <td style="color: #64748b; font-size: 12px;">${item.test_environment || '-'}</td>
                     <td>
                         <span class="level1-type-badge ${typeClass}" style="font-size: 10px; padding: 3px 8px;">
                             ${testType}
                         </span>
                     </td>
-                    <td style="color: #64748b; font-size: 12px;">${item.test_environment || '-'}</td>
                     <td style="color: #94a3b8; font-size: 12px;">${formatDateTime(item.updatedAt || item.updated_at || item.createdAt || item.created_at || '')}</td>
                 </tr>
             `;
@@ -5679,27 +8439,34 @@ function updateFloatingPanelContent(testItems) {
 
         const testCaseRows = testPointsBody.querySelectorAll('.test-case-row');
         testCaseRows.forEach(row => {
-            row.addEventListener('click', () => {
+            row.addEventListener('click', async (e) => {
+                if (e.target.type === 'checkbox') return;
                 const caseId = parseInt(row.dataset.caseId);
                 const testCase = testItems.find(item => item.id === caseId);
                 if (testCase) {
-                    openTestCaseDetailModal(testCase);
+                    await openTestCaseDetailModal(testCase);
                 }
             });
         });
     }
+    
+    clearCaseSelection();
 }
 
 // 清空一级测试点显示
 function clearLevel1PointsDisplay() {
-    const caseListBody = document.getElementById('case-list-body');
-    if (!caseListBody) return;
-
-    caseListBody.innerHTML = `
-        <tr>
-            <td colspan="5" class="no-data">请选择左侧功能模块</td>
-        </tr>
-    `;
+    // 清空一级测试点列表
+    const level1List = document.getElementById('level1-list');
+    if (level1List) {
+        level1List.innerHTML = `
+            <div class="level1-empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                </svg>
+                <span class="level1-empty-state-text">请选择左侧功能模块</span>
+            </div>
+        `;
+    }
 
     // 隐藏分页控件
     const paginationContainer = document.getElementById('level1-pagination');
@@ -5880,123 +8647,377 @@ const TagSelector = {
 };
 
 // 标签页切换功能
+let caseDetailTabsInitialized = false;
+
 function initCaseDetailTabs() {
     const tabs = document.querySelectorAll('.case-tab');
     const contents = document.querySelectorAll('.case-tab-content');
 
+    // 初始化时设置第一个标签页的显示状态
+    // 根据标签按钮的顺序，第一个是"基本信息"
+    const firstTab = tabs[0];
+    const firstTabId = firstTab ? firstTab.dataset.tab : 'basic';
+    
+    // 重置标签按钮状态
     tabs.forEach(tab => {
-        tab.addEventListener('click', () => {
-            const targetTab = tab.dataset.tab;
-
-            // 更新标签状态
-            tabs.forEach(t => t.classList.remove('active'));
-            tab.classList.add('active');
-
-            // 更新内容显示
-            contents.forEach(content => {
-                content.classList.remove('active');
-                if (content.id === `tab-${targetTab}`) {
-                    content.classList.add('active');
-                }
-            });
-        });
-    });
-}
-
-// 打开测试用例详情编辑模态框
-async function openTestCaseDetailModal(testCase) {
-    // 保存当前测试用例数据，用于取消操作时恢复
-    window.currentEditingTestCase = testCase;
-    currentEditingTestCaseId = testCase.id;
-
-    // 更新头部信息
-    document.getElementById('detail-case-id-display').textContent = testCase.caseId || testCase.case_id || 'CASE-0000';
-    document.getElementById('detail-case-title').textContent = testCase.name || '测试用例名称';
-    document.getElementById('detail-creator-display').textContent = testCase.creator || 'admin';
-    document.getElementById('detail-created-at-display').textContent = formatDateTime(testCase.createdAt || testCase.created_at || '');
-    document.getElementById('detail-owner-display').textContent = testCase.owner || testCase.creator || 'admin';
-
-    // 更新优先级徽章
-    const priorityBadge = document.getElementById('detail-priority-badge');
-    priorityBadge.className = 'case-priority-badge';
-    const priority = testCase.priority || '中';
-    if (priority === '高' || priority === 'high' || priority === 'P0' || priority === 'P1') {
-        priorityBadge.classList.add('priority-high');
-        priorityBadge.textContent = priority === 'P0' ? 'P0 阻塞级' : priority === 'P1' ? 'P1 严重级' : '高优先级';
-    } else if (priority === '低' || priority === 'low' || priority === 'P3' || priority === 'P4') {
-        priorityBadge.classList.add('priority-low');
-        priorityBadge.textContent = priority === 'P3' ? 'P3 一般级' : priority === 'P4' ? 'P4 建议级' : '低优先级';
-    } else {
-        priorityBadge.classList.add('priority-medium');
-        priorityBadge.textContent = priority === 'P2' ? 'P2 次要级' : '中优先级';
-    }
-
-    // 填充表单数据
-    document.getElementById('detail-case-name').value = testCase.name || '';
-    document.getElementById('detail-case-id').value = testCase.caseId || testCase.case_id || '';
-    document.getElementById('detail-case-priority').value = priority;
-    document.getElementById('detail-case-owner').value = testCase.owner || testCase.creator || '';
-    document.getElementById('detail-case-precondition').value = testCase.precondition || '';
-    document.getElementById('detail-case-purpose').value = testCase.purpose || '';
-    document.getElementById('detail-case-steps').value = testCase.test_steps || testCase.steps || '';
-    document.getElementById('detail-case-expected').value = testCase.expected_behavior || testCase.expected || '';
-    document.getElementById('detail-case-key-config').value = testCase.key_config || '';
-    document.getElementById('detail-case-remark').value = testCase.remark || '';
-    document.getElementById('detail-case-creator').value = testCase.creator || '';
-    document.getElementById('detail-case-created-at').value = formatDateTime(testCase.createdAt || testCase.created_at || '');
-    document.getElementById('detail-case-updated-at').value = formatDateTime(testCase.updatedAt || testCase.updated_at || '');
-
-    // 设置模块ID和一级测试点ID（用于保存时使用）
-    selectedModuleId = testCase.module_id || testCase.moduleId || null;
-    selectedLevel1PointId = testCase.level1_id || testCase.level1Id || null;
-    currentCaseLibraryId = testCase.library_id || testCase.libraryId || null;
-
-    // 加载优先级
-    await loadPrioritiesForDetail(testCase.priority);
-
-    // 加载测试类型
-    await loadTestTypesForDetail(testCase.type || '');
-
-    // 加载测试阶段
-    await loadPhasesForDetail(testCase.test_phase || '');
-
-    // 加载测试环境
-    await loadEnvironmentsForDetail(testCase.test_environment || '');
-
-    // 加载测试方式
-    await loadMethodsForDetail(testCase.test_method || testCase.type);
-
-    // 加载测试点来源
-    await loadSourcesForDetail(testCase.test_source || '');
-
-    // 加载关联项目
-    await loadTestCaseProjects(testCase.id);
-
-    // 初始化标签页
-    initCaseDetailTabs();
-
-    // 重置到第一个标签页
-    document.querySelectorAll('.case-tab').forEach((tab, index) => {
-        if (index === 0) {
+        if (tab.dataset.tab === firstTabId) {
             tab.classList.add('active');
         } else {
             tab.classList.remove('active');
         }
     });
-    document.querySelectorAll('.case-tab-content').forEach((content, index) => {
-        if (index === 0) {
+    
+    // 重置标签内容状态
+    contents.forEach(content => {
+        if (content.id === `tab-${firstTabId}`) {
             content.classList.add('active');
+            content.style.display = 'block';
         } else {
             content.classList.remove('active');
+            content.style.display = 'none';
         }
     });
 
-    // 初始化执行记录
-    initExecutionRecords(testCase.id);
+    // 使用事件委托，避免重复绑定事件监听器
+    if (!caseDetailTabsInitialized) {
+        const tabsContainer = document.querySelector('.case-detail-tabs');
+        if (tabsContainer) {
+            tabsContainer.addEventListener('click', (e) => {
+                const tab = e.target.closest('.case-tab');
+                if (!tab) return;
+                
+                const targetTab = tab.dataset.tab;
+                const allTabs = document.querySelectorAll('.case-tab');
+                const allContents = document.querySelectorAll('.case-tab-content');
 
-    // 显示模态框
-    const modal = document.getElementById('test-case-detail-modal');
-    modal.style.display = 'block';
+                // 保存当前模态框的大小
+                const modalContent = document.querySelector('.case-detail-content');
+                const savedWidth = modalContent?.style.width || '';
+                const savedHeight = modalContent?.style.height || '';
+                const savedMaxWidth = modalContent?.style.maxWidth || '';
+                const savedMaxHeight = modalContent?.style.maxHeight || '';
+
+                // 更新标签状态
+                allTabs.forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+
+                // 更新内容显示
+                allContents.forEach(content => {
+                    content.classList.remove('active');
+                    content.style.display = 'none';
+                    if (content.id === `tab-${targetTab}`) {
+                        content.classList.add('active');
+                        content.style.display = 'block';
+                    }
+                });
+
+                // 恢复模态框的大小
+                if (modalContent) {
+                    if (savedWidth) modalContent.style.width = savedWidth;
+                    if (savedHeight) modalContent.style.height = savedHeight;
+                    if (savedMaxWidth) modalContent.style.maxWidth = savedMaxWidth;
+                    if (savedMaxHeight) modalContent.style.maxHeight = savedMaxHeight;
+                }
+            });
+        }
+        caseDetailTabsInitialized = true;
+    }
+}
+
+// 打开测试用例详情编辑模态框
+async function openTestCaseDetailModal(testCase) {
+    try {
+        // 保存当前测试用例数据，用于取消操作时恢复
+        window.currentEditingTestCase = testCase;
+        currentEditingTestCaseId = testCase.id;
+
+        // 更新头部信息
+        document.getElementById('detail-case-id-display').textContent = testCase.caseId || testCase.case_id || 'CASE-0000';
+        document.getElementById('detail-case-title').textContent = testCase.name || '测试用例名称';
+        document.getElementById('detail-creator-display').textContent = testCase.creator || 'admin';
+        document.getElementById('detail-created-at-display').textContent = formatDateTime(testCase.createdAt || testCase.created_at || '');
+        document.getElementById('detail-owner-display').textContent = testCase.owner || testCase.creator || 'admin';
+
+        // 更新优先级徽章
+        const priorityBadge = document.getElementById('detail-priority-badge');
+        priorityBadge.className = 'case-priority-badge';
+        const priority = testCase.priority || '中';
+        if (priority === '高' || priority === 'high' || priority === 'P0' || priority === 'P1') {
+            priorityBadge.classList.add('priority-high');
+            priorityBadge.textContent = priority === 'P0' ? 'P0 阻塞级' : priority === 'P1' ? 'P1 严重级' : '高优先级';
+        } else if (priority === '低' || priority === 'low' || priority === 'P3' || priority === 'P4') {
+            priorityBadge.classList.add('priority-low');
+            priorityBadge.textContent = priority === 'P3' ? 'P3 一般级' : priority === 'P4' ? 'P4 建议级' : '低优先级';
+        } else {
+            priorityBadge.classList.add('priority-medium');
+            priorityBadge.textContent = priority === 'P2' ? 'P2 次要级' : '中优先级';
+        }
+
+        // 设置模块ID和一级测试点ID（用于保存时使用）
+        selectedModuleId = testCase.module_id || testCase.moduleId || null;
+        selectedLevel1PointId = testCase.level1_id || testCase.level1Id || null;
+        currentCaseLibraryId = testCase.library_id || testCase.libraryId || null;
+
+        
+        // 先加载下拉框选项，再填充表单数据
+        // 加载优先级
+        await loadPrioritiesForDetail(testCase.priority);
+
+        // 加载测试类型
+        await loadTestTypesForDetail(testCase.type || '');
+
+        const phasesStr = Array.isArray(testCase.phases) ? testCase.phases.join(',') : (testCase.test_phase || testCase.phase || '');
+        await loadPhasesForDetail(phasesStr);
+
+        const envStr = Array.isArray(testCase.environments) ? testCase.environments.join(',') : (testCase.test_environment || '');
+        await loadEnvironmentsForDetail(envStr);
+
+        const methodsStr = Array.isArray(testCase.methods) ? testCase.methods.join(',') : (testCase.test_method || testCase.method || '');
+        await loadMethodsForDetail(methodsStr);
+
+        const sourcesStr = Array.isArray(testCase.sources) ? testCase.sources.join(',') : (testCase.test_source || '');
+        await loadSourcesForDetail(sourcesStr);
+
+        
+        // 填充表单数据（在下拉框加载完成后）
+        document.getElementById('detail-case-name').value = testCase.name || '';
+        document.getElementById('detail-case-id').value = testCase.caseId || testCase.case_id || '';
+        document.getElementById('detail-case-priority').value = priority;
+        document.getElementById('detail-case-type').value = testCase.type || '';
+        document.getElementById('detail-case-owner').value = testCase.owner || testCase.creator || '';
+        document.getElementById('detail-case-precondition').value = testCase.precondition || '';
+        document.getElementById('detail-case-purpose').value = testCase.purpose || '';
+        document.getElementById('detail-case-steps').value = testCase.test_steps || testCase.steps || '';
+        document.getElementById('detail-case-expected').value = testCase.expected_behavior || testCase.expected || '';
+        document.getElementById('detail-case-key-config').value = testCase.key_config || '';
+        document.getElementById('detail-case-remark').value = testCase.remark || '';
+        document.getElementById('detail-case-creator').value = testCase.creator || '';
+        document.getElementById('detail-case-created-at').value = formatDateTime(testCase.createdAt || testCase.created_at || '');
+        document.getElementById('detail-case-updated-at').value = formatDateTime(testCase.updatedAt || testCase.updated_at || '');
+        
+        
+        // 鷻加更详细的调试日志
+        const nameInput = document.getElementById('detail-case-name');
+        const priorityInput = document.getElementById('detail-case-priority');
+        const typeInput = document.getElementById('detail-case-type');
+        const preconditionInput = document.getElementById('detail-case-precondition');
+        const purposeInput = document.getElementById('detail-case-purpose');
+        
+        
+        // 检查标签页是否正确显示
+        const basicTab = document.getElementById('tab-basic');
+
+        // 初始化标签页
+        initCaseDetailTabs();
+
+        // 初始化执行记录
+        initExecutionRecords(testCase.id);
+
+        // 加载评审历史
+        loadReviewHistory(testCase.id);
+
+        // 加载关联脚本
+        loadScripts(testCase.id);
+        
+        // 加载关联项目
+        loadTestCaseProjects(testCase.id);
+
+        // 显示模态框
+        const modal = document.getElementById('test-case-detail-modal');
+        modal.style.display = 'block';
+        
+        
+        // 检查基本信息标签页的可见性
+        const basicTabContent = document.getElementById('tab-basic');
+
+        TestCaseEditState.setupAutoSave(testCase);
+        
+        initTestCaseDetailModalResizer();
+        
+    } catch (error) {
+        logger.error('打开测试用例详情模态框失败:', error);
+        logger.error('错误堆栈:', error.stack);
+        showErrorMessage('打开测试用例详情失败: ' + error.message);
+    }
+}
+
+let testCaseDetailModalResizerInitialized = false;
+
+function initTestCaseDetailModalResizer() {
+    const modalContent = document.querySelector('.case-detail-content');
+    const resizer = document.getElementById('case-detail-resizer');
+    const resizerCorner = document.getElementById('case-detail-resizer-corner');
+    const modalHeader = modalContent?.querySelector('.case-detail-header');
+    
+    if (!modalContent) return;
+    
+    if (modalContent.dataset.resizerInitialized === 'true') return;
+    modalContent.dataset.resizerInitialized = 'true';
+
+    let isResizing = false;
+    let isResizingCorner = false;
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startWidth = 0;
+    let startHeight = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    const minWidth = 600;
+    const minHeight = 400;
+    const maxWidthRatio = 0.95;
+    const maxHeightRatio = 0.95;
+
+    if (resizer) {
+        resizer.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            startWidth = modalContent.offsetWidth;
+            startHeight = modalContent.offsetHeight;
+            
+            resizer.classList.add('dragging');
+            document.body.classList.add('modal-resizing');
+            
+            e.preventDefault();
+            e.stopPropagation();
+        });
+    }
+
+    if (resizerCorner) {
+        resizerCorner.addEventListener('mousedown', (e) => {
+            isResizingCorner = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            startWidth = modalContent.offsetWidth;
+            startHeight = modalContent.offsetHeight;
+            
+            resizerCorner.classList.add('dragging');
+            document.body.classList.add('modal-resizing-corner');
+            
+            e.preventDefault();
+            e.stopPropagation();
+        });
+    }
+
+    if (modalHeader) {
+        modalHeader.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.close-modal') || e.target.closest('.close') || e.target.closest('button')) return;
+            
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            
+            const rect = modalContent.getBoundingClientRect();
+            startLeft = rect.left;
+            startTop = rect.top;
+            
+            modalContent.style.position = 'fixed';
+            modalContent.style.left = startLeft + 'px';
+            modalContent.style.top = startTop + 'px';
+            modalContent.style.margin = '0';
+            
+            document.body.classList.add('modal-dragging');
+            
+            e.preventDefault();
+        });
+    }
+
+    document.addEventListener('mousemove', (e) => {
+        if (isResizing) {
+            const deltaX = e.clientX - startX;
+            const newWidth = startWidth + deltaX;
+            const maxWidth = window.innerWidth * maxWidthRatio;
+            
+            if (newWidth >= minWidth && newWidth <= maxWidth) {
+                modalContent.style.width = newWidth + 'px';
+                modalContent.style.maxWidth = newWidth + 'px';
+            }
+        }
+        
+        if (isResizingCorner) {
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+            const newWidth = startWidth + deltaX;
+            const newHeight = startHeight + deltaY;
+            const maxWidth = window.innerWidth * maxWidthRatio;
+            const maxHeight = window.innerHeight * maxHeightRatio;
+            
+            if (newWidth >= minWidth && newWidth <= maxWidth) {
+                modalContent.style.width = newWidth + 'px';
+                modalContent.style.maxWidth = newWidth + 'px';
+            }
+            
+            if (newHeight >= minHeight && newHeight <= maxHeight) {
+                modalContent.style.height = newHeight + 'px';
+                modalContent.style.maxHeight = newHeight + 'px';
+            }
+        }
+        
+        if (isDragging) {
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+            
+            let newLeft = startLeft + deltaX;
+            let newTop = startTop + deltaY;
+            
+            const maxLeft = window.innerWidth - modalContent.offsetWidth - 10;
+            const maxTop = window.innerHeight - 100;
+            
+            newLeft = Math.max(10, Math.min(newLeft, maxLeft));
+            newTop = Math.max(10, Math.min(newTop, maxTop));
+            
+            modalContent.style.left = newLeft + 'px';
+            modalContent.style.top = newTop + 'px';
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isResizing) {
+            isResizing = false;
+            if (resizer) resizer.classList.remove('dragging');
+            document.body.classList.remove('modal-resizing');
+        }
+        if (isResizingCorner) {
+            isResizingCorner = false;
+            if (resizerCorner) resizerCorner.classList.remove('dragging');
+            document.body.classList.remove('modal-resizing-corner');
+        }
+        if (isDragging) {
+            isDragging = false;
+            document.body.classList.remove('modal-dragging');
+        }
+    });
+
+    if (resizer) {
+        resizer.addEventListener('dblclick', () => {
+            modalContent.style.width = '';
+            modalContent.style.maxWidth = '900px';
+        });
+    }
+
+    if (resizerCorner) {
+        resizerCorner.addEventListener('dblclick', () => {
+            modalContent.style.width = '';
+            modalContent.style.maxWidth = '900px';
+            modalContent.style.height = '';
+            modalContent.style.maxHeight = '90vh';
+        });
+    }
+}
+
+function resetTestCaseDetailModalPosition() {
+    const modalContent = document.querySelector('.case-detail-content');
+    if (modalContent) {
+        modalContent.style.position = '';
+        modalContent.style.left = '';
+        modalContent.style.top = '';
+        modalContent.style.margin = '';
+        modalContent.style.width = '';
+        modalContent.style.maxWidth = '900px';
+        modalContent.style.height = '';
+        modalContent.style.maxHeight = '90vh';
+    }
 }
 
 // 加载测试环境用于测试用例详情
@@ -6044,7 +9065,7 @@ async function loadEnvironmentsForDetail(testEnvironment) {
         );
 
     } catch (error) {
-        console.error('加载测试环境失败:', error);
+        logger.error('加载测试环境失败:', error);
     }
 }
 
@@ -6085,7 +9106,7 @@ async function loadSourcesForDetail(testSources) {
         );
 
     } catch (error) {
-        console.error('加载测试点来源失败:', error);
+        logger.error('加载测试点来源失败:', error);
     }
 }
 
@@ -6132,7 +9153,7 @@ async function loadPhasesForDetail(testPhases) {
         );
 
     } catch (error) {
-        console.error('加载测试阶段失败:', error);
+        logger.error('加载测试阶段失败:', error);
     }
 }
 
@@ -6181,7 +9202,7 @@ async function loadMethodsForDetail(testMethod) {
         );
 
     } catch (error) {
-        console.error('加载测试方式失败:', error);
+        logger.error('加载测试方式失败:', error);
     }
 }
 
@@ -6199,7 +9220,7 @@ async function loadPrioritiesForDetail(selectedPriority) {
 
         const prioritySelect = document.getElementById('detail-case-priority');
         if (!prioritySelect) {
-            console.error('找不到优先级下拉框元素');
+            logger.error('找不到优先级下拉框元素');
             return;
         }
 
@@ -6223,7 +9244,7 @@ async function loadPrioritiesForDetail(selectedPriority) {
         }
 
     } catch (error) {
-        console.error('加载优先级失败:', error);
+        logger.error('加载优先级失败:', error);
         const prioritySelect = document.getElementById('detail-case-priority');
         if (prioritySelect) {
             prioritySelect.innerHTML = `
@@ -6250,7 +9271,7 @@ async function loadTestTypesForDetail(selectedType) {
 
         const typeSelect = document.getElementById('detail-case-type');
         if (!typeSelect) {
-            console.error('找不到测试类型下拉框元素');
+            logger.error('找不到测试类型下拉框元素');
             return;
         }
 
@@ -6271,7 +9292,7 @@ async function loadTestTypesForDetail(selectedType) {
         }
 
     } catch (error) {
-        console.error('加载测试类型失败:', error);
+        logger.error('加载测试类型失败:', error);
         const typeSelect = document.getElementById('detail-case-type');
         if (typeSelect) {
             typeSelect.innerHTML = `
@@ -6288,12 +9309,9 @@ async function loadTestTypesForDetail(selectedType) {
 // 获取测试用例关联的项目详情
 async function getTestCaseProjectDetails(testCaseId) {
     try {
-        console.log('getTestCaseProjectDetails 被调用，testCaseId:', testCaseId);
         const endpoint = `/testcases/${testCaseId}/projects`;
-        console.log('调用API端点:', endpoint);
 
         const data = await apiRequest(endpoint, { useCache: false });
-        console.log('getTestCaseProjectDetails API返回:', JSON.stringify(data, null, 2));
 
         let projects = [];
 
@@ -6322,26 +9340,22 @@ async function getTestCaseProjectDetails(testCaseId) {
             projects = data.data;
         }
 
-        console.log('解析后的关联项目:', JSON.stringify(projects, null, 2));
         return projects;
     } catch (error) {
-        console.error('获取测试用例项目详情失败:', error);
-        console.error('错误堆栈:', error.stack);
+        logger.error('获取测试用例项目详情失败:', error);
+        logger.error('错误堆栈:', error.stack);
         return [];
     }
 }
 
 async function loadTestCaseProjects(testCaseId) {
     try {
-        console.log('[loadTestCaseProjects] 开始加载，testCaseId:', testCaseId);
         const container = document.getElementById('detail-case-projects-list');
 
         if (!container) {
-            console.log('[loadTestCaseProjects] 关联项目容器不存在，跳过加载');
             return;
         }
 
-        console.log('[loadTestCaseProjects] 找到容器，开始加载数据...');
 
         container.innerHTML = `
             <div class="pa-loading">
@@ -6356,16 +9370,12 @@ async function loadTestCaseProjects(testCaseId) {
 
         try {
             associatedProjects = await getTestCaseProjectDetails(testCaseId);
-            console.log('[loadTestCaseProjects] 获取到的关联项目:', associatedProjects);
-            console.log('[loadTestCaseProjects] 关联项目数量:', associatedProjects ? associatedProjects.length : 0);
         } catch (error) {
-            console.error('[loadTestCaseProjects] 获取关联项目详情错误:', error);
+            logger.error('[loadTestCaseProjects] 获取关联项目详情错误:', error);
         }
 
-        console.log('[loadTestCaseProjects] 检查条件: associatedProjects=', associatedProjects, 'length=', associatedProjects ? associatedProjects.length : 'null');
 
         if (!associatedProjects || associatedProjects.length === 0) {
-            console.log('[loadTestCaseProjects] 条件为真，显示"暂无关联项目"');
             container.innerHTML = `
                 <div class="empty-state">
                     <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -6378,7 +9388,6 @@ async function loadTestCaseProjects(testCaseId) {
             return;
         }
 
-        console.log('[loadTestCaseProjects] 条件为假，开始渲染项目列表...');
 
         let projectsHtml = '';
         associatedProjects.forEach(project => {
@@ -6416,7 +9425,7 @@ async function loadTestCaseProjects(testCaseId) {
 
         container.innerHTML = projectsHtml;
     } catch (error) {
-        console.error('加载测试用例项目关联失败:', error);
+        logger.error('加载测试用例项目关联失败:', error);
         const container = document.getElementById('detail-case-projects-list');
 
         if (container) {
@@ -6438,7 +9447,6 @@ async function loadTestCaseProjects(testCaseId) {
 // 全选项目（注释掉，因为已经移除了复选框）
 function selectAllProjects() {
     try {
-        console.log('全选项目功能已禁用，因为已移除复选框');
         /*
         const container = document.getElementById('detail-case-projects-container');
         if (container) {
@@ -6449,14 +9457,13 @@ function selectAllProjects() {
         }
         */
     } catch (error) {
-        console.error('全选项目出错:', error);
+        logger.error('全选项目出错:', error);
     }
 }
 
 // 取消全选项目（注释掉，因为已经移除了复选框）
 function deselectAllProjects() {
     try {
-        console.log('取消全选项目功能已禁用，因为已移除复选框');
         /*
         const container = document.getElementById('detail-case-projects-container');
         if (container) {
@@ -6467,7 +9474,7 @@ function deselectAllProjects() {
         }
         */
     } catch (error) {
-        console.error('取消全选项目出错:', error);
+        logger.error('取消全选项目出错:', error);
     }
 }
 
@@ -6476,6 +9483,8 @@ function closeTestCaseDetailModal() {
     const modal = document.getElementById('test-case-detail-modal');
     modal.style.display = 'none';
 
+    resetTestCaseDetailModalPosition();
+
     // 清空当前编辑的测试用例
     window.currentEditingTestCase = null;
 
@@ -6483,8 +9492,11 @@ function closeTestCaseDetailModal() {
     const caseIdInput = document.getElementById('detail-case-id');
     if (caseIdInput) {
         caseIdInput.value = '';
-        console.log('已清空detail-case-id输入框的值');
     }
+
+    TestCaseEditState.clear();
+
+    currentReviewCaseId = null;
 }
 
 // ==================== 执行记录功能 ====================
@@ -6594,7 +9606,7 @@ async function loadBugTypeOptions() {
             });
         }
     } catch (error) {
-        console.error('加载Bug类型选项失败:', error);
+        logger.error('加载Bug类型选项失败:', error);
     }
 }
 
@@ -6679,7 +9691,7 @@ async function submitExecutionRecord() {
         }
     } catch (error) {
         hideLoading();
-        console.error('添加执行记录错误:', error);
+        logger.error('添加执行记录错误:', error);
         showErrorMessage('添加执行记录失败: ' + error.message);
     }
 }
@@ -6687,6 +9699,11 @@ async function submitExecutionRecord() {
 // 加载执行记录
 async function loadExecutionRecords(caseId) {
     try {
+        if (!caseId || isNaN(parseInt(caseId))) {
+            window.currentExecutionRecords = [];
+            renderExecutionRecords([]);
+            return;
+        }
         const response = await apiRequest(`/testpoints/execution-records/${caseId}`, { useCache: false });
 
         if (response.success && response.records) {
@@ -6698,7 +9715,7 @@ async function loadExecutionRecords(caseId) {
             renderExecutionRecords([]);
         }
     } catch (error) {
-        console.error('加载执行记录错误:', error);
+        logger.error('加载执行记录错误:', error);
         window.currentExecutionRecords = [];
         renderExecutionRecords([]);
     }
@@ -6730,7 +9747,7 @@ async function renderExecutionRecords(records) {
             hyperlinkConfigs = response.configs;
         }
     } catch (error) {
-        console.error('加载超链接配置失败:', error);
+        logger.error('加载超链接配置失败:', error);
     }
 
     timeline.innerHTML = records.map(record => {
@@ -6770,15 +9787,24 @@ async function renderExecutionRecords(records) {
             ? `<div class="timeline-content">${escapeHtml(record.description)}</div>`
             : '';
 
-        // 图片显示
+        // 图片显示 - 默认折叠
         const images = record.images || [];
         const imagesHtml = images.length > 0
-            ? `<div class="timeline-images">
-                ${images.map(img => `
-                    <div class="timeline-image-item" onclick="previewImageFullscreen('${img.url}')">
-                        <img src="${img.url}" alt="${img.name || '图片'}" loading="lazy">
-                    </div>
-                `).join('')}
+            ? `<div class="timeline-images-wrapper">
+                <button class="timeline-images-toggle" onclick="event.stopPropagation(); toggleTimelineImages(this)">
+                    <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                    <span class="toggle-text">展开图片</span>
+                    <span class="image-count">${images.length}张</span>
+                </button>
+                <div class="timeline-images timeline-images-collapsed">
+                    ${images.map(img => `
+                        <div class="timeline-image-item" onclick="event.stopPropagation(); previewImageFullscreen('${img.url}')">
+                            <img src="${img.url}" alt="${img.name || '图片'}" loading="lazy">
+                        </div>
+                    `).join('')}
+                </div>
                </div>`
             : '';
 
@@ -6830,14 +9856,27 @@ async function renderExecutionRecords(records) {
     }).join('');
 }
 
-// HTML转义函数
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+// 切换图片展开/折叠
+function toggleTimelineImages(btn) {
+    const wrapper = btn.closest('.timeline-images-wrapper');
+    const imagesContainer = wrapper.querySelector('.timeline-images');
+    const toggleText = btn.querySelector('.toggle-text');
+    const toggleIcon = btn.querySelector('.toggle-icon');
+    
+    if (imagesContainer.classList.contains('timeline-images-collapsed')) {
+        imagesContainer.classList.remove('timeline-images-collapsed');
+        imagesContainer.classList.add('timeline-images-expanded');
+        toggleText.textContent = '收起图片';
+        toggleIcon.style.transform = 'rotate(90deg)';
+    } else {
+        imagesContainer.classList.remove('timeline-images-expanded');
+        imagesContainer.classList.add('timeline-images-collapsed');
+        toggleText.textContent = '展开图片';
+        toggleIcon.style.transform = 'rotate(0deg)';
+    }
 }
 
-// 显示Bug详情（Mock）
+// HTML转义函数
 function showBugDetail(bugId) {
     showSuccessMessage(`查看Bug详情: ${bugId}`);
 }
@@ -7050,13 +10089,6 @@ function previewImageFullscreen(src) {
     
     document.body.appendChild(modal);
     
-    // 点击背景关闭
-    modal.addEventListener('click', function(e) {
-        if (e.target === modal) {
-            modal.remove();
-        }
-    });
-    
     // ESC 键关闭
     const handleEsc = function(e) {
         if (e.key === 'Escape') {
@@ -7126,7 +10158,6 @@ function previewImageFullscreen(src) {
 
 // 编辑执行记录
 async function editExecutionRecord(recordId) {
-    console.log('editExecutionRecord called:', recordId);
     
     // 从当前加载的记录中找到要编辑的记录
     const record = window.currentExecutionRecords ? window.currentExecutionRecords.find(r => r.id === recordId) : null;
@@ -7139,7 +10170,7 @@ async function editExecutionRecord(recordId) {
     // 加载超链接配置
     let bugTypeOptions = '<option value="">选择类型</option>';
     try {
-        const response = await apiRequest('/hyperlink-configs/list');
+        const response = await apiRequest('/hyperlink-configs/list', { useCache: false });
         if (response.success && response.configs) {
             response.configs.forEach(config => {
                 const selected = record.bugType === config.name ? 'selected' : '';
@@ -7147,7 +10178,7 @@ async function editExecutionRecord(recordId) {
             });
         }
     } catch (error) {
-        console.error('加载Bug类型选项失败:', error);
+        logger.error('加载Bug类型选项失败:', error);
     }
     
     // 创建编辑模态框
@@ -7213,7 +10244,6 @@ async function editExecutionRecord(recordId) {
     `;
     
     document.body.appendChild(modal);
-    console.log('Edit modal created and appended');
     
     // 初始化编辑图片
     window.editRecordImages = (record.images || []).map(img => ({...img, status: 'done'}));
@@ -7352,7 +10382,7 @@ async function saveEditRecord(recordId) {
             showErrorMessage(result.message || '更新失败');
         }
     } catch (error) {
-        console.error('保存执行记录失败:', error);
+        logger.error('保存执行记录失败:', error);
         showErrorMessage('保存失败');
     } finally {
         hideLoading();
@@ -7407,7 +10437,7 @@ async function viewExecutionRecordDetail(event, recordId) {
                 <a href="${bugUrl}" target="_blank" style="color: #2563eb; text-decoration: underline;">${escapeHtml(record.bugId)}</a>
             </div>`;
         } catch (error) {
-            console.error('获取超链接配置失败:', error);
+            logger.error('获取超链接配置失败:', error);
             bugIdHtml = `<div style="margin-top: 12px;"><span style="font-weight: 500; color: #6b7280;">Bug ID: </span><span>${escapeHtml(record.bugId)}</span></div>`;
         }
     }
@@ -7478,13 +10508,6 @@ async function viewExecutionRecordDetail(event, recordId) {
     `;
     
     document.body.appendChild(modal);
-    
-    // 点击模态框背景关闭
-    modal.addEventListener('click', function(e) {
-        if (e.target === modal) {
-            closeRecordDetailModal();
-        }
-    });
 }
 
 // 关闭执行记录详情模态框
@@ -7522,7 +10545,7 @@ async function deleteExecutionRecord(recordId) {
             showErrorMessage(result.message || '删除失败');
         }
     } catch (error) {
-        console.error('删除执行记录失败:', error);
+        logger.error('删除执行记录失败:', error);
         showErrorMessage('删除失败: ' + error.message);
     } finally {
         hideLoading();
@@ -7551,7 +10574,6 @@ async function saveTestCaseDetail() {
             }
         }
 
-        console.log('saveTestCaseDetail被调用，testCaseId:', testCaseId, 'isNewCase:', isNewCase);
 
         // 获取 libraryId 和 moduleId（优先从 currentEditingTestCase 获取）
         let libraryId = currentCaseLibraryId;
@@ -7560,7 +10582,6 @@ async function saveTestCaseDetail() {
         if ((!libraryId || !moduleId) && window.currentEditingTestCase) {
             libraryId = libraryId || window.currentEditingTestCase.library_id || window.currentEditingTestCase.libraryId;
             moduleId = moduleId || window.currentEditingTestCase.module_id || window.currentEditingTestCase.moduleId;
-            console.log('从 currentEditingTestCase 获取 ID:', { libraryId, moduleId });
         }
 
         // 获取选中的测试阶段（从TagSelector组件获取）
@@ -7578,7 +10599,6 @@ async function saveTestCaseDetail() {
         // 获取选中的项目及其关联数据
         // 对于编辑用例详情页面，关联项目通过编辑按钮单独处理，这里不需要处理
         // 关联项目的保存逻辑已经在saveProjectAssociations函数中实现
-        console.log('编辑用例详情页面的关联项目通过编辑按钮单独处理，这里不直接处理页面上的关联项目信息');
 
         // 获取表单数据
         const formData = {
@@ -7620,14 +10640,12 @@ async function saveTestCaseDetail() {
 
         if (isNewCase) {
             // 新建用例，调用/cases/create端点
-            console.log('新建测试用例，调用/cases/create端点');
             saveData = await apiRequest('/cases/create', {
                 method: 'POST',
                 body: JSON.stringify(formData)
             });
         } else {
             // 编辑用例，调用/cases/update端点
-            console.log('编辑测试用例，调用/cases/update端点');
             saveData = await apiRequest('/cases/update', {
                 method: 'POST',
                 body: JSON.stringify(formData)
@@ -7639,7 +10657,7 @@ async function saveTestCaseDetail() {
 
         // 确保libraryId和moduleId不为空（用于后续刷新操作）
         if (!libraryId || !moduleId) {
-            console.error('libraryId或moduleId为空，尝试从UI获取');
+            logger.error('libraryId或moduleId为空，尝试从UI获取');
             // 尝试从选中的模块获取libraryId和moduleId
             const activeModuleEl = document.querySelector('.case-nav-item.active');
             if (activeModuleEl) {
@@ -7651,26 +10669,32 @@ async function saveTestCaseDetail() {
                 if (uiLibraryId) {
                     libraryId = uiLibraryId;
                 }
-                console.log('从UI重新获取到的ID:', { libraryId, moduleId });
             }
         }
 
         if (saveData.success) {
+            TestCaseEditState.clear();
+
             // 关闭模态框
             closeTestCaseDetailModal();
 
             // 刷新一级测试点列表以更新名称显示
             if (moduleId) {
                 await loadLevel1Points(moduleId);
+                
+                // 恢复之前选中的一级测试点的active状态
+                if (level1Id) {
+                    const level1ItemToRestore = document.querySelector(`.level1-list-item[data-point-id="${level1Id}"]`);
+                    if (level1ItemToRestore) {
+                        level1ItemToRestore.classList.add('active');
+                    }
+                }
             }
 
-            // 刷新悬浮面板（Drawer）数据
-            const activeModuleEl = document.querySelector('.case-nav-item.active');
-            if (activeModuleEl && activeModuleEl !== document.querySelector('.case-nav-item:first-child')) {
-                if (level1Id) {
-                    const level1Points = await getLevel2TestPoints(level1Id);
-                    updateFloatingPanelContent(level1Points);
-                }
+            // 刷新悬浮面板（Drawer）数据 - 直接基于level1Id刷新，不需要检查模块
+            if (level1Id) {
+                const level1Points = await getLevel2TestPoints(level1Id);
+                updateFloatingPanelContent(level1Points);
             }
 
             // 使用之前定义的testCaseId变量，对于新建用例，使用返回的testCaseId
@@ -7678,24 +10702,17 @@ async function saveTestCaseDetail() {
             if (isNewCase && saveData.testCaseId) {
                 // 新建用例，使用返回的testCaseId
                 finalTestCaseId = saveData.testCaseId;
-                console.log('新建测试用例成功，返回的测试用例ID:', finalTestCaseId);
             }
 
             // 无论是新建用例还是编辑用例，都检查本地存储中的临时关联项目数据
-            console.log('检查本地存储中的临时关联项目数据...');
             const tempAssociations = sessionStorage.getItem('tempProjectAssociations');
-            console.log('从本地存储读取到的临时关联项目数据:', tempAssociations);
             if (tempAssociations) {
                 try {
                     const associations = JSON.parse(tempAssociations);
-                    console.log('解析后的临时关联项目数据:', associations);
 
                     if (associations.length > 0) {
                         // 调用API更新测试用例关联项目
                         try {
-                            console.log('准备保存临时关联项目到数据库，测试用例ID:', finalTestCaseId);
-                            console.log('API路径:', `/testcases/${finalTestCaseId}/projects`);
-                            console.log('API请求数据:', { associations });
 
                             // 调用API保存关联项目
                             const updateResponse = await apiRequest(`/testcases/${finalTestCaseId}/projects`, {
@@ -7703,40 +10720,34 @@ async function saveTestCaseDetail() {
                                 body: JSON.stringify({ associations })
                             });
 
-                            console.log('API响应:', updateResponse);
                             if (updateResponse.success) {
-                                console.log('临时关联项目保存成功');
                                 // 清除本地存储中的临时数据
                                 localStorage.removeItem('tempProjectAssociations');
-                                console.log('已清除本地存储中的临时关联项目数据');
                             } else {
-                                console.error('临时关联项目保存失败:', updateResponse.message);
+                                logger.error('临时关联项目保存失败:', updateResponse.message);
                                 showErrorMessage('关联项目保存失败: ' + updateResponse.message);
                             }
                         } catch (error) {
-                            console.error('保存临时关联项目失败:', error);
+                            logger.error('保存临时关联项目失败:', error);
                             showErrorMessage('关联项目保存失败: ' + error.message);
                         }
                     } else {
-                        console.log('解析后的临时关联项目数据为空数组，不需要保存');
                         localStorage.removeItem('tempProjectAssociations');
-                        console.log('已清除本地存储中的空临时关联项目数据');
                     }
                 } catch (parseError) {
-                    console.error('解析本地存储中的临时关联项目数据失败:', parseError);
+                    logger.error('解析本地存储中的临时关联项目数据失败:', parseError);
                     localStorage.removeItem('tempProjectAssociations');
-                    console.log('已清除本地存储中的无效临时关联项目数据');
                 }
             } else {
-                console.log('本地存储中没有临时关联项目数据');
             }
 
             showSuccessMessage('测试用例保存成功');
+            dashboardDataCache.invalidateOnDataChange('case');
         } else {
             showErrorMessage('测试用例保存失败: ' + (saveData.message || '保存失败，请稍后重试'));
         }
     } catch (error) {
-        console.error('保存测试用例错误:', error);
+        logger.error('保存测试用例错误:', error);
         showErrorMessage('测试用例保存失败: ' + error.message);
     } finally {
         hideLoading();
@@ -7796,12 +10807,16 @@ async function deleteTestCase() {
                 level1Id: deletedLevel1Id
             });
 
+            apiCache.deleteByPrefix('/workspace');
+            apiCache.deleteByPrefix('/testcases/review/pending');
+
             showSuccessMessage('测试用例删除成功');
+            dashboardDataCache.invalidateOnDataChange('case');
         } else {
             showErrorMessage('测试用例删除失败: ' + (deleteData.message || '删除失败，请稍后重试'));
         }
     } catch (error) {
-        console.error('删除测试用例错误:', error);
+        logger.error('删除测试用例错误:', error);
         showErrorMessage('测试用例删除失败: ' + error.message);
     } finally {
         hideLoading();
@@ -7830,7 +10845,7 @@ async function openAddLevel1PointModal() {
             `;
         }
     } catch (error) {
-        console.error('加载测试类型失败:', error);
+        logger.error('加载测试类型失败:', error);
     }
     
     modal.style.display = 'block';
@@ -7860,9 +10875,15 @@ function initLevel1PointModalResizer(type) {
     const resizer = document.getElementById(resizerId);
     const modalHeader = modalContent?.querySelector('.modal-header');
     
-    if (!modalContent || !resizer) return;
     
-    if (modalContent.dataset.resizerInitialized === 'true') return;
+    if (!modalContent || !resizer) {
+        console.warn('找不到模态框或调整手柄元素');
+        return;
+    }
+    
+    if (modalContent.dataset.resizerInitialized === 'true') {
+        return;
+    }
     modalContent.dataset.resizerInitialized = 'true';
 
     let isResizing = false;
@@ -7870,20 +10891,34 @@ function initLevel1PointModalResizer(type) {
     let startX = 0;
     let startY = 0;
     let startWidth = 0;
+    let startHeight = 0;
     let startLeft = 0;
     let startTop = 0;
     const minWidth = 400;
+    const minHeight = 420;
     const maxWidthRatio = 0.95;
+    const maxHeightRatio = 0.95;
 
-    // 调整宽度功能
+    // 调整宽度 + 高度功能
     resizer.addEventListener('mousedown', (e) => {
         isResizing = true;
         startX = e.clientX;
+        startY = e.clientY;
         startWidth = modalContent.offsetWidth;
-        
+        startHeight = modalContent.offsetHeight;
+
+        // 确保模态框在调整大小时有正确的定位
+        if (modalContent.style.position !== 'fixed') {
+            const rect = modalContent.getBoundingClientRect();
+            modalContent.style.position = 'fixed';
+            modalContent.style.left = rect.left + 'px';
+            modalContent.style.top = rect.top + 'px';
+            modalContent.style.margin = '0';
+        }
+
         resizer.classList.add('dragging');
         document.body.classList.add('modal-resizing');
-        
+
         e.preventDefault();
         e.stopPropagation();
     });
@@ -7913,12 +10948,15 @@ function initLevel1PointModalResizer(type) {
     }
 
     document.addEventListener('mousemove', (e) => {
-        // 调整宽度
+        // 调整宽度和高度
         if (isResizing) {
             const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
             const newWidth = startWidth + deltaX;
+            const newHeight = startHeight + deltaY;
             const maxWidth = window.innerWidth * maxWidthRatio;
-            
+            const maxHeight = window.innerHeight * maxHeightRatio;
+
             if (newWidth >= minWidth && newWidth <= maxWidth) {
                 modalContent.style.width = newWidth + 'px';
                 modalContent.style.maxWidth = newWidth + 'px';
@@ -7928,6 +10966,14 @@ function initLevel1PointModalResizer(type) {
             } else if (newWidth > maxWidth) {
                 modalContent.style.width = maxWidth + 'px';
                 modalContent.style.maxWidth = maxWidth + 'px';
+            }
+
+            if (newHeight >= minHeight && newHeight <= maxHeight) {
+                modalContent.style.height = newHeight + 'px';
+            } else if (newHeight < minHeight) {
+                modalContent.style.height = minHeight + 'px';
+            } else if (newHeight > maxHeight) {
+                modalContent.style.height = maxHeight + 'px';
             }
         }
         
@@ -7963,10 +11009,13 @@ function initLevel1PointModalResizer(type) {
         }
     });
 
-    // 双击重置宽度
+    // 双击重置宽高
     resizer.addEventListener('dblclick', () => {
-        modalContent.style.width = '';
-        modalContent.style.maxWidth = '520px';
+        const defaultWidth = type === 'add' ? '520px' : '950px';
+        const defaultHeight = type === 'add' ? '' : '620px';
+        modalContent.style.width = defaultWidth;
+        modalContent.style.maxWidth = defaultWidth;
+        modalContent.style.height = defaultHeight;
     });
 }
 
@@ -7980,7 +11029,9 @@ function resetLevel1PointModalPosition(type) {
         modalContent.style.top = '';
         modalContent.style.margin = '';
         modalContent.style.width = '';
-        modalContent.style.maxWidth = '520px';
+        modalContent.style.maxWidth = type === 'add' ? '520px' : '950px';
+        modalContent.style.height = type === 'add' ? '' : '';
+        modalContent.dataset.resizerInitialized = '';
     }
 }
 
@@ -8005,7 +11056,6 @@ async function submitAddLevel1PointForm() {
         // 检查登录状态
         if (!authToken) {
             // 尝试自动登录
-            console.log('未登录，尝试自动登录...');
             try {
                 const loginData = await apiRequest('/users/login', {
                     method: 'POST',
@@ -8015,17 +11065,15 @@ async function submitAddLevel1PointForm() {
                     })
                 });
 
-                console.log('自动登录结果:', loginData);
 
                 if (loginData.token) {
                     currentUser = loginData.user || { username: 'admin', role: '管理员' };
                     authToken = loginData.token;
-                    console.log('自动登录成功');
                 } else if (loginData.success === false && loginData.message) {
-                    console.error('自动登录失败:', loginData.message);
+                    logger.error('自动登录失败:', loginData.message);
                 }
             } catch (error) {
-                console.error('自动登录失败:', error);
+                logger.error('自动登录失败:', error);
             }
         }
 
@@ -8036,8 +11084,6 @@ async function submitAddLevel1PointForm() {
             module_id: selectedModuleId
         };
 
-        console.log('准备添加一级测试点:', requestData);
-        console.log('登录状态:', authToken ? '已登录' : '未登录');
 
         // API调用逻辑 - 使用正确的端点
         let createData = null;
@@ -8047,20 +11093,17 @@ async function submitAddLevel1PointForm() {
                 body: JSON.stringify(requestData)
             });
 
-            console.log('API调用结果:', createData);
         } catch (error) {
-            console.error('API调用失败:', error);
+            logger.error('API调用失败:', error);
         }
 
         // 检查API调用结果
         if (createData && (createData.message === '一级测试点添加成功' || createData.success)) {
-            console.log('[一级测试点] 添加成功，准备刷新列表');
 
             // 关闭模态框
             closeAddLevel1PointModal();
 
             // 重新加载一级测试点数据
-            console.log('[一级测试点] 调用 loadLevel1Points，moduleId:', selectedModuleId);
             await loadLevel1Points(selectedModuleId);
 
             // 发布事件：一级测试点变更
@@ -8089,7 +11132,6 @@ async function submitAddLevel1PointForm() {
                 }
             } else if (createData && createData.message === '访问令牌缺失' || createData.message === '访问令牌无效') {
                 // 令牌无效，尝试重新登录
-                console.log('令牌无效，尝试重新登录...');
                 try {
                     const loginData = await apiRequest('/users/login', {
                         method: 'POST',
@@ -8102,7 +11144,6 @@ async function submitAddLevel1PointForm() {
                     if (loginData.token) {
                         currentUser = loginData.user || { username: 'admin', role: '管理员' };
                         authToken = loginData.token;
-                        console.log('重新登录成功');
 
                         // 再次尝试添加测试点
                         const retryData = await apiRequest('/testpoints/level1/add', {
@@ -8123,11 +11164,10 @@ async function submitAddLevel1PointForm() {
                         }
                     }
                 } catch (error) {
-                    console.error('重新登录失败:', error);
+                    logger.error('重新登录失败:', error);
                 }
 
                 // 尝试本地添加
-                console.log('API调用失败，尝试本地添加一级测试点');
 
                 // 创建新的测试点对象
                 const newPoint = {
@@ -8152,7 +11192,6 @@ async function submitAddLevel1PointForm() {
                 showSuccessMessage('一级测试点添加成功（本地）');
             } else {
                 // 其他错误，尝试本地添加
-                console.log('API调用失败，尝试本地添加一级测试点');
 
                 // 创建新的测试点对象
                 const newPoint = {
@@ -8178,7 +11217,7 @@ async function submitAddLevel1PointForm() {
             }
         }
     } catch (error) {
-        console.error('添加一级测试点错误:', error);
+        logger.error('添加一级测试点错误:', error);
 
         // 尝试本地添加
         const pointName = document.getElementById('level1-point-name').value.trim();
@@ -8240,28 +11279,24 @@ function editReportTemplate(templateId) {
 
 // 搜索测试用例
 function searchTestCases() {
-    console.log('搜索测试用例');
     // 这里可以实现搜索测试用例的功能
     showErrorMessage('搜索测试用例功能即将上线，敬请期待！');
 }
 
 // 搜索测试计划
 function searchTestPlans() {
-    console.log('搜索测试计划');
     // 这里可以实现搜索测试计划的功能
     showErrorMessage('搜索测试计划功能即将上线，敬请期待！');
 }
 
 // 搜索测试报告
 function searchTestReports() {
-    console.log('搜索测试报告');
     // 这里可以实现搜索测试报告的功能
     showErrorMessage('搜索测试报告功能即将上线，敬请期待！');
 }
 
 // 分析测试数据
 function analyzeTestData() {
-    console.log('分析测试数据');
     // 这里可以实现分析测试数据的功能
     showErrorMessage('分析测试数据功能即将上线，敬请期待！');
 }
@@ -8363,7 +11398,7 @@ async function deleteUser(userId) {
             showErrorMessage('用户删除失败: ' + (deleteData.message || '删除失败，请稍后重试'));
         }
     } catch (error) {
-        console.error('删除用户错误:', error);
+        logger.error('删除用户错误:', error);
         showErrorMessage('用户删除失败: ' + error.message);
     } finally {
         hideLoading();
@@ -8423,13 +11458,11 @@ async function submitUserForm() {
             body: JSON.stringify(formData)
         });
 
-        console.log(isEdit ? '编辑用户API响应:' : '创建用户API响应:', responseData);
 
         // 处理不同的返回格式
         const successMessage = isEdit ? '用户更新成功' : '用户添加成功';
         if (responseData.message === successMessage || responseData.success) {
             // 重新加载用户列表
-            console.log(isEdit ? '用户编辑成功，重新加载用户列表' : '用户创建成功，重新加载用户列表');
             await loadUsers();
 
             // 关闭模态框
@@ -8446,7 +11479,6 @@ async function submitUserForm() {
             // 对于编辑用户，如果错误信息是关于用户名已存在，我们可以忽略，因为用户名是不可修改的
             if (isEdit && responseData.message && responseData.message.includes('用户名已存在')) {
                 // 忽略用户名已存在错误，继续处理
-                console.log('忽略用户名已存在错误，继续处理编辑操作');
                 await loadUsers();
                 closeUserModal();
                 document.getElementById('add-user-form').reset();
@@ -8457,7 +11489,7 @@ async function submitUserForm() {
             }
         }
     } catch (error) {
-        console.error((isEdit ? '编辑' : '创建') + '用户错误:', error);
+        logger.error((isEdit ? '编辑' : '创建') + '用户错误:', error);
         showErrorMessage((isEdit ? '编辑' : '创建') + '用户失败: ' + error.message);
     } finally {
         hideLoading();
@@ -8476,7 +11508,6 @@ let currentSearchTerm = '';
 // 加载用户列表
 async function loadUsers(searchTerm = '', page = 1) {
     try {
-        console.log('开始加载用户列表');
 
         currentSearchTerm = searchTerm;
         usersCurrentPage = page;
@@ -8486,10 +11517,8 @@ async function loadUsers(searchTerm = '', page = 1) {
             apiUrl += `&search=${encodeURIComponent(searchTerm)}`;
         }
 
-        console.log('调用API:', apiUrl);
         const usersData = await apiRequest(apiUrl, { useCache: false });
 
-        console.log('API响应:', usersData);
 
         if (Array.isArray(usersData)) {
             mockUsers = usersData;
@@ -8500,7 +11529,6 @@ async function loadUsers(searchTerm = '', page = 1) {
             usersTotal = usersData.pagination?.total || usersData.users.length;
             usersTotalPages = usersData.pagination?.totalPages || 1;
         } else if (usersData.message) {
-            console.log('后端返回错误信息:', usersData.message);
             mockUsers = [];
             usersTotal = 0;
             usersTotalPages = 0;
@@ -8513,9 +11541,8 @@ async function loadUsers(searchTerm = '', page = 1) {
         updateUsersConfig();
         updateUsersPagination();
 
-        console.log('用户列表加载完成');
     } catch (error) {
-        console.error('加载用户列表失败:', error);
+        logger.error('加载用户列表失败:', error);
         mockUsers = [];
         updateUsersConfig();
     }
@@ -8556,7 +11583,6 @@ function goToUsersPage(direction) {
 function updateUsersConfig() {
     const usersBody = document.getElementById('users-config-body');
     if (usersBody) {
-        console.log('更新用户管理页面表格');
 
         if (mockUsers && mockUsers.length > 0) {
             usersBody.innerHTML = mockUsers.map(user => {
@@ -8591,19 +11617,19 @@ function updateUsersConfig() {
 
                 let approveBtn = '';
                 if (!isAdmin && status === 'pending') {
-                    approveBtn = `<button class="config-action-btn approve" onclick="approveUser(${user.id}, 'active')" title="通过审核">通过</button>`;
+                    approveBtn = `<button class="config-action-btn approve" data-user-id="${user.id}" data-action="active" title="通过审核">通过</button>`;
                 } else if (!isAdmin && status === 'disabled') {
-                    approveBtn = `<button class="config-action-btn approve" onclick="approveUser(${user.id}, 'active')" title="启用账号">启用</button>`;
+                    approveBtn = `<button class="config-action-btn approve" data-user-id="${user.id}" data-action="active" title="启用账号">启用</button>`;
                 }
 
                 let disableBtn = '';
                 if (!isAdmin && status === 'active') {
-                    disableBtn = `<button class="config-action-btn disable" onclick="approveUser(${user.id}, 'disabled')" title="禁用账号">禁用</button>`;
+                    disableBtn = `<button class="config-action-btn disable" data-user-id="${user.id}" data-action="disabled" title="禁用账号">禁用</button>`;
                 }
 
                 let deleteBtn = '';
                 if (!isAdmin) {
-                    deleteBtn = `<button class="config-action-btn delete" onclick="deleteUser(${user.id})">删除</button>`;
+                    deleteBtn = `<button class="config-action-btn delete" data-user-id="${user.id}">删除</button>`;
                 }
 
                 return `
@@ -8614,7 +11640,7 @@ function updateUsersConfig() {
                         <td><span class="status-tag ${statusClass}">${statusLabel}</span></td>
                         <td>${user.created_at ? formatDate(user.created_at) : '-'}</td>
                         <td>
-                            <button class="config-action-btn edit" onclick="editUser(${user.id})">编辑</button>
+                            <button class="config-action-btn edit" data-user-id="${user.id}">编辑</button>
                             ${approveBtn}
                             ${disableBtn}
                             ${deleteBtn}
@@ -8630,7 +11656,7 @@ function updateUsersConfig() {
             `;
         }
     } else {
-        console.error('用户管理页面表格元素未找到');
+        logger.error('用户管理页面表格元素未找到');
     }
 }
 
@@ -8666,7 +11692,7 @@ async function approveUser(userId, status) {
         }
     } catch (error) {
         hideLoading();
-        console.error('审核用户错误:', error);
+        logger.error('审核用户错误:', error);
         showErrorMessage('操作失败: ' + error.message);
     }
 }
@@ -8694,7 +11720,6 @@ async function searchUsers() {
 // 加载最近登录人员
 async function loadRecentLogins() {
     try {
-        console.log('加载最近登录人员');
 
         // 调用API获取真实的最近活动数据
         const historyData = await apiRequest('/history/list');
@@ -8717,7 +11742,7 @@ async function loadRecentLogins() {
             updateRecentLoginsTable([]);
         }
     } catch (error) {
-        console.error('加载最近登录人员失败:', error);
+        logger.error('加载最近登录人员失败:', error);
         // 错误情况下使用空数据
         updateRecentLoginsTable([]);
     }
@@ -8739,7 +11764,6 @@ function updateRecentLoginsTable(logins) {
                 <tr>
                     <td>${login.rank}</td>
                     <td>${login.username}</td>
-                    <td>${login.role}</td>
                     <td>${formattedTime}</td>
                     <td>${login.lastAction}</td>
                     <td>${login.status}</td>
@@ -8748,7 +11772,7 @@ function updateRecentLoginsTable(logins) {
         } else {
             loginsBody.innerHTML = `
                 <tr>
-                    <td colspan="6" class="no-data">暂无操作记录</td>
+                    <td colspan="5" class="no-data">暂无操作记录</td>
                 </tr>
             `;
         }
@@ -8987,6 +12011,10 @@ function showStep(stepNumber) {
 
 // 添加用例
 function addTestCase() {
+    if (!selectedModuleId) {
+        openAddTestCaseSelectModal();
+        return;
+    }
     openAddTestCaseModal();
 }
 
@@ -9017,6 +12045,283 @@ function batchCreateTestCases() {
     window.open(url, '_blank');
 }
 
+function batchViewTestCases() {
+    if (!selectedModuleId) {
+        openBatchViewSelectModal();
+        return;
+    }
+    
+    const currentLibraryIdVal = currentCaseLibraryId || '';
+    let currentLibraryNameVal = '';
+    const currentModuleNameVal = window.currentModule ? window.currentModule.name : '';
+    
+    if (caseLibraries && currentCaseLibraryId) {
+        const currentLib = caseLibraries.find(lib => lib.id == currentCaseLibraryId);
+        if (currentLib) {
+            currentLibraryNameVal = currentLib.name || '';
+        }
+    }
+    
+    let url = `/batch-view-cases.html?moduleId=${selectedModuleId}&libraryId=${currentLibraryIdVal}&moduleName=${encodeURIComponent(currentModuleNameVal)}&libraryName=${encodeURIComponent(currentLibraryNameVal)}&returnUrl=${encodeURIComponent(window.location.href)}`;
+    
+    if (selectedLevel1PointId) {
+        url += `&level1Id=${selectedLevel1PointId}&level1Name=${encodeURIComponent(selectedLevel1PointName || '')}`;
+    }
+    
+    window.open(url, '_blank');
+}
+
+let batchViewSelectedLibrary = null;
+let batchViewSelectedModule = null;
+let batchViewSelectedLevel1 = null;
+
+async function openBatchViewSelectModal() {
+    let modal = document.getElementById('batch-view-select-modal');
+    
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'batch-view-select-modal';
+        modal.className = 'modal';
+        modal.style.cssText = 'display: none; z-index: 99999;';
+        modal.innerHTML = `
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 480px; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.15);">
+                <div class="modal-header" style="padding: 20px 24px; border-bottom: 1px solid #f0f0f0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                        <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: white;">选择查看位置</h3>
+                    </div>
+                    <button onclick="closeBatchViewSelectModal()" style="background: rgba(255,255,255,0.2); border: none; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-body" style="padding: 24px; background: #fafbfc;">
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                            </svg>
+                            用例库 <span style="color: #ef4444;">*</span>
+                        </label>
+                        <select id="batch-view-library-select" onchange="onBatchViewLibraryChange()" style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
+                            <option value="">请选择用例库</option>
+                        </select>
+                    </div>
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                            模块 <span style="color: #ef4444;">*</span>
+                        </label>
+                        <select id="batch-view-module-select" onchange="onBatchViewModuleChange()" disabled style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
+                            <option value="">请先选择用例库</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M12 16v-4"></path>
+                                <path d="M12 8h.01"></path>
+                            </svg>
+                            一级测试点 <span style="color: #9ca3af; font-weight: 400; font-size: 12px;">(可选)</span>
+                        </label>
+                        <select id="batch-view-level1-select" disabled style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
+                            <option value="">全部测试点</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer" style="padding: 16px 24px; border-top: 1px solid #f0f0f0; background: white; display: flex; justify-content: flex-end; gap: 12px;">
+                    <button onclick="closeBatchViewSelectModal()" style="padding: 10px 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: white; color: #374151; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='white'">取消</button>
+                    <button onclick="confirmBatchViewSelection()" style="padding: 10px 20px; border: none; border-radius: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 16px rgba(102, 126, 234, 0.4)'" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 12px rgba(102, 126, 234, 0.3)'">确定</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+    
+    batchViewSelectedLibrary = null;
+    batchViewSelectedModule = null;
+    batchViewSelectedLevel1 = null;
+    
+    const librarySelect = document.getElementById('batch-view-library-select');
+    const moduleSelect = document.getElementById('batch-view-module-select');
+    const level1Select = document.getElementById('batch-view-level1-select');
+    
+    if (librarySelect) {
+        librarySelect.innerHTML = '<option value="">请选择用例库</option>';
+        if (caseLibraries && caseLibraries.length > 0) {
+            caseLibraries.forEach(lib => {
+                const option = document.createElement('option');
+                option.value = lib.id;
+                option.textContent = lib.name;
+                if (currentCaseLibraryId && lib.id == currentCaseLibraryId) {
+                    option.selected = true;
+                }
+                librarySelect.appendChild(option);
+            });
+        }
+    }
+    
+    if (moduleSelect) {
+        moduleSelect.innerHTML = '<option value="">请先选择用例库</option>';
+        moduleSelect.disabled = true;
+    }
+    
+    if (level1Select) {
+        level1Select.innerHTML = '<option value="">全部测试点</option>';
+        level1Select.disabled = true;
+    }
+    
+    modal.style.display = 'flex';
+    
+    if (currentCaseLibraryId) {
+        await onBatchViewLibraryChange();
+    }
+}
+
+function closeBatchViewSelectModal() {
+    const modal = document.getElementById('batch-view-select-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+async function onBatchViewLibraryChange() {
+    const librarySelect = document.getElementById('batch-view-library-select');
+    const moduleSelect = document.getElementById('batch-view-module-select');
+    const level1Select = document.getElementById('batch-view-level1-select');
+    
+    const libraryId = librarySelect ? librarySelect.value : '';
+    batchViewSelectedLibrary = libraryId;
+    batchViewSelectedModule = null;
+    batchViewSelectedLevel1 = null;
+    
+    if (moduleSelect) {
+        if (!libraryId) {
+            moduleSelect.innerHTML = '<option value="">请先选择用例库</option>';
+            moduleSelect.disabled = true;
+        } else {
+            moduleSelect.innerHTML = '<option value="">加载中...</option>';
+            moduleSelect.disabled = true;
+            
+            try {
+                const result = await apiRequest('/modules/list', {
+                    method: 'POST',
+                    body: JSON.stringify({ libraryId })
+                });
+                if (result.success && result.modules) {
+                    moduleSelect.innerHTML = '<option value="">请选择模块</option>';
+                    result.modules.forEach(mod => {
+                        const option = document.createElement('option');
+                        option.value = mod.id;
+                        option.textContent = mod.name;
+                        option.dataset.name = mod.name;
+                        moduleSelect.appendChild(option);
+                    });
+                    moduleSelect.disabled = false;
+                } else {
+                    moduleSelect.innerHTML = '<option value="">暂无模块</option>';
+                }
+            } catch (error) {
+                logger.error('加载模块列表失败:', error);
+                moduleSelect.innerHTML = '<option value="">加载失败</option>';
+            }
+        }
+    }
+    
+    if (level1Select) {
+        level1Select.innerHTML = '<option value="">全部测试点</option>';
+        level1Select.disabled = true;
+    }
+}
+
+async function onBatchViewModuleChange() {
+    const moduleSelect = document.getElementById('batch-view-module-select');
+    const level1Select = document.getElementById('batch-view-level1-select');
+    
+    const moduleId = moduleSelect ? moduleSelect.value : '';
+    batchViewSelectedModule = moduleId;
+    batchViewSelectedLevel1 = null;
+    
+    if (level1Select) {
+        if (!moduleId) {
+            level1Select.innerHTML = '<option value="">全部测试点</option>';
+            level1Select.disabled = true;
+        } else {
+            level1Select.innerHTML = '<option value="">加载中...</option>';
+            level1Select.disabled = true;
+            
+            try {
+                const result = await apiRequest('/testpoints/level1/all', {
+                    method: 'POST',
+                    body: JSON.stringify({ libraryId: batchViewSelectedLibrary })
+                });
+                
+                if (result.success && result.level1Points) {
+                    const filteredPoints = result.level1Points.filter(p => p.module_id == moduleId);
+                    level1Select.innerHTML = '<option value="">全部测试点</option>';
+                    filteredPoints.forEach(point => {
+                        const option = document.createElement('option');
+                        option.value = point.id;
+                        option.textContent = point.name;
+                        level1Select.appendChild(option);
+                    });
+                    level1Select.disabled = false;
+                } else {
+                    level1Select.innerHTML = '<option value="">暂无测试点</option>';
+                }
+            } catch (error) {
+                logger.error('加载测试点列表失败:', error);
+                level1Select.innerHTML = '<option value="">加载失败</option>';
+            }
+        }
+    }
+}
+
+function confirmBatchViewSelection() {
+    const librarySelect = document.getElementById('batch-view-library-select');
+    const moduleSelect = document.getElementById('batch-view-module-select');
+    const level1Select = document.getElementById('batch-view-level1-select');
+    
+    const libraryId = librarySelect ? librarySelect.value : '';
+    const moduleId = moduleSelect ? moduleSelect.value : '';
+    const level1Id = level1Select ? level1Select.value : '';
+    
+    if (!libraryId) {
+        showErrorMessage('请选择用例库');
+        return;
+    }
+    
+    if (!moduleId) {
+        showErrorMessage('请选择模块');
+        return;
+    }
+    
+    const libraryName = librarySelect.options[librarySelect.selectedIndex].text;
+    const selectedOption = moduleSelect.options[moduleSelect.selectedIndex];
+    let moduleName = selectedOption ? (selectedOption.dataset.name || selectedOption.textContent || selectedOption.text || '') : '';
+    const level1Name = level1Id ? level1Select.options[level1Select.selectedIndex].text : '';
+    
+    
+    let url = `/batch-view-cases.html?moduleId=${moduleId}&libraryId=${libraryId}&moduleName=${encodeURIComponent(moduleName)}&libraryName=${encodeURIComponent(libraryName)}&returnUrl=${encodeURIComponent(window.location.href)}`;
+    
+    if (level1Id) {
+        url += `&level1Id=${level1Id}&level1Name=${encodeURIComponent(level1Name)}`;
+    }
+    
+    closeBatchViewSelectModal();
+    window.open(url, '_blank');
+}
+
 let batchCreateSelectedLibrary = null;
 let batchCreateSelectedModule = null;
 let batchCreateSelectedLevel1 = null;
@@ -9030,35 +12335,65 @@ async function openBatchCreateSelectModal() {
         modal.className = 'modal';
         modal.style.cssText = 'display: none; z-index: 99999;';
         modal.innerHTML = `
-            <div class="modal-overlay" onclick="closeBatchCreateSelectModal()"></div>
-            <div class="modal-content" style="max-width: 500px;">
-                <div class="modal-header">
-                    <h3>选择创建位置</h3>
-                    <span class="close" onclick="closeBatchCreateSelectModal()">&times;</span>
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 480px; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.15);">
+                <div class="modal-header" style="padding: 20px 24px; border-bottom: 1px solid #f0f0f0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="12" y1="8" x2="12" y2="16"></line>
+                            <line x1="8" y1="12" x2="16" y2="12"></line>
+                        </svg>
+                        <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: white;">选择创建位置</h3>
+                    </div>
+                    <button onclick="closeBatchCreateSelectModal()" style="background: rgba(255,255,255,0.2); border: none; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
                 </div>
-                <div class="modal-body">
-                    <div style="margin-bottom: 16px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #333;">用例库 <span style="color: #ff4d4f;">*</span></label>
-                        <select id="batch-select-library" class="form-control" style="width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;" onchange="onBatchSelectLibrary(this.value)">
+                <div class="modal-body" style="padding: 24px; background: #fafbfc;">
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                            </svg>
+                            用例库 <span style="color: #ef4444;">*</span>
+                        </label>
+                        <select id="batch-select-library" onchange="onBatchSelectLibrary(this.value)" style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
                             <option value="">请选择用例库</option>
                         </select>
                     </div>
-                    <div style="margin-bottom: 16px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #333;">模块 <span style="color: #ff4d4f;">*</span></label>
-                        <select id="batch-select-module" class="form-control" style="width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;" onchange="onBatchSelectModule(this.value)" disabled>
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                            模块 <span style="color: #ef4444;">*</span>
+                        </label>
+                        <select id="batch-select-module" onchange="onBatchSelectModule(this.value)" disabled style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
                             <option value="">请先选择用例库</option>
                         </select>
                     </div>
-                    <div style="margin-bottom: 16px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #333;">一级测试点 <span style="color: #999;">(可选)</span></label>
-                        <select id="batch-select-level1" class="form-control" style="width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;" onchange="onBatchSelectLevel1(this.value)" disabled>
+                    <div>
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M12 16v-4"></path>
+                                <path d="M12 8h.01"></path>
+                            </svg>
+                            一级测试点 <span style="color: #9ca3af; font-weight: 400; font-size: 12px;">(可选)</span>
+                        </label>
+                        <select id="batch-select-level1" onchange="onBatchSelectLevel1(this.value)" disabled style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
                             <option value="">请先选择模块</option>
                         </select>
                     </div>
                 </div>
-                <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 12px; padding: 12px 24px; border-top: 1px solid #f0f0f0; background: #fafafa;">
-                    <button class="btn btn-secondary" onclick="closeBatchCreateSelectModal()">取消</button>
-                    <button class="btn btn-primary" id="batch-create-confirm-btn" onclick="confirmBatchCreate()">确定</button>
+                <div class="modal-footer" style="padding: 16px 24px; border-top: 1px solid #f0f0f0; background: white; display: flex; justify-content: flex-end; gap: 12px;">
+                    <button onclick="closeBatchCreateSelectModal()" style="padding: 10px 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: white; color: #374151; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='white'">取消</button>
+                    <button id="batch-create-confirm-btn" onclick="confirmBatchCreate()" style="padding: 10px 20px; border: none; border-radius: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 16px rgba(102, 126, 234, 0.4)'" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 12px rgba(102, 126, 234, 0.3)'">确定</button>
                 </div>
             </div>
         `;
@@ -9098,7 +12433,7 @@ async function openBatchCreateSelectModal() {
             }
         }
     } catch (error) {
-        console.error('加载用例库列表失败:', error);
+        logger.error('加载用例库列表失败:', error);
     }
     
     modal.style.display = 'flex';
@@ -9159,7 +12494,7 @@ async function onBatchSelectLibrary(libraryId) {
             moduleSelect.innerHTML = '<option value="">该用例库下暂无模块</option>';
         }
     } catch (error) {
-        console.error('加载模块列表失败:', error);
+        logger.error('加载模块列表失败:', error);
         moduleSelect.innerHTML = '<option value="">加载失败</option>';
     }
 }
@@ -9205,7 +12540,7 @@ async function onBatchSelectModule(moduleId) {
             level1Select.disabled = false;
         }
     } catch (error) {
-        console.error('加载一级测试点列表失败:', error);
+        logger.error('加载一级测试点列表失败:', error);
         level1Select.innerHTML = '<option value="">加载失败</option>';
         level1Select.disabled = false;
     }
@@ -9249,12 +12584,272 @@ async function confirmBatchCreate() {
     window.location.href = url;
 }
 
+let addCaseSelectedLibrary = null;
+let addCaseSelectedModule = null;
+let addCaseSelectedLevel1 = null;
+
+async function openAddTestCaseSelectModal() {
+    let modal = document.getElementById('add-case-select-modal');
+    
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'add-case-select-modal';
+        modal.className = 'modal';
+        modal.style.cssText = 'display: none; z-index: 99999;';
+        modal.innerHTML = `
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 480px; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.15);">
+                <div class="modal-header" style="padding: 20px 24px; border-bottom: 1px solid #f0f0f0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                            <path d="M12 5v14M5 12h14"></path>
+                        </svg>
+                        <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: white;">选择创建位置</h3>
+                    </div>
+                    <button onclick="closeAddCaseSelectModal()" style="background: rgba(255,255,255,0.2); border: none; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-body" style="padding: 24px; background: #fafbfc;">
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                            </svg>
+                            用例库 <span style="color: #ef4444;">*</span>
+                        </label>
+                        <select id="add-case-select-library" onchange="onAddCaseSelectLibrary(this.value)" style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
+                            <option value="">请选择用例库</option>
+                        </select>
+                    </div>
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                            模块 <span style="color: #ef4444;">*</span>
+                        </label>
+                        <select id="add-case-select-module" onchange="onAddCaseSelectModule(this.value)" disabled style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
+                            <option value="">请先选择用例库</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 500; color: #374151; font-size: 14px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M12 16v-4"></path>
+                                <path d="M12 8h.01"></path>
+                            </svg>
+                            一级测试点 <span style="color: #ef4444;">*</span>
+                        </label>
+                        <select id="add-case-select-level1" onchange="onAddCaseSelectLevel1(this.value)" disabled style="width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #1f2937; background: white; cursor: pointer; transition: all 0.2s; appearance: none; background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 12px center;">
+                            <option value="">请先选择模块</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer" style="padding: 16px 24px; border-top: 1px solid #f0f0f0; background: white; display: flex; justify-content: flex-end; gap: 12px;">
+                    <button onclick="closeAddCaseSelectModal()" style="padding: 10px 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: white; color: #374151; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='white'">取消</button>
+                    <button id="add-case-confirm-btn" onclick="confirmAddCaseSelect()" style="padding: 10px 20px; border: none; border-radius: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 16px rgba(102, 126, 234, 0.4)'" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 4px 12px rgba(102, 126, 234, 0.3)'">确定</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+    
+    addCaseSelectedLibrary = null;
+    addCaseSelectedModule = null;
+    addCaseSelectedLevel1 = null;
+    
+    const librarySelect = document.getElementById('add-case-select-library');
+    const moduleSelect = document.getElementById('add-case-select-module');
+    const level1Select = document.getElementById('add-case-select-level1');
+    
+    librarySelect.innerHTML = '<option value="">请选择用例库</option>';
+    moduleSelect.innerHTML = '<option value="">请先选择用例库</option>';
+    moduleSelect.disabled = true;
+    level1Select.innerHTML = '<option value="">请先选择模块</option>';
+    level1Select.disabled = true;
+    
+    try {
+        const result = await apiRequest('/libraries/list', { useCache: false });
+        if (result.success && result.libraries) {
+            result.libraries.forEach(lib => {
+                const option = document.createElement('option');
+                option.value = lib.id;
+                option.textContent = lib.name;
+                option.dataset.name = lib.name;
+                if (currentCaseLibraryId && lib.id == currentCaseLibraryId) {
+                    option.selected = true;
+                }
+                librarySelect.appendChild(option);
+            });
+            
+            if (currentCaseLibraryId) {
+                await onAddCaseSelectLibrary(currentCaseLibraryId);
+            }
+        }
+    } catch (error) {
+        logger.error('加载用例库列表失败:', error);
+    }
+    
+    modal.style.display = 'flex';
+}
+
+function closeAddCaseSelectModal() {
+    const modal = document.getElementById('add-case-select-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+async function onAddCaseSelectLibrary(libraryId) {
+    const moduleSelect = document.getElementById('add-case-select-module');
+    const level1Select = document.getElementById('add-case-select-level1');
+    
+    addCaseSelectedLibrary = null;
+    addCaseSelectedModule = null;
+    addCaseSelectedLevel1 = null;
+    
+    level1Select.innerHTML = '<option value="">请先选择模块</option>';
+    level1Select.disabled = true;
+    
+    if (!libraryId) {
+        moduleSelect.innerHTML = '<option value="">请先选择用例库</option>';
+        moduleSelect.disabled = true;
+        return;
+    }
+    
+    const librarySelect = document.getElementById('add-case-select-library');
+    const selectedOption = librarySelect.options[librarySelect.selectedIndex];
+    addCaseSelectedLibrary = {
+        id: libraryId,
+        name: selectedOption.dataset.name || selectedOption.textContent
+    };
+    
+    moduleSelect.innerHTML = '<option value="">加载中...</option>';
+    moduleSelect.disabled = true;
+    
+    try {
+        const result = await apiRequest('/modules/list', {
+            method: 'POST',
+            body: JSON.stringify({ libraryId: libraryId, page: 1, pageSize: 1000 })
+        });
+        
+        moduleSelect.innerHTML = '<option value="">请选择模块</option>';
+        
+        if (result.success && result.modules && result.modules.length > 0) {
+            result.modules.forEach(mod => {
+                const option = document.createElement('option');
+                option.value = mod.id;
+                option.textContent = mod.name;
+                option.dataset.name = mod.name;
+                moduleSelect.appendChild(option);
+            });
+            moduleSelect.disabled = false;
+        } else {
+            moduleSelect.innerHTML = '<option value="">该用例库下暂无模块</option>';
+        }
+    } catch (error) {
+        logger.error('加载模块列表失败:', error);
+        moduleSelect.innerHTML = '<option value="">加载失败</option>';
+    }
+}
+
+async function onAddCaseSelectModule(moduleId) {
+    const level1Select = document.getElementById('add-case-select-level1');
+    
+    addCaseSelectedModule = null;
+    addCaseSelectedLevel1 = null;
+    
+    if (!moduleId) {
+        level1Select.innerHTML = '<option value="">请先选择模块</option>';
+        level1Select.disabled = true;
+        return;
+    }
+    
+    const moduleSelect = document.getElementById('add-case-select-module');
+    const selectedOption = moduleSelect.options[moduleSelect.selectedIndex];
+    addCaseSelectedModule = {
+        id: moduleId,
+        name: selectedOption.dataset.name || selectedOption.textContent
+    };
+    
+    level1Select.innerHTML = '<option value="">加载中...</option>';
+    level1Select.disabled = true;
+    
+    try {
+        const result = await apiRequest(`/testpoints/level1/${moduleId}`, { useCache: false });
+        
+        level1Select.innerHTML = '<option value="">不指定（可选）</option>';
+        
+        if (result.success && result.level1Points && result.level1Points.length > 0) {
+            result.level1Points.forEach(l1 => {
+                const option = document.createElement('option');
+                option.value = l1.id;
+                option.textContent = l1.name;
+                option.dataset.name = l1.name;
+                level1Select.appendChild(option);
+            });
+            level1Select.disabled = false;
+        } else {
+            level1Select.innerHTML = '<option value="">该模块下暂无一级测试点</option>';
+            level1Select.disabled = false;
+        }
+    } catch (error) {
+        logger.error('加载一级测试点列表失败:', error);
+        level1Select.innerHTML = '<option value="">加载失败</option>';
+        level1Select.disabled = false;
+    }
+}
+
+function onAddCaseSelectLevel1(level1Id) {
+    if (!level1Id) {
+        addCaseSelectedLevel1 = null;
+        return;
+    }
+    
+    const level1Select = document.getElementById('add-case-select-level1');
+    const selectedOption = level1Select.options[level1Select.selectedIndex];
+    addCaseSelectedLevel1 = {
+        id: level1Id,
+        name: selectedOption.dataset.name || selectedOption.textContent
+    };
+}
+
+async function confirmAddCaseSelect() {
+    if (!addCaseSelectedLibrary || !addCaseSelectedModule) {
+        showErrorMessage('请选择用例库和模块');
+        return;
+    }
+    
+    if (!addCaseSelectedLevel1) {
+        showErrorMessage('请选择一级测试点');
+        return;
+    }
+    
+    const libraryId = addCaseSelectedLibrary.id;
+    const moduleId = addCaseSelectedModule.id;
+    const level1Id = addCaseSelectedLevel1 ? addCaseSelectedLevel1.id : null;
+    
+    selectedModuleId = moduleId;
+    currentCaseLibraryId = libraryId;
+    selectedLevel1PointId = level1Id;
+    
+    closeAddCaseSelectModal();
+    
+    await openAddTestCaseModal();
+}
+
 // 加载测试阶段列表用于测试用例创建
 async function loadTestPhasesForTestCase() {
     try {
         const phaseSelect = document.getElementById('case-phases');
         if (!phaseSelect) {
-            console.error('case-phases element not found');
+            logger.error('case-phases element not found');
             return;
         }
 
@@ -9269,11 +12864,11 @@ async function loadTestPhasesForTestCase() {
                 phaseSelect.appendChild(option);
             });
         } else {
-            console.error('加载测试阶段列表失败:', response.message);
+            logger.error('加载测试阶段列表失败:', response.message);
             phaseSelect.innerHTML = '<option value="">加载测试阶段失败</option>';
         }
     } catch (error) {
-        console.error('加载测试阶段列表错误:', error);
+        logger.error('加载测试阶段列表错误:', error);
         const phaseSelect = document.getElementById('case-phases');
         if (phaseSelect) {
             phaseSelect.innerHTML = '<option value="">加载测试阶段失败</option>';
@@ -9288,19 +12883,17 @@ const totalAddCaseSteps = 3;
 // 打开测试用例创建模态框（支持关联到选中模块）
 async function openAddTestCaseModal() {
     try {
-        // 检查是否已选择模块
         if (!selectedModuleId) {
-            showErrorMessage('请先选择一个模块，然后再创建测试用例');
+            openAddTestCaseSelectModal();
             return;
         }
 
         const modal = document.getElementById('add-case-modal');
         if (!modal) {
-            console.error('add-case-modal element not found');
+            logger.error('add-case-modal element not found');
             return;
         }
 
-        console.log('[新建用例] 已选择模块ID:', selectedModuleId);
 
         // 重置步骤
         currentAddCaseStep = 1;
@@ -9386,7 +12979,6 @@ async function openAddTestCaseModal() {
 
         // 如果有选中的模块，确保测试用例能关联到该模块
         if (selectedModuleId) {
-            console.log('打开测试用例创建模态框，关联到模块:', selectedModuleId);
         }
 
         // 更新关联项目摘要
@@ -9396,8 +12988,8 @@ async function openAddTestCaseModal() {
         initAddCaseModalResizer();
 
     } catch (error) {
-        console.error('Error in openAddTestCaseModal:', error);
-        console.error('Error stack:', error.stack);
+        logger.error('Error in openAddTestCaseModal:', error);
+        logger.error('Error stack:', error.stack);
     }
 }
 
@@ -9436,7 +13028,6 @@ function updateAddCaseStepUI() {
 
     // 如果切换到步骤3（关联项目），更新关联项目摘要
     if (currentAddCaseStep === 3) {
-        console.log('[关联项目] 切换到步骤3，更新关联项目摘要');
         updateNewCaseProjectsSummary();
     }
 }
@@ -9502,17 +13093,14 @@ function validateAddCaseStep(step) {
 function updateNewCaseProjectsSummary() {
     const summaryContainer = document.getElementById('new-case-projects-summary');
     if (!summaryContainer) {
-        console.error('[关联项目] 未找到 new-case-projects-summary 元素');
+        logger.error('[关联项目] 未找到 new-case-projects-summary 元素');
         return;
     }
 
     // 从localStorage获取临时关联项目
     const tempAssociations = JSON.parse(localStorage.getItem('tempProjectAssociations') || '[]');
-    console.log('[关联项目] 从localStorage读取到的数据:', tempAssociations);
-    console.log('[关联项目] 关联项目数量:', tempAssociations.length);
 
     if (tempAssociations.length === 0) {
-        console.log('[关联项目] 没有关联项目，显示空状态');
         summaryContainer.innerHTML = `
             <div class="ac-projects-empty">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -9523,7 +13111,6 @@ function updateNewCaseProjectsSummary() {
             </div>
         `;
     } else {
-        console.log('[关联项目] 有关联项目，显示列表');
         summaryContainer.innerHTML = `
             <div class="ac-projects-table">
                 <table class="projects-summary-table">
@@ -9538,7 +13125,6 @@ function updateNewCaseProjectsSummary() {
                     </thead>
                     <tbody>
                         ${tempAssociations.map(assoc => {
-            console.log('[关联项目] 渲染关联项目:', assoc);
             const statusClass = assoc.status_id == 1 ? 'status-pending' : assoc.status_id == 3 ? 'status-completed' : 'status-active';
             const statusText = assoc.status_id == 1 ? '待开始' : assoc.status_id == 3 ? '已完成' : '进行中';
             return `
@@ -9572,7 +13158,7 @@ async function loadTestTypesForTestCase() {
     try {
         const testTypeSelect = document.getElementById('case-type');
         if (!testTypeSelect) {
-            console.error('case-type element not found');
+            logger.error('case-type element not found');
             return;
         }
 
@@ -9582,20 +13168,16 @@ async function loadTestTypesForTestCase() {
         `;
 
         // 调用API加载测试类型
-        console.log('开始调用API获取测试类型列表...');
         try {
             const testTypesData = await apiRequest('/test-types/list');
-            console.log('API返回结果:', testTypesData);
 
             if (testTypesData && testTypesData.success && Array.isArray(testTypesData.testTypes)) {
                 // 清空现有选项
                 testTypeSelect.innerHTML = '';
 
-                console.log('获取到测试类型数量:', testTypesData.testTypes.length);
 
                 // 添加测试类型选项
                 testTypesData.testTypes.forEach(type => {
-                    console.log('添加测试类型:', type);
                     const option = document.createElement('option');
                     option.value = type.name; // 使用名称作为value，与test_cases表的type字段兼容
                     option.textContent = type.name;
@@ -9607,7 +13189,7 @@ async function loadTestTypesForTestCase() {
                     testTypeSelect.value = testTypesData.testTypes[0].name;
                 }
             } else {
-                console.error('API返回数据格式不符合预期:', testTypesData);
+                logger.error('API返回数据格式不符合预期:', testTypesData);
                 // 加载失败时使用默认选项
                 testTypeSelect.innerHTML = `
                     <option value="功能测试">功能测试</option>
@@ -9617,7 +13199,7 @@ async function loadTestTypesForTestCase() {
                 `;
             }
         } catch (apiError) {
-            console.error('调用API获取测试类型失败:', apiError);
+            logger.error('调用API获取测试类型失败:', apiError);
             // API调用失败时使用默认选项
             testTypeSelect.innerHTML = `
                 <option value="功能测试">功能测试</option>
@@ -9627,8 +13209,8 @@ async function loadTestTypesForTestCase() {
             `;
         }
     } catch (error) {
-        console.error('加载测试类型列表错误:', error);
-        console.error('错误堆栈:', error.stack);
+        logger.error('加载测试类型列表错误:', error);
+        logger.error('错误堆栈:', error.stack);
 
         // 加载失败时使用默认选项
         const testTypeSelect = document.getElementById('case-type');
@@ -9648,7 +13230,7 @@ async function loadEnvironmentsForTestCase() {
     try {
         const environmentSelect = document.getElementById('case-environments');
         if (!environmentSelect) {
-            console.error('case-environments element not found');
+            logger.error('case-environments element not found');
             return;
         }
 
@@ -9676,7 +13258,7 @@ async function loadEnvironmentsForTestCase() {
         `;
 
     } catch (error) {
-        console.error('加载测试环境列表错误:', error);
+        logger.error('加载测试环境列表错误:', error);
         const environmentSelect = document.getElementById('case-environments');
         if (environmentSelect) {
             environmentSelect.innerHTML = `
@@ -9691,7 +13273,7 @@ async function loadTestMethodsForTestCase() {
     try {
         const methodSelect = document.getElementById('case-methods');
         if (!methodSelect) {
-            console.error('case-methods element not found');
+            logger.error('case-methods element not found');
             return;
         }
 
@@ -9719,7 +13301,7 @@ async function loadTestMethodsForTestCase() {
         `;
 
     } catch (error) {
-        console.error('加载测试方式列表错误:', error);
+        logger.error('加载测试方式列表错误:', error);
         const methodSelect = document.getElementById('case-methods');
         if (methodSelect) {
             methodSelect.innerHTML = `
@@ -9734,7 +13316,7 @@ async function loadModulesForTestCase() {
     try {
         const moduleSelect = document.getElementById('case-module');
         if (!moduleSelect) {
-            console.error('case-module element not found');
+            logger.error('case-module element not found');
             return;
         }
 
@@ -9778,7 +13360,7 @@ async function loadModulesForTestCase() {
             moduleSelect.innerHTML = options;
         }
     } catch (error) {
-        console.error('加载模块列表错误:', error);
+        logger.error('加载模块列表错误:', error);
         const moduleSelect = document.getElementById('case-module');
         if (moduleSelect) {
             moduleSelect.innerHTML = `
@@ -9793,7 +13375,6 @@ async function loadModulesForTestCase() {
 async function loadTestProgresses() {
     try {
         const response = await apiRequest('/test-progresses/list', { useCache: false });
-        console.log('loadTestProgresses API返回:', response);
         // 处理多种可能的数据结构
         let testProgresses = [];
         if (response.success && response.data && response.data.success) {
@@ -9816,17 +13397,15 @@ async function loadTestProgresses() {
             testProgresses = response.data;
         }
 
-        console.log('解析后的testProgresses:', testProgresses);
         return testProgresses;
     } catch (error) {
-        console.error('加载测试进度列表错误:', error);
+        logger.error('加载测试进度列表错误:', error);
         // 使用默认测试进度数据
         const defaultProgresses = [
             { id: 1, progress_id: 1, name: '已完成' },
             { id: 2, progress_id: 2, name: '未开始' },
             { id: 3, progress_id: 3, name: '测试中' }
         ];
-        console.log('使用默认测试进度数据:', defaultProgresses);
         return defaultProgresses;
     }
 }
@@ -9835,7 +13414,6 @@ async function loadTestProgresses() {
 async function loadTestStatuses() {
     try {
         const response = await apiRequest('/test-statuses/list', { useCache: false });
-        console.log('loadTestStatuses API返回:', response);
         // 处理多种可能的数据结构
         let testStatuses = [];
         if (response.success && response.data && response.data.success) {
@@ -9858,17 +13436,15 @@ async function loadTestStatuses() {
             testStatuses = response.data;
         }
 
-        console.log('解析后的testStatuses:', testStatuses);
         return testStatuses;
     } catch (error) {
-        console.error('加载测试状态列表错误:', error);
+        logger.error('加载测试状态列表错误:', error);
         // 使用默认测试状态数据
         const defaultStatuses = [
             { id: 1, status_id: 1, name: 'PASS' },
             { id: 2, status_id: 2, name: 'FAIL' },
             { id: 3, status_id: 3, name: 'BLOCK' }
         ];
-        console.log('使用默认测试状态数据:', defaultStatuses);
         return defaultStatuses;
     }
 }
@@ -9880,7 +13456,6 @@ async function loadProjectsForAssociation() {
 
         if (!container) {
             // 容器不存在，显示普通日志，不显示错误信息
-            console.log('关联项目容器不存在，跳过加载');
             return;
         }
 
@@ -9895,19 +13470,19 @@ async function loadProjectsForAssociation() {
         try {
             projectsData = await apiRequest('/projects/list');
         } catch (error) {
-            console.error('加载项目列表错误:', error);
+            logger.error('加载项目列表错误:', error);
         }
 
         try {
             testProgresses = await loadTestProgresses();
         } catch (error) {
-            console.error('加载测试进度错误:', error);
+            logger.error('加载测试进度错误:', error);
         }
 
         try {
             testStatuses = await loadTestStatuses();
         } catch (error) {
-            console.error('加载测试状态错误:', error);
+            logger.error('加载测试状态错误:', error);
         }
 
         let projectList = [];
@@ -9959,7 +13534,7 @@ async function loadProjectsForAssociation() {
             container.innerHTML = projectsHtml;
         }
     } catch (error) {
-        console.error('加载项目列表错误:', error);
+        logger.error('加载项目列表错误:', error);
         const container = document.getElementById('new-case-projects-container');
 
         if (container) {
@@ -9972,31 +13547,25 @@ async function loadProjectsForAssociation() {
 function editProjectAssociations() {
     try {
         // 调试信息：函数被调用
-        console.log('editProjectAssociations 函数被调用');
 
         // 获取当前编辑的测试用例ID
         const caseIdInput = document.getElementById('detail-case-id');
 
         // 调试信息：输出caseIdInput元素
-        console.log('caseIdInput 元素:', caseIdInput);
 
         // 调试信息：输出caseIdInput的值
         if (caseIdInput) {
-            console.log('caseIdInput.value:', caseIdInput.value);
         } else {
-            console.log('caseIdInput 为 null/undefined');
         }
 
         // 如果找不到元素或者值为空，设置为'new'表示新建操作
         if (caseIdInput && caseIdInput.value) {
             currentEditingTestCaseId = caseIdInput.value;
         } else {
-            console.log('未找到测试用例ID，按新建操作处理');
             currentEditingTestCaseId = 'new';
         }
 
         // 调试信息：输出最终的currentEditingTestCaseId
-        console.log('最终的 currentEditingTestCaseId:', currentEditingTestCaseId);
 
         // 显示模态框
         const modal = document.getElementById('edit-project-associations-modal');
@@ -10016,7 +13585,7 @@ function editProjectAssociations() {
         // 加载项目数据到模态框
         loadProjectsForEditModal();
     } catch (error) {
-        console.error('打开编辑关联项目模态框错误:', error);
+        logger.error('打开编辑关联项目模态框错误:', error);
         showErrorMessage('打开编辑关联项目模态框失败: ' + error.message);
     }
 }
@@ -10027,32 +13596,25 @@ let currentEditingTestCaseId = null;
 // 打开编辑用例项目关联模态框
 function openEditTestCaseProjectAssociationsModal() {
     try {
-        // 调试信息：函数被调用
-        console.log('openEditTestCaseProjectAssociationsModal 函数被调用');
 
-        // 获取当前编辑的测试用例ID
+        let caseId = null;
         const caseIdInput = document.getElementById('detail-case-id');
+        const drawerCaseIdInput = document.getElementById('drawer-testcase-id');
 
-        // 调试信息：输出caseIdInput元素
-        console.log('caseIdInput 元素:', caseIdInput);
-
-        // 调试信息：输出caseIdInput的值
-        if (caseIdInput) {
-            console.log('caseIdInput.value:', caseIdInput.value);
-        } else {
-            console.log('caseIdInput 为 null/undefined');
+        if (currentEditingTestCaseId && currentEditingTestCaseId !== 'new') {
+            caseId = currentEditingTestCaseId;
+        } else if (caseIdInput && caseIdInput.value) {
+            caseId = caseIdInput.value;
+        } else if (drawerCaseIdInput && drawerCaseIdInput.value) {
+            caseId = drawerCaseIdInput.value;
         }
 
-        // 如果找不到元素或者值为空，设置为'new'表示新建操作
-        if (caseIdInput && caseIdInput.value) {
-            currentEditingTestCaseId = caseIdInput.value;
+        if (caseId) {
+            currentEditingTestCaseId = caseId;
         } else {
-            console.log('未找到测试用例ID，按新建操作处理');
             currentEditingTestCaseId = 'new';
         }
 
-        // 调试信息：输出最终的currentEditingTestCaseId
-        console.log('最终的 currentEditingTestCaseId:', currentEditingTestCaseId);
 
         // 打开模态框
         const modal = document.getElementById('edit-project-associations-modal');
@@ -10074,7 +13636,7 @@ function openEditTestCaseProjectAssociationsModal() {
             throw new Error('无法找到编辑关联项目模态框');
         }
     } catch (error) {
-        console.error('打开编辑用例项目关联模态框失败:', error);
+        logger.error('打开编辑用例项目关联模态框失败:', error);
         showErrorMessage('打开编辑用例项目关联模态框失败: ' + error.message);
     }
 }
@@ -10100,7 +13662,7 @@ function selectAllEditProjects() {
             });
         }
     } catch (error) {
-        console.error('全选项目错误:', error);
+        logger.error('全选项目错误:', error);
     }
 }
 
@@ -10115,7 +13677,7 @@ function deselectAllEditProjects() {
             });
         }
     } catch (error) {
-        console.error('取消全选项目错误:', error);
+        logger.error('取消全选项目错误:', error);
     }
 }
 
@@ -10128,7 +13690,7 @@ async function loadProjectsForEditModal() {
         const tableContainer = document.querySelector('.pa-table-container');
 
         if (!tbody) {
-            console.error('pa-projects-tbody 元素不存在');
+            logger.error('pa-projects-tbody 元素不存在');
             return;
         }
 
@@ -10228,8 +13790,8 @@ async function loadProjectsForEditModal() {
                             <select class="pa-table-select" name="owner-${project.id}" ${!isAssociated ? 'disabled' : ''}>
                                 <option value="">请选择</option>
                                 ${users.map(user => {
-                    const isSelected = (user.id || user.user_id || user.username).toString() === selectedOwner.toString();
-                    return `<option value="${user.id || user.user_id || user.username}" ${isSelected ? 'selected' : ''}>${user.username}</option>`;
+                    const isSelected = user.username === selectedOwner;
+                    return `<option value="${user.username}" ${isSelected ? 'selected' : ''}>${user.username}</option>`;
                 }).join('')}
                             </select>
                         </td>
@@ -10267,7 +13829,7 @@ async function loadProjectsForEditModal() {
         }
 
     } catch (error) {
-        console.error('加载项目列表错误:', error);
+        logger.error('加载项目列表错误:', error);
         const loadingState = document.getElementById('pa-loading-state');
         const emptyState = document.getElementById('pa-empty-state');
         if (loadingState) loadingState.style.display = 'none';
@@ -10421,20 +13983,18 @@ async function saveProjectAssociations() {
     try {
         const tbody = document.getElementById('pa-projects-tbody');
         if (!tbody) {
-            console.error('pa-projects-tbody不存在');
+            logger.error('pa-projects-tbody不存在');
             return;
         }
 
         // 获取所有选中的行
         const selectedRows = tbody.querySelectorAll('.pa-table-row.selected');
-        console.log('选中的项目行数量:', selectedRows.length);
 
         const associations = [];
 
         // 遍历所有选中的行，收集关联数据
         selectedRows.forEach((row, index) => {
             const projectId = parseInt(row.dataset.projectId);
-            console.log(`项目行${index}的projectId:`, projectId);
 
             if (!isNaN(projectId)) {
                 // 获取其他关联数据
@@ -10455,12 +14015,10 @@ async function saveProjectAssociations() {
                     remark: remarkInput ? remarkInput.value : ''
                 };
 
-                console.log('收集到关联项目:', association);
                 associations.push(association);
             }
         });
 
-        console.log('最终收集到的关联项目:', associations);
 
         // 检查是否有window.currentEditingTestCase对象
         let isNewCase = true;
@@ -10475,11 +14033,9 @@ async function saveProjectAssociations() {
             testCaseId = currentEditingTestCaseId;
         }
 
-        console.log('保存关联项目，isNewCase:', isNewCase, 'testCaseId:', testCaseId);
 
         if (!isNewCase && testCaseId) {
             // 编辑现有用例，直接保存到数据库
-            console.log('编辑用例关联项目，保存到数据库');
             showLoading('保存关联项目...');
 
             const result = await apiRequest('/cases/projects/update', {
@@ -10492,16 +14048,13 @@ async function saveProjectAssociations() {
 
             if (result.success) {
                 showSuccessMessage('关联项目保存成功');
-                // 清除缓存 - 关键修复
                 apiCache.delete(`/testcases/${testCaseId}/projects`);
-                console.log('已清除关联项目缓存');
-                // 清除本地存储中的临时数据（如果有的话）
                 localStorage.removeItem('tempProjectAssociations');
-                console.log('已清除本地存储中的临时关联项目数据');
-                // 关闭模态框
                 closeEditProjectAssociationsModal();
-                // 刷新项目列表
                 loadTestCaseProjects(testCaseId);
+                if (document.getElementById('testcase-edit-drawer')?.classList.contains('open')) {
+                    refreshDrawerProjects();
+                }
             } else {
                 showErrorMessage(result.message || '保存关联项目失败');
             }
@@ -10509,19 +14062,15 @@ async function saveProjectAssociations() {
             hideLoading();
         } else {
             // 新建用例，保存到本地存储
-            console.log('[关联项目] 新建用例关联项目，保存到本地存储');
-            console.log('[关联项目] 保存的关联数据:', associations);
             localStorage.setItem('tempProjectAssociations', JSON.stringify(associations));
-            console.log('[关联项目] 已保存到localStorage，验证:', localStorage.getItem('tempProjectAssociations'));
             // 关闭模态框
             closeEditProjectAssociationsModal();
             // 更新新建用例页面的项目摘要
-            console.log('[关联项目] 准备调用 updateNewCaseProjectsSummary');
             updateNewCaseProjectsSummary();
             showSuccessMessage('关联项目已保存到本地，待测试用例保存时一并提交');
         }
     } catch (error) {
-        console.error('保存关联项目错误:', error);
+        logger.error('保存关联项目错误:', error);
         showErrorMessage('保存关联项目失败');
     }
 }
@@ -10529,7 +14078,6 @@ async function saveProjectAssociations() {
 // 全选新建测试用例的项目（注释掉，因为已经移除了复选框）
 function selectAllNewCaseProjects() {
     try {
-        console.log('全选新建测试用例项目功能已禁用，因为已移除复选框');
         /*
         const container = document.getElementById('new-case-projects-container');
         if (container) {
@@ -10540,14 +14088,13 @@ function selectAllNewCaseProjects() {
         }
         */
     } catch (error) {
-        console.error('全选新建测试用例项目出错:', error);
+        logger.error('全选新建测试用例项目出错:', error);
     }
 }
 
 // 取消全选新建测试用例的项目（注释掉，因为已经移除了复选框）
 function deselectAllNewCaseProjects() {
     try {
-        console.log('取消全选新建测试用例项目功能已禁用，因为已移除复选框');
         /*
         const container = document.getElementById('new-case-projects-container');
         if (container) {
@@ -10558,7 +14105,7 @@ function deselectAllNewCaseProjects() {
         }
         */
     } catch (error) {
-        console.error('取消全选新建测试用例项目出错:', error);
+        logger.error('取消全选新建测试用例项目出错:', error);
     }
 }
 
@@ -10589,7 +14136,6 @@ function closeTestCaseModal() {
     // 重置模态框位置
     resetAddCaseModalPosition();
 
-    console.log('[新建用例] 模态框已关闭，状态已重置');
 }
 
 // 初始化新建测试用例模态框的拖拽调整宽度功能
@@ -10724,19 +14270,15 @@ function resetAddCaseModalPosition() {
 // 提交测试用例表单
 async function submitTestCaseForm() {
     try {
-        console.log('=== 开始提交测试用例表单 ===');
         showLoading('创建测试用例中...');
 
         // 生成测试用例编号
         const caseId = generateTestCaseId();
-        console.log('Generated caseId:', caseId);
 
         // 从localStorage获取临时关联项目
         const tempAssociations = JSON.parse(localStorage.getItem('tempProjectAssociations') || '[]');
-        console.log('Temp associations from localStorage:', tempAssociations);
 
         // 获取表单数据
-        console.log('Getting form data...');
         const caseName = document.getElementById('case-name');
         const casePriority = document.getElementById('case-priority');
         const caseType = document.getElementById('case-type');
@@ -10753,12 +14295,6 @@ async function submitTestCaseForm() {
         const selectedMethods = TagSelector.getValues('case-methods-selector').map(id => parseInt(id));
         const selectedSources = TagSelector.getValues('case-sources-selector').map(id => parseInt(id));
 
-        console.log('Selected values:', {
-            phases: selectedPhases,
-            environments: selectedEnvironments,
-            methods: selectedMethods,
-            sources: selectedSources
-        });
 
         // 提取项目ID数组，兼容现有API
         const projectIds = tempAssociations.map(assoc => assoc.project_id);
@@ -10787,27 +14323,16 @@ async function submitTestCaseForm() {
             sources: selectedSources
         };
 
-        console.log('Form data:', formData);
-        console.log('[新建用例] 验证字段:', {
-            moduleId: formData.moduleId,
-            moduleIdType: typeof formData.moduleId,
-            selectedEnvironments: selectedEnvironments,
-            selectedEnvironmentsLength: selectedEnvironments.length,
-            selectedMethods: selectedMethods,
-            selectedMethodsLength: selectedMethods.length,
-            selectedModuleId: selectedModuleId,
-            selectedLevel1PointId: selectedLevel1PointId
-        });
 
         // 验证必填字段
         if (!formData.name) {
-            console.error('测试用例名称不能为空');
+            logger.error('测试用例名称不能为空');
             showErrorMessage('测试用例名称不能为空');
             hideLoading();
             return;
         }
         if (!formData.moduleId || selectedEnvironments.length === 0 || selectedMethods.length === 0) {
-            console.error('[新建用例] 缺少必填字段:', {
+            logger.error('[新建用例] 缺少必填字段:', {
                 moduleId: formData.moduleId,
                 moduleIdValid: !!formData.moduleId,
                 environments: selectedEnvironments,
@@ -10821,17 +14346,14 @@ async function submitTestCaseForm() {
         }
 
         // 调用API创建测试用例
-        console.log('Calling API to create test case...');
 
         const createData = await apiRequest('/cases/create', {
             method: 'POST',
             body: JSON.stringify(formData)
         });
 
-        console.log('API response:', createData);
 
         if (createData.success) {
-            console.log('测试用例创建成功');
 
             // 清除本地存储中的临时关联项目数据（已在创建时一并保存）
             localStorage.removeItem('tempProjectAssociations');
@@ -10841,7 +14363,6 @@ async function submitTestCaseForm() {
 
             // 刷新一级测试点列表（更新测试用例数量统计）
             if (selectedModuleId) {
-                console.log('[新建用例] 刷新一级测试点列表');
                 await loadLevel1Points(selectedModuleId);
             }
 
@@ -10860,16 +14381,15 @@ async function submitTestCaseForm() {
 
             showSuccessMessage('测试用例创建成功');
         } else {
-            console.error('测试用例创建失败:', createData.message);
+            logger.error('测试用例创建失败:', createData.message);
             showErrorMessage('创建测试用例失败: ' + (createData.message || '创建失败，请稍后重试'));
         }
     } catch (error) {
-        console.error('创建测试用例错误:', error);
-        console.error('Error stack:', error.stack);
+        logger.error('创建测试用例错误:', error);
+        logger.error('Error stack:', error.stack);
         showErrorMessage('创建测试用例失败: ' + error.message);
     } finally {
         hideLoading();
-        console.log('=== 测试用例表单提交完成 ===');
     }
 }
 
@@ -10997,7 +14517,6 @@ async function loadReportDrawerData(reportId) {
                         `;
                     }
                 } catch (e) {
-                    console.log('获取统计数据失败:', e);
                 }
             }
 
@@ -11011,10 +14530,33 @@ async function loadReportDrawerData(reportId) {
                     }
                 }
             } catch (e) {
-                console.log('获取Markdown内容失败:', e);
             }
 
             let summaryHtml = '';
+            
+            // 检查AI分析是否失败
+            const aiAnalysisFailed = report.aiAnalysisFailed || report.ai_analysis_failed;
+            if (aiAnalysisFailed) {
+                summaryHtml = `
+                    <div class="drawer-section">
+                        <div class="ai-analysis-warning" style="background: #fef3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 12px 16px; margin-bottom: 12px;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="#856404" stroke-width="2" style="width: 20px; height: 20px;">
+                                    <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                                </svg>
+                                <span style="color: #856404; font-weight: 500;">AI分析生成失败</span>
+                            </div>
+                            <p style="color: #856404; font-size: 13px; margin: 8px 0 0 28px;">
+                                报告已生成，但AI智能分析未能完成。您可以重新生成报告以获取AI分析内容。
+                            </p>
+                            <button onclick="regenerateReportWithAI(${reportId})" style="margin-top: 8px; margin-left: 28px; padding: 6px 12px; background: #ffc107; border: none; border-radius: 4px; color: #856404; cursor: pointer; font-size: 13px;">
+                                重新生成AI分析
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+            
             if (summaryContent) {
                 // 使用 marked.js 将 Markdown 转换为 HTML
                 let renderedSummary = summaryContent;
@@ -11022,11 +14564,10 @@ async function loadReportDrawerData(reportId) {
                     try {
                         renderedSummary = marked.parse(summaryContent);
                     } catch (e) {
-                        console.log('Markdown渲染失败:', e);
                     }
                 }
                 
-                summaryHtml = `
+                summaryHtml += `
                     <div class="drawer-section">
                         <h4 class="section-title">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
@@ -11088,7 +14629,7 @@ async function loadReportDrawerData(reportId) {
             `;
         }
     } catch (error) {
-        console.error('加载报告详情失败:', error);
+        logger.error('加载报告详情失败:', error);
         contentArea.innerHTML = `
             <div style="padding: 40px; text-align: center; color: var(--color-text-secondary, #6b7280);">
                 <p>加载失败: ${error.message}</p>
@@ -11123,6 +14664,8 @@ async function loadReportDetail(reportId) {
         const reportIterationEl = document.getElementById('report-iteration');
         const reportTypeEl = document.getElementById('report-type');
         const reportSummaryTextEl = document.getElementById('report-summary-text');
+        const reportPhaseEl = document.getElementById('report-phase');
+        const reportSoftwareEl = document.getElementById('report-software');
 
         if (reportData.success && reportData.report) {
             const report = reportData.report;
@@ -11135,6 +14678,8 @@ async function loadReportDetail(reportId) {
             if (reportProjectEl) reportProjectEl.textContent = report.project || '-';
             if (reportIterationEl) reportIterationEl.textContent = report.iteration || '-';
             if (reportTypeEl) reportTypeEl.textContent = report.type || '-';
+            if (reportPhaseEl) reportPhaseEl.textContent = report.testPhase || '-';
+            if (reportSoftwareEl) reportSoftwareEl.textContent = report.software || '-';
 
             if (report.summary && report.summary.startsWith('#')) {
                 currentReportMarkdown = report.summary;
@@ -11148,6 +14693,8 @@ async function loadReportDetail(reportId) {
             if (reportProjectEl) reportProjectEl.textContent = '-';
             if (reportIterationEl) reportIterationEl.textContent = '-';
             if (reportTypeEl) reportTypeEl.textContent = '-';
+            if (reportPhaseEl) reportPhaseEl.textContent = '-';
+            if (reportSoftwareEl) reportSoftwareEl.textContent = '-';
             if (reportSummaryTextEl) reportSummaryTextEl.value = '';
         }
 
@@ -11158,29 +14705,25 @@ async function loadReportDetail(reportId) {
                 extractSummaryFromMarkdown();
             }
         } catch (e) {
-            console.log('未找到Markdown内容');
         }
 
-        if (testPlanId) {
-            try {
-                const previewData = await apiRequest(`/reports/preview/${testPlanId}`);
-                if (previewData.success) {
-                    currentReportData = previewData;
-                    updateDashboardCards(previewData.statistics);
-                    updateOverviewInfo(previewData.testPlan);
-                    initReportCharts(previewData);
-                    renderDefectsTable(previewData.failedCases || []);
+        // 使用新的统计API获取数据（支持所有维度的报告）
+        try {
+            const statsData = await apiRequest(`/reports/statistics/${reportId}`);
+            if (statsData.success) {
+                currentReportData = statsData;
+                updateDashboardCards(statsData.statistics);
+                if (statsData.testPlan) {
+                    updateOverviewInfo(statsData.testPlan);
                 }
-            } catch (e) {
-                console.log('未找到详细统计数据:', e);
-                initReportCharts(null);
+                initReportCharts(statsData);
+                renderDefectsTable(statsData.failedCases || []);
             }
-        } else {
-            console.log('报告未关联测试计划，无法加载详细统计数据');
+        } catch (e) {
             initReportCharts(null);
         }
     } catch (error) {
-        console.error('加载报告详情错误:', error);
+        logger.error('加载报告详情错误:', error);
         const currentReportNameEl = document.getElementById('current-report-name');
         const reportNameInputEl = document.getElementById('report-name-input');
         if (currentReportNameEl) currentReportNameEl.textContent = '测试报告';
@@ -11244,7 +14787,6 @@ function extractSummaryFromMarkdown() {
                 try {
                     summaryDisplay.innerHTML = marked.parse(summaryContent);
                 } catch (e) {
-                    console.log('Markdown渲染失败:', e);
                     summaryDisplay.innerHTML = `<pre>${escapeHtml(summaryContent)}</pre>`;
                 }
             } else {
@@ -11261,7 +14803,6 @@ function updateDashboardCards(statistics) {
     const failCountEl = document.getElementById('report-fail-count');
     
     if (!totalCasesEl && !passRateEl && !notRunEl && !failCountEl) {
-        console.log('[updateDashboardCards] 当前页面不包含报告卡片元素，跳过更新');
         return;
     }
     
@@ -11327,47 +14868,96 @@ function renderMarkdownContent() {
     }
 }
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
 async function generateReportFromTestPlan(testPlanId) {
-    console.log(`[生成报告] 开始生成测试报告，testPlanId: ${testPlanId}`);
+    
     try {
-        showLoading('正在生成测试报告...');
+        showLoading('正在提交报告生成任务...');
 
-        const result = await apiRequest(`/reports/generate/${testPlanId}`, {
+        const asyncResult = await apiRequest('/reports/async-generate', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ useAI: true })
+            body: JSON.stringify({
+                dimension: 'testplan',
+                targetId: testPlanId,
+                template: 'standard',
+                reportName: '',
+                reportDesc: '',
+                enableAI: true
+            })
         });
 
-        if (result.success) {
-            currentReportMarkdown = result.markdown;
-            currentReportId = result.reportId;
+        if (!asyncResult.success) {
+            hideLoading();
+            showToast(asyncResult.message || '提交任务失败', 'error');
+            return;
+        }
 
-            document.getElementById('current-report-name').textContent = result.reportName;
-            document.getElementById('report-name-input').value = result.reportName;
+        const jobId = asyncResult.jobId;
 
-            showToast('报告生成成功', 'success');
+        let progress = 0;
+        let message = '任务已提交';
+        const maxPollTime = 10 * 60 * 1000;
+        const pollInterval = 2000;
+        const startTime = Date.now();
 
-            if (isMarkdownView) {
-                renderMarkdownContent();
+        while (Date.now() - startTime < maxPollTime) {
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+
+            const statusResult = await apiRequest(`/reports/job-status/${jobId}`);
+            
+            if (!statusResult.success) {
+                continue;
             }
 
-            return result;
-        } else {
-            showToast(result.message || '报告生成失败', 'error');
+            progress = statusResult.progress || 0;
+            message = statusResult.message || '处理中...';
+
+            updateLoadingMessage(`正在生成报告... ${progress}% - ${message}`);
+
+            if (statusResult.status === 'completed') {
+                hideLoading();
+                showToast('报告生成成功', 'success');
+                
+                currentReportId = statusResult.reportId;
+                
+                if (typeof loadTestReports === 'function') {
+                    await loadTestReports();
+                }
+                
+                return { success: true, reportId: statusResult.reportId };
+            }
+
+            if (statusResult.status === 'failed') {
+                hideLoading();
+                showToast(`报告生成失败: ${statusResult.error || '未知错误'}`, 'error');
+                return { success: false, message: statusResult.error };
+            }
+
+            if (statusResult.status === 'cancelled') {
+                hideLoading();
+                showToast('报告生成已取消', 'warning');
+                return { success: false, message: '任务已取消' };
+            }
         }
+
+        hideLoading();
+        showToast('报告生成超时，请稍后刷新查看', 'warning');
+        return { success: false, message: '生成超时' };
+
     } catch (error) {
-        console.error('生成报告错误:', error);
+        logger.error('生成报告错误:', error);
         showToast('报告生成失败: ' + error.message, 'error');
     } finally {
         hideLoading();
+    }
+}
+
+function updateLoadingMessage(message) {
+    const loadingText = document.querySelector('#loading-overlay .loading-text');
+    if (loadingText) {
+        loadingText.textContent = message;
     }
 }
 
@@ -11380,7 +14970,7 @@ function copyMarkdownContent() {
     navigator.clipboard.writeText(currentReportMarkdown).then(() => {
         showToast('Markdown内容已复制到剪贴板', 'success');
     }).catch(err => {
-        console.error('复制失败:', err);
+        logger.error('复制失败:', err);
         showToast('复制失败', 'error');
     });
 }
@@ -11426,8 +15016,57 @@ async function regenerateReport() {
             }
         }
     } catch (error) {
-        console.error('重新生成报告错误:', error);
+        logger.error('重新生成报告错误:', error);
         showToast('重新生成失败', 'error');
+    }
+}
+
+// 重新生成AI分析（仅针对AI分析失败的报告）
+async function regenerateReportWithAI(reportId) {
+    if (!reportId) {
+        showToast('报告ID无效', 'warning');
+        return;
+    }
+
+    try {
+        showSuccessMessage('正在重新生成AI分析，请稍候...');
+        
+        const reportData = await apiRequest(`/reports/detail/${reportId}`);
+        if (!reportData.success || !reportData.report) {
+            showToast('获取报告信息失败', 'error');
+            return;
+        }
+
+        const report = reportData.report;
+        const testPlanId = report.testPlanId || report.test_plan_id;
+        
+        if (!testPlanId) {
+            showToast('该报告未关联测试计划，无法重新生成', 'error');
+            return;
+        }
+
+        const result = await apiRequest(`/reports/generate/${testPlanId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ useAI: true })
+        });
+
+        if (result.success) {
+            showToast('AI分析重新生成成功', 'success');
+            if (typeof loadReportDrawerData === 'function') {
+                loadReportDrawerData(reportId);
+            }
+            if (typeof loadReportsData === 'function') {
+                loadReportsData();
+            }
+        } else {
+            showToast(result.message || 'AI分析生成失败', 'error');
+        }
+    } catch (error) {
+        logger.error('重新生成AI分析错误:', error);
+        showToast('重新生成失败: ' + error.message, 'error');
     }
 }
 
@@ -11687,13 +15326,12 @@ function openBugDetail(bugId) {
 
 // 添加用例库
 function addCaseLibrary() {
-    console.log('添加用例库');
     // 打开新建用例库模态框
     const modal = document.getElementById('add-case-library-modal');
     if (modal) {
         modal.style.display = 'block';
     } else {
-        console.error('新建用例库模态框未找到');
+        logger.error('新建用例库模态框未找到');
     }
 }
 
@@ -11705,23 +15343,20 @@ async function loadCaseLibraries() {
     try {
         showLoading('加载用例库列表中...');
 
-        console.log('加载用例库列表');
 
         const librariesData = await apiRequest('/libraries/list', { useCache: false });
 
-        console.log('从API获取的用例库数据:', librariesData);
 
         if (librariesData.success && librariesData.libraries) {
-            console.log('成功加载用例库数量:', librariesData.libraries.length);
             caseLibraries = librariesData.libraries;
         } else {
-            console.warn('API加载失败，使用空数据');
+            logger.warn('API加载失败，使用空数据');
             caseLibraries = [];
         }
 
         renderCaseLibrariesTable();
     } catch (error) {
-        console.error('加载用例库错误:', error);
+        logger.error('加载用例库错误:', error);
         caseLibraries = [];
         renderCaseLibrariesTable();
     } finally {
@@ -11731,11 +15366,10 @@ async function loadCaseLibraries() {
 
 // 渲染用例库列表
 function renderCaseLibrariesTable() {
-    console.log('渲染用例库列表:', caseLibraries);
     const tableBody = document.getElementById('case-library-body');
 
     if (!tableBody) {
-        console.error('用例库表格体未找到');
+        logger.error('用例库表格体未找到');
         return;
     }
 
@@ -11763,7 +15397,6 @@ function renderCaseLibrariesTable() {
     }
 
     tableBody.innerHTML = caseLibraries.map(library => {
-        console.log('渲染用例库:', library);
         const moduleCount = library.moduleCount || library.module_count || 0;
 
         // 获取当前用户信息，判断是否为管理员
@@ -11780,10 +15413,10 @@ function renderCaseLibrariesTable() {
                                 <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
                             </svg>
                         </div>
-                        <span class="case-library-name">${library.name || '未命名'}</span>
+                        <span class="case-library-name">${escapeHtml(library.name || '未命名')}</span>
                     </div>
                 </td>
-                <td style="color: #64748b;">${library.creator || library.owner || 'admin'}</td>
+                <td style="color: #64748b;">${escapeHtml(library.creator || library.owner || 'admin')}</td>
                 <td style="color: #64748b;">${formatDateTime(library.createdAt || library.created_at || '')}</td>
                 <td style="text-align: right;">
                     <span style="display: inline-flex; align-items: center; gap: 4px; background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%); padding: 4px 12px; border-radius: 12px; font-size: 13px; font-weight: 600; color: #6366f1;">
@@ -11797,21 +15430,30 @@ function renderCaseLibrariesTable() {
                     </span>
                 </td>
                 <td style="text-align: center;">
-                    ${isAdmin ? `
-                        <button class="delete-library-btn" data-library-id="${library.id}" data-library-name="${(library.name || '未命名').replace(/"/g, '&quot;')}" title="删除用例库">
+                    <div style="display: flex; gap: 8px; justify-content: center;">
+                        <button class="edit-library-btn" data-library-id="${library.id}" data-library-name="${escapeHtml(library.name || '未命名')}" title="编辑用例库名称">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"></path>
+                                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                             </svg>
-                            删除
+                            编辑
                         </button>
-                    ` : `
-                        <button disabled title="仅管理员可执行此操作" style="background: #f3f4f6; border: 1px solid #e5e7eb; color: #9ca3af; padding: 6px 12px; border-radius: 6px; cursor: not-allowed; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
-                            </svg>
-                            删除
-                        </button>
-                    `}
+                        ${isAdmin ? `
+                            <button class="delete-library-btn" data-library-id="${library.id}" data-library-name="${escapeHtml(library.name || '未命名')}" title="删除用例库">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"></path>
+                                </svg>
+                                删除
+                            </button>
+                        ` : `
+                            <button disabled title="仅管理员可执行此操作" style="background: #f3f4f6; border: 1px solid #e5e7eb; color: #9ca3af; padding: 6px 12px; border-radius: 6px; cursor: not-allowed; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
+                                </svg>
+                                删除
+                            </button>
+                        `}
+                    </div>
                 </td>
             </tr>
         `;
@@ -11828,6 +15470,19 @@ function renderCaseLibrariesTable() {
             const libraryId = this.getAttribute('data-library-id');
             const libraryName = this.getAttribute('data-library-name');
             deleteLibrary(libraryId, libraryName);
+        });
+    });
+
+    // 绑定编辑按钮事件
+    const editButtons = tableBody.querySelectorAll('.edit-library-btn');
+    editButtons.forEach(btn => {
+        btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            e.preventDefault();
+
+            const libraryId = this.getAttribute('data-library-id');
+            const libraryName = this.getAttribute('data-library-name');
+            showEditLibraryModal(libraryId, libraryName);
         });
     });
 }
@@ -11879,7 +15534,7 @@ async function loadLibrariesForLibraryClone() {
             });
         }
     } catch (error) {
-        console.error('加载用例库列表失败:', error);
+        logger.error('加载用例库列表失败:', error);
     }
 }
 
@@ -11897,24 +15552,129 @@ function getCurrentUserFull() {
             return JSON.parse(userStr);
         }
     } catch (error) {
-        console.error('获取用户信息失败:', error);
+        logger.error('获取用户信息失败:', error);
     }
 
     // 如果都没有，返回默认管理员（开发环境）
-    console.warn('未找到用户信息，返回默认管理员');
+    logger.warn('未找到用户信息，返回默认管理员');
     return { username: 'admin', role: '管理员' };
+}
+
+// 显示编辑用例库名称的模态框
+function showEditLibraryModal(libraryId, libraryName) {
+    const modalHtml = `
+        <div id="edit-library-modal" class="modal" style="display: flex; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 99999; justify-content: center; align-items: center;">
+            <div class="modal-content" style="background: white; border-radius: 16px; width: 480px; max-width: 90%; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);">
+                <div class="modal-header" style="padding: 20px 24px; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; gap: 12px;">
+                    <div style="width: 40px; height: 40px; background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%); border-radius: 10px; display: flex; align-items: center; justify-content: center;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 style="margin: 0; font-size: 18px; font-weight: 600; color: #1f2937;">编辑用例库</h3>
+                        <p style="margin: 4px 0 0 0; font-size: 13px; color: #6b7280;">修改用例库名称</p>
+                    </div>
+                </div>
+                <div class="modal-body" style="padding: 24px;">
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 8px; font-size: 14px; font-weight: 500; color: #374151;">用例库名称 <span style="color: #dc2626;">*</span></label>
+                        <input type="text" id="edit-library-name-input" value="${escapeHtml(libraryName)}" maxlength="64" placeholder="请输入用例库名称" style="width: 100%; padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; outline: none; transition: border-color 0.2s; box-sizing: border-box;" onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='#d1d5db'">
+                        <div style="display: flex; justify-content: space-between; margin-top: 6px;">
+                            <span id="edit-library-name-error" style="font-size: 12px; color: #dc2626; display: none;"></span>
+                            <span id="edit-library-name-counter" style="font-size: 12px; color: #9ca3af; margin-left: auto;">${libraryName.length}/64</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer" style="padding: 16px 24px; border-top: 1px solid #e5e7eb; display: flex; justify-content: flex-end; gap: 12px;">
+                    <button id="edit-library-cancel-btn" style="padding: 10px 20px; border: 1px solid #d1d5db; border-radius: 8px; background: white; color: #374151; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s;">取消</button>
+                    <button id="edit-library-save-btn" style="padding: 10px 20px; border: none; border-radius: 8px; background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); color: white; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s;">保存</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+    const modal = document.getElementById('edit-library-modal');
+    const nameInput = document.getElementById('edit-library-name-input');
+    const nameCounter = document.getElementById('edit-library-name-counter');
+    const nameError = document.getElementById('edit-library-name-error');
+    const cancelBtn = document.getElementById('edit-library-cancel-btn');
+    const saveBtn = document.getElementById('edit-library-save-btn');
+
+    nameInput.addEventListener('input', function() {
+        const length = this.value.length;
+        nameCounter.textContent = `${length}/64`;
+        nameError.style.display = 'none';
+    });
+
+    cancelBtn.addEventListener('click', function() {
+        modal.remove();
+    });
+
+    saveBtn.addEventListener('click', async function() {
+        const newName = nameInput.value.trim();
+        
+        if (!newName) {
+            nameError.textContent = '请输入用例库名称';
+            nameError.style.display = 'block';
+            return;
+        }
+
+        if (newName.length > 64) {
+            nameError.textContent = '用例库名称不能超过64个字符';
+            nameError.style.display = 'block';
+            return;
+        }
+
+        if (newName === libraryName) {
+            showSuccessMessage('用例库名称未变更');
+            modal.remove();
+            return;
+        }
+
+        saveBtn.disabled = true;
+        saveBtn.textContent = '保存中...';
+
+        try {
+            const result = await apiRequest(`/libraries/update/${libraryId}`, {
+                method: 'PUT',
+                body: JSON.stringify({ name: newName })
+            });
+
+            if (result.success) {
+                showSuccessMessage('用例库名称更新成功');
+                modal.remove();
+                await loadCaseLibraries();
+                addHistoryRecord('编辑用例库', `将用例库名称修改为 "${newName}"`);
+            } else {
+                nameError.textContent = result.message || '更新失败，请重试';
+                nameError.style.display = 'block';
+                saveBtn.disabled = false;
+                saveBtn.textContent = '保存';
+            }
+        } catch (error) {
+            logger.error('更新用例库名称失败:', error);
+            nameError.textContent = '更新失败，请重试';
+            nameError.style.display = 'block';
+            saveBtn.disabled = false;
+            saveBtn.textContent = '保存';
+        }
+    });
+
+    nameInput.focus();
+    nameInput.select();
 }
 
 // 删除用例库 - 高危操作，需要二次确认
 async function deleteLibrary(libraryId, libraryName) {
-    console.log('deleteLibrary 被调用:', { libraryId, libraryName });
 
     // 获取当前用户信息
     const user = getCurrentUserFull();
-    console.log('当前用户:', user);
 
     const isAdmin = user && (user.role === '管理员' || user.role === 'admin');
-    console.log('是否管理员:', isAdmin);
 
     if (!isAdmin) {
         showErrorMessage('权限不足：仅管理员可以删除用例库');
@@ -12029,6 +15789,7 @@ async function confirmDeleteLibrary(libraryId, libraryName) {
 
             // 显示成功提示
             showSuccessMessage('用例库删除成功');
+            dashboardDataCache.invalidateOnDataChange('library');
 
             // 重新加载用例库列表
             await loadCaseLibraries();
@@ -12039,7 +15800,7 @@ async function confirmDeleteLibrary(libraryId, libraryName) {
             confirmBtn.innerHTML = '确认删除';
         }
     } catch (error) {
-        console.error('删除用例库错误:', error);
+        logger.error('删除用例库错误:', error);
         errorMsg.textContent = '网络错误，请稍后重试';
         errorMsg.style.display = 'block';
         confirmBtn.disabled = false;
@@ -12052,7 +15813,6 @@ async function verifyCaseLibraryPersistence() {
     try {
         showLoading('验证数据库持久化中...');
 
-        console.log('开始验证用例库持久化...');
 
         // 清空本地缓存
         caseLibraries = [];
@@ -12060,10 +15820,8 @@ async function verifyCaseLibraryPersistence() {
         // 重新从数据库加载
         await loadCaseLibraries();
 
-        console.log('验证完成，当前用例库数量:', caseLibraries.length);
 
         if (caseLibraries.length > 0) {
-            console.log('持久化的用例库:', caseLibraries);
 
             // 更新计数显示
             const countElement = document.querySelector('.case-library-count');
@@ -12077,7 +15835,7 @@ async function verifyCaseLibraryPersistence() {
         }
 
     } catch (error) {
-        console.error('验证持久化错误:', error);
+        logger.error('验证持久化错误:', error);
         showErrorMessage('验证数据库持久化失败: ' + error.message);
     } finally {
         hideLoading();
@@ -12086,8 +15844,7 @@ async function verifyCaseLibraryPersistence() {
 
 // 导入用例
 function importTestCases() {
-    console.log('导入用例');
-    // 这里将实现导入用例功能
+    openImportExcelModal();
 }
 
 // 配置中心功能
@@ -12119,10 +15876,10 @@ function initConfigCenter() {
                     targetPanel.classList.add('active');
                 }
 
-                // 更新 URL hash
-                const configName = menuItem.getAttribute('href')?.replace('#config=', '');
+                // 更新 URL hash（使用路由兼容格式）
+                const configName = menuItem.getAttribute('href')?.replace('#/settings?config=', '');
                 if (configName) {
-                    history.replaceState(null, '', `#config=${configName}`);
+                    history.replaceState(null, '', `#/settings?config=${configName}`);
                 }
 
                 // 触发对应的数据加载
@@ -12251,16 +16008,48 @@ function applyMenuVisibilityByRole() {
 // 从 URL hash 恢复配置面板
 function restoreConfigPanelFromHash() {
     const hash = window.location.hash;
-    const configMatch = hash.match(/#config=(.+)/);
+    const configMatch = hash.match(/[?&]config=([^&]+)/);
 
     if (configMatch) {
         const configName = configMatch[1];
-        const menuItem = document.querySelector(`.menu-item[href="#config=${configName}"]`);
+        const menuItem = document.querySelector(`.menu-item[href="#/settings?config=${configName}"]`);
 
         if (menuItem) {
-            // 模拟点击菜单项
             menuItem.click();
         }
+    }
+}
+
+async function loadSubAgentsConfigPanel() {
+    if (typeof initSubAgentsConfig === 'function') initSubAgentsConfig();
+    else console.warn('[loadSubAgentsConfigPanel] initSubAgentsConfig 未定义，模块可能未加载');
+    if (typeof loadSubAgentsList === 'function') {
+        await loadSubAgentsList();
+    } else if (typeof loadSubAgentsData === 'function') {
+        await loadSubAgentsData();
+    } else {
+        console.warn('[loadSubAgentsConfigPanel] loadSubAgentsList/loadSubAgentsData 未定义，模块可能未加载');
+    }
+}
+
+async function loadAIToolsConfigPanel() {
+    if (typeof ensureAIToolsModal === 'function') ensureAIToolsModal();
+    if (typeof initAIToolsConfig === 'function') initAIToolsConfig();
+    else console.warn('[loadAIToolsConfigPanel] initAIToolsConfig 未定义，模块可能未加载');
+    if (typeof loadAIToolsList === 'function') {
+        await loadAIToolsList();
+    } else {
+        console.warn('[loadAIToolsConfigPanel] loadAIToolsList 未定义，模块可能未加载');
+    }
+}
+
+async function loadAIMemoriesConfigPanel() {
+    if (typeof initAIMemoriesConfig === 'function') initAIMemoriesConfig();
+    else console.warn('[loadAIMemoriesConfigPanel] initAIMemoriesConfig 未定义，模块可能未加载');
+    if (typeof loadAgentDropdown === 'function') {
+        await loadAgentDropdown();
+    } else {
+        console.warn('[loadAIMemoriesConfigPanel] loadAgentDropdown 未定义，模块可能未加载');
     }
 }
 
@@ -12285,15 +16074,18 @@ function loadConfigPanelData(panelId) {
         'test-software-config': loadTestSoftwares,
         'report-templates-config': loadReportTemplates,
         'ai-config-config': initAIConfigPage,
-        'ai-skills-config': loadAISkills
+        'ai-skills-config': loadAISkills,
+        'ai-timeout-config': loadAITimeoutConfig,
+        'ai-sub-agents-config': loadSubAgentsConfigPanel,
+        'ai-tools-config': loadAIToolsConfigPanel,
+        'ai-memories-config': loadAIMemoriesConfigPanel
     };
 
     const loader = dataLoaders[panelId];
     if (loader && typeof loader === 'function') {
-        console.log('加载配置面板数据:', panelId);
         loader();
     } else {
-        console.warn('未找到配置面板加载函数:', panelId);
+        logger.warn('未找到配置面板加载函数:', panelId);
     }
 }
 
@@ -12316,11 +16108,11 @@ async function loadProfileData() {
             profileEmail = user.email || '';
             document.getElementById('profile-email-display').textContent = profileEmail || '未设置';
         } else {
-            console.error('加载用户信息失败:', result);
+            logger.error('加载用户信息失败:', result);
             showErrorMessage(result.message || '加载用户信息失败');
         }
     } catch (error) {
-        console.error('加载用户信息失败:', error);
+        logger.error('加载用户信息失败:', error);
         showErrorMessage('加载用户信息失败');
     }
 }
@@ -12364,7 +16156,7 @@ async function submitEmailChange() {
             showErrorMessage(result.message || '修改失败');
         }
     } catch (error) {
-        console.error('修改邮箱失败:', error);
+        logger.error('修改邮箱失败:', error);
         showErrorMessage('修改邮箱失败');
     }
 }
@@ -12409,11 +16201,12 @@ async function submitPasswordChange() {
         if (result.success) {
             showSuccessMessage('密码修改成功');
             closeEditPasswordModal();
+            await loadUsers();
         } else {
             showErrorMessage(result.message || '修改失败');
         }
     } catch (error) {
-        console.error('修改密码失败:', error);
+        logger.error('修改密码失败:', error);
         showErrorMessage('修改密码失败');
     }
 }
@@ -12422,57 +16215,411 @@ async function submitPasswordChange() {
 // 消息提醒设置功能
 // ========================================
 
+let _notificationPrefsData = null;
+
 async function loadNotificationPrefs() {
+    const container = document.getElementById('notification-settings-container');
+    if (!container) return;
+
+    container.innerHTML = '<div style="text-align:center;padding:40px;color:#999;"><span style="font-size:24px;">⏳</span><p>加载通知设置中...</p></div>';
+
     try {
-        const result = await apiRequest('/users/preferences');
+        const result = await apiRequest('/notification-prefs/preferences');
         if (result.success && result.data) {
-            const prefs = result.data;
-            document.getElementById('pref-email-mentions').checked = prefs.email_notify_mentions;
-            document.getElementById('pref-email-comments').checked = prefs.email_notify_comments;
-            document.getElementById('pref-email-likes').checked = prefs.email_notify_likes;
+            _notificationPrefsData = result.data;
+            renderNotificationPrefs(result.data);
+        } else {
+            container.innerHTML = '<div style="text-align:center;padding:40px;color:#dc3545;"><span style="font-size:24px;">❌</span><p>加载通知设置失败</p></div>';
         }
     } catch (error) {
         console.error('加载消息提醒配置失败:', error);
-        showErrorMessage('加载提醒配置失败');
+        container.innerHTML = '<div style="text-align:center;padding:40px;color:#dc3545;"><span style="font-size:24px;">❌</span><p>加载通知设置失败</p></div>';
+    }
+}
+
+function renderNotificationPrefs(data) {
+    const container = document.getElementById('notification-settings-container');
+    if (!container) return;
+
+    let html = '';
+
+    html += `<div class="settings-section" style="margin-bottom:20px;">
+        <div class="settings-section-header">
+            <span class="section-icon">🌐</span>
+            <div class="section-title-group">
+                <h4 class="settings-section-title">全局设置</h4>
+                <p class="settings-section-desc">控制所有邮件通知的总开关和免打扰时段</p>
+            </div>
+        </div>
+        <div class="settings-items">
+            <div class="setting-item-card">
+                <div class="setting-item-info">
+                    <h5>全局邮件通知</h5>
+                    <p>关闭后所有邮件通知将停止发送</p>
+                </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="pref-global-email" ${data.global.emailEnabled ? 'checked' : ''}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="setting-item-card" style="flex-direction:column;align-items:flex-start;gap:12px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
+                    <div class="setting-item-info">
+                        <h5>免打扰时段</h5>
+                        <p>设置时段内不发送邮件通知（紧急通知除外）</p>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="pref-quiet-hours-enabled" ${data.global.quietHoursStart ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div id="quiet-hours-inputs" style="display:flex;align-items:center;gap:8px;padding-left:12px;${data.global.quietHoursStart ? '' : 'opacity:0.5;pointer-events:none;'}">
+                    <input type="time" id="pref-quiet-start" value="${data.global.quietHoursStart || '22:00'}" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
+                    <span style="color:#666;">至</span>
+                    <input type="time" id="pref-quiet-end" value="${data.global.quietHoursEnd || '08:00'}" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
+                </div>
+            </div>
+        </div>
+    </div>`;
+
+    data.categories.forEach(category => {
+        html += `<div class="settings-section" style="margin-bottom:20px;">
+            <div class="settings-section-header">
+                <span class="section-icon">${category.icon}</span>
+                <div class="section-title-group">
+                    <h4 class="settings-section-title">${category.name}</h4>
+                </div>
+                <div style="display:flex;gap:24px;color:#666;font-size:13px;font-weight:500;">
+                    <span style="min-width:40px;text-align:center;">邮件</span>
+                    ${category.types.some(t => t.supportsInApp) ? '<span style="min-width:40px;text-align:center;">站内</span>' : ''}
+                </div>
+            </div>
+            <div class="settings-items">`;
+
+        category.types.forEach(type => {
+            html += `<div class="setting-item-card">
+                <div class="setting-item-info" style="flex:1;">
+                    <h5>${type.typeName}${type.isRequired ? ' <span style="color:#dc3545;font-size:11px;font-weight:normal;">(强制)</span>' : ''}</h5>
+                    <p>${type.description}</p>
+                </div>
+                <div style="display:flex;gap:24px;align-items:center;">
+                    <label class="toggle-switch" style="margin-bottom:0;">
+                        <input type="checkbox" data-type-code="${type.typeCode}" data-pref-type="email" ${type.emailEnabled ? 'checked' : ''} ${type.canToggleEmail ? '' : 'disabled'}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                    ${type.supportsInApp ? `<label class="toggle-switch" style="margin-bottom:0;">
+                        <input type="checkbox" data-type-code="${type.typeCode}" data-pref-type="inApp" ${type.inAppEnabled ? 'checked' : ''} ${type.canToggleInApp ? '' : 'disabled'}>
+                        <span class="toggle-slider"></span>
+                    </label>` : ''}
+                </div>
+            </div>`;
+        });
+
+        html += `</div></div>`;
+    });
+
+    container.innerHTML = html;
+
+    const quietHoursToggle = document.getElementById('pref-quiet-hours-enabled');
+    const quietHoursInputs = document.getElementById('quiet-hours-inputs');
+    if (quietHoursToggle && quietHoursInputs) {
+        quietHoursToggle.addEventListener('change', function() {
+            if (this.checked) {
+                quietHoursInputs.style.opacity = '1';
+                quietHoursInputs.style.pointerEvents = 'auto';
+            } else {
+                quietHoursInputs.style.opacity = '0.5';
+                quietHoursInputs.style.pointerEvents = 'none';
+            }
+        });
     }
 }
 
 async function saveNotificationPrefs() {
     const btn = document.getElementById('save-notification-prefs-btn');
+    const originalHtml = btn.innerHTML;
+
     btn.disabled = true;
-    btn.textContent = '保存中...';
-    
-    const prefs = {
-        email_notify_mentions: document.getElementById('pref-email-mentions').checked,
-        email_notify_comments: document.getElementById('pref-email-comments').checked,
-        email_notify_likes: document.getElementById('pref-email-likes').checked
-    };
-    
+    btn.innerHTML = '<span class="btn-icon">⏳</span> 保存中...';
+
     try {
-        const result = await apiRequest('/users/preferences', {
+        const globalEmailEnabled = document.getElementById('pref-global-email')?.checked ?? true;
+        const quietHoursEnabled = document.getElementById('pref-quiet-hours-enabled')?.checked ?? false;
+        const quietStart = quietHoursEnabled ? (document.getElementById('pref-quiet-start')?.value || null) : null;
+        const quietEnd = quietHoursEnabled ? (document.getElementById('pref-quiet-end')?.value || null) : null;
+
+        const globalResult = await apiRequest('/notification-prefs/preferences/global', {
             method: 'PUT',
-            body: JSON.stringify(prefs)
+            body: JSON.stringify({
+                emailEnabled: globalEmailEnabled,
+                quietHoursStart: quietStart,
+                quietHoursEnd: quietEnd
+            })
         });
-        
-        if (result.success) {
-            showSuccessMessage('消息提醒配置已保存');
-        } else {
-            showErrorMessage(result.message || '保存失败');
+
+        if (!globalResult.success) {
+            showErrorMessage(globalResult.message || '保存全局设置失败');
+            return;
         }
+
+        const preferences = [];
+        document.querySelectorAll('[data-type-code]').forEach(el => {
+            const typeCode = el.getAttribute('data-type-code');
+            const prefType = el.getAttribute('data-pref-type');
+            const existing = preferences.find(p => p.typeCode === typeCode);
+            if (existing) {
+                if (prefType === 'email') existing.emailEnabled = el.checked;
+                else existing.inAppEnabled = el.checked;
+            } else {
+                preferences.push({
+                    typeCode: typeCode,
+                    emailEnabled: prefType === 'email' ? el.checked : true,
+                    inAppEnabled: prefType === 'inApp' ? el.checked : true
+                });
+            }
+        });
+
+        if (preferences.length > 0) {
+            const batchResult = await apiRequest('/notification-prefs/preferences/batch', {
+                method: 'PUT',
+                body: JSON.stringify({ preferences })
+            });
+            if (!batchResult.success) {
+                showErrorMessage(batchResult.message || '保存偏好设置失败');
+                return;
+            }
+        }
+
+        showSuccessMessage('消息提醒配置已保存');
+        await loadNotificationPrefs();
     } catch (error) {
         console.error('保存消息提醒配置失败:', error);
         showErrorMessage('保存配置失败');
     } finally {
         btn.disabled = false;
-        btn.textContent = '保存设置';
+        btn.innerHTML = originalHtml;
     }
 }
 
-// 绑定保存按钮事件
+async function resetNotificationPrefs() {
+    if (!(await showConfirmMessage('确定要恢复所有通知设置为默认值吗？此操作不可撤销。'))) return;
+
+    try {
+        const result = await apiRequest('/notification-prefs/preferences/reset', {
+            method: 'POST'
+        });
+        if (result.success) {
+            showSuccessMessage('已恢复默认设置');
+            await loadNotificationPrefs();
+        } else {
+            showErrorMessage(result.message || '恢复默认设置失败');
+        }
+    } catch (error) {
+        console.error('恢复默认设置失败:', error);
+        showErrorMessage('恢复默认设置失败');
+    }
+}
+
+// ========================================
+// AI 超时配置功能
+// ========================================
+
+const AI_TIMEOUT_ITEMS = [
+    { key: 'generalAITask', label: 'AI 任务超时', desc: '用例生成、一级测试点生成、去重 Embedding、概述生成等所有常规AI任务的统一超时时间', defaultMs: 120000, min: 10000, max: 3600000 },
+    { key: 'reportGeneration', label: '报告分析超时', desc: 'AI生成报告分析时的请求超时时间，因数据量较大通常需要更长超时', defaultMs: 600000, min: 60000, max: 7200000 }
+];
+
+let _aiTimeoutConfig = null;
+let _aiTimeoutDefaults = null;
+
+async function loadAITimeoutConfig() {
+    const container = document.getElementById('ai-timeout-settings-container');
+    if (!container) return;
+
+    container.innerHTML = '<div style="text-align:center;padding:40px;color:#999;"><span style="font-size:24px;">⏳</span><p>加载AI超时配置中...</p></div>';
+
+    try {
+        const result = await apiRequest('/users/ai-timeout-config', { useCache: false });
+        if (result.success && result.data) {
+            _aiTimeoutConfig = result.data.config;
+            _aiTimeoutDefaults = result.data.defaults;
+            renderAITimeoutConfig(result.data.config, result.data.defaults);
+        } else {
+            container.innerHTML = '<div style="text-align:center;padding:40px;color:#dc3545;"><span style="font-size:24px;">❌</span><p>加载AI超时配置失败</p></div>';
+        }
+    } catch (error) {
+        console.error('加载AI超时配置失败:', error);
+        container.innerHTML = '<div style="text-align:center;padding:40px;color:#dc3545;"><span style="font-size:24px;">❌</span><p>加载AI超时配置失败</p></div>';
+    }
+}
+
+function renderAITimeoutConfig(config, defaults) {
+    const container = document.getElementById('ai-timeout-settings-container');
+    if (!container) return;
+
+    let html = '';
+
+    html += `<div class="settings-section" style="margin-bottom:20px;">
+        <div class="settings-section-header">
+            <span class="section-icon">💡</span>
+            <div class="section-title-group">
+                <h4 class="settings-section-title">超时配置说明</h4>
+                <p class="settings-section-desc">不同大模型和服务器响应速度不同，您可以根据实际使用情况调整AI任务的请求超时时间。未配置的项将使用系统默认值。</p>
+            </div>
+        </div>
+    </div>`;
+
+    html += `<div class="settings-section" style="margin-bottom:20px;">
+        <div class="settings-section-header">
+            <span class="section-icon">⏱️</span>
+            <div class="section-title-group">
+                <h4 class="settings-section-title">超时设置</h4>
+                <p class="settings-section-desc">单位：秒，数值表示等待AI响应的最大时间</p>
+            </div>
+        </div>
+        <div class="settings-items">`;
+
+    AI_TIMEOUT_ITEMS.forEach(item => {
+        const currentValue = config[item.key] || defaults[item.key] || item.defaultMs;
+        const currentSeconds = Math.round(currentValue / 1000);
+        const defaultSeconds = Math.round((defaults[item.key] || item.defaultMs) / 1000);
+        const minSeconds = Math.round(item.min / 1000);
+        const maxSeconds = Math.round(item.max / 1000);
+        const isCustom = config[item.key] !== undefined && config[item.key] !== null && config[item.key] !== defaults[item.key];
+
+        html += `<div class="setting-item-card" style="flex-direction:column;align-items:flex-start;gap:8px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
+                <div class="setting-item-info">
+                    <h5>${item.label} ${isCustom ? '<span style="color:#f59e0b;font-size:11px;font-weight:normal;">(已自定义)</span>' : ''}</h5>
+                    <p>${item.desc}</p>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <input type="number" id="ai-timeout-${item.key}" value="${currentSeconds}" min="${minSeconds}" max="${maxSeconds}" step="5"
+                        style="width:80px;padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px;text-align:right;"
+                        data-key="${item.key}" data-default-ms="${item.defaultMs}">
+                    <span style="color:#666;font-size:14px;white-space:nowrap;">秒</span>
+                </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding-left:12px;width:100%;">
+                <span style="color:#9ca3af;font-size:12px;">默认 ${defaultSeconds} 秒</span>
+                <span style="color:#d1d5db;">|</span>
+                <span style="color:#9ca3af;font-size:12px;">范围 ${minSeconds}-${maxSeconds} 秒</span>
+            </div>
+        </div>`;
+    });
+
+    html += `</div></div>`;
+
+    container.innerHTML = html;
+}
+
+async function saveAITimeoutConfig() {
+    if (!_aiTimeoutDefaults) {
+        showErrorMessage('请先加载配置');
+        return;
+    }
+
+    const config = {};
+
+    for (const item of AI_TIMEOUT_ITEMS) {
+        const input = document.getElementById(`ai-timeout-${item.key}`);
+        if (!input) continue;
+
+        const valueSeconds = parseInt(input.value, 10);
+        const minSeconds = Math.round(item.min / 1000);
+        const maxSeconds = Math.round(item.max / 1000);
+
+        if (isNaN(valueSeconds) || valueSeconds < minSeconds || valueSeconds > maxSeconds) {
+            showErrorMessage(`${item.label} 的值必须在 ${minSeconds}-${maxSeconds} 秒之间`);
+            return;
+        }
+
+        config[item.key] = valueSeconds * 1000;
+    }
+
+    try {
+        const saveBtn = document.getElementById('save-ai-timeout-btn');
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<span class="btn-icon">⏳</span> 保存中...';
+        }
+
+        const result = await apiRequest('/users/ai-timeout-config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        });
+
+        if (result.success) {
+            showSuccessMessage('AI超时配置已保存');
+            _aiTimeoutConfig = result.data;
+            renderAITimeoutConfig(result.data, _aiTimeoutDefaults);
+        } else {
+            showErrorMessage(result.message || '保存失败');
+        }
+    } catch (error) {
+        console.error('保存AI超时配置失败:', error);
+        showErrorMessage('保存AI超时配置失败');
+    } finally {
+        const saveBtn = document.getElementById('save-ai-timeout-btn');
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<span class="btn-icon">💾</span> 保存设置';
+        }
+    }
+}
+
+async function resetAITimeoutConfig() {
+    if (!(await showConfirmMessage('确定要恢复所有AI超时配置为系统默认值吗？'))) return;
+
+    try {
+        const resetBtn = document.getElementById('reset-ai-timeout-btn');
+        if (resetBtn) {
+            resetBtn.disabled = true;
+            resetBtn.innerHTML = '<span class="btn-icon">⏳</span> 重置中...';
+        }
+
+        const result = await apiRequest('/users/ai-timeout-config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+
+        if (result.success) {
+            showSuccessMessage('已恢复为默认配置');
+            _aiTimeoutConfig = result.data;
+            renderAITimeoutConfig(result.data, _aiTimeoutDefaults);
+        } else {
+            showErrorMessage(result.message || '重置失败');
+        }
+    } catch (error) {
+        console.error('重置AI超时配置失败:', error);
+        showErrorMessage('重置AI超时配置失败');
+    } finally {
+        const resetBtn = document.getElementById('reset-ai-timeout-btn');
+        if (resetBtn) {
+            resetBtn.disabled = false;
+            resetBtn.innerHTML = '<span class="btn-icon">🔄</span> 恢复默认';
+        }
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     const saveBtn = document.getElementById('save-notification-prefs-btn');
     if (saveBtn) {
         saveBtn.addEventListener('click', saveNotificationPrefs);
+    }
+    const resetBtn = document.getElementById('reset-notification-prefs-btn');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', resetNotificationPrefs);
+    }
+    const aiTimeoutSaveBtn = document.getElementById('save-ai-timeout-btn');
+    if (aiTimeoutSaveBtn) {
+        aiTimeoutSaveBtn.addEventListener('click', saveAITimeoutConfig);
+    }
+    const aiTimeoutResetBtn = document.getElementById('reset-ai-timeout-btn');
+    if (aiTimeoutResetBtn) {
+        aiTimeoutResetBtn.addEventListener('click', resetAITimeoutConfig);
     }
 });
 
@@ -12492,7 +16639,7 @@ async function loadEmailConfigs() {
             await loadEmailStats();
         }
     } catch (error) {
-        console.error('加载邮件配置失败:', error);
+        logger.error('加载邮件配置失败:', error);
     }
 }
 
@@ -12546,7 +16693,7 @@ async function loadEmailStats() {
             document.getElementById('email-remaining').textContent = Math.max(0, remaining);
         }
     } catch (error) {
-        console.error('加载邮件统计失败:', error);
+        logger.error('加载邮件统计失败:', error);
     }
 }
 
@@ -12580,7 +16727,7 @@ function openAddEmailConfigModal() {
 // 编辑邮件配置
 async function editEmailConfig(id) {
     try {
-        const result = await apiRequest(`/email/configs/${id}`);
+        const result = await apiRequest(`/email/configs/${id}`, { useCache: false });
         if (result.success) {
             const config = result.config;
             document.getElementById('email-modal-title').textContent = '编辑邮件配置';
@@ -12602,7 +16749,7 @@ async function editEmailConfig(id) {
             document.getElementById('email-config-modal').style.display = 'flex';
         }
     } catch (error) {
-        console.error('获取邮件配置失败:', error);
+        logger.error('获取邮件配置失败:', error);
         showToast('获取邮件配置失败', 'error');
     }
 }
@@ -12665,12 +16812,16 @@ async function saveEmailConfig() {
         if (result.success) {
             showToast(id ? '邮件配置更新成功' : '邮件配置创建成功', 'success');
             closeEmailConfigModal();
+            apiCache.delete('/email/configs');
+            if (id) {
+                apiCache.delete(`/email/configs/${id}`);
+            }
             loadEmailConfigs();
         } else {
             showToast(result.message || '保存失败', 'error');
         }
     } catch (error) {
-        console.error('保存邮件配置失败:', error);
+        logger.error('保存邮件配置失败:', error);
         showToast('保存失败', 'error');
     }
 }
@@ -12683,12 +16834,14 @@ async function deleteEmailConfig(id) {
         const result = await apiRequest(`/email/configs/${id}`, { method: 'DELETE' });
         if (result.success) {
             showToast('邮件配置删除成功', 'success');
+            apiCache.delete('/email/configs');
+            apiCache.delete(`/email/configs/${id}`);
             loadEmailConfigs();
         } else {
             showToast(result.message || '删除失败', 'error');
         }
     } catch (error) {
-        console.error('删除邮件配置失败:', error);
+        logger.error('删除邮件配置失败:', error);
         showToast('删除失败', 'error');
     }
 }
@@ -12718,7 +16871,7 @@ async function loadHyperlinkConfigs() {
     if (!tbody) return;
 
     try {
-        const result = await apiRequest('/hyperlink-configs/list');
+        const result = await apiRequest('/hyperlink-configs/list', { useCache: false });
         
         if (result.success && result.configs) {
             if (result.configs.length === 0) {
@@ -12753,7 +16906,7 @@ async function loadHyperlinkConfigs() {
             `).join('');
         }
     } catch (error) {
-        console.error('加载超链接配置失败:', error);
+        logger.error('加载超链接配置失败:', error);
         tbody.innerHTML = '<tr><td colspan="6" class="no-data">加载失败</td></tr>';
     }
 }
@@ -12815,12 +16968,13 @@ async function saveHyperlinkConfig() {
         if (result.success) {
             showSuccessMessage(id ? '更新成功' : '添加成功');
             closeHyperlinkConfigModal();
+            apiCache.delete('/hyperlink-configs/list');
             loadHyperlinkConfigs();
         } else {
             showErrorMessage(result.message || '操作失败');
         }
     } catch (error) {
-        console.error('保存超链接配置失败:', error);
+        logger.error('保存超链接配置失败:', error);
         showErrorMessage('操作失败');
     }
 }
@@ -12836,7 +16990,7 @@ async function editHyperlinkConfig(id) {
             }
         }
     } catch (error) {
-        console.error('获取配置失败:', error);
+        logger.error('获取配置失败:', error);
         showErrorMessage('获取配置失败');
     }
 }
@@ -12851,12 +17005,13 @@ async function deleteHyperlinkConfig(id) {
         const result = await apiRequest(`/hyperlink-configs/${id}`, { method: 'DELETE' });
         if (result.success) {
             showSuccessMessage('删除成功');
+            apiCache.delete('/hyperlink-configs/list');
             loadHyperlinkConfigs();
         } else {
             showErrorMessage(result.message || '删除失败');
         }
     } catch (error) {
-        console.error('删除超链接配置失败:', error);
+        logger.error('删除超链接配置失败:', error);
         showErrorMessage('删除失败');
     }
 }
@@ -12893,7 +17048,7 @@ async function sendTestEmail() {
             showToast(result.message || '发送失败', 'error');
         }
     } catch (error) {
-        console.error('发送测试邮件失败:', error);
+        logger.error('发送测试邮件失败:', error);
         showToast('发送失败', 'error');
     }
 }
@@ -12914,55 +17069,115 @@ document.addEventListener('click', function (e) {
 // 查看邮件发送日志
 async function viewEmailLogs() {
     try {
-        const result = await apiRequest('/email/logs?pageSize=50');
+        const result = await apiRequest('/email/logs?pageSize=50', { useCache: false });
         if (result.success) {
             const logs = result.logs;
             let logsHtml = `
-                <div style="max-height: 400px; overflow-y: auto;">
-                    <table style="width: 100%; border-collapse: collapse;">
-                        <thead>
-                            <tr style="background: #f5f5f5;">
-                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">收件人</th>
-                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">主题</th>
-                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">类型</th>
-                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">状态</th>
-                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">时间</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-            `;
-
-            if (logs.length === 0) {
-                logsHtml += '<tr><td colspan="5" style="padding: 20px; text-align: center; color: #999;">暂无发送记录</td></tr>';
-            } else {
-                logs.forEach(log => {
-                    const statusColor = log.status === 'sent' ? '#28a745' : (log.status === 'failed' ? '#dc3545' : '#ffc107');
-                    const statusText = log.status === 'sent' ? '成功' : (log.status === 'failed' ? '失败' : '待发送');
-                    logsHtml += `
-                        <tr>
-                            <td style="padding: 8px; border-bottom: 1px solid #eee;">${log.recipient_email}</td>
-                            <td style="padding: 8px; border-bottom: 1px solid #eee; max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${log.subject}</td>
-                            <td style="padding: 8px; border-bottom: 1px solid #eee;">${log.email_type || '-'}</td>
-                            <td style="padding: 8px; border-bottom: 1px solid #eee;"><span style="color: ${statusColor};">${statusText}</span></td>
-                            <td style="padding: 8px; border-bottom: 1px solid #eee;">${log.created_at || '-'}</td>
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="background: #f5f5f5;">
+                            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd; white-space: nowrap;">收件人</th>
+                            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">主题</th>
+                            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd; white-space: nowrap;">类型</th>
+                            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd; white-space: nowrap;">状态</th>
+                            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd; white-space: nowrap;">时间</th>
                         </tr>
-                    `;
-                });
-            }
+                    </thead>
+                    <tbody>
+        `;
 
-            logsHtml += '</tbody></table></div>';
+        if (logs.length === 0) {
+            logsHtml += '<tr><td colspan="5" style="padding: 30px; text-align: center; color: #999;">暂无发送记录</td></tr>';
+        } else {
+            logs.forEach(log => {
+                const statusColor = log.status === 'sent' ? '#28a745' : (log.status === 'failed' ? '#dc3545' : '#ffc107');
+                const statusText = log.status === 'sent' ? '成功' : (log.status === 'failed' ? '失败' : '待发送');
+                logsHtml += `
+                    <tr>
+                        <td style="padding: 10px; border-bottom: 1px solid #eee;">${log.recipient_email}</td>
+                        <td style="padding: 10px; border-bottom: 1px solid #eee;">${log.subject}</td>
+                        <td style="padding: 10px; border-bottom: 1px solid #eee;">${log.email_type || '-'}</td>
+                        <td style="padding: 10px; border-bottom: 1px solid #eee;"><span style="color: ${statusColor}; font-weight: 500;">${statusText}</span></td>
+                        <td style="padding: 10px; border-bottom: 1px solid #eee; white-space: nowrap;">${log.created_at || '-'}</td>
+                    </tr>
+                `;
+            });
+        }
 
-            // 使用确认模态框显示日志
-            const modal = document.getElementById('confirm-modal');
-            document.querySelector('#confirm-modal .modal-header h3').textContent = '📋 邮件发送日志';
-            document.getElementById('confirm-message').innerHTML = logsHtml;
-            document.querySelector('#confirm-modal .modal-footer').style.display = 'none';
+        logsHtml += '</tbody></table>';
+
+            const modalBody = document.getElementById('email-logs-body');
+            modalBody.innerHTML = logsHtml;
+            
+            const modal = document.getElementById('email-logs-modal');
+            const content = document.getElementById('email-logs-content');
+            content.style.width = '800px';
+            content.style.height = 'auto';
+            content.style.left = '';
+            content.style.top = '';
+            content.style.position = 'relative';
             modal.style.display = 'flex';
+            
+            initEmailLogsDrag();
         }
     } catch (error) {
-        console.error('获取邮件日志失败:', error);
+        logger.error('获取邮件日志失败:', error);
         showToast('获取邮件日志失败', 'error');
     }
+}
+
+// 关闭邮件日志弹窗
+function closeEmailLogsModal() {
+    document.getElementById('email-logs-modal').style.display = 'none';
+}
+
+// 初始化邮件日志弹窗拖拽功能
+function initEmailLogsDrag() {
+    const header = document.getElementById('email-logs-header');
+    const content = document.getElementById('email-logs-content');
+    const modal = document.getElementById('email-logs-modal');
+    
+    let isDragging = false;
+    let startX, startY, startLeft, startTop;
+    
+    header.onmousedown = function(e) {
+        if (e.target.tagName === 'BUTTON') return;
+        
+        isDragging = true;
+        
+        const rect = content.getBoundingClientRect();
+        const modalRect = modal.getBoundingClientRect();
+        
+        if (content.style.position !== 'fixed') {
+            content.style.position = 'fixed';
+            content.style.left = rect.left + 'px';
+            content.style.top = rect.top + 'px';
+            content.style.margin = '0';
+        }
+        
+        startX = e.clientX;
+        startY = e.clientY;
+        startLeft = parseInt(content.style.left) || rect.left;
+        startTop = parseInt(content.style.top) || rect.top;
+        
+        document.onmousemove = function(e) {
+            if (!isDragging) return;
+            
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+            
+            content.style.left = (startLeft + deltaX) + 'px';
+            content.style.top = (startTop + deltaY) + 'px';
+        };
+        
+        document.onmouseup = function() {
+            isDragging = false;
+            document.onmousemove = null;
+            document.onmouseup = null;
+        };
+        
+        e.preventDefault();
+    };
 }
 
 // 保存系统配置
@@ -13026,27 +17241,33 @@ document.addEventListener('click', function (e) {
 
 // 用户管理表格按钮事件委托
 document.addEventListener('click', function (e) {
-    // 用户编辑按钮
-    if (e.target.classList.contains('config-action-btn') && e.target.classList.contains('edit') && e.target.closest('#users-config')) {
-        const row = e.target.closest('tr');
-        const userId = row.dataset.userId;
-        if (userId) editUser(parseInt(userId));
+    if (!e.target.classList.contains('config-action-btn')) return;
+
+    if (e.target.closest('#users-config')) {
+        const userId = e.target.dataset.userId ? parseInt(e.target.dataset.userId) : null;
+
+        if (e.target.classList.contains('edit') && userId) {
+            editUser(userId);
+        } else if (e.target.classList.contains('delete') && userId) {
+            deleteUser(userId);
+        } else if (e.target.classList.contains('approve') && userId) {
+            const action = e.target.dataset.action || 'active';
+            approveUser(userId, action);
+        } else if (e.target.classList.contains('disable') && userId) {
+            const action = e.target.dataset.action || 'disabled';
+            approveUser(userId, action);
+        }
     }
-    // 用户删除按钮
-    else if (e.target.classList.contains('config-action-btn') && e.target.classList.contains('delete') && e.target.closest('#users-config')) {
-        const row = e.target.closest('tr');
-        const userId = row.dataset.userId;
-        if (userId) deleteUser(parseInt(userId));
-    }
+
     // 项目编辑按钮
-    else if (e.target.classList.contains('config-action-btn') && e.target.classList.contains('edit') && e.target.closest('#projects-config')) {
+    if (e.target.classList.contains('edit') && e.target.closest('#projects-config')) {
         const row = e.target.closest('tr');
         const projectName = row.cells[0].textContent;
         const projectCode = row.cells[1].textContent;
         editProject(projectName, projectCode);
     }
     // 项目删除按钮
-    else if (e.target.classList.contains('config-action-btn') && e.target.classList.contains('delete') && e.target.closest('#projects-config')) {
+    else if (e.target.classList.contains('delete') && e.target.closest('#projects-config')) {
         const row = e.target.closest('tr');
         const projectName = row.cells[0].textContent;
         deleteProject(projectName);
@@ -13056,19 +17277,15 @@ document.addEventListener('click', function (e) {
 // 加载项目列表
 async function loadProjects() {
     try {
-        console.log('开始加载项目列表');
 
         try {
             // 尝试调用API加载项目列表
-            console.log('调用API: /projects/list');
             const projectsData = await apiRequest('/projects/list', { useCache: false });
 
-            console.log('API响应:', projectsData);
 
             // 处理不同的返回格式
             if (Array.isArray(projectsData)) {
                 // 后端直接返回项目数组
-                console.log('后端直接返回项目数组:', projectsData);
                 // 转换 snake_case 到 camelCase
                 projects = projectsData.map(project => ({
                     ...project,
@@ -13076,7 +17293,6 @@ async function loadProjects() {
                 }));
             } else if (projectsData.success && projectsData.projects) {
                 // 后端返回 { success: true, projects: [...] } 格式
-                console.log('后端返回标准格式:', projectsData.projects);
                 // 转换 snake_case 到 camelCase
                 projects = projectsData.projects.map(project => ({
                     ...project,
@@ -13084,11 +17300,9 @@ async function loadProjects() {
                 }));
             } else if (projectsData.message) {
                 // 后端返回错误信息
-                console.log('后端返回错误信息:', projectsData.message);
                 // 即使返回错误信息，也继续执行（可能是权限问题）
             } else {
                 // 加载失败时使用默认数据
-                console.log('API调用失败，使用默认数据');
                 // 如果没有项目数据，使用默认项目
                 if (projects.length === 0) {
                     projects = [
@@ -13097,7 +17311,7 @@ async function loadProjects() {
                 }
             }
         } catch (error) {
-            console.error('API调用失败，使用默认数据:', error);
+            logger.error('API调用失败，使用默认数据:', error);
             // 即使API调用失败，也继续执行
             // 如果没有项目数据，使用默认项目
             if (projects.length === 0) {
@@ -13108,22 +17322,18 @@ async function loadProjects() {
         }
 
         // 更新项目管理页面
-        console.log('更新项目管理页面');
         updateProjectsTable();
         // 更新测试报告页面的项目列表
         try {
             renderProjectsList();
         } catch (e) {
-            console.log('renderProjectsList跳过:', e.message);
         }
         // 更新测试计划模态框的项目多选组件
         loadProjectsToMultiSelect();
 
-        console.log('项目列表加载完成');
     } catch (error) {
-        console.error('加载项目列表失败:', error);
+        logger.error('加载项目列表失败:', error);
         // 加载失败时使用默认数据
-        console.log('捕获到错误，使用默认数据');
         // 如果没有项目数据，使用默认项目
         if (projects.length === 0) {
             projects = [
@@ -13131,13 +17341,11 @@ async function loadProjects() {
             ];
         }
         // 更新项目管理页面
-        console.log('更新项目管理页面');
         updateProjectsTable();
         // 更新测试报告页面的项目列表
         try {
             renderProjectsList();
         } catch (e) {
-            console.log('renderProjectsList跳过:', e.message);
         }
     }
 }
@@ -13146,7 +17354,6 @@ async function loadProjects() {
 function updateProjectsTable() {
     const projectsBody = document.getElementById('projects-config-body');
     if (projectsBody) {
-        console.log('更新项目管理页面表格');
 
         // 使用存储的项目数据
         if (projects && projects.length > 0) {
@@ -13170,7 +17377,7 @@ function updateProjectsTable() {
             `;
         }
     } else {
-        console.error('项目管理页面表格元素未找到');
+        logger.error('项目管理页面表格元素未找到');
     }
 }
 
@@ -13199,7 +17406,7 @@ async function saveSystemConfig() {
             showErrorMessage('系统配置保存失败: ' + (saveData.message || '保存失败，请稍后重试'));
         }
     } catch (error) {
-        console.error('保存系统配置错误:', error);
+        logger.error('保存系统配置错误:', error);
         showErrorMessage('系统配置保存失败: ' + error.message);
     } finally {
         hideLoading();
@@ -13231,7 +17438,7 @@ async function saveIntegrationConfig() {
             showErrorMessage('集成配置保存失败: ' + (saveData.message || '保存失败，请稍后重试'));
         }
     } catch (error) {
-        console.error('保存集成配置错误:', error);
+        logger.error('保存集成配置错误:', error);
         showErrorMessage('集成配置保存失败: ' + error.message);
     } finally {
         hideLoading();
@@ -13301,11 +17508,12 @@ async function deleteProject(projectName) {
             // 重新加载项目列表
             await loadProjects();
             showSuccessMessage('项目删除成功');
+            dashboardDataCache.invalidateOnDataChange('project');
         } else {
             showErrorMessage('项目删除失败: ' + (deleteData.message || '删除失败，请稍后重试'));
         }
     } catch (error) {
-        console.error('删除项目错误:', error);
+        logger.error('删除项目错误:', error);
         showErrorMessage('项目删除失败: ' + error.message);
     } finally {
         hideLoading();
@@ -13337,7 +17545,6 @@ async function submitProjectForm() {
                 body: JSON.stringify(formData)
             });
 
-            console.log('创建项目API响应:', createData);
 
             // 处理不同的返回格式
             if (createData.message === '项目添加成功' || createData.success) {
@@ -13349,7 +17556,6 @@ async function submitProjectForm() {
                 projects.push(newProject);
 
                 // 重新加载项目列表
-                console.log('项目创建成功，重新加载项目列表');
                 await loadProjects();
 
                 // 关闭模态框
@@ -13362,12 +17568,12 @@ async function submitProjectForm() {
                 addHistoryRecord('创建项目', `创建了项目 ${formData.name}`);
 
                 showSuccessMessage('项目创建成功');
+                dashboardDataCache.invalidateOnDataChange('project');
             } else {
                 // 检查是否是JSON解析错误或HTML响应错误
                 if (createData.message && (createData.message.includes('JSON') || createData.message.includes('DOCTYPE') || createData.message.includes('HTML') || createData.message.includes('token'))) {
-                    console.error('API返回非JSON响应，使用模拟数据:', createData.message);
+                    logger.error('API返回非JSON响应，使用模拟数据:', createData.message);
                     // 模拟成功创建项目
-                    console.log('模拟项目创建成功，重新加载项目列表');
 
                     // 添加新项目到存储
                     const newProject = {
@@ -13389,12 +17595,13 @@ async function submitProjectForm() {
                     addHistoryRecord('创建项目', `创建了项目 ${formData.name}`);
 
                     showSuccessMessage('项目创建成功');
+                    dashboardDataCache.invalidateOnDataChange('project');
                 } else {
                     showErrorMessage('创建项目失败: ' + (createData.message || '创建失败，请稍后重试'));
                 }
             }
         } catch (error) {
-            console.error('API调用失败，使用模拟数据:', error);
+            logger.error('API调用失败，使用模拟数据:', error);
             // 即使API调用失败，也模拟成功创建项目
             // 这样用户体验更好，后续后端实现后会自动使用真实API
 
@@ -13406,7 +17613,6 @@ async function submitProjectForm() {
             projects.push(newProject);
 
             // 重新加载项目列表
-            console.log('模拟项目创建成功，重新加载项目列表');
             await loadProjects();
 
             // 关闭模态框
@@ -13419,9 +17625,10 @@ async function submitProjectForm() {
             addHistoryRecord('创建项目', `创建了项目 ${formData.name}`);
 
             showSuccessMessage('项目创建成功');
+            dashboardDataCache.invalidateOnDataChange('project');
         }
     } catch (error) {
-        console.error('创建项目错误:', error);
+        logger.error('创建项目错误:', error);
         showErrorMessage('创建项目失败: ' + error.message);
     } finally {
         hideLoading();
@@ -13438,11 +17645,11 @@ async function loadEnvironments() {
         if (response.success) {
             updateEnvironmentTable(response.environments);
         } else {
-            console.error('加载环境列表失败:', response.message);
+            logger.error('加载环境列表失败:', response.message);
             updateEnvironmentTable([]);
         }
     } catch (error) {
-        console.error('加载环境列表错误:', error);
+        logger.error('加载环境列表错误:', error);
         updateEnvironmentTable([]);
     } finally {
         hideLoading();
@@ -13478,7 +17685,6 @@ function updateEnvironmentTable(environments) {
 
 // 添加环境
 function addEnvironment() {
-    console.log('添加环境');
     const modal = document.getElementById('add-environment-modal');
     modal.style.display = 'block';
     // 重置表单和编辑状态
@@ -13488,7 +17694,6 @@ function addEnvironment() {
 
 // 添加测试方式
 function addTestMethod() {
-    console.log('添加测试方式');
     const modal = document.getElementById('add-test-method-modal');
     modal.style.display = 'block';
     // 重置表单和编辑状态
@@ -13501,7 +17706,7 @@ async function editEnvironment(environmentId) {
     try {
         showLoading('加载环境信息中...');
 
-        const response = await apiRequest(`/environments/get?id=${environmentId}`);
+        const response = await apiRequest(`/environments/get?id=${environmentId}`, { useCache: false });
 
         if (response.success) {
             const environment = response.environment;
@@ -13518,7 +17723,7 @@ async function editEnvironment(environmentId) {
             showErrorMessage('加载环境信息失败: ' + response.message);
         }
     } catch (error) {
-        console.error('编辑环境错误:', error);
+        logger.error('编辑环境错误:', error);
         showErrorMessage('加载环境信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -13557,7 +17762,7 @@ async function deleteEnvironment(environmentId) {
                 showErrorMessage('环境删除失败: ' + response.message);
             }
         } catch (error) {
-            console.error('删除环境错误:', error);
+            logger.error('删除环境错误:', error);
             showErrorMessage('环境删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -13659,6 +17864,7 @@ async function submitCaseLibraryForm() {
             }
 
             showSuccessMessage('用例库创建成功');
+            dashboardDataCache.invalidateOnDataChange('library');
         } else {
             showErrorMessage('创建用例库失败: ' + (createData.message || '创建失败'));
         }
@@ -13784,12 +17990,15 @@ async function submitTestPlanForm() {
             // 记录历史
             addHistoryRecord('创建测试计划', `创建了测试计划 ${formData.name}`);
 
+            apiCache.deleteByPrefix('/workspace');
+
             showSuccessMessage('测试计划创建成功');
+            dashboardDataCache.invalidateOnDataChange('testPlan');
         } else {
             showErrorMessage('创建测试计划失败: ' + (createData.message || '创建失败，请稍后重试'));
         }
     } catch (error) {
-        console.error('创建测试计划错误:', error);
+        logger.error('创建测试计划错误:', error);
         showErrorMessage('创建测试计划失败: ' + error.message);
     } finally {
         hideLoading();
@@ -13849,7 +18058,6 @@ function loadProjectsToMultiSelect() {
     // 清空现有选项
     optionsContainer.innerHTML = '';
 
-    console.log('加载项目数据到多选组件:', projects);
 
     // 加载项目数据
     if (projects && projects.length > 0) {
@@ -14044,7 +18252,7 @@ async function submitTestReportForm() {
             showErrorMessage('创建测试报告失败: ' + (createData.message || '创建失败，请稍后重试'));
         }
     } catch (error) {
-        console.error('创建测试报告错误:', error);
+        logger.error('创建测试报告错误:', error);
         showErrorMessage('创建测试报告失败: ' + error.message);
     } finally {
         hideLoading();
@@ -14075,12 +18283,10 @@ async function login() {
 
             localStorage.setItem('authToken', authToken);
             localStorage.setItem('currentUser', JSON.stringify(currentUser));
-            console.log('[登录] Token已保存到localStorage');
 
             document.documentElement.classList.add('authenticated');
 
             localStorage.setItem('rememberedUsername', username);
-            console.log('[登录] 已记住用户名:', username);
 
             // 发送WebSocket登录事件
             if (socket && socket.connected) {
@@ -14127,21 +18333,17 @@ async function login() {
             }
 
             // 控制配置中心导航链接的显示
-            console.log('登录成功后，currentUser完整信息:', currentUser);
 
             // 查找所有导航链接，确认选择器是否正确
             const allNavLinks = document.querySelectorAll('.nav-left a.nav-item');
-            console.log('所有导航链接:', allNavLinks);
 
             const settingsLink = document.querySelector('.nav-left a[href="#/settings"]');
-            console.log('找到的配置中心链接元素:', settingsLink);
 
             if (settingsLink) {
                 // 所有登录用户都可以看到配置中心链接
                 settingsLink.style.display = 'block';
-                console.log('登录成功，显示配置中心链接');
             } else {
-                console.error('未找到配置中心链接元素');
+                logger.error('未找到配置中心链接元素');
             }
 
             // 显示登出按钮
@@ -14158,7 +18360,6 @@ async function login() {
             // 如果当前在配置中心页面，刷新配置数据
             const currentRoute = Router.getCurrentRoute();
             if (currentRoute === 'settings') {
-                console.log('[登录] 当前在配置中心，刷新数据');
                 applyMenuVisibilityByRole();
                 loadUsers();
                 loadProjects();
@@ -14178,7 +18379,7 @@ async function login() {
             showErrorMessage('登录失败: ' + errorMsg);
         }
     } catch (error) {
-        console.error('登录错误:', error);
+        logger.error('登录错误:', error);
         showErrorMessage('登录失败: ' + error.message);
     } finally {
         hideLoading();
@@ -14219,7 +18420,7 @@ async function register() {
             showErrorMessage('注册失败: ' + (registerData.message || '注册失败，请稍后重试'));
         }
     } catch (error) {
-        console.error('注册错误:', error);
+        logger.error('注册错误:', error);
         showErrorMessage('注册失败: ' + error.message);
     } finally {
         hideLoading();
@@ -14228,7 +18429,6 @@ async function register() {
 
 // 登出功能
 function logout() {
-    console.log('[登出] 开始执行登出操作');
     
     if (socket && socket.connected && currentUser) {
         socket.emit('logout');
@@ -14243,8 +18443,6 @@ function logout() {
     localStorage.removeItem('currentUser');
     
     aiModelsCache = [];
-    console.log('[登出] 已清除localStorage和缓存数据');
-    console.log('[登出] currentUser:', currentUser, 'authToken:', authToken, 'aiModelsCache:', aiModelsCache);
 
     document.documentElement.classList.remove('authenticated');
 
@@ -14256,14 +18454,11 @@ function logout() {
     const settingsLink = document.querySelector('.nav-left a[href="#/settings"]');
     if (settingsLink) {
         settingsLink.style.display = 'none';
-        console.log('登出后，隐藏配置中心链接');
     }
 
     addHistoryRecord('登出', `用户 ${username} 登出系统`);
     
-    console.log('[登出] 准备导航到登录页面');
     Router.navigateTo('login');
-    console.log('[登出] 导航命令已执行，当前hash:', window.location.hash);
 }
 
 // 添加历史记录
@@ -14361,7 +18556,7 @@ async function updateStats() {
         await loadDashboardTables();
 
     } catch (error) {
-        console.error('更新统计数据错误:', error);
+        logger.error('更新统计数据错误:', error);
     }
 }
 
@@ -14374,6 +18569,8 @@ function updateLastRefreshTime() {
 }
 
 async function refreshDashboardData() {
+    dashboardDataCache.clear();
+
     const refreshBtn = document.querySelector('.btn-refresh-data');
     if (refreshBtn) {
         refreshBtn.disabled = true;
@@ -14469,7 +18666,8 @@ function navigateToPlans() {
 // 加载筛选器选项
 async function loadDashboardFilters() {
     try {
-        // 加载项目列表
+        const currentFilters = getCurrentFilters();
+
         const projectsData = await apiRequest('/projects/list');
         if (projectsData.success && projectsData.projects) {
             const projectFilter = document.getElementById('project-filter');
@@ -14481,13 +18679,15 @@ async function loadDashboardFilters() {
                     option.textContent = project.name;
                     projectFilter.appendChild(option);
                 });
+                if (currentFilters.projectId && currentFilters.projectId !== 'all') {
+                    projectFilter.value = currentFilters.projectId;
+                }
             }
         }
 
-        // 加载用户列表（负责人）
         const usersData = await apiRequest('/users/list');
-        if (Array.isArray(usersData)) {
-            const filteredUsers = filterOwners(usersData);
+        if (usersData.success && usersData.users) {
+            const filteredUsers = filterOwners(usersData.users);
             const ownerFilter = document.getElementById('owner-filter');
             if (ownerFilter) {
                 ownerFilter.innerHTML = '<option value="all">所有负责人</option>';
@@ -14497,10 +18697,12 @@ async function loadDashboardFilters() {
                     option.textContent = user.username;
                     ownerFilter.appendChild(option);
                 });
+                if (currentFilters.owner && currentFilters.owner !== 'all') {
+                    ownerFilter.value = currentFilters.owner;
+                }
             }
         }
 
-        // 加载测试状态列表
         const statusData = await apiRequest('/test-statuses/list');
         if (statusData.success && statusData.testStatuses) {
             const statusFilter = document.getElementById('status-filter');
@@ -14512,10 +18714,12 @@ async function loadDashboardFilters() {
                     option.textContent = status.name;
                     statusFilter.appendChild(option);
                 });
+                if (currentFilters.statusId && currentFilters.statusId !== 'all') {
+                    statusFilter.value = currentFilters.statusId;
+                }
             }
         }
 
-        // 加载测试进度列表
         const progressData = await apiRequest('/test-progresses/list');
         if (progressData.success && progressData.testProgresses) {
             const progressFilter = document.getElementById('progress-filter');
@@ -14527,10 +18731,12 @@ async function loadDashboardFilters() {
                     option.textContent = progress.name;
                     progressFilter.appendChild(option);
                 });
+                if (currentFilters.progressId && currentFilters.progressId !== 'all') {
+                    progressFilter.value = currentFilters.progressId;
+                }
             }
         }
 
-        // 加载用例库列表
         const librariesData = await apiRequest('/libraries/list');
         if (librariesData.success && librariesData.libraries) {
             const libraryFilter = document.getElementById('library-filter');
@@ -14542,26 +18748,25 @@ async function loadDashboardFilters() {
                     option.textContent = library.name;
                     libraryFilter.appendChild(option);
                 });
+                if (currentFilters.libraryId && currentFilters.libraryId !== 'all') {
+                    libraryFilter.value = currentFilters.libraryId;
+                }
             }
         }
 
     } catch (error) {
-        console.error('加载筛选器选项错误:', error);
+        logger.error('加载筛选器选项错误:', error);
     }
 }
 
 // 初始化仪表板图表
 async function initDashboardCharts() {
     try {
-        // 销毁之前的图表实例
         Object.values(chartInstances).forEach(chart => {
-            if (chart) {
-                chart.destroy();
-            }
+            if (chart) chart.destroy();
         });
         chartInstances = {};
 
-        // 额外销毁所有 canvas 上的图表实例
         const chartIds = [
             'pass-rate-trend-chart',
             'execution-trend-chart',
@@ -14571,40 +18776,65 @@ async function initDashboardCharts() {
             'owner-pass-rate-chart',
             'progress-trend-chart'
         ];
-        
+
         chartIds.forEach(id => {
             const canvas = document.getElementById(id);
             if (canvas) {
                 const existingChart = Chart.getChart(canvas);
-                if (existingChart) {
-                    existingChart.destroy();
-                }
+                if (existingChart) existingChart.destroy();
             }
         });
 
-        // 初始化通过率趋势图表
         await initPassRateTrendChart(7);
-
-        // 初始化执行次数趋势图表
         await initExecutionTrendChart(7);
-
-        // 初始化项目测试进度图表
         await initProjectProgressChart();
-
-        // 初始化测试状态分布图表
         await initStatusDistributionChart();
-
-        // 初始化负责人任务图表
         await initOwnerTasksChart();
-
-        // 初始化负责人通过率图表
         await initOwnerPassRateChart();
-
-        // 初始化测试进度趋势图表
         await initProgressTrendChart();
-
     } catch (error) {
-        console.error('初始化图表错误:', error);
+        logger.error('初始化图表错误:', error);
+    }
+}
+
+async function initDashboardChartsParallel() {
+    try {
+        Object.values(chartInstances).forEach(chart => {
+            if (chart) chart.destroy();
+        });
+        chartInstances = {};
+
+        const chartIds = [
+            'pass-rate-trend-chart',
+            'execution-trend-chart',
+            'project-progress-chart',
+            'status-distribution-chart',
+            'owner-tasks-chart',
+            'owner-pass-rate-chart',
+            'progress-trend-chart'
+        ];
+
+        chartIds.forEach(id => {
+            const canvas = document.getElementById(id);
+            if (canvas) {
+                const existingChart = Chart.getChart(canvas);
+                if (existingChart) existingChart.destroy();
+            }
+        });
+
+        const filters = getCurrentFilters();
+
+        await Promise.all([
+            RequestQueue.execute(() => initPassRateTrendChart(7)),
+            RequestQueue.execute(() => initExecutionTrendChart(7)),
+            RequestQueue.execute(() => initProjectProgressChart()),
+            RequestQueue.execute(() => initStatusDistributionChart()),
+            RequestQueue.execute(() => initOwnerTasksChart()),
+            RequestQueue.execute(() => initOwnerPassRateChart()),
+            RequestQueue.execute(() => initProgressTrendChart())
+        ]);
+    } catch (error) {
+        logger.error('并行初始化图表错误:', error);
     }
 }
 
@@ -14643,7 +18873,7 @@ async function initPassRateTrendChart(days) {
 
         renderPassRateTrendChart(ctx, data.trendData);
     } catch (error) {
-        console.error('初始化通过率趋势图表错误:', error);
+        logger.error('初始化通过率趋势图表错误:', error);
         const mockData = generateMockTrendData(days);
         renderPassRateTrendChart(ctx, mockData);
     }
@@ -14707,7 +18937,7 @@ async function initExecutionTrendChart(days) {
 
         renderExecutionTrendChart(ctx, data.trendData);
     } catch (error) {
-        console.error('初始化执行次数趋势图表错误:', error);
+        logger.error('初始化执行次数趋势图表错误:', error);
         const mockData = generateMockTrendData(days);
         renderExecutionTrendChart(ctx, mockData);
     }
@@ -14847,7 +19077,7 @@ async function initProjectProgressChart() {
             }
         });
     } catch (error) {
-        console.error('初始化项目测试进度图表错误:', error);
+        logger.error('初始化项目测试进度图表错误:', error);
     }
 }
 
@@ -14903,7 +19133,7 @@ async function initStatusDistributionChart() {
             }
         });
     } catch (error) {
-        console.error('初始化测试状态分布图表错误:', error);
+        logger.error('初始化测试状态分布图表错误:', error);
     }
 }
 
@@ -14979,7 +19209,7 @@ async function initOwnerTasksChart() {
             }
         });
     } catch (error) {
-        console.error('初始化负责人任务图表错误:', error);
+        logger.error('初始化负责人任务图表错误:', error);
     }
 }
 
@@ -15036,7 +19266,7 @@ async function initOwnerPassRateChart() {
             }
         });
     } catch (error) {
-        console.error('初始化负责人通过率图表错误:', error);
+        logger.error('初始化负责人通过率图表错误:', error);
     }
 }
 
@@ -15100,7 +19330,7 @@ async function initProgressTrendChart() {
             }
         });
     } catch (error) {
-        console.error('初始化测试进度趋势图表错误:', error);
+        logger.error('初始化测试进度趋势图表错误:', error);
         ctx.parentElement.innerHTML = '<div class="no-data-message" style="display:flex;align-items:center;justify-content:center;height:100%;color:#999;">加载失败</div>';
     }
 }
@@ -15115,7 +19345,7 @@ async function loadDashboardTables() {
         await loadOwnerDetailsTable();
 
     } catch (error) {
-        console.error('加载详细数据表格错误:', error);
+        logger.error('加载详细数据表格错误:', error);
     }
 }
 
@@ -15152,7 +19382,7 @@ async function loadProjectDetailsTable() {
         `).join('');
 
     } catch (error) {
-        console.error('加载项目测试详情表格错误:', error);
+        logger.error('加载项目测试详情表格错误:', error);
         tbody.innerHTML = '<tr><td colspan="7" class="no-data">加载失败</td></tr>';
     }
 }
@@ -15186,7 +19416,7 @@ async function loadOwnerDetailsTable() {
         `).join('');
 
     } catch (error) {
-        console.error('加载负责人任务详情表格错误:', error);
+        logger.error('加载负责人任务详情表格错误:', error);
         tbody.innerHTML = '<tr><td colspan="6" class="no-data">加载失败</td></tr>';
     }
 }
@@ -15225,23 +19455,7 @@ function renderProgressBar(value, type = 'progress') {
 
 // 应用仪表板筛选器
 async function applyDashboardFilters() {
-    const projectFilter = document.getElementById('project-filter');
-    const ownerFilter = document.getElementById('owner-filter');
-    const statusFilter = document.getElementById('status-filter');
-    const progressFilter = document.getElementById('progress-filter');
-    const libraryFilter = document.getElementById('library-filter');
-
-    const filters = {
-        projectId: projectFilter ? projectFilter.value : 'all',
-        owner: ownerFilter ? ownerFilter.value : 'all',
-        statusId: statusFilter ? statusFilter.value : 'all',
-        progressId: progressFilter ? progressFilter.value : 'all',
-        libraryId: libraryFilter ? libraryFilter.value : 'all'
-    };
-
-    console.log('应用筛选器:', filters);
-
-    // 重新加载数据
+    const filters = getCurrentFilters();
     await updateStats();
 }
 
@@ -15265,7 +19479,6 @@ function resetDashboardFilters() {
 
 // 导出项目数据
 async function exportProjectData() {
-    console.log('导出项目数据');
     
     try {
         const filters = getCurrentFilters();
@@ -15290,14 +19503,13 @@ async function exportProjectData() {
         exportToExcel('项目测试详情', headers, rows, '项目测试详情');
         showSuccessMessage('导出成功');
     } catch (error) {
-        console.error('导出项目数据错误:', error);
+        logger.error('导出项目数据错误:', error);
         showErrorMessage('导出失败: ' + error.message);
     }
 }
 
 // 导出负责人数据
 async function exportOwnerData() {
-    console.log('导出负责人数据');
     
     try {
         const data = await apiRequest('/dashboard/owner-analysis');
@@ -15320,7 +19532,7 @@ async function exportOwnerData() {
         exportToExcel('负责人任务详情', headers, rows, '负责人任务详情');
         showSuccessMessage('导出成功');
     } catch (error) {
-        console.error('导出负责人数据错误:', error);
+        logger.error('导出负责人数据错误:', error);
         showErrorMessage('导出失败: ' + error.message);
     }
 }
@@ -15507,6 +19719,26 @@ function showSection(sectionId) {
         }
     }
 
+    // 检查URL hash中是否包含libraryId参数，用于恢复用例库详情页
+    const hash = window.location.hash;
+    const libraryIdMatch = hash.match(/libraryId=(\d+)/);
+    if (sectionId === 'cases' && libraryIdMatch) {
+        const urlLibraryId = parseInt(libraryIdMatch[1]);
+        const library = caseLibraries.find(lib => lib.id == urlLibraryId);
+        if (library) {
+            currentCaseLibraryId = urlLibraryId;
+
+            // 更新当前用例库名称显示
+            const currentCaseLibraryElement = document.getElementById('current-case-library');
+            if (currentCaseLibraryElement) {
+                currentCaseLibraryElement.textContent = library.name;
+            }
+
+            // 切换到用例管理详情页
+            sectionId = 'case-management';
+        }
+    }
+
     // 隐藏所有部分
     document.querySelectorAll('section').forEach(section => {
         section.style.display = 'none';
@@ -15534,11 +19766,19 @@ function showSection(sectionId) {
             loadAllLevel1Points();
         });
     }
+
+    // 当显示用例管理详情页时，初始化数据
+    if (sectionId === 'case-management') {
+        clearLevel1PointsDisplay();
+        currentModulePage = 1;
+        initModuleData();
+    }
 }
 
 // 页面加载完成后执行
 document.addEventListener('DOMContentLoaded', async function () {
     ThemeSystem.init();
+    if (typeof initTheme === 'function') initTheme();
 
     CommandPalette.init();
 
@@ -15546,9 +19786,27 @@ document.addEventListener('DOMContentLoaded', async function () {
 
     initSearchEvents();
 
-    initCaseListResizer();
-
     initFloatingPanelResizer();
+
+    const editSummaryField = document.getElementById('edit-level1-point-summary');
+    if (editSummaryField) {
+        editSummaryField.addEventListener('input', function() {
+            const summaryCounter = document.getElementById('edit-level1-point-summary-counter');
+            if (summaryCounter) {
+                summaryCounter.textContent = `${this.value.length}/300`;
+            }
+        });
+    }
+
+    const editNameField = document.getElementById('edit-level1-point-name');
+    if (editNameField) {
+        editNameField.addEventListener('input', function() {
+            const nameCounter = document.getElementById('edit-level1-point-name-counter');
+            if (nameCounter) {
+                nameCounter.textContent = `${this.value.length}/64`;
+            }
+        });
+    }
 
     const savedToken = localStorage.getItem('authToken');
     const savedUser = localStorage.getItem('currentUser');
@@ -15557,7 +19815,6 @@ document.addEventListener('DOMContentLoaded', async function () {
         try {
             authToken = savedToken;
             currentUser = JSON.parse(savedUser);
-            console.log('[页面加载] 已从localStorage恢复登录状态:', currentUser.username);
 
             const userInfoElement = document.getElementById('user-info');
             if (userInfoElement) {
@@ -15592,11 +19849,17 @@ document.addEventListener('DOMContentLoaded', async function () {
             await loadData();
             await loadProjects();
             await loadCaseLibraries();
+            
+            // 处理URL参数中的action
+            handleUrlAction();
         } catch (e) {
-            console.error('[页面加载] 恢复登录状态失败:', e);
+            logger.error('[页面加载] 恢复登录状态失败:', e);
             localStorage.removeItem('authToken');
             localStorage.removeItem('currentUser');
         }
+    } else {
+        // 未登录用户也检查URL参数
+        handleUrlAction();
     }
 
     const rememberedUsername = localStorage.getItem('rememberedUsername');
@@ -15605,12 +19868,38 @@ document.addEventListener('DOMContentLoaded', async function () {
         const usernameInput = document.getElementById('username');
         if (usernameInput) {
             usernameInput.value = rememberedUsername;
-            console.log('[登录] 已自动填充记住的用户名:', rememberedUsername);
         }
     }
 
     // 初始化 Hash 路由系统
     Router.init();
+
+    // 恢复测试用例编辑状态
+    const savedEditState = TestCaseEditState.load();
+    if (savedEditState && savedEditState.testCase) {
+        
+        setTimeout(async () => {
+            try {
+                await openTestCaseDetailModal(savedEditState.testCase);
+                
+                if (savedEditState.formData) {
+                    const selectorData = TestCaseEditState.restoreFormData(savedEditState.formData);
+                    
+                    requestAnimationFrame(() => {
+                        TagSelector.setValues('detail-case-phases-selector', selectorData.phases || []);
+                        TagSelector.setValues('detail-case-environments-selector', selectorData.environments || []);
+                        TagSelector.setValues('detail-case-methods-selector', selectorData.methods || []);
+                        TagSelector.setValues('detail-case-sources-selector', selectorData.sources || []);
+                    });
+                }
+                
+                showSuccessMessage('已恢复之前的编辑内容');
+            } catch (error) {
+                logger.error('恢复编辑状态失败:', error);
+                TestCaseEditState.clear();
+            }
+        }, 100);
+    }
 
     // 绑定主题切换按钮事件
     const themeToggle = document.getElementById('theme-toggle');
@@ -15625,19 +19914,15 @@ document.addEventListener('DOMContentLoaded', async function () {
     }
 
     // 根据当前用户角色控制配置中心导航链接的显示
-    console.log('页面加载时，currentUser:', currentUser);
 
     const settingsLink = document.querySelector('.nav-left a[href="#/settings"]');
-    console.log('页面加载时找到的配置中心链接:', settingsLink);
 
     if (settingsLink) {
         // 所有登录用户都可以看到配置中心链接
         if (currentUser) {
             settingsLink.style.display = 'block';
-            console.log('用户已登录，显示配置中心链接');
         } else {
             settingsLink.style.display = 'none';
-            console.log('用户未登录，隐藏配置中心链接');
         }
     }
 
@@ -15651,6 +19936,11 @@ document.addEventListener('DOMContentLoaded', async function () {
         initModuleData();
     }
 
+    // 预加载AI模型列表（仅已登录用户）
+    if (currentUser) {
+        preloadAIModels();
+    }
+
     // 顶部导航栏搜索功能
     const topSearchInput = document.querySelector('.nav-right .search-input');
     if (topSearchInput) {
@@ -15658,7 +19948,6 @@ document.addEventListener('DOMContentLoaded', async function () {
             const searchTerm = this.value.trim();
             if (searchTerm) {
                 // 这里可以实现全局搜索功能
-                console.log('全局搜索:', searchTerm);
                 // 可以根据当前页面进行相应的搜索
                 const currentSection = document.querySelector('section[style*="display: block"]');
                 if (currentSection) {
@@ -15679,7 +19968,6 @@ document.addEventListener('DOMContentLoaded', async function () {
     if (loginForm) {
         loginForm.addEventListener('submit', function (e) {
             e.preventDefault();
-            console.log('Login form submitted');
             login();
         });
     }
@@ -15689,7 +19977,6 @@ document.addEventListener('DOMContentLoaded', async function () {
     if (registerForm) {
         registerForm.addEventListener('submit', function (e) {
             e.preventDefault();
-            console.log('Register form submitted');
             register();
         });
     }
@@ -15701,7 +19988,6 @@ document.addEventListener('DOMContentLoaded', async function () {
             const href = e.target.getAttribute('href');
             // 从 href="#/dashboard" 格式中提取路由名称
             const routeName = href.replace(/^#\/?/, '');
-            console.log('[Navigation] 点击导航链接:', routeName);
 
             // 使用路由系统导航
             Router.navigateTo(routeName);
@@ -15777,7 +20063,6 @@ document.addEventListener('DOMContentLoaded', async function () {
     document.addEventListener('click', function (e) {
         if (e.target.id === 'add-case-button') {
             e.stopPropagation();
-            console.log('点击了添加用例按钮');
             addTestCase();
         }
     });
@@ -15786,7 +20071,6 @@ document.addEventListener('DOMContentLoaded', async function () {
     document.addEventListener('click', function (e) {
         if (e.target.id === 'add-case-library-btn') {
             e.stopPropagation();
-            console.log('点击了添加用例库按钮');
             addCaseLibrary();
         }
     });
@@ -15853,22 +20137,12 @@ document.addEventListener('DOMContentLoaded', async function () {
 
             if (library) {
                 let caseLibraryName = library.name;
-                console.log('点击用例库:', caseLibraryName);
 
                 currentCaseLibraryId = library.id;
-                console.log('设置当前用例库ID:', currentCaseLibraryId);
 
-                showSection('case-management');
-
-                const currentCaseLibraryElement = document.getElementById('current-case-library');
-                if (currentCaseLibraryElement) {
-                    currentCaseLibraryElement.textContent = caseLibraryName;
-                }
-
-                // 清空一级测试点显示
-                clearLevel1PointsDisplay();
-                currentModulePage = 1;
-                initModuleData();
+                // 更新URL hash，保存当前用例库ID，以便刷新后能恢复
+                // 通过设置hash触发Router处理页面切换，避免重复调用showSection
+                window.location.hash = '#/cases?libraryId=' + library.id;
             }
         }
     });
@@ -15878,26 +20152,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (e.target.id === 'current-case-library' || e.target.closest('.case-library-breadcrumb')) {
             e.preventDefault();
             e.stopPropagation();
-            console.log('点击当前用例库名称，触发下拉菜单');
             toggleCaseLibraryDropdown();
-        }
-    });
-
-    // 点击模态框外部关闭
-    window.addEventListener('click', function (e) {
-        const testPlanModal = document.getElementById('add-testplan-modal');
-        if (e.target === testPlanModal) {
-            closeTestPlanModal();
-        }
-
-        const testReportModal = document.getElementById('add-testreport-modal');
-        if (e.target === testReportModal) {
-            closeTestReportModal();
-        }
-
-        const caseLibraryModal = document.getElementById('add-case-library-modal');
-        if (e.target === caseLibraryModal) {
-            closeCaseLibraryModal();
         }
     });
 
@@ -15922,20 +20177,117 @@ document.addEventListener('DOMContentLoaded', async function () {
     });
 });
 
-// 测试管理页面可视化功能
+// 数据面板可视化功能
 
-// 初始化测试管理页面数据
+// 初始化数据面板数据
 function initDashboardData() {
-    console.log('初始化测试管理页面数据');
 
-    // 加载筛选器数据
-    loadFilterData();
+    dashboardDataCache.clear();
 
-    // 加载统计数据
-    loadDashboardStats();
+    loadDashboardDataUnified();
+}
 
-    // 渲染图表
-    renderAllCharts();
+async function loadDashboardDataUnified() {
+    try {
+        const filters = getCurrentFilters();
+
+        const results = await Promise.all([
+            RequestQueue.execute(() => loadFilterDataWithCache()),
+            RequestQueue.execute(() => loadDashboardStatsWithCache(filters)),
+            RequestQueue.execute(() => initDashboardChartsParallel())
+        ]);
+
+        updateLastRefreshTime();
+    } catch (error) {
+        logger.error('统一加载数据错误:', error);
+    }
+}
+
+async function loadFilterDataWithCache() {
+    try {
+        let libraryData = dashboardDataCache.get('libraries');
+        if (!libraryData) {
+            libraryData = await apiRequest('/libraries/list');
+            if (libraryData.success) dashboardDataCache.set('libraries', libraryData);
+        }
+        if (libraryData && libraryData.success) {
+            populateSelectOptions('library-filter', libraryData.libraries, 'name', 'id');
+        }
+
+        let projectData = dashboardDataCache.get('projects');
+        if (!projectData) {
+            projectData = await apiRequest('/projects/list');
+            if (projectData.success) dashboardDataCache.set('projects', projectData);
+        }
+        if (projectData && projectData.success) {
+            populateSelectOptions('project-filter', projectData.projects, 'name', 'id');
+        }
+
+        let casesData = dashboardDataCache.get('cases');
+        if (!casesData) {
+            casesData = await apiRequest('/cases/list', {
+                method: 'POST',
+                body: JSON.stringify({ page: 1, pageSize: 100 })
+            });
+            if (casesData.success) dashboardDataCache.set('cases', casesData);
+        }
+        if (casesData && casesData.success) {
+            const owners = [...new Set(casesData.testCases.map(c => c.owner))];
+            populateSelectOptions('owner-filter', owners.map(owner => ({ name: owner, id: owner })), 'name', 'id');
+        }
+
+        addFilterChangeEventsDebounced();
+    } catch (error) {
+        logger.error('加载筛选器数据失败:', error);
+    }
+}
+
+async function loadDashboardStatsWithCache(filters) {
+    try {
+        const testcaseCountEl = document.getElementById('testcase-count');
+        const testplanCountEl = document.getElementById('testplan-count');
+        const testreportCountEl = document.getElementById('testreport-count');
+
+        if (!testcaseCountEl && !testplanCountEl && !testreportCountEl) return;
+
+        if (testcaseCountEl) {
+            let casesData = dashboardDataCache.get('cases');
+            if (!casesData) {
+                casesData = await apiRequest('/cases/list', {
+                    method: 'POST',
+                    body: JSON.stringify({ ...filters, page: 1, pageSize: 100 })
+                });
+                if (casesData.success) dashboardDataCache.set('cases', casesData);
+            }
+            if (casesData && casesData.success) {
+                testcaseCountEl.textContent = casesData.testCases?.length || 0;
+            }
+        }
+
+        if (testplanCountEl) {
+            let plansData = dashboardDataCache.get('testPlans');
+            if (!plansData) {
+                plansData = await apiRequest('/testplans/list');
+                if (plansData.success) dashboardDataCache.set('testPlans', plansData);
+            }
+            if (plansData && plansData.success) {
+                testplanCountEl.textContent = plansData.testPlans?.length || 0;
+            }
+        }
+
+        if (testreportCountEl) {
+            let reportsData = dashboardDataCache.get('reports');
+            if (!reportsData) {
+                reportsData = await apiRequest('/reports/list');
+                if (reportsData.success) dashboardDataCache.set('reports', reportsData);
+            }
+            if (reportsData && reportsData.success) {
+                testreportCountEl.textContent = reportsData.reports?.length || 0;
+            }
+        }
+    } catch (error) {
+        logger.error('加载仪表盘统计数据失败:', error);
+    }
 }
 
 // 加载筛选器数据
@@ -15966,7 +20318,7 @@ async function loadFilterData() {
         // 添加筛选器变化事件
         addFilterChangeEvents();
     } catch (error) {
-        console.error('加载筛选器数据失败:', error);
+        logger.error('加载筛选器数据失败:', error);
     }
 }
 
@@ -15998,10 +20350,27 @@ function addFilterChangeEvents() {
     [libraryFilter, projectFilter, ownerFilter].forEach(filter => {
         if (filter) {
             filter.addEventListener('change', () => {
-                console.log('筛选器变化，重新加载数据');
                 loadDashboardStats();
                 renderAllCharts();
             });
+        }
+    });
+}
+
+function addFilterChangeEventsDebounced() {
+    const debouncedReload = debounce(() => {
+        dashboardDataCache.clear();
+        loadDashboardDataUnified();
+    }, 300);
+
+    const libraryFilter = document.getElementById('library-filter');
+    const projectFilter = document.getElementById('project-filter');
+    const ownerFilter = document.getElementById('owner-filter');
+
+    [libraryFilter, projectFilter, ownerFilter].forEach(filter => {
+        if (filter) {
+            filter.removeEventListener('change', debouncedReload);
+            filter.addEventListener('change', debouncedReload);
         }
     });
 }
@@ -16014,7 +20383,6 @@ async function loadDashboardStats() {
         const testreportCountEl = document.getElementById('testreport-count');
         
         if (!testcaseCountEl && !testplanCountEl && !testreportCountEl) {
-            console.log('[loadDashboardStats] 当前页面不包含统计元素，跳过加载');
             return;
         }
 
@@ -16045,7 +20413,7 @@ async function loadDashboardStats() {
         }
 
     } catch (error) {
-        console.error('加载仪表盘统计数据失败:', error);
+        logger.error('加载仪表盘统计数据失败:', error);
     }
 }
 
@@ -16054,7 +20422,9 @@ function getCurrentFilters() {
     return {
         libraryId: document.getElementById('library-filter')?.value || 'all',
         projectId: document.getElementById('project-filter')?.value || 'all',
-        owner: document.getElementById('owner-filter')?.value || 'all'
+        owner: document.getElementById('owner-filter')?.value || 'all',
+        statusId: document.getElementById('status-filter')?.value || 'all',
+        progressId: document.getElementById('progress-filter')?.value || 'all'
     };
 }
 
@@ -16328,7 +20698,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // 初始化测试计划表格的事件委托
     initTestPlanTableEvents();
 
-    // 监听测试管理页面显示事件
+    // 监听数据面板页面显示事件
     document.addEventListener('click', function (e) {
         if (e.target.closest('a[href="#/dashboard"]')) {
             setTimeout(initDashboardData, 100);
@@ -16478,7 +20848,6 @@ function initCaseFilters() {
             if (e.key === 'Enter') {
                 e.preventDefault();
                 // 这里可以添加用例库搜索的逻辑
-                console.log('用例库搜索:', this.value);
             }
         });
 
@@ -16788,7 +21157,7 @@ async function submitEnvironmentForm() {
             showErrorMessage((isEditing ? '环境编辑' : '环境添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        console.error('处理环境错误:', error);
+        logger.error('处理环境错误:', error);
         showErrorMessage('环境处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -16828,7 +21197,7 @@ async function loadTestSources() {
             showErrorMessage('加载测试点来源列表失败: ' + response.message);
         }
     } catch (error) {
-        console.error('加载测试点来源列表错误:', error);
+        logger.error('加载测试点来源列表错误:', error);
         showErrorMessage('加载测试点来源列表失败: ' + error.message);
     } finally {
         hideLoading();
@@ -16865,7 +21234,7 @@ async function editTestSource(sourceId) {
             showErrorMessage('加载测试点来源信息失败: ' + response.message);
         }
     } catch (error) {
-        console.error('加载测试点来源信息错误:', error);
+        logger.error('加载测试点来源信息错误:', error);
         showErrorMessage('加载测试点来源信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -16892,7 +21261,7 @@ async function deleteTestSource(sourceId) {
             showErrorMessage('删除测试点来源失败: ' + response.message);
         }
     } catch (error) {
-        console.error('删除测试点来源错误:', error);
+        logger.error('删除测试点来源错误:', error);
         showErrorMessage('删除测试点来源失败: ' + error.message);
     } finally {
         hideLoading();
@@ -16941,7 +21310,7 @@ async function submitTestSourceForm() {
             showErrorMessage((isEditing ? '测试点来源编辑' : '测试点来源添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        console.error('处理测试点来源错误:', error);
+        logger.error('处理测试点来源错误:', error);
         showErrorMessage('测试点来源处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -16982,10 +21351,10 @@ async function loadTestMethods() {
                 }
             }
         } else {
-            console.error('加载测试方式列表失败:', response.message);
+            logger.error('加载测试方式列表失败:', response.message);
         }
     } catch (error) {
-        console.error('加载测试方式列表错误:', error);
+        logger.error('加载测试方式列表错误:', error);
     } finally {
         hideLoading();
     }
@@ -17004,7 +21373,7 @@ async function editTestMethod(methodId) {
     try {
         showLoading('加载测试方式信息中...');
 
-        const response = await apiRequest(`/test-methods/get?id=${methodId}`);
+        const response = await apiRequest(`/test-methods/get?id=${methodId}`, { useCache: false });
 
         if (response.success) {
             const testMethod = response.testMethod;
@@ -17021,7 +21390,7 @@ async function editTestMethod(methodId) {
             showErrorMessage('加载测试方式信息失败: ' + response.message);
         }
     } catch (error) {
-        console.error('编辑测试方式错误:', error);
+        logger.error('编辑测试方式错误:', error);
         showErrorMessage('加载测试方式信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -17060,7 +21429,7 @@ async function deleteTestMethod(methodId) {
                 showErrorMessage('测试方式删除失败: ' + response.message);
             }
         } catch (error) {
-            console.error('删除测试方式错误:', error);
+            logger.error('删除测试方式错误:', error);
             showErrorMessage('测试方式删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -17111,7 +21480,7 @@ async function submitTestMethodForm() {
             showErrorMessage((isEditing ? '测试方式编辑' : '测试方式添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        console.error('处理测试方式错误:', error);
+        logger.error('处理测试方式错误:', error);
         showErrorMessage('测试方式处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -17152,10 +21521,10 @@ async function loadTestTypes() {
                 }
             }
         } else {
-            console.error('加载测试类型列表失败:', response.message);
+            logger.error('加载测试类型列表失败:', response.message);
         }
     } catch (error) {
-        console.error('加载测试类型列表错误:', error);
+        logger.error('加载测试类型列表错误:', error);
     } finally {
         hideLoading();
     }
@@ -17163,7 +21532,6 @@ async function loadTestTypes() {
 
 // 添加测试类型
 function addTestType() {
-    console.log('添加测试类型');
     const modal = document.getElementById('add-test-type-modal');
     modal.style.display = 'block';
     // 重置表单和编辑状态
@@ -17184,7 +21552,7 @@ async function editTestType(typeId) {
     try {
         showLoading('加载测试类型信息中...');
 
-        const response = await apiRequest(`/test-types/get?id=${typeId}`);
+        const response = await apiRequest(`/test-types/get?id=${typeId}`, { useCache: false });
 
         if (response.success) {
             const testType = response.testType;
@@ -17201,7 +21569,7 @@ async function editTestType(typeId) {
             showErrorMessage('加载测试类型信息失败: ' + response.message);
         }
     } catch (error) {
-        console.error('编辑测试类型错误:', error);
+        logger.error('编辑测试类型错误:', error);
         showErrorMessage('加载测试类型信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -17240,7 +21608,7 @@ async function deleteTestType(typeId) {
                 showErrorMessage('测试类型删除失败: ' + response.message);
             }
         } catch (error) {
-            console.error('删除测试类型错误:', error);
+            logger.error('删除测试类型错误:', error);
             showErrorMessage('测试类型删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -17291,7 +21659,7 @@ async function submitTestTypeForm() {
             showErrorMessage((isEditing ? '测试类型编辑' : '测试类型添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        console.error('处理测试类型错误:', error);
+        logger.error('处理测试类型错误:', error);
         showErrorMessage('测试类型处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -17332,10 +21700,10 @@ async function loadTestSoftwares() {
                 }
             }
         } else {
-            console.error('加载测试软件列表失败:', response.message);
+            logger.error('加载测试软件列表失败:', response.message);
         }
     } catch (error) {
-        console.error('加载测试软件列表错误:', error);
+        logger.error('加载测试软件列表错误:', error);
     } finally {
         hideLoading();
     }
@@ -17343,7 +21711,6 @@ async function loadTestSoftwares() {
 
 // 添加测试软件
 function addTestSoftware() {
-    console.log('添加测试软件');
     const modal = document.getElementById('add-test-software-modal');
     modal.style.display = 'block';
     // 重置表单和编辑状态
@@ -17364,7 +21731,7 @@ async function editTestSoftware(softwareId) {
     try {
         showLoading('加载测试软件信息中...');
 
-        const response = await apiRequest(`/test-softwares/get?id=${softwareId}`);
+        const response = await apiRequest(`/test-softwares/get?id=${softwareId}`, { useCache: false });
 
         if (response.success) {
             const testSoftware = response.software;
@@ -17381,7 +21748,7 @@ async function editTestSoftware(softwareId) {
             showErrorMessage('加载测试软件信息失败: ' + response.message);
         }
     } catch (error) {
-        console.error('编辑测试软件错误:', error);
+        logger.error('编辑测试软件错误:', error);
         showErrorMessage('加载测试软件信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -17420,7 +21787,7 @@ async function deleteTestSoftware(softwareId) {
                 showErrorMessage('测试软件删除失败: ' + response.message);
             }
         } catch (error) {
-            console.error('删除测试软件错误:', error);
+            logger.error('删除测试软件错误:', error);
             showErrorMessage('测试软件删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -17471,7 +21838,7 @@ async function submitTestSoftwareForm() {
             showErrorMessage((isEditing ? '测试软件编辑' : '测试软件添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        console.error('处理测试软件错误:', error);
+        logger.error('处理测试软件错误:', error);
         showErrorMessage('测试软件处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -17512,10 +21879,10 @@ async function loadTestPhases() {
                 }
             }
         } else {
-            console.error('加载测试阶段列表失败:', response.message);
+            logger.error('加载测试阶段列表失败:', response.message);
         }
     } catch (error) {
-        console.error('加载测试阶段列表错误:', error);
+        logger.error('加载测试阶段列表错误:', error);
     } finally {
         hideLoading();
     }
@@ -17523,7 +21890,6 @@ async function loadTestPhases() {
 
 // 添加测试阶段
 function addTestPhase() {
-    console.log('添加测试阶段');
     const modal = document.getElementById('add-test-phase-modal');
     modal.style.display = 'block';
     // 重置表单和编辑状态
@@ -17561,7 +21927,7 @@ async function editTestPhase(phaseId) {
             showErrorMessage('加载测试阶段信息失败: ' + response.message);
         }
     } catch (error) {
-        console.error('编辑测试阶段错误:', error);
+        logger.error('编辑测试阶段错误:', error);
         showErrorMessage('加载测试阶段信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -17600,7 +21966,7 @@ async function deleteTestPhase(phaseId) {
                 showErrorMessage('测试阶段删除失败: ' + response.message);
             }
         } catch (error) {
-            console.error('删除测试阶段错误:', error);
+            logger.error('删除测试阶段错误:', error);
             showErrorMessage('测试阶段删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -17651,7 +22017,7 @@ async function submitTestPhaseForm() {
             showErrorMessage((isEditing ? '测试阶段编辑' : '测试阶段添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        console.error('处理测试阶段错误:', error);
+        logger.error('处理测试阶段错误:', error);
         showErrorMessage('测试阶段处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -17692,10 +22058,10 @@ async function loadTestProgressConfigs() {
                 }
             }
         } else {
-            console.error('加载测试进度列表失败:', response.message);
+            logger.error('加载测试进度列表失败:', response.message);
         }
     } catch (error) {
-        console.error('加载测试进度列表错误:', error);
+        logger.error('加载测试进度列表错误:', error);
     } finally {
         hideLoading();
     }
@@ -17703,7 +22069,6 @@ async function loadTestProgressConfigs() {
 
 // 添加测试进度
 function addTestProgress() {
-    console.log('添加测试进度');
     const modal = document.getElementById('add-test-progress-modal');
     modal.style.display = 'block';
     // 重置表单和编辑状态
@@ -17724,7 +22089,7 @@ async function editTestProgress(progressId) {
     try {
         showLoading('加载测试进度信息中...');
 
-        const response = await apiRequest(`/test-progresses/get?id=${progressId}`);
+        const response = await apiRequest(`/test-progresses/get?id=${progressId}`, { useCache: false });
 
         if (response.success) {
             const testProgress = response.testProgress;
@@ -17741,7 +22106,7 @@ async function editTestProgress(progressId) {
             showErrorMessage('加载测试进度信息失败: ' + response.message);
         }
     } catch (error) {
-        console.error('编辑测试进度错误:', error);
+        logger.error('编辑测试进度错误:', error);
         showErrorMessage('加载测试进度信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -17774,7 +22139,7 @@ async function deleteTestProgress(progressId) {
                 showErrorMessage('测试进度删除失败: ' + response.message);
             }
         } catch (error) {
-            console.error('删除测试进度错误:', error);
+            logger.error('删除测试进度错误:', error);
             showErrorMessage('测试进度删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -17825,7 +22190,7 @@ async function submitTestProgressForm() {
             showErrorMessage((isEditing ? '测试进度编辑' : '测试进度添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        console.error('处理测试进度错误:', error);
+        logger.error('处理测试进度错误:', error);
         showErrorMessage('测试进度处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -17866,10 +22231,10 @@ async function loadTestStatusConfigs() {
                 }
             }
         } else {
-            console.error('加载测试状态列表失败:', response.message);
+            logger.error('加载测试状态列表失败:', response.message);
         }
     } catch (error) {
-        console.error('加载测试状态列表错误:', error);
+        logger.error('加载测试状态列表错误:', error);
     } finally {
         hideLoading();
     }
@@ -17877,7 +22242,6 @@ async function loadTestStatusConfigs() {
 
 // 添加测试状态
 function addTestStatus() {
-    console.log('添加测试状态');
     const modal = document.getElementById('add-test-status-modal');
     modal.style.display = 'block';
     // 重置表单和编辑状态
@@ -17915,7 +22279,7 @@ async function editTestStatus(statusId) {
             showErrorMessage('加载测试状态信息失败: ' + response.message);
         }
     } catch (error) {
-        console.error('编辑测试状态错误:', error);
+        logger.error('编辑测试状态错误:', error);
         showErrorMessage('加载测试状态信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -17948,7 +22312,7 @@ async function deleteTestStatus(statusId) {
                 showErrorMessage('测试状态删除失败: ' + response.message);
             }
         } catch (error) {
-            console.error('删除测试状态错误:', error);
+            logger.error('删除测试状态错误:', error);
             showErrorMessage('测试状态删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -17999,7 +22363,7 @@ async function submitTestStatusForm() {
             showErrorMessage((isEditing ? '测试状态编辑' : '测试状态添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        console.error('处理测试状态错误:', error);
+        logger.error('处理测试状态错误:', error);
         showErrorMessage('测试状态处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -18040,10 +22404,10 @@ async function loadPriorities() {
                 }
             }
         } else {
-            console.error('加载优先级列表失败:', response.message);
+            logger.error('加载优先级列表失败:', response.message);
         }
     } catch (error) {
-        console.error('加载优先级列表错误:', error);
+        logger.error('加载优先级列表错误:', error);
     } finally {
         hideLoading();
     }
@@ -18051,7 +22415,6 @@ async function loadPriorities() {
 
 // 添加优先级
 function addPriority() {
-    console.log('添加优先级');
     const modal = document.getElementById('add-priority-modal');
     modal.style.display = 'block';
     document.getElementById('add-priority-form').reset();
@@ -18071,7 +22434,7 @@ async function editPriority(priorityId) {
     try {
         showLoading('加载优先级信息中...');
 
-        const response = await apiRequest(`/priorities/get?id=${priorityId}`);
+        const response = await apiRequest(`/priorities/get?id=${priorityId}`, { useCache: false });
 
         if (response.success) {
             const priority = response.priority;
@@ -18086,7 +22449,7 @@ async function editPriority(priorityId) {
             showErrorMessage('加载优先级信息失败: ' + response.message);
         }
     } catch (error) {
-        console.error('编辑优先级错误:', error);
+        logger.error('编辑优先级错误:', error);
         showErrorMessage('加载优先级信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -18121,7 +22484,7 @@ async function deletePriority(priorityId) {
                 showErrorMessage('优先级删除失败: ' + response.message);
             }
         } catch (error) {
-            console.error('删除优先级错误:', error);
+            logger.error('删除优先级错误:', error);
             showErrorMessage('优先级删除失败: ' + error.message);
         } finally {
             hideLoading();
@@ -18171,7 +22534,7 @@ async function submitPriorityForm() {
             showErrorMessage((isEditing ? '优先级编辑' : '优先级添加') + '失败: ' + response.message);
         }
     } catch (error) {
-        console.error('处理优先级错误:', error);
+        logger.error('处理优先级错误:', error);
         showErrorMessage('优先级处理失败: ' + error.message);
     } finally {
         hideLoading();
@@ -18200,29 +22563,22 @@ async function loadLevel1PointsForSorting() {
     try {
         showLoading('加载一级测试点数据中...');
 
-        console.log('=== 加载一级测试点数据用于排序 ===');
-        console.log('window.currentModule:', window.currentModule);
-        console.log('selectedModuleId:', typeof selectedModuleId !== 'undefined' ? selectedModuleId : '未定义');
 
         if (typeof selectedModuleId !== 'undefined' && selectedModuleId) {
             currentModuleId = selectedModuleId;
-            console.log('使用selectedModuleId:', currentModuleId);
         } else if (window.currentModule && window.currentModule.id) {
             currentModuleId = window.currentModule.id;
-            console.log('使用window.currentModule.id:', currentModuleId);
         }
 
         const apiUrl = `/testpoints/level1/${currentModuleId}`;
-        console.log('调用API:', apiUrl);
 
         const response = await apiRequest(apiUrl, { useCache: false });  // 删除后必须跳过缓存
-        console.log('API响应:', response);
 
         const sortableContainer = document.getElementById('level1-points-sortable');
         const countElement = document.getElementById('level1-sort-count');
 
         if (!sortableContainer) {
-            console.error('未找到level1-points-sortable容器');
+            logger.error('未找到level1-points-sortable容器');
             return;
         }
 
@@ -18230,7 +22586,6 @@ async function loadLevel1PointsForSorting() {
 
         if (response.success) {
             const level1Points = response.level1Points || [];
-            console.log('解析到的一级测试点:', level1Points);
 
             if (countElement) {
                 countElement.textContent = level1Points.length;
@@ -18294,7 +22649,7 @@ async function loadLevel1PointsForSorting() {
             // 数据加载完成后初始化拖拽功能
             initLevel1PointsSortable();
         } else {
-            console.error('加载一级测试点数据失败:', response.message);
+            logger.error('加载一级测试点数据失败:', response.message);
             if (countElement) countElement.textContent = '0';
             sortableContainer.innerHTML = `
                 <div class="level1-sort-error">
@@ -18308,8 +22663,8 @@ async function loadLevel1PointsForSorting() {
             `;
         }
     } catch (error) {
-        console.error('加载一级测试点数据错误:', error);
-        console.error('错误堆栈:', error.stack);
+        logger.error('加载一级测试点数据错误:', error);
+        logger.error('错误堆栈:', error.stack);
         const sortableContainer = document.getElementById('level1-points-sortable');
         const countElement = document.getElementById('level1-sort-count');
         if (countElement) countElement.textContent = '0';
@@ -18482,7 +22837,7 @@ async function saveLevel1PointsOrder() {
             showErrorMessage('一级测试点顺序调整失败: ' + response.message);
         }
     } catch (error) {
-        console.error('保存一级测试点顺序错误:', error);
+        logger.error('保存一级测试点顺序错误:', error);
         showErrorMessage('一级测试点顺序调整失败: ' + error.message);
     } finally {
         hideLoading();
@@ -18491,7 +22846,6 @@ async function saveLevel1PointsOrder() {
 
 // 编辑一级测试点
 async function editLevel1Point(pointId) {
-    console.log('编辑一级测试点:', pointId);
     closeEditLevel1PointsModal();
     await openEditLevel1PointModal(pointId);
 }
@@ -18501,7 +22855,7 @@ async function openEditLevel1PointModal(pointId) {
     try {
         showLoading('加载测试点数据中...');
 
-        const response = await apiRequest(`/testpoints/level1/detail/${pointId}`);
+        const response = await apiRequest(`/testpoints/level1/detail/${pointId}`, { useCache: false });
 
         if (response.success && response.testpoint) {
             const point = response.testpoint;
@@ -18526,7 +22880,7 @@ async function openEditLevel1PointModal(pointId) {
                     `;
                 }
             } catch (error) {
-                console.error('加载测试类型失败:', error);
+                logger.error('加载测试类型失败:', error);
             }
             
             typeSelect.value = point.test_type || point.type || '功能测试';
@@ -18534,6 +22888,15 @@ async function openEditLevel1PointModal(pointId) {
             const counter = document.getElementById('edit-level1-point-name-counter');
             if (counter) {
                 counter.textContent = `${(point.name || '').length}/64`;
+            }
+
+            const summaryField = document.getElementById('edit-level1-point-summary');
+            if (summaryField) {
+                summaryField.value = point.summary || '';
+                const summaryCounter = document.getElementById('edit-level1-point-summary-counter');
+                if (summaryCounter) {
+                    summaryCounter.textContent = `${(point.summary || '').length}/300`;
+                }
             }
 
             document.getElementById('edit-level1-point-modal').style.display = 'block';
@@ -18544,7 +22907,7 @@ async function openEditLevel1PointModal(pointId) {
             showErrorMessage('加载测试点数据失败: ' + (response.message || '未知错误'));
         }
     } catch (error) {
-        console.error('打开编辑一级测试点模态框错误:', error);
+        logger.error('打开编辑一级测试点模态框错误:', error);
         showErrorMessage('加载测试点数据失败: ' + error.message);
     } finally {
         hideLoading();
@@ -18566,6 +22929,560 @@ function closeEditLevel1PointModal() {
     resetLevel1PointModalPosition('edit');
 }
 
+// AI生成一级测试点概述
+async function generateLevel1PointSummary() {
+    const pointId = document.getElementById('edit-level1-point-id').value;
+    const summaryTextarea = document.getElementById('edit-level1-point-summary');
+    const generateBtn = document.getElementById('ai-generate-summary-btn');
+
+    if (!pointId) {
+        showErrorMessage('无法获取测试点ID');
+        return;
+    }
+
+    if (generateBtn.disabled) return;
+
+    const existingSummary = summaryTextarea.value.trim();
+    let appendMode = false;
+    if (existingSummary) {
+        const choice = await showSummaryChoiceDialog(existingSummary);
+        if (choice === 'cancel') return;
+        appendMode = (choice === 'append');
+    }
+
+    try {
+        generateBtn.disabled = true;
+        generateBtn.title = 'AI正在后台生成概述，请稍候...';
+        generateBtn.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite;">
+                <circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="32"></circle>
+            </svg>
+            生成中...
+        `;
+
+        const response = await apiRequest('/ai-tasks/create', {
+            method: 'POST',
+            body: JSON.stringify({
+                taskType: 'overview_generation',
+                targetType: 'level1_point',
+                targetId: parseInt(pointId),
+                targetName: document.getElementById('edit-level1-point-name')?.value || '',
+                config: { appendMode }
+            })
+        });
+
+        if (response.success) {
+            window._pendingAIOverview = {
+                textarea: summaryTextarea,
+                existingSummary,
+                appendMode,
+                pointId: parseInt(pointId),
+                generateBtn: generateBtn,
+                taskId: response.data.taskId
+            };
+            if (window.unifiedTaskManager) {
+                window.unifiedTaskManager.addTask(response.data.taskId, {
+                    task_type: 'overview_generation',
+                    target_type: 'level1_point',
+                    target_id: parseInt(pointId),
+                    target_name: document.getElementById('edit-level1-point-name')?.value || '',
+                    status: 'pending',
+                    appendMode: appendMode
+                });
+            }
+            showSuccessMessage('AI概述生成任务已提交后台运行，请稍候...');
+        } else {
+            showErrorMessage(response.message || 'AI生成概述失败');
+            resetOverviewBtn(generateBtn);
+        }
+
+    } catch (error) {
+        console.error('提交概述生成任务失败:', error);
+        showErrorMessage('提交概述生成任务失败: ' + error.message);
+        resetOverviewBtn(generateBtn);
+    }
+}
+
+function resetOverviewBtn(generateBtn) {
+    if (!generateBtn) {
+        generateBtn = document.getElementById('ai-generate-summary-btn');
+    }
+    if (generateBtn) {
+        generateBtn.disabled = false;
+        generateBtn.title = '点击AI自动生成概述';
+        generateBtn.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"></path>
+                <path d="M12 16v-4"></path>
+                <path d="M12 8h.01"></path>
+            </svg>
+            AI生成概述
+        `;
+    }
+}
+
+// 即时更新一级测试点列表中的概述显示（无需重新加载整个列表）
+function updateLevel1SummaryInList(pointId, newSummary) {
+    if (typeof level1Points !== 'undefined' && Array.isArray(level1Points)) {
+        const point = level1Points.find(p => p.id == pointId);
+        if (point) {
+            point.summary = newSummary;
+        }
+    }
+    const listItem = document.querySelector(`.level1-list-item[data-point-id="${pointId}"]`);
+    if (listItem) {
+        const summaryDiv = listItem.querySelector('.level1-summary');
+        if (summaryDiv) {
+            const displayText = newSummary.trim() || '';
+            summaryDiv.title = displayText;
+            if (displayText) {
+                summaryDiv.innerHTML = escapeHtml(displayText);
+            } else {
+                summaryDiv.innerHTML = '<span style="color:#94a3b8">暂无概述</span>';
+            }
+        }
+    }
+}
+
+function updateLevel1DetailModalSummary(pointId, newSummary) {
+    if (!pointId) return;
+    const detailModal = document.querySelector(`.modal[data-point-id="${pointId}"]`);
+    if (!detailModal) return;
+    const summaryDiv = detailModal.querySelector('.level1-detail-summary');
+    if (!summaryDiv) return;
+    const displayText = (newSummary || '').trim();
+    if (displayText) {
+        summaryDiv.textContent = displayText;
+    } else {
+        summaryDiv.innerHTML = '<span style="color:#94a3b8">暂无概述</span>';
+    }
+}
+
+// 概述覆盖选择对话框（支持拖拽移动和调整大小）
+function showSummaryChoiceDialog(existingSummary) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:999999;';
+
+        const dialog = document.createElement('div');
+        // 初始尺寸: 宽800 高560, 居中
+        const initW = 800, initH = 560;
+        const initLeft = Math.max(60, (window.innerWidth - initW) / 2);
+        const initTop = Math.max(40, (window.innerHeight - initH) / 2);
+        dialog.style.cssText = `position:fixed;left:${initLeft}px;top:${initTop}px;width:${initW}px;height:${initH}px;min-width:500px;min-height:400px;background:white;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.3);display:flex;flex-direction:column;overflow:hidden;`;
+
+        dialog.innerHTML = `
+            <div id="ai-choice-drag-handle" style="display:flex;align-items:center;gap:12px;padding:20px 24px 16px;cursor:move;user-select:none;flex-shrink:0;border-bottom:1px solid #f1f5f9;">
+                <div style="width:40px;height:40px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:10px;display:flex;align-items:center;justify-content:center;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                        <path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </div>
+                <div style="flex:1;">
+                    <div style="font-size:17px;font-weight:600;color:#1e293b;">概述已存在</div>
+                    <div style="font-size:13px;color:#64748b;margin-top:2px;">当前已有 ${existingSummary.length} 字概述内容</div>
+                </div>
+                <div style="font-size:11px;color:#94a3b8;">拖拽标题栏移动 · 拖拽右下角调整大小</div>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;padding:20px 24px;overflow:hidden;">
+                <div style="flex:1;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px;overflow-y:auto;margin-bottom:16px;">
+                    <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">当前内容</div>
+                    <div style="font-size:14px;color:#475569;line-height:1.7;white-space:pre-wrap;">${escapeHtml(existingSummary)}</div>
+                </div>
+                <div style="font-size:14px;color:#64748b;margin-bottom:16px;flex-shrink:0;">AI 生成的新概述将如何处理？</div>
+                <div style="display:flex;gap:12px;justify-content:flex-end;flex-shrink:0;">
+                    <button id="ai-summary-cancel" style="padding:10px 22px;border:1px solid #e2e8f0;background:white;color:#64748b;border-radius:8px;font-size:14px;cursor:pointer;transition:all 0.15s;">取消</button>
+                    <button id="ai-summary-append" style="padding:10px 22px;border:1px solid #8b5cf6;background:#8b5cf6;color:white;border-radius:8px;font-size:14px;cursor:pointer;transition:all 0.15s;">追加到原有</button>
+                    <button id="ai-summary-replace" style="padding:10px 22px;border:1px solid #ef4444;background:#ef4444;color:white;border-radius:8px;font-size:14px;cursor:pointer;transition:all 0.15s;">替换原有</button>
+                </div>
+            </div>
+            <div id="ai-choice-resize-handle" style="position:absolute;right:0;bottom:0;width:20px;height:20px;cursor:se-resize;display:flex;align-items:center;justify-content:center;opacity:0.4;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2">
+                    <path d="M21 21H7M21 15v6M21 21H15"/>
+                </svg>
+            </div>
+        `;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        // --- 拖拽移动 ---
+        const dragHandle = dialog.querySelector('#ai-choice-drag-handle');
+        let isDragging = false, dragStartX, dragStartY, dialogStartLeft, dialogStartTop;
+        dragHandle.addEventListener('mousedown', (e) => {
+            if (e.target.tagName === 'BUTTON') return;
+            isDragging = true;
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            dialogStartLeft = dialog.offsetLeft;
+            dialogStartTop = dialog.offsetTop;
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const dx = e.clientX - dragStartX;
+            const dy = e.clientY - dragStartY;
+            dialog.style.left = Math.max(0, dialogStartLeft + dx) + 'px';
+            dialog.style.top = Math.max(0, dialogStartTop + dy) + 'px';
+        });
+        document.addEventListener('mouseup', () => { isDragging = false; });
+
+        // --- 拖拽调整大小 ---
+        const resizeHandle = dialog.querySelector('#ai-choice-resize-handle');
+        let isResizing = false, resizeStartX, resizeStartY, startW, startH;
+        resizeHandle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            resizeStartX = e.clientX;
+            resizeStartY = e.clientY;
+            startW = dialog.offsetWidth;
+            startH = dialog.offsetHeight;
+            e.preventDefault();
+            e.stopPropagation();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            const newW = Math.max(500, startW + (e.clientX - resizeStartX));
+            const newH = Math.max(400, startH + (e.clientY - resizeStartY));
+            dialog.style.width = newW + 'px';
+            dialog.style.height = newH + 'px';
+        });
+        document.addEventListener('mouseup', () => { isResizing = false; });
+
+        const cleanup = () => {
+            isDragging = false;
+            isResizing = false;
+            if (overlay.parentNode) document.body.removeChild(overlay);
+        };
+
+        dialog.querySelector('#ai-summary-cancel').onclick = () => { cleanup(); resolve('cancel'); };
+        dialog.querySelector('#ai-summary-append').onclick = () => { cleanup(); resolve('append'); };
+        dialog.querySelector('#ai-summary-replace').onclick = () => { cleanup(); resolve('replace'); };
+    });
+}
+
+// AI生成关键配置
+async function generateKeyConfig() {
+    const isDrawer = document.getElementById('drawer-testcase-key-config') !== null;
+    const isModal = document.getElementById('detail-case-key-config') !== null;
+
+    let keyConfigTextarea, generateBtn;
+    let precondition, purpose, steps, expected, caseName;
+
+    if (isDrawer) {
+        keyConfigTextarea = document.getElementById('drawer-testcase-key-config');
+        generateBtn = document.getElementById('ai-generate-key-config-btn');
+        precondition = document.getElementById('drawer-testcase-precondition')?.value || '';
+        purpose = document.getElementById('drawer-testcase-purpose')?.value || '';
+        steps = document.getElementById('drawer-testcase-steps')?.value || '';
+        expected = document.getElementById('drawer-testcase-expected')?.value || '';
+        caseName = document.getElementById('drawer-testcase-name')?.value || '';
+    } else if (isModal) {
+        keyConfigTextarea = document.getElementById('detail-case-key-config');
+        generateBtn = document.getElementById('ai-generate-key-config-btn');
+        precondition = document.getElementById('detail-case-precondition')?.value || '';
+        purpose = document.getElementById('detail-case-purpose')?.value || '';
+        steps = document.getElementById('detail-case-steps')?.value || '';
+        expected = document.getElementById('detail-case-expected')?.value || '';
+        caseName = document.getElementById('detail-case-name')?.value || '';
+    } else {
+        showErrorMessage('未找到关键配置表单');
+        return;
+    }
+
+    if (generateBtn.disabled) return;
+
+    const existingConfig = keyConfigTextarea.value.trim();
+    let appendMode = false;
+    if (existingConfig) {
+        const choice = await showKeyConfigChoiceDialog(existingConfig);
+        if (choice === 'cancel') return;
+        appendMode = (choice === 'append');
+    }
+
+    try {
+        generateBtn.disabled = true;
+        generateBtn.title = 'AI正在后台生成关键配置，请稍候...';
+        generateBtn.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite;">
+                <circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="32"></circle>
+            </svg>
+            生成中...
+        `;
+
+        const currentCaseId = (typeof currentEditingTestCaseId !== 'undefined' && currentEditingTestCaseId && currentEditingTestCaseId !== 'new') ? currentEditingTestCaseId : null;
+
+        const response = await apiRequest('/ai-tasks/create', {
+            method: 'POST',
+            body: JSON.stringify({
+                taskType: 'key_config_generation',
+                targetType: 'test_case',
+                targetId: currentCaseId,
+                targetName: caseName || '',
+                config: {
+                    appendMode,
+                    inputData: {
+                        caseName: caseName || '未命名',
+                        precondition: precondition || '无',
+                        purpose: purpose || '无',
+                        steps: steps || '无',
+                        expected: expected || '无'
+                    }
+                }
+            })
+        });
+
+        if (response.success) {
+            window._pendingAIKeyConfig = {
+                textarea: keyConfigTextarea,
+                existingConfig,
+                appendMode,
+                caseName,
+                generateBtn: generateBtn,
+                taskId: response.data.taskId
+            };
+            if (window.unifiedTaskManager) {
+                window.unifiedTaskManager.addTask(response.data.taskId, {
+                    task_type: 'key_config_generation',
+                    target_type: 'test_case',
+                    target_id: currentCaseId,
+                    target_name: caseName || '',
+                    status: 'pending',
+                    appendMode: appendMode
+                });
+            }
+            showSuccessMessage('AI关键配置生成任务已提交后台运行，请稍候...');
+        } else {
+            showErrorMessage(response.message || 'AI生成关键配置失败');
+            resetKeyConfigBtn(generateBtn);
+        }
+
+    } catch (error) {
+        console.error('提交关键配置生成任务失败:', error);
+        showErrorMessage('提交关键配置生成任务失败: ' + error.message);
+        resetKeyConfigBtn(generateBtn);
+    }
+}
+
+function resetKeyConfigBtn(generateBtn) {
+    if (!generateBtn) {
+        generateBtn = document.getElementById('ai-generate-key-config-btn');
+    }
+    if (generateBtn) {
+        generateBtn.disabled = false;
+        generateBtn.title = '点击AI自动生成关键配置';
+        generateBtn.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+            </svg>
+            AI生成
+        `;
+    }
+}
+
+// 处理AI异步任务完成通知
+function handleAITaskComplete(data) {
+    if (!data) return;
+
+    var taskType = data.taskType || data.task_type || '';
+    var success = data.success;
+    var result = data.result;
+    var errorMessage = data.errorMessage;
+
+    if (taskType === 'overview_generation' || taskType === 'overview') {
+        taskType = 'overview';
+    }
+    if (taskType === 'key_config_generation' || taskType === 'key_config') {
+        taskType = 'key_config';
+    }
+
+    if (!success) {
+        if (data && data.title) {
+            showErrorMessage(data.title);
+        } else if (errorMessage) {
+            showErrorMessage('AI任务失败: ' + errorMessage);
+        }
+        if (taskType === 'overview') {
+            resetOverviewBtn();
+        }
+        if (taskType === 'key_config') {
+            resetKeyConfigBtn();
+        }
+        if (typeof NotificationManager !== 'undefined' && NotificationManager.fetchUnreadCount) {
+            NotificationManager.fetchUnreadCount();
+        }
+        return;
+    }
+
+    if (taskType === 'key_config') {
+        const pending = window._pendingAIKeyConfig;
+        if (pending && pending.textarea && document.body.contains(pending.textarea) && pending.caseName === (data.caseName || data.case_name)) {
+            const newConfig = result;
+            const appendMode = data.appendMode || data.append_mode;
+            if (appendMode && pending.existingConfig) {
+                pending.textarea.value = pending.existingConfig + '\n' + newConfig;
+            } else {
+                pending.textarea.value = newConfig;
+            }
+            pending.textarea.dispatchEvent(new Event('input'));
+            showSuccessMessage('AI关键配置生成完成，已自动填入');
+            if (pending.generateBtn) resetKeyConfigBtn(pending.generateBtn);
+            delete window._pendingAIKeyConfig;
+        } else {
+            if (result) {
+                const keyConfigField = document.getElementById('drawer-testcase-key-config') || document.getElementById('detail-case-key-config');
+                const caseId = data.caseId || data.case_id || data.targetId || data.target_id;
+                if (keyConfigField && caseId && typeof currentEditingTestCaseId !== 'undefined' && String(currentEditingTestCaseId) === String(caseId)) {
+                    const appendMode = data.appendMode || data.append_mode;
+                    if (appendMode && keyConfigField.value.trim()) {
+                        keyConfigField.value = keyConfigField.value.trim() + '\n' + result;
+                    } else {
+                        keyConfigField.value = result;
+                    }
+                    keyConfigField.dispatchEvent(new Event('input'));
+                }
+            }
+            showSuccessMessage('AI关键配置生成完成，已自动保存');
+            resetKeyConfigBtn();
+            delete window._pendingAIKeyConfig;
+        }
+    } else if (taskType === 'overview') {
+        const pending = window._pendingAIOverview;
+        let finalSummary = result || '';
+        let targetPointId = data.level1PointId || data.level1_point_id || data.targetId || data.target_id;
+        if (pending && pending.textarea && document.body.contains(pending.textarea) && pending.pointId === targetPointId) {
+            const newOverview = result;
+            const appendMode = data.appendMode || data.append_mode;
+            if (appendMode && pending.existingSummary) {
+                pending.textarea.value = pending.existingSummary + '\n' + newOverview;
+            } else {
+                pending.textarea.value = newOverview;
+            }
+            pending.textarea.dispatchEvent(new Event('input'));
+            finalSummary = pending.textarea.value;
+            targetPointId = pending.pointId;
+            if (typeof updateLevel1SummaryInList === 'function') {
+                updateLevel1SummaryInList(pending.pointId, pending.textarea.value);
+            }
+            showSuccessMessage('AI概述生成完成，已自动填入');
+            if (pending.generateBtn) resetOverviewBtn(pending.generateBtn);
+            delete window._pendingAIOverview;
+        } else {
+            if (result && typeof updateLevel1SummaryInList === 'function') {
+                updateLevel1SummaryInList(targetPointId, result);
+            }
+            showSuccessMessage('AI概述生成完成，已自动保存');
+            resetOverviewBtn();
+            delete window._pendingAIOverview;
+        }
+        updateLevel1DetailModalSummary(targetPointId, finalSummary);
+    }
+
+    if (typeof NotificationManager !== 'undefined' && NotificationManager.fetchUnreadCount) {
+        NotificationManager.fetchUnreadCount();
+    }
+}
+
+// 关键配置覆盖选择对话框（支持拖拽移动和调整大小）
+function showKeyConfigChoiceDialog(existingConfig) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:999999;';
+
+        const dialog = document.createElement('div');
+        const initW = 800, initH = 560;
+        const initLeft = Math.max(60, (window.innerWidth - initW) / 2);
+        const initTop = Math.max(40, (window.innerHeight - initH) / 2);
+        dialog.style.cssText = `position:fixed;left:${initLeft}px;top:${initTop}px;width:${initW}px;height:${initH}px;min-width:500px;min-height:400px;background:white;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.3);display:flex;flex-direction:column;overflow:hidden;`;
+
+        dialog.innerHTML = `
+            <div id="ai-kc-drag-handle" style="display:flex;align-items:center;gap:12px;padding:20px 24px 16px;cursor:move;user-select:none;flex-shrink:0;border-bottom:1px solid #f1f5f9;">
+                <div style="width:40px;height:40px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:10px;display:flex;align-items:center;justify-content:center;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                        <path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </div>
+                <div style="flex:1;">
+                    <div style="font-size:17px;font-weight:600;color:#1e293b;">关键配置已存在</div>
+                    <div style="font-size:13px;color:#64748b;margin-top:2px;">当前已有 ${existingConfig.length} 字配置内容</div>
+                </div>
+                <div style="font-size:11px;color:#94a3b8;">拖拽标题栏移动 · 拖拽右下角调整大小</div>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;padding:20px 24px;overflow:hidden;">
+                <div style="flex:1;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px;overflow-y:auto;margin-bottom:16px;">
+                    <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">当前内容</div>
+                    <div style="font-size:14px;color:#475569;line-height:1.7;white-space:pre-wrap;">${escapeHtml(existingConfig)}</div>
+                </div>
+                <div style="font-size:14px;color:#64748b;margin-bottom:16px;flex-shrink:0;">AI 生成的新关键配置将如何处理？</div>
+                <div style="display:flex;gap:12px;justify-content:flex-end;flex-shrink:0;">
+                    <button id="ai-kc-cancel" style="padding:10px 22px;border:1px solid #e2e8f0;background:white;color:#64748b;border-radius:8px;font-size:14px;cursor:pointer;transition:all 0.15s;">取消</button>
+                    <button id="ai-kc-append" style="padding:10px 22px;border:1px solid #8b5cf6;background:#8b5cf6;color:white;border-radius:8px;font-size:14px;cursor:pointer;transition:all 0.15s;">追加到原有</button>
+                    <button id="ai-kc-replace" style="padding:10px 22px;border:1px solid #ef4444;background:#ef4444;color:white;border-radius:8px;font-size:14px;cursor:pointer;transition:all 0.15s;">替换原有</button>
+                </div>
+            </div>
+            <div id="ai-kc-resize-handle" style="position:absolute;right:0;bottom:0;width:20px;height:20px;cursor:se-resize;display:flex;align-items:center;justify-content:center;opacity:0.4;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2">
+                    <path d="M21 21H7M21 15v6M21 21H15"/>
+                </svg>
+            </div>
+        `;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        // --- 拖拽移动 ---
+        const dragHandle = dialog.querySelector('#ai-kc-drag-handle');
+        let isDragging = false, dragStartX, dragStartY, dialogStartLeft, dialogStartTop;
+        dragHandle.addEventListener('mousedown', (e) => {
+            if (e.target.tagName === 'BUTTON') return;
+            isDragging = true;
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            dialogStartLeft = dialog.offsetLeft;
+            dialogStartTop = dialog.offsetTop;
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const dx = e.clientX - dragStartX;
+            const dy = e.clientY - dragStartY;
+            dialog.style.left = Math.max(0, dialogStartLeft + dx) + 'px';
+            dialog.style.top = Math.max(0, dialogStartTop + dy) + 'px';
+        });
+        document.addEventListener('mouseup', () => { isDragging = false; });
+
+        // --- 拖拽调整大小 ---
+        const resizeHandle = dialog.querySelector('#ai-kc-resize-handle');
+        let isResizing = false, resizeStartX, resizeStartY, startW, startH;
+        resizeHandle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            resizeStartX = e.clientX;
+            resizeStartY = e.clientY;
+            startW = dialog.offsetWidth;
+            startH = dialog.offsetHeight;
+            e.preventDefault();
+            e.stopPropagation();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            const newW = Math.max(500, startW + (e.clientX - resizeStartX));
+            const newH = Math.max(400, startH + (e.clientY - resizeStartY));
+            dialog.style.width = newW + 'px';
+            dialog.style.height = newH + 'px';
+        });
+        document.addEventListener('mouseup', () => { isResizing = false; });
+
+        const cleanup = () => {
+            isDragging = false;
+            isResizing = false;
+            if (overlay.parentNode) document.body.removeChild(overlay);
+        };
+
+        dialog.querySelector('#ai-kc-cancel').onclick = () => { cleanup(); resolve('cancel'); };
+        dialog.querySelector('#ai-kc-append').onclick = () => { cleanup(); resolve('append'); };
+        dialog.querySelector('#ai-kc-replace').onclick = () => { cleanup(); resolve('replace'); };
+    });
+}
+
 // 提交编辑一级测试点表单
 async function submitEditLevel1PointForm() {
     try {
@@ -18574,6 +23491,7 @@ async function submitEditLevel1PointForm() {
         const pointId = document.getElementById('edit-level1-point-id').value;
         const pointName = document.getElementById('edit-level1-point-name').value.trim();
         const pointType = document.getElementById('edit-level1-point-type').value;
+        const pointSummary = document.getElementById('edit-level1-point-summary') ? document.getElementById('edit-level1-point-summary').value.trim() : '';
 
         if (!pointName) {
             showErrorMessage('测试点名称不能为空');
@@ -18584,7 +23502,8 @@ async function submitEditLevel1PointForm() {
             method: 'PUT',
             body: JSON.stringify({
                 name: pointName,
-                test_type: pointType
+                test_type: pointType,
+                summary: pointSummary
             })
         });
 
@@ -18593,9 +23512,6 @@ async function submitEditLevel1PointForm() {
             closeEditLevel1PointModal();
             // 同时刷新：排序弹窗列表 + 主页面一级测试点列表
             await loadLevel1PointsForSorting();
-            console.log('[编辑一级测试点] currentModuleId:', currentModuleId);
-            console.log('[编辑一级测试点] selectedModuleId:', typeof selectedModuleId !== 'undefined' ? selectedModuleId : '未定义');
-            console.log('[编辑一级测试点] window.currentModule:', window.currentModule);
             
             let moduleIdToRefresh = currentModuleId;
             if (!moduleIdToRefresh && typeof selectedModuleId !== 'undefined' && selectedModuleId) {
@@ -18605,18 +23521,17 @@ async function submitEditLevel1PointForm() {
                 moduleIdToRefresh = window.currentModule.id;
             }
             
-            console.log('[编辑一级测试点] 最终使用的 moduleId:', moduleIdToRefresh);
             
             if (moduleIdToRefresh) {
                 await loadLevel1Points(moduleIdToRefresh);
             } else {
-                console.warn('[编辑一级测试点] 无法确定要刷新的模块ID');
+                logger.warn('[编辑一级测试点] 无法确定要刷新的模块ID');
             }
         } else {
             showErrorMessage('更新失败: ' + (response.message || '未知错误'));
         }
     } catch (error) {
-        console.error('提交编辑一级测试点表单错误:', error);
+        logger.error('提交编辑一级测试点表单错误:', error);
         showErrorMessage('更新失败: ' + error.message);
     } finally {
         hideLoading();
@@ -18670,11 +23585,238 @@ async function deleteLevel1Point(pointId) {
                 showErrorMessage('一级测试点删除失败: ' + response.message);
             }
         } catch (error) {
-            console.error('删除一级测试点错误:', error);
+            logger.error('删除一级测试点错误:', error);
             showErrorMessage('一级测试点删除失败: ' + error.message);
         } finally {
             hideLoading();
         }
+    }
+}
+
+async function viewLevel1PointDetail(pointId) {
+    try {
+        showLoading('加载测试点详情...');
+        const response = await apiRequest(`/testpoints/level1/detail/${pointId}`);
+        if (response.success && response.testpoint) {
+            const point = response.testpoint;
+            const detailModal = document.createElement('div');
+            detailModal.className = 'modal';
+            detailModal.dataset.pointId = pointId;
+            detailModal.style.cssText = 'display: flex; align-items: center; justify-content: center; z-index: 99999;';
+            
+            const summaryDisplay = point.summary ? escapeHtml(point.summary) : '<span style="color:#94a3b8">暂无概述</span>';
+            const createTime = formatDateTime(point.created_at || '');
+            const updateTime = formatDateTime(point.updated_at || '');
+
+            detailModal.innerHTML = `
+                <div class="modal-overlay" style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 99998;"></div>
+                <div class="modal-content" style="max-width: 640px; width: 90%; position: relative; z-index: 99999; border-radius: 16px; overflow: hidden;">
+                    <div class="modal-header" style="background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); padding: 20px 24px; color: white;">
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <div style="width: 40px; height: 40px; background: rgba(255,255,255,0.2); border-radius: 10px; display: flex; align-items: center; justify-content: center;">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                                    <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                    <path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                                </svg>
+                            </div>
+                            <div>
+                                <h3 style="margin: 0; font-size: 18px; font-weight: 600;">测试点详情</h3>
+                                <p style="margin: 4px 0 0 0; font-size: 13px; opacity: 0.8;">查看一级测试点完整信息</p>
+                            </div>
+                        </div>
+                        <button class="close-detail-modal" style="background: none; border: none; color: white; font-size: 24px; cursor: pointer; padding: 0; line-height: 1;">&times;</button>
+                    </div>
+                    <div class="modal-body" style="padding: 24px;">
+                        <div style="display: grid; gap: 16px;">
+                            <div style="background: #f8fafc; border-radius: 10px; padding: 16px; border: 1px solid #e2e8f0;">
+                                <div style="font-size: 12px; color: #64748b; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">测试点名称</div>
+                                <div style="font-size: 16px; font-weight: 600; color: #1e293b;">${escapeHtml(point.name || '')}</div>
+                            </div>
+                            <div style="background: #f8fafc; border-radius: 10px; padding: 16px; border: 1px solid #e2e8f0;">
+                                <div style="font-size: 12px; color: #64748b; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">概述</div>
+                                <div class="level1-detail-summary" style="font-size: 14px; color: #374151; line-height: 1.6; white-space: pre-wrap;">${summaryDisplay}</div>
+                            </div>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                                <div style="background: #f8fafc; border-radius: 10px; padding: 16px; border: 1px solid #e2e8f0;">
+                                    <div style="font-size: 12px; color: #64748b; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">测试类型</div>
+                                    <div style="font-size: 14px; color: #374151;">${escapeHtml(point.test_type || '功能测试')}</div>
+                                </div>
+                                <div style="background: #f8fafc; border-radius: 10px; padding: 16px; border: 1px solid #e2e8f0;">
+                                    <div style="font-size: 12px; color: #64748b; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">创建时间</div>
+                                    <div style="font-size: 14px; color: #374151;">${createTime}</div>
+                                </div>
+                            </div>
+                            <div style="background: #f8fafc; border-radius: 10px; padding: 16px; border: 1px solid #e2e8f0;">
+                                <div style="font-size: 12px; color: #64748b; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">更新时间</div>
+                                <div style="font-size: 14px; color: #374151;">${updateTime}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer" style="padding: 16px 24px; background: #f8fafc; border-top: 1px solid #e2e8f0; display: flex; justify-content: flex-end; gap: 12px;">
+                        <button class="btn btn-secondary close-detail-modal" style="padding: 10px 20px; border-radius: 8px; font-size: 14px;">关闭</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(detailModal);
+
+            detailModal.querySelectorAll('.close-detail-modal').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    detailModal.remove();
+                });
+            });
+        } else {
+            showErrorMessage('获取测试点详情失败');
+        }
+    } catch (error) {
+        logger.error('查看测试点详情错误:', error);
+        showErrorMessage('获取测试点详情失败: ' + error.message);
+    } finally {
+        hideLoading();
+    }
+}
+
+async function openEditLevel1PointFromList(pointId) {
+    try {
+        showLoading('加载测试点信息...');
+        const response = await apiRequest(`/testpoints/level1/detail/${pointId}`);
+        if (response.success && response.testpoint) {
+            const point = response.testpoint;
+            document.getElementById('edit-level1-point-id').value = point.id;
+            document.getElementById('edit-level1-point-name').value = point.name || '';
+
+            try {
+                const testTypesData = await apiRequest('/test-types/list');
+                const typeSelect = document.getElementById('edit-level1-point-type');
+                if (testTypesData && testTypesData.success && Array.isArray(testTypesData.testTypes) && testTypesData.testTypes.length > 0) {
+                    typeSelect.innerHTML = testTypesData.testTypes.map(type =>
+                        `<option value="${type.name}" ${type.name === point.test_type ? 'selected' : ''}>${type.name}</option>`
+                    ).join('');
+                } else {
+                    typeSelect.innerHTML = `
+                        <option value="功能测试" ${point.test_type === '功能测试' ? 'selected' : ''}>功能测试</option>
+                        <option value="性能测试" ${point.test_type === '性能测试' ? 'selected' : ''}>性能测试</option>
+                        <option value="兼容性测试" ${point.test_type === '兼容性测试' ? 'selected' : ''}>兼容性测试</option>
+                        <option value="安全测试" ${point.test_type === '安全测试' ? 'selected' : ''}>安全测试</option>
+                    `;
+                }
+            } catch (error) {
+                logger.error('加载测试类型失败:', error);
+            }
+
+            const nameCounter = document.getElementById('edit-level1-point-name-counter');
+            if (nameCounter) {
+                nameCounter.textContent = `${(point.name || '').length}/64`;
+            }
+
+            const summaryField = document.getElementById('edit-level1-point-summary');
+            if (summaryField) {
+                summaryField.value = point.summary || '';
+                const summaryCounter = document.getElementById('edit-level1-point-summary-counter');
+                if (summaryCounter) {
+                    summaryCounter.textContent = `${(point.summary || '').length}/300`;
+                }
+            }
+
+            document.getElementById('edit-level1-point-modal').style.display = 'block';
+            
+            // 初始化拖拽调整宽度功能
+            initLevel1PointModalResizer('edit');
+        } else {
+            showErrorMessage('获取测试点信息失败');
+        }
+    } catch (error) {
+        logger.error('加载测试点信息错误:', error);
+        showErrorMessage('加载测试点信息失败: ' + error.message);
+    } finally {
+        hideLoading();
+    }
+}
+
+async function showBugListModal(pointId) {
+    try {
+        showLoading('加载缺陷列表...');
+        const response = await apiRequest(`/testpoints/level1/bugs/${pointId}`);
+        if (response.success) {
+            const bugs = response.bugs || [];
+            const bugModal = document.createElement('div');
+            bugModal.className = 'modal';
+            bugModal.style.cssText = 'display: flex; align-items: center; justify-content: center; z-index: 99999;';
+
+            let bugListHtml = '';
+            if (bugs.length === 0) {
+                bugListHtml = `
+                    <div style="text-align: center; padding: 60px 20px; color: #94a3b8;">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin: 0 auto 16px; opacity: 0.5;">
+                            <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <div style="font-size: 14px;">暂无缺陷记录</div>
+                    </div>
+                `;
+            } else {
+                bugListHtml = bugs.map((bug, index) => {
+                    const bugTime = formatDateTime(bug.created_at || '');
+                    return `
+                        <div style="padding: 14px 16px; border-bottom: 1px solid #f1f5f9; transition: background 0.2s;" onmouseenter="this.style.background='#f8fafc'" onmouseleave="this.style.background=''">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <span style="display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; background: #fef2f2; color: #ef4444; border-radius: 6px; font-size: 11px; font-weight: 600;">${index + 1}</span>
+                                    <span style="font-size: 14px; font-weight: 600; color: #1e293b;">${escapeHtml(bug.bug_id || '未编号')}</span>
+                                    ${bug.bug_type ? `<span style="display: inline-flex; padding: 2px 8px; background: #fef3c7; color: #d97706; border-radius: 10px; font-size: 11px; font-weight: 500;">${escapeHtml(bug.bug_type)}</span>` : ''}
+                                </div>
+                                <span style="font-size: 12px; color: #94a3b8;">${bugTime}</span>
+                            </div>
+                            <div style="font-size: 13px; color: #64748b; margin-bottom: 4px;">
+                                <span style="color: #6366f1; font-weight: 500;">关联用例:</span> ${escapeHtml(bug.case_name || '')}
+                            </div>
+                            ${bug.description ? `<div style="font-size: 13px; color: #374151; line-height: 1.5; margin-top: 6px; padding: 8px 12px; background: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0;">${escapeHtml(bug.description)}</div>` : ''}
+                            <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">
+                                <span>提交人: ${escapeHtml(bug.creator || '')}</span>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            bugModal.innerHTML = `
+                <div class="modal-overlay" style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 99998;"></div>
+                <div class="modal-content" style="max-width: 720px; width: 90%; position: relative; z-index: 99999; border-radius: 16px; overflow: hidden;">
+                    <div class="modal-header" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); padding: 20px 24px; color: white;">
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <div style="width: 40px; height: 40px; background: rgba(255,255,255,0.2); border-radius: 10px; display: flex; align-items: center; justify-content: center;">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                                    <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"></path>
+                                </svg>
+                            </div>
+                            <div>
+                                <h3 style="margin: 0; font-size: 18px; font-weight: 600;">缺陷列表</h3>
+                                <p style="margin: 4px 0 0 0; font-size: 13px; opacity: 0.8;">共 ${bugs.length} 条缺陷记录</p>
+                            </div>
+                        </div>
+                        <button class="close-bug-modal" style="background: none; border: none; color: white; font-size: 24px; cursor: pointer; padding: 0; line-height: 1;">&times;</button>
+                    </div>
+                    <div class="modal-body" style="padding: 0; max-height: 500px; overflow-y: auto;">
+                        ${bugListHtml}
+                    </div>
+                    <div class="modal-footer" style="padding: 16px 24px; background: #f8fafc; border-top: 1px solid #e2e8f0; display: flex; justify-content: flex-end; gap: 12px;">
+                        <button class="btn btn-secondary close-bug-modal" style="padding: 10px 20px; border-radius: 8px; font-size: 14px;">关闭</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(bugModal);
+
+            bugModal.querySelectorAll('.close-bug-modal').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    bugModal.remove();
+                });
+            });
+        } else {
+            showErrorMessage('获取缺陷列表失败');
+        }
+    } catch (error) {
+        logger.error('加载缺陷列表错误:', error);
+        showErrorMessage('加载缺陷列表失败: ' + error.message);
+    } finally {
+        hideLoading();
     }
 }
 
@@ -18697,7 +23839,7 @@ async function loadAIConfig() {
         }
         return null;
     } catch (error) {
-        console.error('加载AI配置错误:', error);
+        logger.error('加载AI配置错误:', error);
         return null;
     }
 }
@@ -18712,7 +23854,7 @@ async function loadAIModels() {
         }
         return [];
     } catch (error) {
-        console.error('加载AI模型列表错误:', error);
+        logger.error('加载AI模型列表错误:', error);
         return [];
     }
 }
@@ -18799,7 +23941,7 @@ async function loadAISkills() {
             tableBody.innerHTML = '<tr><td colspan="8" class="no-data">暂无AI技能，点击上方按钮新建</td></tr>';
         }
     } catch (error) {
-        console.error('加载AI技能列表错误:', error);
+        logger.error('加载AI技能列表错误:', error);
     }
 }
 
@@ -18817,9 +23959,137 @@ async function toggleSkillStatus(skillId) {
             showErrorMessage(response.message || '操作失败');
         }
     } catch (error) {
-        console.error('切换技能状态错误:', error);
+        logger.error('切换技能状态错误:', error);
         showErrorMessage('操作失败');
     }
+}
+
+function aiSkillFormatJson() {
+    const input = document.getElementById('ai-skill-definition-input');
+    const status = document.getElementById('ai-skill-json-status');
+    if (!input.value.trim()) return;
+    try {
+        const obj = JSON.parse(input.value);
+        input.value = JSON.stringify(obj, null, 2);
+        status.className = 'ai-skill-json-status json-valid';
+        status.textContent = '✓ JSON格式化成功';
+        status.style.display = 'flex';
+        setTimeout(() => { status.style.display = 'none'; }, 2000);
+    } catch (e) {
+        status.className = 'ai-skill-json-status json-invalid';
+        status.textContent = '✕ JSON格式错误: ' + e.message;
+        status.style.display = 'flex';
+    }
+}
+
+function aiSkillCompressJson() {
+    const input = document.getElementById('ai-skill-definition-input');
+    const status = document.getElementById('ai-skill-json-status');
+    if (!input.value.trim()) return;
+    try {
+        const obj = JSON.parse(input.value);
+        input.value = JSON.stringify(obj);
+        status.className = 'ai-skill-json-status json-valid';
+        status.textContent = '✓ JSON已压缩';
+        status.style.display = 'flex';
+        setTimeout(() => { status.style.display = 'none'; }, 2000);
+    } catch (e) {
+        status.className = 'ai-skill-json-status json-invalid';
+        status.textContent = '✕ JSON格式错误: ' + e.message;
+        status.style.display = 'flex';
+    }
+}
+
+function aiSkillValidateJson() {
+    const input = document.getElementById('ai-skill-definition-input');
+    const status = document.getElementById('ai-skill-json-status');
+    if (!input.value.trim()) {
+        status.className = 'ai-skill-json-status json-invalid';
+        status.textContent = '✕ 内容为空';
+        status.style.display = 'flex';
+        return;
+    }
+    try {
+        JSON.parse(input.value);
+        status.className = 'ai-skill-json-status json-valid';
+        status.textContent = '✓ JSON格式正确';
+        status.style.display = 'flex';
+        setTimeout(() => { status.style.display = 'none'; }, 3000);
+    } catch (e) {
+        status.className = 'ai-skill-json-status json-invalid';
+        status.textContent = '✕ JSON格式错误: ' + e.message;
+        status.style.display = 'flex';
+    }
+}
+
+let _aiSkillModalDragInited = false;
+function _initAiSkillModalDragResize() {
+    if (_aiSkillModalDragInited) return;
+    _aiSkillModalDragInited = true;
+    const modal = document.getElementById('ai-skill-modal');
+    const content = modal.querySelector('.ai-skill-modal-content');
+    const header = modal.querySelector('.ai-skill-modal-header');
+    const resizer = modal.querySelector('.ai-skill-modal-resizer');
+    if (!content) return;
+
+    let isDragging = false, isResizing = false;
+    let dragStartX = 0, dragStartY = 0, dragStartLeft = 0, dragStartTop = 0;
+    let resizeStartX = 0, resizeStartY = 0, resizeStartW = 0, resizeStartH = 0;
+
+    if (header) {
+        header.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.ai-skill-modal-close')) return;
+            isDragging = true;
+            const rect = content.getBoundingClientRect();
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            dragStartLeft = rect.left;
+            dragStartTop = rect.top;
+            document.body.classList.add('ai-skill-modal-dragging');
+            e.preventDefault();
+        });
+    }
+
+    if (resizer) {
+        resizer.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            resizeStartX = e.clientX;
+            resizeStartY = e.clientY;
+            resizeStartW = content.offsetWidth;
+            resizeStartH = content.offsetHeight;
+            document.body.classList.add('ai-skill-modal-resizing');
+            e.preventDefault();
+            e.stopPropagation();
+        });
+    }
+
+    document.addEventListener('mousemove', (e) => {
+        if (isDragging) {
+            const dx = e.clientX - dragStartX;
+            const dy = e.clientY - dragStartY;
+            content.style.position = 'fixed';
+            content.style.left = (dragStartLeft + dx) + 'px';
+            content.style.top = (dragStartTop + dy) + 'px';
+            content.style.margin = '0';
+        }
+        if (isResizing) {
+            const newW = Math.max(520, resizeStartW + (e.clientX - resizeStartX));
+            const newH = Math.max(400, resizeStartH + (e.clientY - resizeStartY));
+            content.style.width = Math.min(newW, window.innerWidth - 40) + 'px';
+            content.style.height = Math.min(newH, window.innerHeight - 40) + 'px';
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            document.body.classList.remove('ai-skill-modal-dragging');
+        }
+        if (isResizing) {
+            isResizing = false;
+            document.body.classList.remove('ai-skill-modal-resizing');
+        }
+    });
 }
 
 // 打开AI技能模态框
@@ -18848,7 +24118,7 @@ function openAISkillModal(skill = null) {
 
         if (skill.isSystem) {
             document.getElementById('ai-skill-code-input').disabled = true;
-            warning.style.display = 'inline';
+            warning.style.display = 'flex';
         } else {
             document.getElementById('ai-skill-code-input').disabled = false;
             warning.style.display = 'none';
@@ -18880,25 +24150,36 @@ function openAISkillModal(skill = null) {
     }
 
     modal.style.display = 'flex';
+    _initAiSkillModalDragResize();
 }
 
 // 关闭AI技能模态框
 function closeAISkillModal() {
-    document.getElementById('ai-skill-modal').style.display = 'none';
+    const modal = document.getElementById('ai-skill-modal');
+    const content = modal.querySelector('.ai-skill-modal-content');
+    modal.style.display = 'none';
     currentEditingSkillId = null;
+    if (content) {
+        content.style.position = '';
+        content.style.left = '';
+        content.style.top = '';
+        content.style.margin = '';
+        content.style.width = '';
+        content.style.height = '';
+    }
 }
 
 // 编辑AI技能
 async function editAISkill(skillId) {
     try {
-        const response = await apiRequest(`/ai-skills/detail/${skillId}`);
+        const response = await apiRequest(`/ai-skills/detail/${skillId}`, { useCache: false });
         if (response.success && response.skill) {
             openAISkillModal(response.skill);
         } else {
             showErrorMessage('获取技能详情失败');
         }
     } catch (error) {
-        console.error('获取技能详情错误:', error);
+        logger.error('获取技能详情错误:', error);
         showErrorMessage('获取技能详情失败');
     }
 }
@@ -18970,12 +24251,15 @@ async function saveAISkill() {
         if (response.success) {
             showSuccessMessage(currentEditingSkillId ? '技能更新成功' : '技能创建成功');
             closeAISkillModal();
+            if (currentEditingSkillId) {
+                apiCache.delete(`/ai-skills/detail/${currentEditingSkillId}`);
+            }
             await loadAISkills();
         } else {
             showErrorMessage(response.message || '保存失败');
         }
     } catch (error) {
-        console.error('保存AI技能错误:', error);
+        logger.error('保存AI技能错误:', error);
         showErrorMessage('保存失败: ' + error.message);
     }
 }
@@ -18993,12 +24277,13 @@ async function deleteAISkill(skillId) {
 
         if (response.success) {
             showSuccessMessage('技能删除成功');
+            apiCache.delete(`/ai-skills/detail/${skillId}`);
             await loadAISkills();
         } else {
             showErrorMessage(response.message || '删除失败');
         }
     } catch (error) {
-        console.error('删除AI技能错误:', error);
+        logger.error('删除AI技能错误:', error);
         showErrorMessage('删除失败: ' + error.message);
     }
 }
@@ -19060,7 +24345,7 @@ async function loadReportTemplates() {
             tableBody.innerHTML = '<tr><td colspan="6" class="no-data">暂无报告模板，点击上方按钮上传</td></tr>';
         }
     } catch (error) {
-        console.error('加载报告模板列表错误:', error);
+        logger.error('加载报告模板列表错误:', error);
     }
 }
 
@@ -19118,6 +24403,9 @@ async function uploadTemplate() {
 
         const response = await fetch('/api/templates/upload', {
             method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            },
             body: formData
         });
 
@@ -19131,7 +24419,7 @@ async function uploadTemplate() {
             showErrorMessage(result.message || '上传失败');
         }
     } catch (error) {
-        console.error('上传模板错误:', error);
+        logger.error('上传模板错误:', error);
         showErrorMessage('上传失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19239,7 +24527,7 @@ async function viewTemplateContent(templateId) {
             window.currentTemplateId = templateId;
         }
     } catch (error) {
-        console.error('获取模板内容错误:', error);
+        logger.error('获取模板内容错误:', error);
     }
 }
 
@@ -19306,7 +24594,7 @@ async function saveTemplateContent(templateId) {
             showErrorMessage(response.message || '保存失败');
         }
     } catch (error) {
-        console.error('保存模板内容错误:', error);
+        logger.error('保存模板内容错误:', error);
         showErrorMessage('保存失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19319,7 +24607,7 @@ function copyTemplateContent() {
     navigator.clipboard.writeText(content).then(() => {
         showSuccessMessage('模板内容已复制到剪贴板');
     }).catch(err => {
-        console.error('复制失败:', err);
+        logger.error('复制失败:', err);
         showErrorMessage('复制失败');
     });
 }
@@ -19338,7 +24626,7 @@ async function setTemplateAsDefault(templateId) {
             showErrorMessage(response.message || '设置失败');
         }
     } catch (error) {
-        console.error('设置默认模板错误:', error);
+        logger.error('设置默认模板错误:', error);
         showErrorMessage('设置失败');
     }
 }
@@ -19361,19 +24649,11 @@ async function deleteReportTemplate(templateId) {
             showErrorMessage(response.message || '删除失败');
         }
     } catch (error) {
-        console.error('删除报告模板错误:', error);
+        logger.error('删除报告模板错误:', error);
         showErrorMessage('删除失败: ' + error.message);
     }
 }
 
-// HTML 转义函数
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-// 初始化模板文件上传区域
 document.addEventListener('DOMContentLoaded', function () {
     // 模板上传按钮点击
     document.getElementById('upload-template-btn')?.addEventListener('click', openTemplateUploadModal);
@@ -19436,8 +24716,9 @@ function handleTemplateFileSelect(file) {
 }
 
 // 初始化AI配置页面
+let _aiGenParamsEventsInitialized = false;
+
 async function initAIConfigPage() {
-    // 加载全局配置
     const config = await loadAIConfig();
     if (config) {
         const enabledSelect = document.getElementById('ai-enabled-select');
@@ -19446,8 +24727,360 @@ async function initAIConfigPage() {
         }
     }
 
-    // 加载AI模型列表
     await renderAIModelsList();
+    await loadAIGenerationParams();
+    await loadAIAgentsParams();
+    if (!_aiGenParamsEventsInitialized) {
+        initAIGenParamsEvents();
+        _aiGenParamsEventsInitialized = true;
+    }
+}
+
+let aiGenParamsCache = null;
+
+const AI_GEN_PARAMS_DEFAULTS = {
+    temperature: '0.3', max_tokens: '4000', top_p: '1.0',
+    frequency_penalty: '0', presence_penalty: '0',
+    tool_choice: 'auto', response_format: 'text',
+    request_timeout: '120000', max_retries: '3',
+    ai_rate_limit: '10', request_interval: '0', retry_mode: 'finite', seed: '',
+    scene_data_analysis: { temperature: '0.3', max_tokens: '2000', max_context_rounds: '10' },
+    scene_case_generation: { temperature: '0.7', max_tokens: '4000' },
+    scene_report_analysis: { temperature: '0.3', max_tokens: '2000' },
+    scene_memory_distillation: { temperature: '0.3', max_tokens: '800' }
+};
+
+async function loadAIGenerationParams() {
+    try {
+        const response = await apiRequest('/ai-generation-params/get', { useCache: false });
+        if (response.success && response.params) {
+            aiGenParamsCache = response.params;
+            renderAIGenerationParams(response.params);
+        }
+    } catch (error) {
+        console.error('加载AI生成参数错误:', error);
+    }
+}
+
+function renderAIGenerationParams(params) {
+    const p = { ...AI_GEN_PARAMS_DEFAULTS, ...params };
+
+    setSliderValue('ai-param-temperature', 'ai-param-temperature-val', parseFloat(p.temperature));
+    setInputValue('ai-param-max-tokens', parseInt(p.max_tokens));
+    setInputValue('ai-param-request-timeout', parseInt(p.request_timeout));
+    setInputValue('ai-param-max-retries', parseInt(p.max_retries));
+    setSelectValue('ai-param-tool-choice', p.tool_choice);
+    setSelectValue('ai-param-response-format', p.response_format);
+
+    setSliderValue('ai-param-top-p', 'ai-param-top-p-val', parseFloat(p.top_p));
+    setInputValue('ai-param-frequency-penalty', parseFloat(p.frequency_penalty));
+    setInputValue('ai-param-presence-penalty', parseFloat(p.presence_penalty));
+    setInputValue('ai-param-seed', p.seed ? parseInt(p.seed) : '');
+    setInputValue('ai-param-ai-rate-limit', parseInt(p.ai_rate_limit));
+    setInputValue('ai-param-request-interval', parseInt(p.request_interval || 0));
+    setSelectValue('ai-param-retry-mode', p.retry_mode || 'finite');
+
+    const scenes = ['data_analysis', 'case_generation', 'report_analysis', 'memory_distillation'];
+    scenes.forEach(scene => {
+        const sceneKey = 'scene_' + scene;
+        const sceneData = p[sceneKey] || {};
+        Object.entries(sceneData).forEach(([key, val]) => {
+            const el = document.getElementById('ai-scene-' + scene + '-' + key);
+            if (el) el.value = val;
+        });
+    });
+}
+
+function setSliderValue(sliderId, numberId, value) {
+    const slider = document.getElementById(sliderId);
+    const number = document.getElementById(numberId);
+    if (slider) slider.value = value;
+    if (number) number.value = value;
+}
+
+function setInputValue(inputId, value) {
+    const el = document.getElementById(inputId);
+    if (el) el.value = value;
+}
+
+function setSelectValue(selectId, value) {
+    const el = document.getElementById(selectId);
+    if (el) el.value = value;
+}
+
+function toggleAIAdvancedParams() {
+    const panel = document.getElementById('ai-gen-advanced-panel');
+    const arrow = document.getElementById('ai-gen-advanced-arrow');
+    if (!panel) return;
+    const isOpen = panel.style.display !== 'none';
+    panel.style.display = isOpen ? 'none' : 'block';
+    if (arrow) {
+        arrow.classList.toggle('open', !isOpen);
+    }
+}
+
+function initAIGenParamsEvents() {
+    const sliderPairs = [
+        ['ai-param-temperature', 'ai-param-temperature-val'],
+        ['ai-param-top-p', 'ai-param-top-p-val']
+    ];
+
+    sliderPairs.forEach(([sliderId, numberId]) => {
+        const slider = document.getElementById(sliderId);
+        const number = document.getElementById(numberId);
+        if (slider && number) {
+            slider.addEventListener('input', function() {
+                number.value = this.value;
+            });
+            number.addEventListener('input', function() {
+                const val = parseFloat(this.value);
+                if (!isNaN(val)) {
+                    slider.value = val;
+                }
+            });
+        }
+    });
+
+    const sceneTabs = document.querySelectorAll('#ai-scene-tabs .ai-scene-tab');
+    const scenePanels = document.querySelectorAll('.ai-scene-panel');
+    sceneTabs.forEach(tab => {
+        tab.addEventListener('click', function() {
+            sceneTabs.forEach(t => t.classList.remove('active'));
+            scenePanels.forEach(p => p.classList.remove('active'));
+            this.classList.add('active');
+            const sceneName = this.dataset.scene;
+            const panel = document.getElementById('ai-scene-' + sceneName);
+            if (panel) panel.classList.add('active');
+        });
+    });
+
+    const saveBtn = document.getElementById('save-ai-gen-params-btn');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', saveAIGenerationParams);
+    }
+
+    const resetBtn = document.getElementById('reset-ai-gen-params-btn');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', resetAIGenerationParams);
+    }
+}
+
+function collectAIGenerationParams() {
+    const generationParams = {
+        temperature: getElValue('ai-param-temperature-val'),
+        max_tokens: getElValue('ai-param-max-tokens'),
+        top_p: getElValue('ai-param-top-p-val'),
+        frequency_penalty: getElValue('ai-param-frequency-penalty'),
+        presence_penalty: getElValue('ai-param-presence-penalty'),
+        tool_choice: getElValue('ai-param-tool-choice'),
+        response_format: getElValue('ai-param-response-format'),
+        request_timeout: getElValue('ai-param-request-timeout'),
+        max_retries: getElValue('ai-param-max-retries'),
+        ai_rate_limit: getElValue('ai-param-ai-rate-limit'),
+        request_interval: getElValue('ai-param-request-interval'),
+        retry_mode: getElValue('ai-param-retry-mode'),
+        seed: getElValue('ai-param-seed')
+    };
+
+    const scenes = ['data_analysis', 'case_generation', 'report_analysis', 'memory_distillation'];
+    const sceneParams = {};
+    scenes.forEach(scene => {
+        const sceneData = {};
+        const sceneKey = 'scene_' + scene;
+        const sceneEl = document.getElementById('ai-scene-' + scene);
+        if (sceneEl) {
+            const inputs = sceneEl.querySelectorAll('.ai-param-input');
+            inputs.forEach(input => {
+                const idParts = input.id.split('-');
+                const paramKey = idParts.slice(3).join('_');
+                if (input.value !== '' && input.value !== undefined) {
+                    sceneData[paramKey] = input.value;
+                }
+            });
+        }
+        if (Object.keys(sceneData).length > 0) {
+            sceneParams[sceneKey] = sceneData;
+        }
+    });
+
+    return { generationParams, sceneParams };
+}
+
+function getElValue(id) {
+    const el = document.getElementById(id);
+    return el ? el.value : '';
+}
+
+async function saveAIGenerationParams() {
+    try {
+        showLoading();
+        const { generationParams, sceneParams } = collectAIGenerationParams();
+
+        const response = await apiRequest('/ai-config/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                generationParams,
+                sceneParams,
+                username: currentUser ? currentUser.username : 'admin'
+            })
+        });
+
+        if (response.success) {
+            showSuccessMessage('AI生成参数保存成功');
+            aiGenParamsCache = { ...generationParams, ...sceneParams };
+        } else {
+            showErrorMessage(response.message || '保存失败');
+        }
+    } catch (error) {
+        console.error('保存AI生成参数错误:', error);
+        showErrorMessage('保存失败: ' + error.message);
+    } finally {
+        hideLoading();
+    }
+}
+
+async function resetAIGenerationParams() {
+    if (!(await showConfirmMessage('确定要恢复所有AI生成参数为默认值吗？'))) {
+        return;
+    }
+    renderAIGenerationParams(AI_GEN_PARAMS_DEFAULTS);
+    showSuccessMessage('已恢复为默认值，请点击保存按钮生效');
+}
+
+let _aiAgentsParamsCache = null;
+
+async function loadAIAgentsParams() {
+    try {
+        const response = await apiRequest('/ai-sub-agents/list', { useCache: false });
+        if (response.success && response.agents) {
+            _aiAgentsParamsCache = response.agents;
+            renderAIAgentsParams(response.agents);
+        } else {
+            const container = document.getElementById('ai-agents-params-container');
+            if (container) {
+                container.innerHTML = '<div style="text-align: center; padding: 20px; color: #94a3b8;">暂无智能体</div>';
+            }
+        }
+    } catch (error) {
+        console.error('加载智能体参数错误:', error);
+        const container = document.getElementById('ai-agents-params-container');
+        if (container) {
+            container.innerHTML = '<div style="text-align: center; padding: 20px; color: #ef4444;">加载失败: ' + escapeHtml(error.message) + '</div>';
+        }
+    }
+}
+
+function renderAIAgentsParams(agents) {
+    const container = document.getElementById('ai-agents-params-container');
+    if (!container) return;
+
+    if (!agents || agents.length === 0) {
+        container.innerHTML = '<div style="text-align: center; padding: 20px; color: #94a3b8;">暂无智能体，请在智能体编排台中创建</div>';
+        return;
+    }
+
+    const enabledAgents = agents.filter(a => a.is_enabled !== 0);
+    if (enabledAgents.length === 0) {
+        container.innerHTML = '<div style="text-align: center; padding: 20px; color: #94a3b8;">暂无启用的智能体</div>';
+        return;
+    }
+
+    const systemCount = enabledAgents.filter(a => a.is_system === 1).length;
+    const customCount = enabledAgents.filter(a => a.is_system !== 1).length;
+
+    let html = '<div style="margin-bottom: 12px; padding: 10px 12px; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 6px; font-size: 12px; color: #0369a1;">';
+    html += '<strong>📋 说明：</strong>此表格展示所有启用的智能体。';
+    html += '当前共 <b>' + enabledAgents.length + '</b> 个智能体（系统内置 <b>' + systemCount + '</b> 个，自定义 <b>' + customCount + '</b> 个）。';
+    html += '<br><span style="color: #64748b;">• 管理员可直接修改所有智能体参数 • 普通用户修改系统内置智能体时会创建私有覆盖版本</span>';
+    html += '</div>';
+
+    html += '<div class="ai-agents-params-table"><table class="config-table" style="margin-top: 0;"><thead><tr>';
+    html += '<th style="width: 160px;">智能体名称</th>';
+    html += '<th style="width: 70px;">类型</th>';
+    html += '<th style="width: 80px;">温度</th>';
+    html += '<th style="width: 100px;">最大Token</th>';
+    html += '<th style="width: 80px;">最大重试</th>';
+    html += '<th style="width: 80px;">超时(秒)</th>';
+    html += '</tr></thead><tbody>';
+
+    enabledAgents.forEach(agent => {
+        const agentId = agent.id;
+        const displayName = escapeHtml(agent.display_name || agent.displayName || agent.agent_code);
+        const temperature = agent.llm_temperature || 0.7;
+        const maxTokens = agent.llm_max_tokens || 4096;
+        const maxRetries = agent.max_retries || 3;
+        const timeoutSeconds = agent.timeout_seconds || 300;
+        const isSystem = agent.is_system === 1;
+
+        html += '<tr>';
+        html += '<td><span title="' + escapeHtml(agent.agent_code) + '">' + displayName + '</span></td>';
+        html += '<td>' + (isSystem ? '<span style="color: #6366f1; font-size: 12px;">系统</span>' : '<span style="color: #10b981; font-size: 12px;">自定义</span>') + '</td>';
+        html += '<td><input type="number" class="ai-param-input" data-agent-id="' + agentId + '" data-field="llm_temperature" value="' + temperature + '" min="0" max="2" step="0.1" style="width: 60px;"></td>';
+        html += '<td><input type="number" class="ai-param-input" data-agent-id="' + agentId + '" data-field="llm_max_tokens" value="' + maxTokens + '" min="100" max="128000" step="100" style="width: 80px;"></td>';
+        html += '<td><input type="number" class="ai-param-input" data-agent-id="' + agentId + '" data-field="max_retries" value="' + maxRetries + '" min="0" max="10" step="1" style="width: 60px;"></td>';
+        html += '<td><input type="number" class="ai-param-input" data-agent-id="' + agentId + '" data-field="timeout_seconds" value="' + timeoutSeconds + '" min="10" max="3600" step="10" style="width: 70px;"></td>';
+        html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+    html += '<div style="margin-top: 12px;"><button class="btn btn-primary" id="save-ai-agents-params-btn"><span class="btn-icon">💾</span> 保存智能体参数</button></div>';
+
+    container.innerHTML = html;
+
+    const saveBtn = document.getElementById('save-ai-agents-params-btn');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', saveAIAgentsParams);
+    }
+}
+
+async function saveAIAgentsParams() {
+    try {
+        showLoading();
+        const inputs = document.querySelectorAll('#ai-agents-params-container input[data-agent-id]');
+        const agentParamsMap = {};
+
+        inputs.forEach(input => {
+            const agentId = input.dataset.agentId;
+            const field = input.dataset.field;
+            const value = input.value;
+
+            if (!agentParamsMap[agentId]) {
+                agentParamsMap[agentId] = {};
+            }
+            agentParamsMap[agentId][field] = value;
+        });
+
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const [agentId, params] of Object.entries(agentParamsMap)) {
+            try {
+                const response = await apiRequest('/ai-sub-agents/update/' + agentId, {
+                    method: 'PUT',
+                    body: JSON.stringify(params)
+                });
+                if (response.success) {
+                    successCount++;
+                } else {
+                    failCount++;
+                }
+            } catch (e) {
+                failCount++;
+            }
+        }
+
+        if (failCount === 0) {
+            showSuccessMessage('智能体参数保存成功 (' + successCount + '个)');
+        } else {
+            showErrorMessage('部分保存失败: 成功 ' + successCount + ' 个, 失败 ' + failCount + ' 个');
+        }
+    } catch (error) {
+        console.error('保存智能体参数错误:', error);
+        showErrorMessage('保存失败: ' + error.message);
+    } finally {
+        hideLoading();
+    }
 }
 
 // 渲染AI模型列表
@@ -19471,6 +25104,10 @@ async function renderAIModelsList() {
             ? model.created_by + (isOwner ? ' <span style="color:#4f46e5;">(我)</span>' : '')
             : '-';
         
+        const publicBadge = model.is_public 
+            ? '<span class="status-badge active" style="background: #10b981; color: white;">公开</span>'
+            : '<span class="status-badge inactive" style="background: #6b7280; color: white;">私有</span>';
+        
         return `
         <tr>
             <td>${model.name || '-'}</td>
@@ -19484,6 +25121,7 @@ async function renderAIModelsList() {
             <td>
                 ${model.is_default ? '<span class="default-badge">⭐ 默认</span>' : '-'}
             </td>
+            <td>${publicBadge}</td>
             <td style="font-size: 12px;">${ownerLabel}</td>
             <td>
                 <button class="config-action-btn test" onclick="testAIModelConnection('${model.model_id}')">测试</button>
@@ -19506,6 +25144,8 @@ function getProviderName(provider) {
     const providerNames = {
         'deepseek': 'DeepSeek',
         'openai': 'OpenAI',
+        'openai-compatible': 'OpenAI兼容API',
+        'openrouter': 'OpenRouter',
         'zhipu': '智谱AI',
         'anthropic': 'Anthropic',
         'custom': '自定义'
@@ -19523,11 +25163,21 @@ function truncateText(text, maxLength) {
 function openAIModelModal(isEdit = false) {
     const modal = document.getElementById('ai-model-modal');
     const title = document.getElementById('ai-model-modal-title');
+    const publicRow = document.getElementById('ai-model-public-row');
 
     if (modal) {
         modal.style.display = 'flex';
         if (title) {
             title.textContent = isEdit ? '编辑AI模型' : '添加AI模型';
+        }
+    }
+
+    // 只有 admin 用户可以看到"公开模型"选项
+    if (publicRow) {
+        if (currentUser && currentUser.username === 'admin') {
+            publicRow.style.display = 'flex';
+        } else {
+            publicRow.style.display = 'none';
         }
     }
 }
@@ -19541,6 +25191,7 @@ function closeAIModelModal() {
 
     // 清空表单
     document.getElementById('ai-model-id-input').value = '';
+    document.getElementById('ai-model-id-input').disabled = false;
     document.getElementById('ai-model-name-input').value = '';
     document.getElementById('ai-model-provider-select').value = 'deepseek';
     document.getElementById('ai-model-name-api-input').value = '';
@@ -19549,6 +25200,11 @@ function closeAIModelModal() {
     document.getElementById('ai-model-default-select').value = 'false';
     document.getElementById('ai-model-enabled-select').value = 'true';
     document.getElementById('ai-model-description-input').value = '';
+    
+    const publicSelect = document.getElementById('ai-model-public-select');
+    if (publicSelect) {
+        publicSelect.value = 'false';
+    }
 
     editingAIModelId = null;
 }
@@ -19557,7 +25213,7 @@ function closeAIModelModal() {
 async function editAIModel(modelId) {
     try {
         showLoading();
-        const response = await apiRequest(`/ai-models/get?modelId=${modelId}`);
+        const response = await apiRequest(`/ai-models/get?modelId=${modelId}`, { useCache: false });
 
         if (response.success && response.model) {
             const model = response.model;
@@ -19573,13 +25229,18 @@ async function editAIModel(modelId) {
             document.getElementById('ai-model-default-select').value = model.is_default ? 'true' : 'false';
             document.getElementById('ai-model-enabled-select').value = model.is_enabled ? 'true' : 'false';
             document.getElementById('ai-model-description-input').value = model.description || '';
+            
+            const publicSelect = document.getElementById('ai-model-public-select');
+            if (publicSelect) {
+                publicSelect.value = model.is_public ? 'true' : 'false';
+            }
 
             openAIModelModal(true);
         } else {
             showErrorMessage('获取模型信息失败');
         }
     } catch (error) {
-        console.error('编辑AI模型错误:', error);
+        logger.error('编辑AI模型错误:', error);
         showErrorMessage('获取模型信息失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19597,6 +25258,9 @@ async function saveAIModel() {
     const isDefault = document.getElementById('ai-model-default-select').value === 'true';
     const isEnabled = document.getElementById('ai-model-enabled-select').value === 'true';
     const description = document.getElementById('ai-model-description-input').value.trim();
+    
+    const publicSelect = document.getElementById('ai-model-public-select');
+    const isPublic = publicSelect ? publicSelect.value === 'true' : false;
 
     // 验证必填字段
     if (!modelId || !name || !modelName || !apiKey || !endpoint) {
@@ -19614,6 +25278,7 @@ async function saveAIModel() {
         isDefault,
         isEnabled,
         description,
+        isPublic,
         username: currentUser ? currentUser.username : 'admin'
     };
 
@@ -19640,12 +25305,15 @@ async function saveAIModel() {
         if (response.success) {
             showSuccessMessage(editingAIModelId ? 'AI模型更新成功' : 'AI模型添加成功');
             closeAIModelModal();
+            apiCache.delete(`/ai-models/get?modelId=${modelId}`);
             await renderAIModelsList();
+            aiModelsCache = [];
+            await loadAIAssistantModels(true);
         } else {
             showErrorMessage(response.message || '保存失败');
         }
     } catch (error) {
-        console.error('保存AI模型错误:', error);
+        logger.error('保存AI模型错误:', error);
         showErrorMessage('保存失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19668,12 +25336,15 @@ async function deleteAIModel(modelId) {
 
         if (response.success) {
             showSuccessMessage('AI模型删除成功');
+            apiCache.delete(`/ai-models/get?modelId=${modelId}`);
             await renderAIModelsList();
+            aiModelsCache = [];
+            await loadAIAssistantModels(true);
         } else {
             showErrorMessage(response.message || '删除失败');
         }
     } catch (error) {
-        console.error('删除AI模型错误:', error);
+        logger.error('删除AI模型错误:', error);
         showErrorMessage('删除失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19692,12 +25363,15 @@ async function setDefaultAIModel(modelId) {
 
         if (response.success) {
             showSuccessMessage('默认AI模型设置成功');
+            apiCache.deleteByPrefix('/ai-models/');
             await renderAIModelsList();
+            aiModelsCache = [];
+            await loadAIAssistantModels(true);
         } else {
             showErrorMessage(response.message || '设置失败');
         }
     } catch (error) {
-        console.error('设置默认AI模型错误:', error);
+        logger.error('设置默认AI模型错误:', error);
         showErrorMessage('设置失败: ' + error.message);
     } finally {
         hideLoading();
@@ -19711,7 +25385,7 @@ async function getDefaultAIModel() {
         const defaultModel = models.find(m => m.is_default && m.is_enabled);
         return defaultModel || null;
     } catch (error) {
-        console.error('获取默认AI模型错误:', error);
+        logger.error('获取默认AI模型错误:', error);
         return null;
     }
 }
@@ -19721,81 +25395,34 @@ async function testAIModelConnection(modelId) {
     try {
         showLoading();
 
-        // 获取模型信息
-        const response = await apiRequest(`/ai-models/get?modelId=${modelId}`);
-        if (!response.success || !response.model) {
-            showErrorMessage('获取模型信息失败');
-            return;
-        }
-
-        const model = response.model;
-
-        if (!model.api_key) {
-            showErrorMessage('该模型未配置API密钥，请先编辑模型配置');
-            return;
-        }
-
-        // 显示测试状态
         const statusDiv = document.getElementById('ai-config-status');
         if (statusDiv) {
             statusDiv.style.display = 'block';
             statusDiv.className = 'config-status loading';
-            statusDiv.innerHTML = `🔄 正在测试模型 "${model.name}" 连接...`;
+            statusDiv.innerHTML = `🔄 正在测试模型连接...`;
         }
 
-        // 构建测试请求
-        const testBody = {
-            model: model.model_name,
-            messages: [{ role: 'user', content: 'Hello' }],
-            max_tokens: 10
-        };
-
-        const headers = {
-            'Content-Type': 'application/json'
-        };
-
-        // 根据提供商设置认证方式
-        if (model.provider === 'anthropic') {
-            headers['x-api-key'] = model.api_key;
-            headers['anthropic-version'] = '2023-06-01';
-        } else {
-            headers['Authorization'] = `Bearer ${model.api_key}`;
-        }
-
-        const testResponse = await fetch(model.endpoint, {
+        const response = await apiRequest('/ai-models/test', {
             method: 'POST',
-            headers: headers,
-            body: JSON.stringify(testBody)
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ modelId })
         });
 
-        if (testResponse.ok) {
+        if (response.success) {
             if (statusDiv) {
                 statusDiv.className = 'config-status success';
-                statusDiv.innerHTML = `✅ 模型 "${model.name}" 连接成功！AI服务可用`;
+                statusDiv.innerHTML = `✅ ${response.message}`;
             }
-            showSuccessMessage('AI模型连接测试成功');
+            showSuccessMessage(response.message);
         } else {
-            let errorMessage = '未知错误';
-            try {
-                const contentType = testResponse.headers.get('content-type');
-                if (contentType && contentType.includes('application/json')) {
-                    const errorData = await testResponse.json();
-                    errorMessage = errorData.error?.message || errorData.message || JSON.stringify(errorData);
-                } else {
-                    errorMessage = await testResponse.text();
-                }
-            } catch (parseError) {
-                errorMessage = `HTTP ${testResponse.status}: ${testResponse.statusText}`;
-            }
-
             if (statusDiv) {
                 statusDiv.className = 'config-status error';
-                statusDiv.innerHTML = `❌ 模型 "${model.name}" 连接失败: ${errorMessage}`;
+                statusDiv.innerHTML = `❌ ${response.message}`;
             }
-            showErrorMessage('连接测试失败: ' + errorMessage);
+            showErrorMessage(response.message);
         }
     } catch (error) {
-        console.error('测试AI模型连接错误:', error);
+        logger.error('测试AI模型连接错误:', error);
         const statusDiv = document.getElementById('ai-config-status');
         if (statusDiv) {
             statusDiv.className = 'config-status error';
@@ -19837,7 +25464,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     showSuccessMessage('AI功能状态已更新');
                 }
             } catch (error) {
-                console.error('更新AI启用状态错误:', error);
+                logger.error('更新AI启用状态错误:', error);
             }
         });
     }
@@ -19856,6 +25483,13 @@ document.addEventListener('DOMContentLoaded', function () {
                 case 'openai':
                     endpointInput.value = 'https://api.openai.com/v1/chat/completions';
                     break;
+                case 'openai-compatible':
+                    endpointInput.value = '';
+                    endpointInput.placeholder = '请输入兼容OpenAI格式的API端点URL';
+                    break;
+                case 'openrouter':
+                    endpointInput.value = 'https://openrouter.ai/api/v1/chat/completions';
+                    break;
                 case 'zhipu':
                     endpointInput.value = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
                     break;
@@ -19868,73 +25502,177 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 
 // ========================================
-// AI知识问答功能
+// AI问答功能
 // ========================================
 
 // 打开AI助手模态框
 async function openAIAssistant() {
     const modal = document.getElementById('ai-assistant-modal');
     if (modal) {
-        modal.classList.add('show');
-
-        // 重置位置到屏幕中央
+        // 先重置位置到屏幕中央，再显示模态框
         const content = modal.querySelector('.ai-modal-content');
         if (content) {
             content.style.left = '50%';
             content.style.top = '50%';
             content.style.transform = 'translate(-50%, -50%)';
+            content.style.margin = '0';
         }
 
-        // 初始化拖动功能
-        initAIModalDrag();
+        // 显示模态框
+        modal.classList.add('show');
 
+        // 初始化拖动功能（只初始化一次）
+        if (!aiModalDragInitialized) {
+            initAIModalDrag();
+            aiModalDragInitialized = true;
+        }
+
+        // 异步加载配置和模型，不阻塞UI
+        loadAIConfigAndModels();
+
+        // 聚焦到输入框
+        requestAnimationFrame(() => {
+            const input = document.getElementById('ai-input');
+            if (input) input.focus();
+        });
+    }
+}
+
+// 异步加载AI配置和模型
+async function loadAIConfigAndModels() {
+    try {
         // 从后端加载配置
         const config = await loadAIConfig();
         if (config) {
             // 检查是否启用AI功能
             if (config.ai_enabled && config.ai_enabled.value === 'false') {
                 showErrorMessage('AI功能已禁用，请联系管理员启用');
-                modal.classList.remove('show');
+                closeAIAssistant();
                 return;
             }
         }
+    } catch (error) {
+        logger.error('[AI助手] 加载AI配置失败:', error);
+    }
 
-        // 加载可用的AI模型列表
-        await loadAvailableModels();
+    // 无论配置加载是否成功，都尝试加载模型列表
+    try {
+        await loadAIAssistantModels();
+    } catch (error) {
+        logger.error('[AI助手] 加载AI模型列表失败:', error);
+    }
 
-        // 聚焦到输入框
-        setTimeout(() => {
-            const input = document.getElementById('ai-input');
-            if (input) input.focus();
-        }, 100);
+    try {
+        await loadQAAgents();
+    } catch (error) {
+        logger.error('[AI助手] 加载QA代理列表失败:', error);
     }
 }
 
-// 加载可用的AI模型列表
-async function loadAvailableModels() {
-    const modelSelect = document.getElementById('ai-model-select');
-    if (!modelSelect) return;
-
+// 预加载AI模型列表（后台静默加载）
+async function preloadAIModels() {
     try {
         const response = await apiRequest('/ai-models/list');
         if (response.success && response.models) {
-            // 只显示启用的模型
-            const enabledModels = response.models.filter(m => m.is_enabled);
-
-            if (enabledModels.length === 0) {
-                modelSelect.innerHTML = '<option value="">暂无可用模型</option>';
-                return;
-            }
-
-            modelSelect.innerHTML = enabledModels.map(model =>
-                `<option value="${model.model_id}" ${model.is_default ? 'selected' : ''}>
-                    ${model.name} ${model.is_default ? '(默认)' : ''}
-                </option>`
-            ).join('');
+            aiModelsCache = response.models;
+        } else {
+            aiModelsCache = [];
+            logger.warn('[AI模型] 预加载返回无模型数据，请在配置中心添加AI模型');
         }
     } catch (error) {
-        console.error('加载AI模型列表错误:', error);
-        modelSelect.innerHTML = '<option value="">加载失败</option>';
+        logger.error('[AI模型] 预加载失败:', error);
+        aiModelsCache = [];
+    }
+}
+
+// 加载AI助手模型列表
+async function loadQAAgents() {
+    const agentSelect = document.getElementById('ai-qa-agent-select');
+    const agentInfo = document.getElementById('ai-qa-agent-info');
+    if (!agentSelect) return;
+
+    try {
+        const response = await apiRequest('/api/ai-qa/available-agents');
+        if (response.success && response.data && response.data.length > 0) {
+            let optionsHtml = '<option value="">通用助手</option>';
+            for (const agent of response.data) {
+                const desc = agent.description ? ` - ${agent.description.substring(0, 20)}${agent.description.length > 20 ? '...' : ''}` : '';
+                optionsHtml += `<option value="${escapeHtml(agent.agent_code)}">${escapeHtml(agent.display_name)}${desc}</option>`;
+            }
+            agentSelect.innerHTML = optionsHtml;
+
+            agentSelect.addEventListener('change', function() {
+                if (agentInfo) {
+                    if (this.value) {
+                        const selected = response.data.find(a => a.agent_code === this.value);
+                        if (selected && selected.description) {
+                            agentInfo.textContent = selected.description.substring(0, 60);
+                            agentInfo.style.display = 'inline-block';
+                        } else {
+                            agentInfo.style.display = 'none';
+                        }
+                    } else {
+                        agentInfo.style.display = 'none';
+                    }
+                }
+            });
+        } else {
+            agentSelect.innerHTML = '<option value="">通用助手</option>';
+        }
+    } catch (error) {
+        agentSelect.innerHTML = '<option value="">通用助手</option>';
+    }
+}
+
+async function loadAIAssistantModels(forceRefresh = false) {
+    const modelSelect = document.getElementById('ai-model-select');
+    const modelSelectHeader = document.getElementById('ai-model-select-header');
+    if (!modelSelect && !modelSelectHeader) {
+        logger.warn('[AI模型] 未找到模型选择器元素');
+        return;
+    }
+
+    try {
+        let models;
+
+        // 如果强制刷新或缓存为空，则从服务器加载
+        if (forceRefresh || !aiModelsCache || aiModelsCache.length === 0) {
+            const response = await apiRequest('/ai-models/list');
+            if (response.success && response.models) {
+                models = response.models;
+                aiModelsCache = models;
+            }
+        } else {
+            // 使用缓存
+            models = aiModelsCache;
+        }
+
+        let optionsHtml = '';
+        if (models && models.length > 0) {
+            // 只显示启用的模型
+            const enabledModels = models.filter(m => m.is_enabled);
+
+            if (enabledModels.length === 0) {
+                optionsHtml = '<option value="">暂无可用模型（请在配置中心添加并启用AI模型）</option>';
+            } else {
+                optionsHtml = enabledModels.map(model =>
+                    `<option value="${model.model_id}" ${model.is_default ? 'selected' : ''}>
+                        ${model.name} ${model.is_default ? '(默认)' : ''}
+                    </option>`
+                ).join('');
+            }
+        } else {
+            optionsHtml = '<option value="">暂无可用模型（请在配置中心添加AI模型）</option>';
+        }
+
+        // 更新所有模型选择器
+        if (modelSelect) modelSelect.innerHTML = optionsHtml;
+        if (modelSelectHeader) modelSelectHeader.innerHTML = optionsHtml;
+    } catch (error) {
+        logger.error('[AI模型] 加载AI模型列表错误:', error);
+        const errorHtml = '<option value="">加载失败</option>';
+        if (modelSelect) modelSelect.innerHTML = errorHtml;
+        if (modelSelectHeader) modelSelectHeader.innerHTML = errorHtml;
     }
 }
 
@@ -20017,6 +25755,88 @@ function initAIModalDrag() {
     // 设置header初始样式
     header.style.cursor = 'grab';
     header.style.userSelect = 'none';
+    
+    initAIModalResize();
+}
+
+function initAIModalResize() {
+    const modal = document.getElementById('ai-assistant-modal');
+    const content = modal?.querySelector('.ai-modal-content');
+    
+    if (!modal || !content) return;
+    
+    const rightHandle = content.querySelector('.ai-resize-handle-right');
+    const bottomHandle = content.querySelector('.ai-resize-handle-bottom');
+    const cornerHandle = content.querySelector('.ai-resize-handle-corner');
+    
+    let isResizing = false;
+    let resizeType = '';
+    let startX, startY, startWidth, startHeight;
+    
+    function startResize(e, type) {
+        isResizing = true;
+        resizeType = type;
+        
+        startX = e.clientX;
+        startY = e.clientY;
+        startWidth = content.offsetWidth;
+        startHeight = content.offsetHeight;
+        
+        document.body.style.cursor = type === 'right' ? 'ew-resize' : 
+                                      type === 'bottom' ? 'ns-resize' : 'nwse-resize';
+        document.body.style.userSelect = 'none';
+        
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    
+    function doResize(e) {
+        if (!isResizing) return;
+        
+        const deltaX = e.clientX - startX;
+        const deltaY = e.clientY - startY;
+        
+        if (resizeType === 'right' || resizeType === 'corner') {
+            const newWidth = Math.max(600, Math.min(startWidth + deltaX, window.innerWidth * 0.95));
+            content.style.width = newWidth + 'px';
+            content.style.maxWidth = newWidth + 'px';
+        }
+        
+        if (resizeType === 'bottom' || resizeType === 'corner') {
+            const newHeight = Math.max(400, Math.min(startHeight + deltaY, window.innerHeight * 0.95));
+            content.style.height = newHeight + 'px';
+        }
+        
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    
+    function stopResize(e) {
+        if (isResizing) {
+            isResizing = false;
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        }
+    }
+    
+    if (rightHandle) {
+        rightHandle.addEventListener('mousedown', (e) => startResize(e, 'right'));
+    }
+    
+    if (bottomHandle) {
+        bottomHandle.addEventListener('mousedown', (e) => startResize(e, 'bottom'));
+    }
+    
+    if (cornerHandle) {
+        cornerHandle.addEventListener('mousedown', (e) => startResize(e, 'corner'));
+    }
+    
+    document.addEventListener('mousemove', doResize);
+    document.addEventListener('mouseup', stopResize);
 }
 
 // 发送AI查询
@@ -20029,21 +25849,168 @@ async function sendAIQuery() {
         return;
     }
 
-    // 获取选择的模型
     const modelSelect = document.getElementById('ai-model-select');
     const selectedModelId = modelSelect ? modelSelect.value : '';
 
-    // 添加用户消息到聊天容器
     addChatMessage('user', message);
 
-    // 清空输入框
     input.value = '';
 
-    // 显示加载状态
     const loadingMessage = addChatMessage('loading', '正在思考中...');
 
     try {
-        // 调用后端 AI 分析接口
+        const agentSelect = document.getElementById('ai-qa-agent-select');
+        const agentCode = agentSelect ? agentSelect.value : '';
+
+        if (agentCode) {
+            await _sendAIQueryStream(agentCode, message, loadingMessage);
+        } else {
+            await _sendAIQueryLegacy(message, selectedModelId, loadingMessage);
+        }
+    } catch (error) {
+        removeChatMessage(loadingMessage);
+        addChatMessage('assistant', `抱歉，处理您的问题时出现错误: ${error.message}`);
+    }
+}
+
+async function _sendAIQueryStream(agentCode, question, loadingMessage) {
+    let assistantMsg = null;
+    let fullContent = '';
+    let thinkingDiv = null;
+
+    try {
+        const currentModuleId = window.currentModuleId || null;
+        const currentLibraryId = window.currentLibraryId || null;
+
+        const consumer = new StreamConsumer({
+            url: '/api/ai-qa/ask-stream',
+            body: {
+                agent_code: agentCode,
+                question: question,
+                library_id: currentLibraryId,
+                module_id: currentModuleId
+            },
+            callbacks: {
+                onTextDelta: (delta, full) => {
+                    if (!assistantMsg) {
+                        removeChatMessage(loadingMessage);
+                        assistantMsg = addChatMessage('assistant', '');
+                    }
+                    fullContent = full;
+                    const contentDiv = assistantMsg?.querySelector('.ai-message-content');
+                    if (contentDiv) {
+                        contentDiv.innerHTML = parseMarkdown(fullContent);
+                        const container = document.getElementById('ai-chat-container');
+                        if (container) container.scrollTop = container.scrollHeight;
+                    }
+                },
+                onThinkingStart: () => {
+                    if (!assistantMsg) {
+                        removeChatMessage(loadingMessage);
+                        assistantMsg = addChatMessage('assistant', '');
+                    }
+                    const contentDiv = assistantMsg?.querySelector('.ai-message-content');
+                    if (contentDiv) {
+                        thinkingDiv = document.createElement('div');
+                        thinkingDiv.className = 'ai-thinking-block';
+                        thinkingDiv.style.cssText = 'font-size:12px;color:#888;border-left:3px solid #ddd;padding-left:8px;margin:4px 0;opacity:0.7;';
+                        thinkingDiv.innerHTML = '<em>思考中...</em>';
+                        contentDiv.appendChild(thinkingDiv);
+                    }
+                },
+                onThinkingDelta: (delta, fullThinking) => {
+                    if (thinkingDiv) {
+                        thinkingDiv.innerHTML = '<em>💭 思考过程:</em><br>' + escapeHtml(fullThinking).replace(/\n/g, '<br>');
+                        const container = document.getElementById('ai-chat-container');
+                        if (container) container.scrollTop = container.scrollHeight;
+                    }
+                },
+                onThinkingComplete: (text, thinkingTimeMs) => {
+                    if (thinkingDiv) {
+                        const timeStr = thinkingTimeMs ? ` (${(thinkingTimeMs / 1000).toFixed(1)}s)` : '';
+                        thinkingDiv.innerHTML = `<details><summary><em>💭 思考过程${timeStr}</em></summary><div style="margin-top:4px;white-space:pre-wrap;">${escapeHtml(text)}</div></details>`;
+                        thinkingDiv.style.opacity = '0.6';
+                    }
+                },
+                onToolCallStart: (toolCallId, toolName) => {
+                    if (!assistantMsg) {
+                        removeChatMessage(loadingMessage);
+                        assistantMsg = addChatMessage('assistant', '');
+                    }
+                    const contentDiv = assistantMsg?.querySelector('.ai-message-content');
+                    if (contentDiv) {
+                        const toolInfo = document.createElement('div');
+                        toolInfo.className = 'ai-tool-call-info';
+                        toolInfo.style.cssText = 'font-size:12px;color:#888;margin-top:4px;';
+                        toolInfo.textContent = `🔧 调用工具: ${toolName}`;
+                        contentDiv.appendChild(toolInfo);
+                        const container = document.getElementById('ai-chat-container');
+                        if (container) container.scrollTop = container.scrollHeight;
+                    }
+                },
+                onToolResult: (toolName, result, success) => {
+                    if (!assistantMsg) return;
+                    const contentDiv = assistantMsg.querySelector('.ai-message-content');
+                    if (contentDiv) {
+                        const resultInfo = document.createElement('div');
+                        resultInfo.className = 'ai-tool-result-info';
+                        resultInfo.style.cssText = 'font-size:12px;color:#888;margin-top:2px;';
+                        const preview = typeof result === 'string' ? result.substring(0, 200) : '完成';
+                        resultInfo.textContent = `✅ ${toolName}: ${preview}`;
+                        contentDiv.appendChild(resultInfo);
+                        const container = document.getElementById('ai-chat-container');
+                        if (container) container.scrollTop = container.scrollHeight;
+                    }
+                },
+                onRound: (round, maxRounds) => {
+                    if (!assistantMsg) return;
+                    const contentDiv = assistantMsg.querySelector('.ai-message-content');
+                    if (contentDiv) {
+                        const roundInfo = document.createElement('div');
+                        roundInfo.className = 'ai-round-info';
+                        roundInfo.style.cssText = 'font-size:12px;color:#888;margin-top:2px;';
+                        roundInfo.textContent = `🔄 工具调用轮次: ${round}/${maxRounds}`;
+                        contentDiv.appendChild(roundInfo);
+                        const container = document.getElementById('ai-chat-container');
+                        if (container) container.scrollTop = container.scrollHeight;
+                    }
+                },
+                onDone: (data) => {
+                    if (data.answer && assistantMsg) {
+                        fullContent = data.answer;
+                        const contentDiv = assistantMsg.querySelector('.ai-message-content');
+                        if (contentDiv) {
+                            contentDiv.innerHTML = parseMarkdown(fullContent);
+                            const container = document.getElementById('ai-chat-container');
+                            if (container) container.scrollTop = container.scrollHeight;
+                        }
+                    }
+                },
+                onError: (message, code) => {
+                    if (assistantMsg) removeChatMessage(assistantMsg);
+                    removeChatMessage(loadingMessage);
+                    addChatMessage('assistant', `抱歉，处理您的问题时出现错误: ${message}`);
+                }
+            }
+        });
+
+        await consumer.start();
+
+        if (fullContent && assistantMsg) {
+            const contentDiv = assistantMsg.querySelector('.ai-message-content');
+            if (contentDiv) {
+                contentDiv.innerHTML = parseMarkdown(fullContent);
+            }
+        }
+    } catch (error) {
+        if (assistantMsg) removeChatMessage(assistantMsg);
+        removeChatMessage(loadingMessage);
+        addChatMessage('assistant', `抱歉，流式传输中断: ${error.message}`);
+    }
+}
+
+async function _sendAIQueryLegacy(message, selectedModelId, loadingMessage) {
+    try {
         const response = await apiRequest('/ai/analyze', {
             method: 'POST',
             body: JSON.stringify({
@@ -20052,11 +26019,9 @@ async function sendAIQuery() {
             })
         });
 
-        // 移除加载消息
         removeChatMessage(loadingMessage);
 
         if (response.success) {
-            // 检查是否为报告类型
             if (response.isReport) {
                 addChatMessage('assistant', response.answer, true);
             } else {
@@ -20065,9 +26030,7 @@ async function sendAIQuery() {
         } else {
             addChatMessage('assistant', `抱歉，处理您的问题时出现错误: ${response.message || '未知错误'}`);
         }
-
     } catch (error) {
-        console.error('AI查询错误:', error);
         removeChatMessage(loadingMessage);
         addChatMessage('assistant', `抱歉，处理您的问题时出现错误: ${error.message}`);
     }
@@ -20142,7 +26105,7 @@ async function gatherContextData(query) {
         }
 
     } catch (error) {
-        console.error('收集上下文数据错误:', error);
+        logger.error('收集上下文数据错误:', error);
     }
 
     return context;
@@ -20190,6 +26153,20 @@ ${JSON.stringify(contextData, null, 2)}
             headers['Authorization'] = `Bearer ${apiKey}`;
             if (!modelName) requestBody.model = 'gpt-3.5-turbo';
             break;
+        case 'openrouter':
+            if (!endpoint) endpoint = 'https://openrouter.ai/api/v1/chat/completions';
+            headers['Authorization'] = `Bearer ${apiKey}`;
+            headers['HTTP-Referer'] = window.location.origin;
+            headers['X-Title'] = 'XTest';
+            if (!modelName) requestBody.model = 'openrouter/auto';
+            break;
+        case 'openai-compatible':
+            if (!endpoint) throw new Error('OpenAI兼容API需要配置API端点');
+            headers['Authorization'] = `Bearer ${apiKey}`;
+            headers['HTTP-Referer'] = window.location.origin;
+            headers['X-Title'] = 'XTest';
+            if (!modelName) requestBody.model = 'custom-model';
+            break;
         case 'zhipu':
             if (!endpoint) endpoint = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
             headers['Authorization'] = `Bearer ${apiKey}`;
@@ -20223,7 +26200,7 @@ ${JSON.stringify(contextData, null, 2)}
         return data.choices[0].message.content;
 
     } catch (error) {
-        console.error('调用LLM API错误:', error);
+        logger.error('调用LLM API错误:', error);
         throw error;
     }
 }
@@ -20252,7 +26229,7 @@ function addChatMessage(role, content, isReport = false) {
                 <div class="ai-report-header">
                     <span class="ai-report-icon">📊</span>
                     <span class="ai-report-title">测试报告</span>
-                    <button class="ai-report-download-btn" onclick="downloadReport(this)">
+                    <button class="ai-report-download-btn" onclick="downloadAiChatReport(this)">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"></path>
                         </svg>
@@ -20277,8 +26254,8 @@ function addChatMessage(role, content, isReport = false) {
     return messageDiv;
 }
 
-// 下载报告
-function downloadReport(btn) {
+// 下载AI聊天报告
+function downloadAiChatReport(btn) {
     const reportContent = btn.closest('.ai-report-container').querySelector('.ai-report-content');
     if (!reportContent) return;
 
@@ -20391,16 +26368,6 @@ document.addEventListener('DOMContentLoaded', function () {
             this.style.height = Math.min(this.scrollHeight, 120) + 'px';
         });
     }
-
-    // 点击模态框外部关闭
-    const aiModal = document.getElementById('ai-assistant-modal');
-    if (aiModal) {
-        aiModal.addEventListener('click', function (e) {
-            if (e.target === this) {
-                closeAIAssistant();
-            }
-        });
-    }
 });
 
 // ==================== 测试计划管理 ====================
@@ -20462,7 +26429,7 @@ async function loadOwnersForTestPlan() {
             ownerSelect.appendChild(option);
         });
     } catch (error) {
-        console.error('加载负责人列表失败:', error);
+        logger.error('加载负责人列表失败:', error);
         const ownerSelect = document.getElementById('testplan-owner');
         if (ownerSelect) {
             ownerSelect.innerHTML = '<option value="">加载失败</option>';
@@ -20544,7 +26511,7 @@ async function loadStagesAndSoftwares() {
                 softwaresResponse.softwares.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
         }
     } catch (error) {
-        console.error('加载配置失败:', error);
+        logger.error('加载配置失败:', error);
     }
 }
 
@@ -20598,16 +26565,9 @@ async function loadFilterOptions() {
             renderSelectOptions('filter-type', data.types, '全部类型');
             renderSelectOptions('filter-status', data.statuses, '全部状态');
 
-            console.log('筛选器配置加载成功:', {
-                libraries: data.libraries?.length || 0,
-                priorities: data.priorities?.length || 0,
-                methods: data.methods?.length || 0,
-                types: data.types?.length || 0,
-                statuses: data.statuses?.length || 0
-            });
         }
     } catch (error) {
-        console.error('加载筛选器配置失败:', error);
+        logger.error('加载筛选器配置失败:', error);
     }
 }
 
@@ -20624,18 +26584,20 @@ function findIdByName(configKey, name) {
 async function loadAIModelsForFilter() {
     try {
         const response = await apiRequest('/ai-models/list');
-        const modelSelect = document.getElementById('ai-model-select');
+        const modelSelect = document.getElementById('ai-model-select-header');
 
         if (response.success && response.models) {
             const defaultModel = response.models.find(m => m.is_default);
-            modelSelect.innerHTML = '<option value="">默认模型</option>' +
-                response.models
-                    .filter(m => m.is_enabled)
-                    .map(m => `<option value="${m.model_id}" ${m.is_default ? 'selected' : ''}>${m.name}</option>`)
-                    .join('');
+            if (modelSelect) {
+                modelSelect.innerHTML = '<option value="">默认模型</option>' +
+                    response.models
+                        .filter(m => m.is_enabled)
+                        .map(m => `<option value="${m.model_id}" ${m.is_default ? 'selected' : ''}>${m.name}</option>`)
+                        .join('');
+            }
         }
     } catch (error) {
-        console.error('加载AI模型列表失败:', error);
+        logger.error('加载AI模型列表失败:', error);
     }
 }
 
@@ -20677,7 +26639,7 @@ async function initAssetsTree() {
             treeContainer.innerHTML = '<div class="tree-loading"><span>加载失败: ' + (response.message || '未知错误') + '</span></div>';
         }
     } catch (error) {
-        console.error('初始化资产树失败:', error);
+        logger.error('初始化资产树失败:', error);
         const container = document.getElementById('test-assets-tree');
         if (container) {
             container.innerHTML = '<div class="tree-loading"><span>加载失败: ' + error.message + '</span></div>';
@@ -20693,9 +26655,6 @@ async function autoExpandSelectedPaths() {
     const modulesToExpand = Array.from(window.selectedCasesHierarchy.modules || []);
     const level1PointsToExpand = Array.from(window.selectedCasesHierarchy.level1Points || []);
 
-    console.log('自动展开路径 - 用例库:', librariesToExpand);
-    console.log('自动展开路径 - 模块:', modulesToExpand);
-    console.log('自动展开路径 - 一级测试点:', level1PointsToExpand);
 
     // 展开用例库节点（一级）
     for (const libraryId of librariesToExpand) {
@@ -20742,7 +26701,6 @@ async function autoExpandSelectedPaths() {
     // 最后更新所有节点的勾选状态
     updateTreeCheckboxStates();
 
-    console.log('自动展开路径完成');
 }
 
 // 更新一级节点（用例库）的勾选状态
@@ -20887,7 +26845,7 @@ async function toggleLazyTreeNode(element) {
                     childrenContainer.innerHTML = '<div class="tree-loading"><span>加载失败</span></div>';
                 }
             } catch (error) {
-                console.error('懒加载子节点失败:', error);
+                logger.error('懒加载子节点失败:', error);
                 childrenContainer.innerHTML = '<div class="tree-loading"><span>加载失败</span></div>';
             }
         } else {
@@ -21212,7 +27170,7 @@ function countAllCases(node) {
 function bindAssetsTreeEvents() {
     const treeContainer = document.getElementById('test-assets-tree');
     if (!treeContainer) {
-        console.warn('资产树容器不存在');
+        logger.warn('资产树容器不存在');
         return;
     }
 
@@ -21222,7 +27180,6 @@ function bindAssetsTreeEvents() {
     // 使用事件委托：只在根容器绑定change事件
     treeContainer.addEventListener('change', handleTreeCheckboxChangeEvent);
 
-    console.log('资产树事件绑定完成（事件委托模式）');
 }
 
 // 事件委托处理函数
@@ -21513,7 +27470,7 @@ async function loadDirectChildrenOnly(nodeElement, isSelected) {
             }
         }
     } catch (error) {
-        console.error('加载子节点失败:', error);
+        logger.error('加载子节点失败:', error);
         childrenContainer.innerHTML = '<div class="tree-loading"><span>加载失败</span></div>';
     }
 }
@@ -21733,7 +27690,7 @@ async function expandAllAssets() {
                     }
                 }
             } catch (error) {
-                console.error('展开节点失败:', error);
+                logger.error('展开节点失败:', error);
             }
         }
 
@@ -21860,12 +27817,10 @@ function updateCaseCount() {
 
 // 更新资源树的勾选状态（编辑测试计划时使用）
 function updateTreeCheckboxStates() {
-    console.log('updateTreeCheckboxStates 被调用, window.selectedCases.size:', window.selectedCases.size);
 
     // 获取所有四级用例节点
     const level4Nodes = document.querySelectorAll('#test-assets-tree .tree-node[data-level="4"]');
 
-    console.log('找到四级节点数量:', level4Nodes.length);
 
     level4Nodes.forEach(node => {
         let caseId = node.dataset.id;
@@ -21886,7 +27841,6 @@ function updateTreeCheckboxStates() {
                 node.classList.remove('partial');
             }
 
-            console.log(`四级节点勾选状态: caseId=${caseId}, isSelected=${isSelected}`);
         }
     });
 
@@ -21999,7 +27953,6 @@ let filterDebounceTimer = null;
 async function filterAssetsTree() {
     // 如果是编辑模式，不执行筛选（避免清空已选中的用例）
     if (window.currentEditingPlanId) {
-        console.log('编辑模式：跳过筛选，保留已选中用例');
         return;
     }
 
@@ -22020,7 +27973,6 @@ async function filterAssetsTree() {
 async function applyTraditionalFilter() {
     // 如果是编辑模式，不执行筛选（避免清空已选中的用例）
     if (window.currentEditingPlanId) {
-        console.log('编辑模式：跳过筛选，保留已选中用例');
         return;
     }
 
@@ -22099,7 +28051,7 @@ async function initAssetsTreeWithFilters(filters) {
             treeContainer.innerHTML = '<div class="tree-loading"><span>加载失败: ' + (response.message || '未知错误') + '</span></div>';
         }
     } catch (error) {
-        console.error('加载筛选资产树失败:', error);
+        logger.error('加载筛选资产树失败:', error);
         const container = document.getElementById('test-assets-tree');
         if (container) {
             container.innerHTML = '<div class="tree-loading"><span>加载失败: ' + error.message + '</span></div>';
@@ -22115,7 +28067,7 @@ async function handleAIFilter() {
         return;
     }
 
-    const modelId = document.getElementById('ai-model-select').value;
+    const modelId = (document.getElementById('ai-model-select-header') || document.getElementById('ai-model-select')).value;
     const btn = document.getElementById('ai-filter-btn');
     const btnText = btn.querySelector('.btn-text');
     const btnSpinner = btn.querySelector('.btn-spinner');
@@ -22151,7 +28103,7 @@ async function handleAIFilter() {
             showErrorMessage('AI解析失败: ' + (response.message || '未知错误'));
         }
     } catch (error) {
-        console.error('AI筛选处理错误:', error);
+        logger.error('AI筛选处理错误:', error);
         showErrorMessage('AI筛选处理失败: ' + error.message);
     } finally {
         // 恢复按钮状态
@@ -22269,7 +28221,6 @@ function showAIResultSummary(result) {
     }
 
     if (parts.length > 0) {
-        console.log('AI解析结果:', parts.join(' | '));
     }
 }
 
@@ -22448,7 +28399,6 @@ async function submitAdvancedTestPlan() {
         // 否则发送用例 ID 数组
         if (hasFilters && caseCount > MAX_CASES_TO_SEND) {
             // 只发送筛选条件，后端会根据筛选条件查询
-            console.log(`用例数量 ${caseCount} 超过限制 ${MAX_CASES_TO_SEND}，只发送筛选条件`);
         } else {
             // 发送用例 ID 数组
             requestBody.selectedCases = Array.from(window.selectedCases);
@@ -22473,14 +28423,26 @@ async function submitAdvancedTestPlan() {
         hideLoading();
 
         if (response.success) {
-            showSuccessMessage(isEditMode ? '测试计划更新成功' : `测试计划创建成功，共选择 ${response.caseCount || window.selectedCases.size} 条用例`);
-            closeAdvancedTestPlanModal();
+            // 检查是否有需要确认的项目关联移除
+            if (isEditMode && response.projectUnlinkConfirmations && response.projectUnlinkConfirmations.length > 0) {
+                closeAdvancedTestPlanModal();
+                window.currentEditingPlanId = null;
+                apiCache.deleteByPrefix('/workspace');
+                
+                // 显示项目关联确认弹窗
+                showProjectUnlinkConfirmation(response.projectUnlinkConfirmations, name);
+            } else {
+                showSuccessMessage(isEditMode ? '测试计划更新成功' : `测试计划创建成功，共选择 ${response.caseCount || window.selectedCases.size} 条用例`);
+                closeAdvancedTestPlanModal();
 
-            // 清除编辑模式标记
-            window.currentEditingPlanId = null;
+                // 清除编辑模式标记
+                window.currentEditingPlanId = null;
 
-            if (typeof loadTestPlans === 'function') {
-                loadTestPlans();
+                apiCache.deleteByPrefix('/workspace');
+
+                if (typeof loadTestPlans === 'function') {
+                    loadTestPlans();
+                }
             }
         } else {
             showErrorMessage((isEditMode ? '更新失败: ' : '创建失败: ') + response.message);
@@ -22488,7 +28450,7 @@ async function submitAdvancedTestPlan() {
 
     } catch (error) {
         hideLoading();
-        console.error((isEditMode ? '更新测试计划失败:' : '创建测试计划失败:'), error);
+        logger.error((isEditMode ? '更新测试计划失败:' : '创建测试计划失败:'), error);
         showErrorMessage((isEditMode ? '更新失败: ' : '创建失败: ') + error.message);
     }
 }
@@ -22497,6 +28459,247 @@ async function submitAdvancedTestPlan() {
 function closeTestPlanReportModal() {
     document.getElementById('testplan-report-modal').style.display = 'none';
 }
+
+// ==================== 项目关联确认弹窗 ====================
+
+// 存储当前需要确认的项目关联数据
+let currentProjectUnlinks = [];
+
+// 显示项目关联确认弹窗
+function showProjectUnlinkConfirmation(confirmations, planName) {
+    currentProjectUnlinks = confirmations.map(item => ({
+        ...item,
+        selected: true
+    }));
+    
+    const modal = document.getElementById('project-unlink-modal');
+    if (!modal) {
+        createProjectUnlinkModal();
+    }
+    
+    // 更新弹窗内容
+    document.getElementById('project-unlink-plan-name').textContent = planName || '测试计划';
+    document.getElementById('project-unlink-project-name').textContent = 
+        confirmations.length > 0 ? confirmations[0].projectName : '';
+    
+    // 渲染测试用例列表
+    renderProjectUnlinkList();
+    
+    // 显示弹窗
+    document.getElementById('project-unlink-modal').style.display = 'flex';
+}
+
+// 创建项目关联确认弹窗HTML
+function createProjectUnlinkModal() {
+    const modalHTML = `
+        <div id="project-unlink-modal" class="modal" style="display: none;">
+            <div class="modal-content" style="max-width: 800px; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column;">
+                <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-bottom: 1px solid #e8e8e8;">
+                    <h3 style="margin: 0; font-size: 18px; color: #1890ff;">
+                        <i class="fas fa-exclamation-triangle" style="margin-right: 8px; color: #faad14;"></i>
+                        项目关联确认
+                    </h3>
+                    <button onclick="closeProjectUnlinkModal()" style="background: none; border: none; font-size: 20px; cursor: pointer; color: #999;">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
+                <div class="modal-body" style="padding: 20px 24px; flex: 1; overflow-y: auto;">
+                    <div class="alert-box" style="background: #fffbe6; border: 1px solid #ffe58f; border-radius: 4px; padding: 12px 16px; margin-bottom: 16px;">
+                        <div style="display: flex; align-items: flex-start;">
+                            <i class="fas fa-info-circle" style="color: #faad14; margin-right: 8px; margin-top: 2px;"></i>
+                            <div>
+                                <div style="font-weight: 500; color: #d48806; margin-bottom: 4px;">测试计划已更新成功</div>
+                                <div style="color: #666; font-size: 13px;">
+                                    以下测试用例已从测试计划「<span id="project-unlink-plan-name" style="font-weight: 500;"></span>」中移除，
+                                    且这些用例关联了项目「<span id="project-unlink-project-name" style="font-weight: 500;"></span>」。
+                                    请选择是否取消这些用例与项目的关联关系。
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="action-bar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 8px 12px; background: #f5f5f5; border-radius: 4px;">
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <label style="display: flex; align-items: center; cursor: pointer; font-size: 13px;">
+                                <input type="checkbox" id="project-unlink-select-all" onchange="toggleProjectUnlinkSelectAll()" checked style="margin-right: 6px;">
+                                全选
+                            </label>
+                            <span id="project-unlink-selected-count" style="color: #1890ff; font-weight: 500;">已选择 0 项</span>
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button onclick="selectAllProjectUnlinks()" style="padding: 4px 12px; font-size: 12px; border: 1px solid #d9d9d9; background: #fff; border-radius: 4px; cursor: pointer;">
+                                全部选择
+                            </button>
+                            <button onclick="deselectAllProjectUnlinks()" style="padding: 4px 12px; font-size: 12px; border: 1px solid #d9d9d9; background: #fff; border-radius: 4px; cursor: pointer;">
+                                全部取消
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div id="project-unlink-list" style="border: 1px solid #e8e8e8; border-radius: 4px; max-height: 300px; overflow-y: auto;">
+                    </div>
+                </div>
+                
+                <div class="modal-footer" style="padding: 16px 24px; border-top: 1px solid #e8e8e8; display: flex; justify-content: flex-end; gap: 12px;">
+                    <button onclick="closeProjectUnlinkModal()" style="padding: 8px 24px; border: 1px solid #d9d9d9; background: #fff; border-radius: 4px; cursor: pointer; font-size: 14px;">
+                        保留关联
+                    </button>
+                    <button id="project-unlink-confirm-btn" onclick="confirmProjectUnlink()" style="padding: 8px 24px; border: none; background: #1890ff; color: #fff; border-radius: 4px; cursor: pointer; font-size: 14px;">
+                        确认移除关联
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+}
+
+// 渲染项目关联列表
+function renderProjectUnlinkList() {
+    const listContainer = document.getElementById('project-unlink-list');
+    
+    if (currentProjectUnlinks.length === 0) {
+        listContainer.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">暂无需要确认的关联</div>';
+        return;
+    }
+    
+    listContainer.innerHTML = currentProjectUnlinks.map((item, index) => `
+        <div class="project-unlink-item" style="display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid #f0f0f0; ${index === currentProjectUnlinks.length - 1 ? 'border-bottom: none;' : ''} ${item.selected ? 'background: #e6f7ff;' : ''}">
+            <input type="checkbox" 
+                   id="project-unlink-check-${index}" 
+                   ${item.selected ? 'checked' : ''} 
+                   onchange="toggleProjectUnlinkItem(${index})"
+                   style="margin-right: 12px; width: 16px; height: 16px; cursor: pointer;">
+            <div style="flex: 1;">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                    <span style="font-weight: 500; color: #333;">${item.caseName}</span>
+                    <span style="font-size: 12px; color: #999; background: #f5f5f5; padding: 2px 6px; border-radius: 3px;">${item.caseCode}</span>
+                </div>
+                <div style="font-size: 12px; color: #666;">
+                    ${item.hasOtherPlans 
+                        ? `<span style="color: #faad14;"><i class="fas fa-info-circle" style="margin-right: 4px;"></i>该用例还被其他测试计划关联到此项目：${item.otherPlans.map(p => p.name).join('、')}</span>` 
+                        : `<span style="color: #52c41a;"><i class="fas fa-check-circle" style="margin-right: 4px;"></i>该用例仅被当前测试计划关联到此项目</span>`
+                    }
+                </div>
+            </div>
+            <div style="display: flex; gap: 8px;">
+                <button onclick="toggleProjectUnlinkItemSelection(${index}, true)" 
+                        style="padding: 4px 8px; font-size: 12px; border: 1px solid ${item.selected ? '#1890ff' : '#d9d9d9'}; background: ${item.selected ? '#1890ff' : '#fff'}; color: ${item.selected ? '#fff' : '#333'}; border-radius: 3px; cursor: pointer;">
+                    移除
+                </button>
+                <button onclick="toggleProjectUnlinkItemSelection(${index}, false)" 
+                        style="padding: 4px 8px; font-size: 12px; border: 1px solid ${!item.selected ? '#52c41a' : '#d9d9d9'}; background: ${!item.selected ? '#52c41a' : '#fff'}; color: ${!item.selected ? '#fff' : '#333'}; border-radius: 3px; cursor: pointer;">
+                    保留
+                </button>
+            </div>
+        </div>
+    `).join('');
+    
+    updateProjectUnlinkSelectedCount();
+}
+
+// 切换单个项目的选择状态
+function toggleProjectUnlinkItem(index) {
+    currentProjectUnlinks[index].selected = !currentProjectUnlinks[index].selected;
+    renderProjectUnlinkList();
+}
+
+// 设置单个项目的选择状态
+function toggleProjectUnlinkItemSelection(index, selected) {
+    currentProjectUnlinks[index].selected = selected;
+    renderProjectUnlinkList();
+}
+
+// 切换全选
+function toggleProjectUnlinkSelectAll() {
+    const selectAll = document.getElementById('project-unlink-select-all').checked;
+    currentProjectUnlinks.forEach(item => item.selected = selectAll);
+    renderProjectUnlinkList();
+}
+
+// 全部选择
+function selectAllProjectUnlinks() {
+    currentProjectUnlinks.forEach(item => item.selected = true);
+    document.getElementById('project-unlink-select-all').checked = true;
+    renderProjectUnlinkList();
+}
+
+// 全部取消
+function deselectAllProjectUnlinks() {
+    currentProjectUnlinks.forEach(item => item.selected = false);
+    document.getElementById('project-unlink-select-all').checked = false;
+    renderProjectUnlinkList();
+}
+
+// 更新选中数量
+function updateProjectUnlinkSelectedCount() {
+    const selectedCount = currentProjectUnlinks.filter(item => item.selected).length;
+    document.getElementById('project-unlink-selected-count').textContent = `已选择 ${selectedCount} 项`;
+    
+    // 更新确认按钮状态
+    const confirmBtn = document.getElementById('project-unlink-confirm-btn');
+    if (selectedCount === 0) {
+        confirmBtn.disabled = true;
+        confirmBtn.style.background = '#d9d9d9';
+        confirmBtn.style.cursor = 'not-allowed';
+    } else {
+        confirmBtn.disabled = false;
+        confirmBtn.style.background = '#1890ff';
+        confirmBtn.style.cursor = 'pointer';
+    }
+}
+
+// 关闭项目关联确认弹窗
+function closeProjectUnlinkModal() {
+    document.getElementById('project-unlink-modal').style.display = 'none';
+    currentProjectUnlinks = [];
+    
+    // 刷新测试计划列表
+    if (typeof loadTestPlans === 'function') {
+        loadTestPlans();
+    }
+}
+
+// 确认移除项目关联
+async function confirmProjectUnlink() {
+    const selectedItems = currentProjectUnlinks.filter(item => item.selected);
+    
+    if (selectedItems.length === 0) {
+        showWarningMessage('请至少选择一项要移除的关联');
+        return;
+    }
+    
+    showLoading('正在移除项目关联...');
+    
+    try {
+        const unlinks = selectedItems.map(item => ({
+            caseId: item.caseId,
+            projectId: item.projectId
+        }));
+        
+        const response = await apiRequest('/testplans/unlink-cases-projects', {
+            method: 'POST',
+            body: JSON.stringify({ unlinks })
+        });
+        
+        hideLoading();
+        
+        if (response.success) {
+            showSuccessMessage(response.message || `成功移除 ${response.removedCount} 条关联关系`);
+            closeProjectUnlinkModal();
+        } else {
+            showErrorMessage(response.message || '移除关联失败');
+        }
+    } catch (error) {
+        hideLoading();
+        logger.error('移除项目关联失败:', error);
+        showErrorMessage('移除关联失败: ' + error.message);
+    }
+}
+
+
 
 // 导出测试计划报告
 function exportTestPlanReport() {
@@ -22560,7 +28763,7 @@ async function viewCaseReadonlyDetail(caseId) {
             showErrorMessage('获取用例详情失败: ' + (response.message || '未知错误'));
         }
     } catch (error) {
-        console.error('获取用例详情错误:', error);
+        logger.error('获取用例详情错误:', error);
         showErrorMessage('获取用例详情失败: ' + error.message);
     } finally {
         hideLoading();
@@ -22583,7 +28786,7 @@ async function loadProjectsForTestPlan() {
                 response.projects.map(p => `<option value="${p.name}">${p.name}</option>`).join('');
         }
     } catch (error) {
-        console.error('加载项目列表失败:', error);
+        logger.error('加载项目列表失败:', error);
     }
 }
 
@@ -22890,55 +29093,81 @@ function renderDrawerStep1Content() {
     
     stepContent.innerHTML = `
         <h3>选择数据维度</h3>
-        <p class="step-desc">请选择报告的数据来源维度</p>
+        <p class="step-desc">请选择报告数据的来源维度，不同维度将影响后续的分析目标选择</p>
         
         <div class="dimension-cards">
             <div class="dimension-card" data-dimension="testplan" onclick="selectDimension('testplan')">
-                <div class="dimension-icon">
+                <div class="card-icon">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
                     </svg>
                 </div>
-                <div class="dimension-info">
-                    <h4>测试计划</h4>
-                    <p>基于测试计划生成报告</p>
+                <div class="card-content">
+                    <h4>按测试计划</h4>
+                    <p>基于指定的测试计划生成报告，包含该计划下所有用例执行情况</p>
+                </div>
+                <div class="card-check">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
                 </div>
             </div>
             
             <div class="dimension-card" data-dimension="project" onclick="selectDimension('project')">
-                <div class="dimension-icon">
+                <div class="card-icon">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                     </svg>
                 </div>
-                <div class="dimension-info">
-                    <h4>所属项目</h4>
-                    <p>基于项目维度生成报告</p>
+                <div class="card-content">
+                    <h4>按所属项目</h4>
+                    <p>基于项目维度汇总报告，包含项目下所有测试计划的执行情况</p>
+                </div>
+                <div class="card-check">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
                 </div>
             </div>
             
             <div class="dimension-card" data-dimension="module" onclick="selectDimension('module')">
-                <div class="dimension-icon">
+                <div class="card-icon">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M4 6h16M4 12h16M4 18h16"></path>
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
                     </svg>
                 </div>
-                <div class="dimension-info">
-                    <h4>指定模块</h4>
-                    <p>选择特定模块生成报告</p>
+                <div class="card-content">
+                    <h4>按指定模块</h4>
+                    <p>基于特定功能模块生成专项报告，适合深度分析特定功能域</p>
+                </div>
+                <div class="card-check">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
                 </div>
             </div>
             
             <div class="dimension-card" data-dimension="library" onclick="selectDimension('library')">
-                <div class="dimension-icon">
+                <div class="card-icon">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M4 19.5A2.5 2.5 0 016.5 17H20"></path>
-                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"></path>
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
                     </svg>
                 </div>
-                <div class="dimension-info">
-                    <h4>用例库</h4>
-                    <p>基于整个用例库生成报告</p>
+                <div class="card-content">
+                    <h4>按用例库</h4>
+                    <p>基于用例库生成报告，适合回归测试和用例库维护分析</p>
+                </div>
+                <div class="card-check">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
                 </div>
             </div>
         </div>
@@ -22985,13 +29214,12 @@ function resetDrawerState() {
 async function loadDrawerData() {
     // 检查登录状态
     if (!authToken) {
-        console.warn('[loadDrawerData] 未登录，尝试从 localStorage 恢复 token');
+        logger.warn('[loadDrawerData] 未登录，尝试从 localStorage 恢复 token');
         const savedToken = localStorage.getItem('authToken');
         if (savedToken) {
             authToken = savedToken;
-            console.log('[loadDrawerData] 已从 localStorage 恢复 token');
         } else {
-            console.error('[loadDrawerData] 无法获取 token，请先登录');
+            logger.error('[loadDrawerData] 无法获取 token，请先登录');
             showToast('请先登录', 'error');
             return false;
         }
@@ -23009,7 +29237,6 @@ async function loadDrawerData() {
     }
     
     try {
-        console.log('[loadDrawerData] 开始加载数据...');
         
         // 并行加载所有数据以提高速度
         const [projectsRes, testPlansRes, modulesRes, librariesRes] = await Promise.all([
@@ -23036,17 +29263,15 @@ async function loadDrawerData() {
 
         if (librariesRes.success) {
             window.drawerLibraries = librariesRes.libraries || [];
-            console.log('[loadDrawerData] 用例库加载成功:', window.drawerLibraries.length, '个');
         } else {
-            console.error('[loadDrawerData] 用例库加载失败:', librariesRes.message);
+            logger.error('[loadDrawerData] 用例库加载失败:', librariesRes.message);
         }
         
         // 标记数据已加载
         window.drawerDataLoaded = true;
-        console.log('[loadDrawerData] 数据加载完成');
         return true;
     } catch (error) {
-        console.error('加载抽屉数据失败:', error);
+        logger.error('加载抽屉数据失败:', error);
         showToast('加载数据失败，请重试', 'error');
         return false;
     }
@@ -23274,7 +29499,7 @@ async function loadModulesByProject(projectId) {
             moduleSelect.innerHTML = '<option value="">暂无模块</option>';
         }
     } catch (error) {
-        console.error('加载模块失败:', error);
+        logger.error('加载模块失败:', error);
         moduleSelect.innerHTML = '<option value="">加载失败</option>';
     }
 }
@@ -23283,7 +29508,7 @@ async function loadModulesByProject(projectId) {
 async function loadModulesByLibrary(libraryId) {
     const moduleSelect = document.getElementById('target-select-module');
     if (!moduleSelect) {
-        console.error('[loadModulesByLibrary] 找不到模块选择器元素');
+        logger.error('[loadModulesByLibrary] 找不到模块选择器元素');
         return;
     }
 
@@ -23297,7 +29522,6 @@ async function loadModulesByLibrary(libraryId) {
     moduleSelect.disabled = false;
 
     try {
-        console.log('[loadModulesByLibrary] 开始加载模块, libraryId:', libraryId);
         
         // 通过API获取用例库关联的模块
         const result = await apiRequest('/modules/search', {
@@ -23305,7 +29529,6 @@ async function loadModulesByLibrary(libraryId) {
             body: JSON.stringify({ libraryId: libraryId })
         });
 
-        console.log('[loadModulesByLibrary] API 返回结果:', result);
 
         if (!result) {
             moduleSelect.innerHTML = '<option value="">API 返回空结果</option>';
@@ -23320,13 +29543,12 @@ async function loadModulesByLibrary(libraryId) {
                     <option value="">请选择模块</option>
                     ${result.modules.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
                 `;
-                console.log('[loadModulesByLibrary] 加载了', result.modules.length, '个模块');
             }
         } else {
             moduleSelect.innerHTML = `<option value="">${result.message || '暂无模块'}</option>`;
         }
     } catch (error) {
-        console.error('[loadModulesByLibrary] 加载模块失败:', error);
+        logger.error('[loadModulesByLibrary] 加载模块失败:', error);
         moduleSelect.innerHTML = '<option value="">加载失败</option>';
     }
 }
@@ -23505,7 +29727,7 @@ async function submitReportTask() {
             showToast('任务提交失败: ' + result.message, 'error');
         }
     } catch (error) {
-        console.error('提交任务失败:', error);
+        logger.error('提交任务失败:', error);
         updateAsyncTask(taskId, {
             progress: 100,
             status: '提交失败',
@@ -23544,16 +29766,27 @@ function renderAsyncTasks() {
         taskCountBadge.textContent = `${runningTasks.length} 个任务`;
     }
 
-    tasksList.innerHTML = asyncTasks.map(task => `
-        <div class="task-item" data-task-id="${task.id}">
+    tasksList.innerHTML = asyncTasks.map(task => {
+        // 获取进度阶段描述
+        const progressStage = getProgressStage(task.progress, task.status);
+        const estimatedTime = calculateEstimatedTime(task);
+        
+        return `
+        <div class="task-item ${task.status === 'failed' ? 'task-failed' : task.status === 'partial_completed' ? 'task-partial' : ''}" data-task-id="${task.id}">
             <div class="task-info">
                 <div class="task-name">${task.name}</div>
                 <div class="task-progress">
                     ${renderProgressBar(task.progress, 'progress')}
                 </div>
+                <div class="task-stage">
+                    <span class="stage-icon">${progressStage.icon}</span>
+                    <span class="stage-text">${progressStage.text}</span>
+                    ${estimatedTime ? `<span class="estimated-time">预计剩余: ${estimatedTime}</span>` : ''}
+                </div>
+                ${task.error ? `<div class="task-error" style="color: #ef4444; font-size: 12px; margin-top: 4px;">${task.error}</div>` : ''}
             </div>
-            <span class="task-status">${task.status}</span>
-            ${task.progress < 100 ? `
+            <span class="task-status status-${task.status}">${getTaskStatusText(task.status)}</span>
+            ${task.progress < 100 && task.status !== 'failed' ? `
                 <div class="task-actions">
                     <button class="task-cancel-btn" onclick="cancelAsyncTask('${task.id}')" title="取消任务">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
@@ -23563,8 +29796,80 @@ function renderAsyncTasks() {
                     </button>
                 </div>
             ` : ''}
+            ${(task.status === 'completed' || task.status === 'partial_completed') && task.reportId ? `
+                <div class="task-actions">
+                    <button class="task-view-btn" onclick="viewReportDetail(${task.reportId})" title="查看报告">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                    </button>
+                </div>
+            ` : ''}
         </div>
-    `).join('');
+    `}).join('');
+}
+
+// 获取进度阶段描述
+function getProgressStage(progress, status) {
+    if (status === 'failed') {
+        return { icon: '❌', text: '任务失败' };
+    }
+    if (status === 'completed') {
+        return { icon: '✅', text: '已完成' };
+    }
+    if (status === 'partial_completed') {
+        return { icon: '⚠️', text: '部分完成' };
+    }
+    if (status === 'cancelled') {
+        return { icon: '⏹️', text: '已取消' };
+    }
+    
+    if (progress < 10) {
+        return { icon: '📋', text: '正在创建报告记录...' };
+    } else if (progress < 40) {
+        return { icon: '📊', text: '正在组装测试数据...' };
+    } else if (progress < 50) {
+        return { icon: '📝', text: '数据组装完成，准备生成报告...' };
+    } else if (progress < 70) {
+        return { icon: '🤖', text: '正在进行AI智能分析...' };
+    } else if (progress < 85) {
+        return { icon: '📄', text: '正在生成Markdown报告...' };
+    } else if (progress < 100) {
+        return { icon: '💾', text: '正在保存报告文件...' };
+    } else {
+        return { icon: '✅', text: '报告生成完成' };
+    }
+}
+
+// 计算预计剩余时间
+function calculateEstimatedTime(task) {
+    if (!task.startTime || task.progress < 10 || task.progress >= 100) {
+        return null;
+    }
+    
+    const elapsed = Date.now() - task.startTime;
+    const progressPerMs = task.progress / elapsed;
+    const remainingProgress = 100 - task.progress;
+    const estimatedMs = remainingProgress / progressPerMs;
+    
+    if (estimatedMs < 1000) return '即将完成';
+    if (estimatedMs < 60000) return `${Math.ceil(estimatedMs / 1000)} 秒`;
+    if (estimatedMs < 3600000) return `${Math.ceil(estimatedMs / 60000)} 分钟`;
+    return `${Math.ceil(estimatedMs / 3600000)} 小时`;
+}
+
+// 获取任务状态文本
+function getTaskStatusText(status) {
+    const statusMap = {
+        'pending': '等待中',
+        'processing': '处理中',
+        'completed': '已完成',
+        'partial_completed': '部分完成',
+        'failed': '失败',
+        'cancelled': '已取消'
+    };
+    return statusMap[status] || status;
 }
 
 // 显示异步任务面板
@@ -23593,14 +29898,13 @@ function startTaskPolling(taskId, jobId) {
                 const status = result.status || 'processing';
                 const progress = result.progress || 0;
                 
-                console.log(`[任务轮询] taskId: ${taskId}, jobId: ${jobId}, status: ${status}, progress: ${progress}, reportId: ${result.reportId}`);
                 
                 updateAsyncTask(taskId, {
                     progress: progress,
-                    status: status === 'completed' ? '已完成' : status === 'failed' ? '失败' : status === 'processing' ? '处理中...' : status
+                    status: status === 'completed' ? '已完成' : status === 'partial_completed' ? '部分完成' : status === 'failed' ? '失败' : status === 'processing' ? '处理中...' : status
                 });
 
-                if (progress >= 100 || status === 'completed') {
+                if (progress >= 100 || status === 'completed' || status === 'partial_completed') {
                     clearInterval(pollInterval);
 
                     updateAsyncTask(taskId, {
@@ -23623,7 +29927,7 @@ function startTaskPolling(taskId, jobId) {
                 }
             }
         } catch (error) {
-            console.error('轮询任务状态失败:', error);
+            logger.error('轮询任务状态失败:', error);
         }
     }, 2000);
 }
@@ -23633,7 +29937,7 @@ function cancelAsyncTask(taskId) {
     const task = asyncTasks.find(t => t.id === taskId);
     if (task && task.jobId) {
         apiRequest(`/reports/cancel-job/${task.jobId}`, { method: 'POST' })
-            .catch(err => console.error('取消任务失败:', err));
+            .catch(err => logger.error('取消任务失败:', err));
     }
 
     asyncTasks = asyncTasks.filter(t => t.id !== taskId);
@@ -23644,21 +29948,6 @@ function cancelAsyncTask(taskId) {
     }
 
     showToast('任务已取消', 'info');
-}
-
-// 加载报告数据
-async function loadReportsData() {
-    try {
-        const result = await apiRequest('/reports/list');
-
-        if (result.success) {
-            allReportsData = result.reports || [];
-            renderReportsTable(allReportsData);
-            updateReportsStats(allReportsData);
-        }
-    } catch (error) {
-        console.error('加载报告数据失败:', error);
-    }
 }
 
 // 渲染报告表格
@@ -23785,16 +30074,9 @@ function getStatusText(status) {
     }
 }
 
-// 格式化日期时间
-function formatDateTime(dateStr) {
-    if (!dateStr) return '-';
-    const date = new Date(dateStr);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    return `${year}/${month}/${day} ${hours}:${minutes}`;
+// 格式化日期时间（已由全局 formatDateTime 统一处理）
+function formatDateTimeAlias(dateStr) {
+    return formatDateTime(dateStr);
 }
 
 // 更新报告统计
@@ -23862,10 +30144,72 @@ function filterReports() {
 
 // 存储所有报告数据用于筛选
 let allReportsData = [];
+let reportsCurrentPage = 1;
+let reportsPageSize = 20;
+let reportsTotalCount = 0;
+
+// 加载报告数据（支持分页）
+async function loadReportsData(page = 1) {
+    try {
+        reportsCurrentPage = page;
+        const result = await apiRequest(`/reports/list?page=${page}&pageSize=${reportsPageSize}`);
+
+        if (result.success) {
+            allReportsData = result.reports || [];
+            reportsTotalCount = result.pagination?.total || 0;
+            renderReportsTable(allReportsData);
+            renderReportsPagination();
+            updateReportsStats(allReportsData);
+        }
+    } catch (error) {
+        logger.error('加载报告数据失败:', error);
+    }
+}
+
+// 渲染报告分页
+function renderReportsPagination() {
+    const totalPages = Math.ceil(reportsTotalCount / reportsPageSize);
+    
+    // 更新总记录数
+    const totalReportsEl = document.getElementById('total-reports');
+    if (totalReportsEl) {
+        totalReportsEl.textContent = reportsTotalCount;
+    }
+    
+    // 更新当前页
+    const currentPageEl = document.getElementById('current-page');
+    if (currentPageEl) {
+        currentPageEl.textContent = reportsCurrentPage;
+    }
+    
+    // 更新分页按钮状态
+    const prevBtn = document.querySelector('#reports-pagination .page-btn:first-of-type');
+    const nextBtn = document.querySelector('#reports-pagination .page-btn:last-of-type');
+    
+    if (prevBtn) {
+        prevBtn.disabled = reportsCurrentPage <= 1;
+    }
+    if (nextBtn) {
+        nextBtn.disabled = reportsCurrentPage >= totalPages;
+    }
+}
 
 // 分页
 function changeReportPage(direction) {
-    // TODO: 实现分页逻辑
+    const totalPages = Math.ceil(reportsTotalCount / reportsPageSize);
+    let newPage = reportsCurrentPage;
+    
+    if (direction === 'prev') {
+        newPage = Math.max(1, reportsCurrentPage - 1);
+    } else if (direction === 'next') {
+        newPage = Math.min(totalPages, reportsCurrentPage + 1);
+    } else if (typeof direction === 'number') {
+        newPage = direction;
+    }
+    
+    if (newPage !== reportsCurrentPage && newPage >= 1 && newPage <= totalPages) {
+        loadReportsData(newPage);
+    }
 }
 
 // 下载报告
@@ -23889,7 +30233,7 @@ async function downloadReport(reportId) {
             showToast('获取报告内容失败', 'error');
         }
     } catch (error) {
-        console.error('下载报告失败:', error);
+        logger.error('下载报告失败:', error);
         showToast('下载失败', 'error');
     }
 }
@@ -23925,19 +30269,15 @@ async function deleteReport(reportId) {
 
     try {
         showLoading('删除中...');
-        console.log('开始删除报告, ID:', reportId);
         const result = await apiRequest(`/reports/${reportId}`, {
             method: 'DELETE'
         });
 
-        console.log('删除结果:', result);
 
         if (result.success) {
             showSuccessMessage('报告删除成功');
-            console.log('开始重新加载报告列表...');
-            // 重新加载报告列表和统计数据
+            dashboardDataCache.invalidateOnDataChange('report');
             await loadReportsData();
-            console.log('报告列表重新加载完成');
             // 同时更新Dashboard统计
             if (typeof loadDashboardStats === 'function') {
                 loadDashboardStats();
@@ -23946,7 +30286,7 @@ async function deleteReport(reportId) {
             showErrorMessage(result.message || '删除失败');
         }
     } catch (error) {
-        console.error('删除报告失败:', error);
+        logger.error('删除报告失败:', error);
         showErrorMessage('删除失败');
     } finally {
         hideLoading();
@@ -23966,7 +30306,6 @@ function showConfirmDialog(message) {
             // 设置确认回调
             window.confirmCallback = resolve;
         } else {
-            // 如果模态框不存在，使用原生确认框
             resolve(confirm(message));
         }
     });
@@ -23982,6 +30321,76 @@ function closeConfirmModal(confirmed) {
     if (window.confirmCallback) {
         window.confirmCallback(confirmed);
         window.confirmCallback = null;
+    }
+}
+
+// 显示输入弹窗（Promise版本）
+function showPromptModal(options) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('prompt-modal');
+        const titleEl = document.getElementById('prompt-title');
+        const messageEl = document.getElementById('prompt-message');
+        const inputEl = document.getElementById('prompt-input');
+        const hintEl = document.getElementById('prompt-hint');
+
+        if (!modal) {
+            const result = prompt(options.message || '请输入内容:', options.defaultValue || '');
+            resolve(result);
+            return;
+        }
+
+        if (titleEl) titleEl.textContent = options.title || '输入提示';
+        if (messageEl) messageEl.textContent = options.message || '';
+        if (inputEl) {
+            inputEl.value = options.defaultValue || '';
+            if (options.placeholder) {
+                inputEl.placeholder = options.placeholder;
+            }
+            if (options.minLength) {
+                inputEl.minLength = options.minLength;
+            }
+        }
+        if (hintEl) {
+            hintEl.textContent = options.hint || '';
+        }
+
+        modal.style.display = 'flex';
+
+        if (inputEl) {
+            setTimeout(() => inputEl.focus(), 100);
+        }
+
+        window.promptCallback = resolve;
+        window.promptOptions = options;
+    });
+}
+
+// 关闭输入弹窗
+function closePromptModal(confirmed) {
+    const modal = document.getElementById('prompt-modal');
+    const inputEl = document.getElementById('prompt-input');
+
+    if (modal) {
+        modal.style.display = 'none';
+    }
+
+    if (window.promptCallback) {
+        if (confirmed && inputEl) {
+            const value = inputEl.value.trim();
+            const options = window.promptOptions || {};
+            
+            if (options.minLength && value.length < options.minLength) {
+                showErrorMessage(options.hint || `输入内容至少需要 ${options.minLength} 个字`);
+                if (modal) modal.style.display = 'flex';
+                return;
+            }
+            
+            window.promptCallback(value);
+        } else {
+            window.promptCallback(null);
+        }
+        window.promptCallback = null;
+        window.promptOptions = null;
     }
 }
 
@@ -24030,7 +30439,7 @@ async function openTestPlanDrawer(planId) {
     const drawer = document.getElementById('testplan-drawer');
 
     if (!overlay || !drawer) {
-        console.error('抽屉元素不存在');
+        logger.error('抽屉元素不存在');
         return;
     }
 
@@ -24084,7 +30493,7 @@ async function loadTestPlanDrawerData(planId) {
         await loadDrawerCases(planId);
 
     } catch (error) {
-        console.error('加载抽屉数据失败:', error);
+        logger.error('加载抽屉数据失败:', error);
         showToast('加载数据失败', 'error');
     }
 }
@@ -24130,7 +30539,63 @@ function renderDrawerInfo(plan) {
     `;
 }
 
+// 更新滑屉底部操作按钮
+function updateDrawerActionButtons(plan) {
+    const container = document.getElementById('testplan-drawer-action-btn');
+    if (!container) return;
+
+    const actualStatus = calculatePlanStatus(plan);
+    const progressPercent = plan.totalCases > 0 ? Math.round((plan.testedCases / plan.totalCases) * 100) : 0;
+
+    let btnHtml = '';
+
+    if (actualStatus === 'completed') {
+        btnHtml = `
+            <button class="primary-btn" onclick="restartTestPlan(currentDrawerPlanId)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;margin-right:6px;">
+                    <polyline points="1 4 1 10 7 10"></polyline>
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                </svg>
+                重新执行
+            </button>
+        `;
+    } else if (actualStatus === 'running' || actualStatus === 'delayed') {
+        btnHtml = `
+            <button class="warning-btn" onclick="pauseTestPlan(currentDrawerPlanId)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;margin-right:6px;">
+                    <rect x="6" y="4" width="4" height="16"></rect>
+                    <rect x="14" y="4" width="4" height="16"></rect>
+                </svg>
+                暂停计划
+            </button>
+        `;
+    } else if (actualStatus === 'paused') {
+        btnHtml = `
+            <button class="primary-btn" onclick="resumeTestPlan(currentDrawerPlanId)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;margin-right:6px;">
+                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+                继续执行
+            </button>
+        `;
+    } else {
+        btnHtml = `
+            <button class="primary-btn" onclick="executeTestPlan(currentDrawerPlanId)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;margin-right:6px;">
+                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+                执行测试
+            </button>
+        `;
+    }
+
+    container.innerHTML = btnHtml;
+}
+
 // 重新计算测试计划统计数据
+// 注意: 与后端 updatePlanStatisticsWithTx 保持一致
+// - testedCases (tested_progress): 非 pending 状态 (含 pass, fail, blocked, paused, asic_hang, core_dump, traffic_drop)
+// - passRate 计算分母 (valid_tested): 仅含 pass, fail, asic_hang, core_dump, traffic_drop (不含 blocked 和 paused)
 function recalculatePlanStats(plan, cases) {
     if (!cases || !Array.isArray(cases)) return;
 
@@ -24140,33 +30605,36 @@ function recalculatePlanStats(plan, cases) {
     let failedCases = 0;
     let blockedCases = 0;
     let pendingCases = 0;
+    let pausedCases = 0;
 
     cases.forEach(tc => {
-        const status = tc.status || 'pending';
+        const status = (tc.status || 'pending').toLowerCase().trim();
         if (status === 'pass') {
             testedCases++;
             passedCases++;
-        } else if (status === 'fail') {
+        } else if (status === 'fail' || status === 'asic_hang' || status === 'core_dump' || status === 'traffic_drop') {
             testedCases++;
             failedCases++;
         } else if (status === 'blocked') {
             testedCases++;
             blockedCases++;
-        } else if (status === 'asic_hang' || status === 'core_dump' || status === 'traffic_drop') {
+        } else if (status === 'paused') {
             testedCases++;
-            failedCases++;
+            pausedCases++;
         } else {
             pendingCases++;
         }
     });
 
+    const validTestedForPassRate = passedCases + failedCases;
     plan.totalCases = totalCases;
     plan.testedCases = testedCases;
     plan.passedCases = passedCases;
     plan.failedCases = failedCases;
     plan.blockedCases = blockedCases;
+    plan.pausedCases = pausedCases;
     plan.pendingCases = pendingCases;
-    plan.passRate = testedCases > 0 ? Math.round((passedCases / testedCases) * 100) : 0;
+    plan.passRate = validTestedForPassRate > 0 ? Math.round((passedCases / validTestedForPassRate) * 100) : 0;
 }
 
 // 渲染进度统计
@@ -24179,7 +30647,7 @@ function renderDrawerProgress(plan) {
     const passedCases = plan.passedCases || 0;
     const failedCases = plan.failedCases || 0;
     const blockedCases = plan.blockedCases || 0;
-    const pendingCases = totalCases - testedCases;
+    const pendingCases = plan.pendingCases || (totalCases - testedCases);
 
     progressStats.innerHTML = `
         <div class="stat-item passed">
@@ -24208,7 +30676,6 @@ async function loadDrawerCases(planId) {
 
     if (!casesList) return;
 
-    console.log('loadDrawerCases called with planId:', planId, 'type:', typeof planId);
 
     casesList.innerHTML = `
         <div style="padding: 40px; text-align: center; color: var(--color-text-secondary, #6b7280);">
@@ -24220,7 +30687,6 @@ async function loadDrawerCases(planId) {
     try {
         const result = await apiRequest(`/testplans/${planId}/cases?pageSize=10000`);
 
-        console.log('loadDrawerCases API result:', result.success, 'cases count:', result.cases?.length);
 
         if (result.success && result.cases) {
             drawerCasesData = result.cases;
@@ -24232,21 +30698,18 @@ async function loadDrawerCases(planId) {
             caseCount.textContent = drawerCasesData.length;
         }
 
-        console.log('loadDrawerCases drawerCasesData first item:', drawerCasesData[0]);
         renderDrawerCasesList(drawerCasesData, planId);
 
         const plan = testPlans.find(p => p.id === planId);
-        console.log('loadDrawerCases found plan:', plan ? 'yes' : 'no', 'plan id:', plan?.id);
         if (plan) {
             recalculatePlanStats(plan, drawerCasesData);
-            console.log('loadDrawerCases stats calculated:', { passedCases: plan.passedCases, failedCases: plan.failedCases, blockedCases: plan.blockedCases, pendingCases: plan.pendingCases });
             renderDrawerProgress(plan);
+            updateDrawerActionButtons(plan);
         } else {
-            console.log('loadDrawerCases testPlans:', testPlans.map(p => p.id));
         }
 
     } catch (error) {
-        console.error('加载用例失败:', error);
+        logger.error('加载用例失败:', error);
         drawerCasesData = [];
         if (caseCount) {
             caseCount.textContent = '0';
@@ -24269,11 +30732,21 @@ function renderDrawerCasesList(cases, planId) {
         return;
     }
 
+    const statusOptions = [
+        { value: 'pending', label: '未执行' },
+        { value: 'pass', label: '通过' },
+        { value: 'fail', label: '失败' },
+        { value: 'blocked', label: '阻塞' },
+        { value: 'paused', label: '暂停' },
+        { value: 'asic_hang', label: 'ASIC挂起' },
+        { value: 'core_dump', label: '核心转储' },
+        { value: 'traffic_drop', label: '流量丢失' }
+    ];
+
     casesList.innerHTML = cases.map(tc => {
         const priorityClass = (tc.priority || 'P3').toLowerCase();
-        const statusClass = getStatusClass(tc.status);
-        const statusText = getStatusText(tc.status);
-        const safeCaseName = (tc.name || '').replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/\n/g, ' ').replace(/\r/g, '');
+        const currentStatus = tc.status || 'pending';
+        const statusClass = getStatusClass(currentStatus);
 
         return `
             <div class="case-item">
@@ -24283,23 +30756,91 @@ function renderDrawerCasesList(cases, planId) {
                     <span class="priority-tag ${priorityClass}">${tc.priority || 'P3'}</span>
                 </span>
                 <span class="case-status">
-                    <span class="status-tag-small ${statusClass} clickable" data-case-id="${tc.id}" data-plan-id="${planId}" data-status="${tc.status || 'pending'}" data-name="${escapeHtml(safeCaseName)}">${statusText}</span>
+                    <select class="status-select-inline ${statusClass}" 
+                            data-case-id="${tc.id}" 
+                            data-plan-id="${planId}"
+                            onchange="handleStatusSelectChange(this, ${tc.id}, ${planId})">
+                        ${statusOptions.map(opt => `
+                            <option value="${opt.value}" ${currentStatus === opt.value ? 'selected' : ''}>${opt.label}</option>
+                        `).join('')}
+                    </select>
                 </span>
             </div>
         `;
     }).join('');
+}
+
+async function handleStatusSelectChange(selectElement, caseId, planId) {
+    const newStatus = selectElement.value;
+    const oldStatus = selectElement.dataset.oldStatus || 'pending';
     
-    // 绑定点击事件
-    casesList.querySelectorAll('.status-tag-small.clickable').forEach(tag => {
-        tag.addEventListener('click', function(e) {
-            e.stopPropagation();
-            const caseId = this.dataset.caseId;
-            const planId = this.dataset.planId;
-            const status = this.dataset.status;
-            const name = this.dataset.name;
-            showCaseStatusEditor(caseId, planId, status, name);
+    selectElement.dataset.oldStatus = newStatus;
+    
+    const statusClass = getStatusClass(newStatus);
+    selectElement.className = `status-select-inline ${statusClass}`;
+    
+    try {
+        selectElement.disabled = true;
+        
+        const result = await apiRequest(`/testplans/${planId}/cases/${caseId}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+                status: newStatus
+            })
         });
-    });
+
+        if (result.success) {
+            showSuccessMessage('状态更新成功');
+
+            const numericCaseId = parseInt(caseId);
+            const numericPlanId = parseInt(planId);
+
+            if (currentDrawerPlanId !== numericPlanId) {
+                logger.warn('抽屉已切换到其他计划，跳过UI更新');
+                return;
+            }
+
+            const caseItem = drawerCasesData.find(c => c.id === numericCaseId || c.caseId === numericCaseId);
+            if (caseItem) {
+                caseItem.status = newStatus;
+            }
+
+            const plan = testPlans.find(p => p.id === numericPlanId);
+            if (plan) {
+                if (result.stats) {
+                    plan.totalCases = result.stats.totalCases || 0;
+                    plan.testedCases = result.stats.testedCases || 0;
+                    plan.passRate = result.stats.passRate || 0;
+                    plan.passedCases = result.stats.passedCases || 0;
+                    plan.failedCases = result.stats.failedCases || 0;
+                    plan.blockedCases = result.stats.blockedCases || 0;
+                    plan.pausedCases = result.stats.pausedCases || 0;
+                    plan.pendingCases = result.stats.pendingCases || 0;
+                } else {
+                    recalculatePlanStats(plan, drawerCasesData);
+                }
+                renderDrawerProgress(plan);
+                renderDrawerInfo(plan);
+            }
+
+            if (typeof loadTestPlans === 'function') {
+                loadTestPlans();
+            }
+            
+            apiCache.deleteByPrefix('/workspace');
+        } else {
+            showErrorMessage('更新失败: ' + (result.message || '未知错误'));
+            selectElement.value = oldStatus;
+            selectElement.className = `status-select-inline ${getStatusClass(oldStatus)}`;
+        }
+    } catch (error) {
+        logger.error('保存状态失败:', error);
+        showErrorMessage('保存失败: ' + error.message);
+        selectElement.value = oldStatus;
+        selectElement.className = `status-select-inline ${getStatusClass(oldStatus)}`;
+    } finally {
+        selectElement.disabled = false;
+    }
 }
 
 // 从滑屉打开测试用例详情编辑模态框
@@ -24320,7 +30861,7 @@ async function openDrawerCaseDetail(caseId) {
             showToast('获取用例详情失败', 'error');
         }
     } catch (error) {
-        console.error('加载用例详情失败:', error);
+        logger.error('加载用例详情失败:', error);
         showToast('加载用例详情失败', 'error');
     } finally {
         hideLoading();
@@ -24329,21 +30870,23 @@ async function openDrawerCaseDetail(caseId) {
 
 // 获取状态显示文本
 function getStatusText(status) {
+    if (!status) return '未执行';
+    const normalizedStatus = status.toLowerCase().trim();
     const statusTextMap = {
         'pass': '通过',
         'fail': '失败',
         'blocked': '阻塞',
         'pending': '未执行',
+        'paused': '暂停',
         'asic_hang': 'ASIC挂起',
         'core_dump': '核心转储',
         'traffic_drop': '流量丢失'
     };
-    return statusTextMap[status] || status || '未执行';
+    return statusTextMap[normalizedStatus] || status || '未执行';
 }
 
 // 显示用例状态编辑器
 async function showCaseStatusEditor(caseId, planId, currentStatus, caseName) {
-    console.log('showCaseStatusEditor called:', { caseId, planId, currentStatus, caseName });
     
     const existingModal = document.getElementById('case-status-modal');
     if (existingModal) {
@@ -24371,7 +30914,6 @@ async function showCaseStatusEditor(caseId, planId, currentStatus, caseName) {
             }));
         }
     } catch (e) {
-        console.log('获取状态列表失败，使用默认值:', e);
     }
 
     const modal = document.createElement('div');
@@ -24412,7 +30954,6 @@ async function showCaseStatusEditor(caseId, planId, currentStatus, caseName) {
     `;
 
     document.body.appendChild(modal);
-    console.log('Modal created and appended:', modal);
     
     // 确保模态框可见
     setTimeout(() => {
@@ -24467,8 +31008,6 @@ async function saveCaseStatus(caseId, planId) {
     const newStatus = statusSelect.value;
     const errorMessage = errorMessageField ? errorMessageField.value : '';
 
-    console.log('saveCaseStatus - newStatus:', newStatus);
-    console.log('saveCaseStatus - sending to backend:', { status: newStatus, error_message: errorMessage });
 
     try {
         showLoading('保存中...');
@@ -24488,27 +31027,34 @@ async function saveCaseStatus(caseId, planId) {
             const numericCaseId = parseInt(caseId);
             const numericPlanId = parseInt(planId);
 
-            console.log('saveCaseStatusDebug', { currentDrawerPlanId, numericPlanId, numericCaseId, drawerCasesDataLength: drawerCasesData.length });
 
             if (currentDrawerPlanId !== numericPlanId) {
-                console.warn('抽屉已切换到其他计划，跳过UI更新');
+                logger.warn('抽屉已切换到其他计划，跳过UI更新');
                 return;
             }
 
             const caseItem = drawerCasesData.find(c => c.id === numericCaseId || c.caseId === numericCaseId);
-            console.log('caseItem found:', caseItem ? 'yes' : 'no', 'id type:', typeof caseItem?.id, 'caseId type:', typeof caseItem?.caseId);
             if (caseItem) {
                 caseItem.status = newStatus;
             } else {
-                console.log('drawerCasesData ids:', drawerCasesData.map(c => c.id));
             }
 
             renderDrawerCasesList(drawerCasesData, numericPlanId);
 
             const plan = testPlans.find(p => p.id === numericPlanId);
-            console.log('plan found:', plan ? 'yes' : 'no');
             if (plan) {
-                recalculatePlanStats(plan, drawerCasesData);
+                if (result.stats) {
+                    plan.totalCases = result.stats.totalCases || 0;
+                    plan.testedCases = result.stats.testedCases || 0;
+                    plan.passRate = result.stats.passRate || 0;
+                    plan.passedCases = result.stats.passedCases || 0;
+                    plan.failedCases = result.stats.failedCases || 0;
+                    plan.blockedCases = result.stats.blockedCases || 0;
+                    plan.pausedCases = result.stats.pausedCases || 0;
+                    plan.pendingCases = result.stats.pendingCases || 0;
+                } else {
+                    recalculatePlanStats(plan, drawerCasesData);
+                }
                 renderDrawerProgress(plan);
                 renderDrawerInfo(plan);
             }
@@ -24516,26 +31062,23 @@ async function saveCaseStatus(caseId, planId) {
             if (typeof loadTestPlans === 'function') {
                 loadTestPlans();
             }
+            
+            apiCache.deleteByPrefix('/workspace');
         } else {
             showErrorMessage('更新失败: ' + (result.message || '未知错误'));
         }
     } catch (error) {
-        console.error('保存状态失败:', error);
+        logger.error('保存状态失败:', error);
         showErrorMessage('保存失败: ' + error.message);
     } finally {
         hideLoading();
     }
 }
 
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
 // 获取状态样式类
 function getStatusClass(status) {
+    if (!status) return 'pending';
+    const normalizedStatus = status.toLowerCase().trim();
     const statusMap = {
         '通过': 'pass',
         'pass': 'pass',
@@ -24544,9 +31087,17 @@ function getStatusClass(status) {
         '阻塞': 'blocked',
         'blocked': 'blocked',
         '未执行': 'pending',
-        'pending': 'pending'
+        'pending': 'pending',
+        '暂停': 'paused',
+        'paused': 'paused',
+        'asic_hang': 'fail',
+        'asic挂起': 'fail',
+        'core_dump': 'fail',
+        '核心转储': 'fail',
+        'traffic_drop': 'fail',
+        '流量丢失': 'fail'
     };
-    return statusMap[status] || 'pending';
+    return statusMap[normalizedStatus] || 'pending';
 }
 
 // 筛选抽屉中的用例
@@ -24587,6 +31138,12 @@ let importSystemSelectData = {};
 let importPreviewRows = [];
 let importSheetNames = [];
 let importPreviewRowCount = 16;
+
+// AI辅助优化状态
+let importAiOptimizeEnabled = false;
+let importAiOptimizeTaskId = null;
+let importAiOptimizePollingTimer = null;
+let importAiOptimizeImportedCaseIds = [];
 
 // 系统字段定义
 const IMPORT_SYSTEM_FIELDS = [
@@ -24633,17 +31190,66 @@ function initImportButtonEvents() {
     const prevBtn = document.getElementById('import-prev-btn');
     const cancelBtn = document.getElementById('import-cancel-btn');
     const nextBtn = document.getElementById('import-next-btn');
-    
+
     if (prevBtn) {
         prevBtn.onclick = prevImportStep;
     }
-    
+
     if (cancelBtn) {
         cancelBtn.onclick = closeImportExcelModal;
     }
-    
+
     if (nextBtn) {
         nextBtn.onclick = nextImportStep;
+    }
+
+    // AI优化开关事件
+    const aiToggle = document.getElementById('ai-optimize-toggle');
+    if (aiToggle && !aiToggle.dataset.bound) {
+        aiToggle.dataset.bound = 'true';
+        aiToggle.addEventListener('change', function() {
+            toggleAiOptimize(this.checked);
+        });
+    }
+
+    // AI优化配置展开/收起
+    const aiConfigToggleBtn = document.getElementById('ai-opt-config-toggle-btn');
+    if (aiConfigToggleBtn && !aiConfigToggleBtn.dataset.bound) {
+        aiConfigToggleBtn.dataset.bound = 'true';
+        aiConfigToggleBtn.addEventListener('click', function() {
+            const configEl = document.getElementById('ai-opt-config');
+            const arrowEl = this.querySelector('.ai-opt-config-arrow');
+            if (configEl) {
+                const isHidden = configEl.style.display === 'none';
+                configEl.style.display = isHidden ? 'block' : 'none';
+                if (arrowEl) arrowEl.textContent = isHidden ? '▲' : '▼';
+            }
+        });
+    }
+
+    // 前往评审按钮
+    const goReviewBtn = document.getElementById('ai-opt-go-review-btn');
+    if (goReviewBtn && !goReviewBtn.dataset.bound) {
+        goReviewBtn.dataset.bound = 'true';
+        goReviewBtn.addEventListener('click', goToAiReview);
+    }
+
+    // 重试按钮
+    const retryBtn = document.getElementById('ai-opt-retry-btn');
+    if (retryBtn && !retryBtn.dataset.bound) {
+        retryBtn.dataset.bound = 'true';
+        retryBtn.addEventListener('click', async function() {
+            if (importAiOptimizeImportedCaseIds.length > 0) {
+                // 重置步骤4 UI
+                document.getElementById('ai-opt-result-fail').style.display = 'none';
+                document.getElementById('ai-opt-result-success').style.display = 'none';
+                document.getElementById('ai-opt-progress').style.display = 'block';
+                document.getElementById('ai-opt-progress-fill').style.width = '0%';
+                document.getElementById('ai-opt-progress-text').textContent = '正在重试...';
+                document.getElementById('ai-opt-progress-percent').textContent = '0%';
+                await createAiOptimizeTask(importAiOptimizeImportedCaseIds);
+            }
+        });
     }
 }
 
@@ -24851,12 +31457,10 @@ function showImportDetailTab(tab) {
 
 // 关闭导入弹窗
 function closeImportExcelModal() {
-    console.log('closeImportExcelModal called');
     
     const modal = document.getElementById('import-excel-modal');
     if (modal) {
         modal.style.display = 'none';
-        console.log('modal hidden');
     }
     
     // 异步清理，不阻塞关闭
@@ -24865,7 +31469,7 @@ function closeImportExcelModal() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ filePath: importFileInfo.path })
-        }).catch(e => console.warn('清理临时文件失败:', e));
+        }).catch(e => logger.warn('清理临时文件失败:', e));
     }
     
     resetImportForm();
@@ -24873,10 +31477,9 @@ function closeImportExcelModal() {
     
     // 异步刷新一级测试点，不阻塞关闭
     if (currentModuleId) {
-        loadLevel1Points(currentModuleId).catch(e => console.warn('刷新一级测试点失败:', e));
+        loadLevel1Points(currentModuleId).catch(e => logger.warn('刷新一级测试点失败:', e));
     }
     
-    console.log('closeImportExcelModal done');
 }
 
 // 重置导入表单
@@ -24887,57 +31490,89 @@ function resetImportForm() {
     importSheetNames = [];
     importPreviewRowCount = 16;
     window.importResultData = null;
-    
+
+    // 重置AI优化状态
+    importAiOptimizeEnabled = false;
+    importAiOptimizeTaskId = null;
+    importAiOptimizeImportedCaseIds = [];
+    stopAiOptimizePolling();
+
     const fileInput = document.getElementById('excel-file-input');
     if (fileInput) fileInput.value = '';
-    
+
     const fileInfoEl = document.getElementById('selected-file-info');
     if (fileInfoEl) fileInfoEl.style.display = 'none';
-    
+
     const nextBtn = document.getElementById('import-next-btn');
     if (nextBtn) {
         nextBtn.disabled = true;
         nextBtn.textContent = '下一步';
         nextBtn.onclick = nextImportStep;
+        nextBtn.style.display = 'inline-block';
     }
-    
+
     const progressEl = document.getElementById('import-progress');
     if (progressEl) progressEl.style.display = 'none';
-    
+
     const resultEl = document.getElementById('import-result');
     if (resultEl) resultEl.style.display = 'none';
-    
+
     const detailEl = document.getElementById('import-detail-section');
     if (detailEl) detailEl.style.display = 'none';
-    
+
+    // 重置AI优化开关
+    const aiToggle = document.getElementById('ai-optimize-toggle');
+    if (aiToggle) aiToggle.checked = false;
+
+    const aiConfig = document.getElementById('ai-opt-config');
+    if (aiConfig) aiConfig.style.display = 'none';
+
+    // 重置步骤4 UI
+    const aiOptProgress = document.getElementById('ai-opt-progress');
+    if (aiOptProgress) aiOptProgress.style.display = 'none';
+
+    const aiOptResultSuccess = document.getElementById('ai-opt-result-success');
+    if (aiOptResultSuccess) aiOptResultSuccess.style.display = 'none';
+
+    const aiOptResultFail = document.getElementById('ai-opt-result-fail');
+    if (aiOptResultFail) aiOptResultFail.style.display = 'none';
+
     importCurrentStep = 1;
-    
-    for (let i = 1; i <= 3; i++) {
+
+    const totalSteps = 4;
+    for (let i = 1; i <= totalSteps; i++) {
         const stepEl = document.getElementById(`import-step-${i}`);
         const contentEl = document.getElementById(`import-step-content-${i}`);
-        
+
         if (stepEl) {
             stepEl.classList.remove('active', 'completed');
             if (i === 1) {
                 stepEl.classList.add('active');
             }
         }
-        
+
         if (contentEl) {
             contentEl.style.display = i === 1 ? 'block' : 'none';
         }
     }
-    
+
     const prevBtn = document.getElementById('import-prev-btn');
     if (prevBtn) prevBtn.style.display = 'none';
+
+    const cancelBtn = document.getElementById('import-cancel-btn');
+    if (cancelBtn) {
+        cancelBtn.textContent = '取消';
+        cancelBtn.onclick = closeImportExcelModal;
+    }
 }
 
 // 更新步骤UI
 function updateImportStepUI() {
-    for (let i = 1; i <= 3; i++) {
+    const totalSteps = 4;
+    for (let i = 1; i <= totalSteps; i++) {
         const stepEl = document.getElementById(`import-step-${i}`);
         const contentEl = document.getElementById(`import-step-content-${i}`);
-        
+
         if (stepEl) {
             stepEl.classList.remove('active', 'completed');
             if (i < importCurrentStep) {
@@ -24946,42 +31581,50 @@ function updateImportStepUI() {
                 stepEl.classList.add('active');
             }
         }
-        
+
         if (contentEl) {
             contentEl.style.display = i === importCurrentStep ? 'block' : 'none';
         }
     }
-    
+
     const prevBtn = document.getElementById('import-prev-btn');
     const nextBtn = document.getElementById('import-next-btn');
     const cancelBtn = document.getElementById('import-cancel-btn');
-    
+
     if (prevBtn) {
-        prevBtn.style.display = importCurrentStep > 1 ? 'inline-block' : 'none';
+        prevBtn.style.display = importCurrentStep > 1 && importCurrentStep < 4 ? 'inline-block' : 'none';
         prevBtn.onclick = prevImportStep;
     }
-    
+
     if (nextBtn) {
         nextBtn.style.display = 'inline-block';
         nextBtn.disabled = false;
         nextBtn.onclick = nextImportStep;
-        
+
         if (importCurrentStep === 3) {
-            nextBtn.textContent = '开始导入';
+            nextBtn.textContent = importAiOptimizeEnabled ? '开始导入 + AI优化 🚀' : '开始导入';
+        } else if (importCurrentStep === 4) {
+            nextBtn.style.display = 'none';
         } else {
             nextBtn.textContent = '下一步';
         }
     }
-    
+
     if (cancelBtn) {
         cancelBtn.style.display = 'inline-block';
-        cancelBtn.onclick = closeImportExcelModal;
+        if (importCurrentStep === 4) {
+            cancelBtn.textContent = '关闭';
+            cancelBtn.onclick = closeImportWithAiOptimize;
+        } else {
+            cancelBtn.textContent = '取消';
+            cancelBtn.onclick = closeImportExcelModal;
+        }
     }
-    
+
     const progressEl = document.getElementById('import-progress');
     const resultEl = document.getElementById('import-result');
     const detailEl = document.getElementById('import-detail-section');
-    
+
     if (progressEl) progressEl.style.display = 'none';
     if (resultEl) resultEl.style.display = 'none';
     if (detailEl) detailEl.style.display = 'none';
@@ -25022,6 +31665,9 @@ async function handleExcelFileSelect(event) {
         
         const response = await fetch('/api/excel/import/parse-headers', {
             method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            },
             body: formData
         });
         
@@ -25353,7 +31999,7 @@ async function loadSystemSelectOptions() {
             importSystemSelectData = result.data;
         }
     } catch (error) {
-        console.error('加载系统选项失败:', error);
+        logger.error('加载系统选项失败:', error);
         importSystemSelectData = {};
     }
 }
@@ -25467,15 +32113,20 @@ async function executeImport() {
             document.getElementById('import-progress').style.display = 'none';
             document.getElementById('import-result').style.display = 'block';
             document.getElementById('import-result-text').textContent = result.message;
-            
+
             if (result.data) {
                 const data = result.data;
                 document.getElementById('stat-success').textContent = data.successCount || 0;
                 document.getElementById('stat-skip').textContent = data.skipCount || 0;
                 document.getElementById('stat-duplicate').textContent = data.duplicateCount || 0;
-                
+
                 window.importResultData = data;
-                
+
+                // 存储导入的用例ID
+                if (data.imported_case_ids && data.imported_case_ids.length > 0) {
+                    importAiOptimizeImportedCaseIds = data.imported_case_ids;
+                }
+
                 if (data.skipCount > 0 || data.duplicateCount > 0) {
                     document.getElementById('import-detail-section').style.display = 'block';
                     showImportDetailTab('duplicate');
@@ -25483,30 +32134,45 @@ async function executeImport() {
                     document.getElementById('import-detail-section').style.display = 'none';
                 }
             }
-            
-            const nextBtn = document.getElementById('import-next-btn');
-            const prevBtn = document.getElementById('import-prev-btn');
-            const cancelBtn = document.getElementById('import-cancel-btn');
-            
-            const hasFailures = result.data && (result.data.skipCount > 0 || result.data.duplicateCount > 0);
-            
-            if (nextBtn) {
-                nextBtn.disabled = false;
-                nextBtn.textContent = '完成';
-                nextBtn.onclick = function() { 
-                    closeImportExcelModal(); 
-                };
-            }
-            
-            if (hasFailures) {
-                if (prevBtn) prevBtn.style.display = 'inline-block';
-                if (cancelBtn) cancelBtn.style.display = 'inline-block';
-            } else {
-                if (prevBtn) prevBtn.style.display = 'none';
-                if (cancelBtn) cancelBtn.style.display = 'none';
-            }
-            
+
             await loadTestCases();
+            await initModuleData();
+
+            // 如果AI优化已启用，自动跳转到步骤4并创建优化任务
+            if (importAiOptimizeEnabled && importAiOptimizeImportedCaseIds.length > 0) {
+                importCurrentStep = 4;
+                updateImportStepUI();
+                // 填充步骤4的导入摘要
+                const data = result.data;
+                document.getElementById('ai-opt-stat-success').textContent = data.successCount || 0;
+                document.getElementById('ai-opt-stat-skip').textContent = data.skipCount || 0;
+                document.getElementById('ai-opt-stat-duplicate').textContent = data.duplicateCount || 0;
+                // 创建AI优化任务
+                await createAiOptimizeTask(importAiOptimizeImportedCaseIds);
+            } else {
+                // 不使用AI优化，保持原有逻辑
+                const nextBtn = document.getElementById('import-next-btn');
+                const prevBtn = document.getElementById('import-prev-btn');
+                const cancelBtn = document.getElementById('import-cancel-btn');
+
+                const hasFailures = result.data && (result.data.skipCount > 0 || result.data.duplicateCount > 0);
+
+                if (nextBtn) {
+                    nextBtn.disabled = false;
+                    nextBtn.textContent = '完成';
+                    nextBtn.onclick = function() {
+                        closeImportExcelModal();
+                    };
+                }
+
+                if (hasFailures) {
+                    if (prevBtn) prevBtn.style.display = 'inline-block';
+                    if (cancelBtn) cancelBtn.style.display = 'inline-block';
+                } else {
+                    if (prevBtn) prevBtn.style.display = 'none';
+                    if (cancelBtn) cancelBtn.style.display = 'none';
+                }
+            }
         } else {
             document.getElementById('import-next-btn').disabled = false;
             progressText.textContent = '导入失败';
@@ -25518,6 +32184,231 @@ async function executeImport() {
         showErrorMessage('导入失败: ' + error.message);
     }
 }
+
+// ==================== AI辅助优化相关函数 ====================
+
+// 切换AI优化开关
+function toggleAiOptimize(enabled) {
+    importAiOptimizeEnabled = enabled;
+    const nextBtn = document.getElementById('import-next-btn');
+    if (nextBtn && importCurrentStep === 3) {
+        nextBtn.textContent = enabled ? '开始导入 + AI优化 🚀' : '开始导入';
+    }
+}
+
+// 创建AI优化任务
+async function createAiOptimizeTask(importedCaseIds) {
+    const agentSelect = document.getElementById('ai-opt-agent-select');
+    const agentId = agentSelect ? agentSelect.value : 'case_import_optimizer';
+
+    // 收集选中的优化字段
+    const fieldCheckboxes = document.querySelectorAll('.ai-opt-field-checkbox input[type="checkbox"]');
+    const selectedFields = [];
+    fieldCheckboxes.forEach(cb => {
+        if (cb.checked) selectedFields.push(cb.value);
+    });
+
+    // 获取覆盖模式
+    const overwriteRadio = document.querySelector('input[name="ai-opt-overwrite"]:checked');
+    const overwriteMode = overwriteRadio ? overwriteRadio.value : 'smart';
+
+    // 显示进度区
+    const progressEl = document.getElementById('ai-opt-progress');
+    if (progressEl) progressEl.style.display = 'block';
+
+    const progressFill = document.getElementById('ai-opt-progress-fill');
+    const progressText = document.getElementById('ai-opt-progress-text');
+    const progressPercent = document.getElementById('ai-opt-progress-percent');
+
+    if (progressFill) progressFill.style.width = '5%';
+    if (progressText) progressText.textContent = '正在创建AI优化任务...';
+    if (progressPercent) progressPercent.textContent = '5%';
+
+    try {
+        const result = await apiRequest('/api/ai-import/optimize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                imported_case_ids: importedCaseIds,
+                library_id: currentCaseLibraryId,
+                agent_code: agentId,
+                config: {
+                    fields_to_optimize: selectedFields,
+                    overwrite_mode: overwriteMode
+                }
+            })
+        });
+
+        if (result.success && result.data && result.data.task_id) {
+            importAiOptimizeTaskId = result.data.task_id;
+            const taskIdEl = document.getElementById('ai-opt-task-id');
+            if (taskIdEl) taskIdEl.textContent = '任务ID: ' + escapeHtml(importAiOptimizeTaskId);
+
+            if (progressFill) progressFill.style.width = '10%';
+            if (progressText) progressText.textContent = 'AI优化任务已创建，正在处理...';
+            if (progressPercent) progressPercent.textContent = '10%';
+
+            // 开始轮询任务状态
+            startAiOptimizePolling(importAiOptimizeTaskId);
+        } else {
+            // 任务创建失败
+            showAiOptimizeFailure(result.message || '创建AI优化任务失败');
+        }
+    } catch (error) {
+        logger.error('创建AI优化任务失败:', error);
+        showAiOptimizeFailure('创建AI优化任务失败: ' + error.message);
+    }
+}
+
+// 开始轮询AI优化任务状态
+function startAiOptimizePolling(taskId) {
+    stopAiOptimizePolling();
+
+    let pollCount = 0;
+    const MAX_POLL_COUNT = 360; // 360次 x 5秒 = 30分钟
+
+    importAiOptimizePollingTimer = setInterval(async () => {
+        pollCount++;
+        if (pollCount > MAX_POLL_COUNT) {
+            stopAiOptimizePolling();
+            showAiOptimizeFailure('轮询超时（30分钟），请稍后手动查看任务状态');
+            return;
+        }
+
+        try {
+            const result = await apiRequest('/api/ai-import/task/' + encodeURIComponent(taskId), {
+                method: 'GET'
+            });
+
+            if (result.success && result.data) {
+                updateAiOptimizeProgress(result.data);
+
+                // 任务完成、失败或取消时停止轮询
+                if (result.data.status === 'completed' || result.data.status === 'partial_completed' || result.data.status === 'failed' || result.data.status === 'cancelled') {
+                    stopAiOptimizePolling();
+                }
+            } else {
+                // 查询失败不停止轮询，等待下次
+                logger.warn('查询AI优化任务状态失败:', result.message);
+            }
+        } catch (error) {
+            logger.error('轮询AI优化任务状态异常:', error);
+        }
+    }, 5000);
+}
+
+// 停止轮询
+function stopAiOptimizePolling() {
+    if (importAiOptimizePollingTimer) {
+        clearInterval(importAiOptimizePollingTimer);
+        importAiOptimizePollingTimer = null;
+    }
+}
+
+// 更新AI优化进度UI
+function updateAiOptimizeProgress(data) {
+    const progressFill = document.getElementById('ai-opt-progress-fill');
+    const progressText = document.getElementById('ai-opt-progress-text');
+    const progressPercent = document.getElementById('ai-opt-progress-percent');
+    const progressEl = document.getElementById('ai-opt-progress');
+    const resultSuccessEl = document.getElementById('ai-opt-result-success');
+    const resultFailEl = document.getElementById('ai-opt-result-fail');
+
+    if (data.status === 'processing' || data.status === 'pending') {
+        // 进行中
+        const percent = data.progress || 0;
+        if (progressFill) progressFill.style.width = percent + '%';
+        if (progressPercent) progressPercent.textContent = percent + '%';
+
+        if (data.status === 'pending') {
+            if (progressText) progressText.textContent = '等待处理...';
+        } else {
+            const processed = data.processed_batches || 0;
+            const total = data.total_batches || 0;
+            if (progressText) progressText.textContent = '正在优化 ' + processed + '/' + total + ' 批次...';
+        }
+    } else if (data.status === 'completed' || data.status === 'partial_completed') {
+        // 完成
+        if (progressEl) progressEl.style.display = 'none';
+        if (resultFailEl) resultFailEl.style.display = 'none';
+        if (resultSuccessEl) resultSuccessEl.style.display = 'block';
+
+        const optimizedCount = data.optimized_cases || 0;
+        const failedCount = data.failed_cases || 0;
+        document.getElementById('ai-opt-optimized-count').textContent = optimizedCount;
+        document.getElementById('ai-opt-failed-count').textContent = failedCount;
+
+        // 更新底部按钮
+        updateStep4Buttons(true);
+    } else if (data.status === 'failed') {
+        // 失败
+        showAiOptimizeFailure(data.error_message || 'AI优化处理失败');
+    } else if (data.status === 'cancelled') {
+        // 已取消
+        if (progressEl) progressEl.style.display = 'none';
+        if (resultSuccessEl) resultSuccessEl.style.display = 'none';
+        if (resultFailEl) resultFailEl.style.display = 'block';
+        const errorMsgEl = document.getElementById('ai-opt-error-message');
+        if (errorMsgEl) errorMsgEl.textContent = '任务已取消';
+        updateStep4Buttons(false);
+    }
+}
+
+// 显示AI优化失败
+function showAiOptimizeFailure(errorMessage) {
+    const progressEl = document.getElementById('ai-opt-progress');
+    const resultSuccessEl = document.getElementById('ai-opt-result-success');
+    const resultFailEl = document.getElementById('ai-opt-result-fail');
+
+    if (progressEl) progressEl.style.display = 'none';
+    if (resultSuccessEl) resultSuccessEl.style.display = 'none';
+    if (resultFailEl) resultFailEl.style.display = 'block';
+
+    const errorMsgEl = document.getElementById('ai-opt-error-message');
+    if (errorMsgEl) errorMsgEl.textContent = errorMessage;
+
+    // 更新底部按钮
+    updateStep4Buttons(false);
+}
+
+// 更新步骤4底部按钮
+function updateStep4Buttons(completed) {
+    const prevBtn = document.getElementById('import-prev-btn');
+    const nextBtn = document.getElementById('import-next-btn');
+    const cancelBtn = document.getElementById('import-cancel-btn');
+
+    if (prevBtn) prevBtn.style.display = 'none';
+    if (nextBtn) nextBtn.style.display = 'none';
+
+    if (cancelBtn) {
+        cancelBtn.textContent = completed ? '稍后查看' : '关闭';
+        cancelBtn.style.display = 'inline-block';
+        cancelBtn.onclick = closeImportWithAiOptimize;
+    }
+}
+
+// 前往AI评审页面
+function goToAiReview() {
+    stopAiOptimizePolling();
+    closeImportExcelModal();
+    // 导航到AI生成页面
+    const aiGenTab = document.querySelector('[data-tab="ai-generation"]') ||
+                     document.querySelector('[data-page="ai-generation"]');
+    if (aiGenTab) {
+        aiGenTab.click();
+    } else {
+        // 尝试通过URL导航
+        window.location.hash = '#ai-generation';
+    }
+}
+
+// 关闭导入模态框（带AI优化状态清理）
+function closeImportWithAiOptimize() {
+    stopAiOptimizePolling();
+    closeImportExcelModal();
+}
+
+// ==================== AI辅助优化相关函数结束 ====================
 
 // 导出测试用例 - 打开导出选项弹窗
 async function exportTestCases() {
@@ -25559,7 +32450,6 @@ function closeExportOptionsModal() {
 
 // 加载导出模块列表
 async function loadExportModulesList() {
-    console.log('[导出模块列表] 开始加载, currentCaseLibraryId:', currentCaseLibraryId);
     
     try {
         const result = await apiRequest('/modules/list', {
@@ -25567,19 +32457,17 @@ async function loadExportModulesList() {
             body: JSON.stringify({ libraryId: currentCaseLibraryId, pageSize: 1000 })
         });
         
-        console.log('[导出模块列表] API返回结果:', result);
         
         if (result.success) {
             const listEl = document.getElementById('export-modules-list');
             if (!listEl) {
-                console.error('[导出模块列表] 未找到export-modules-list元素');
+                logger.error('[导出模块列表] 未找到export-modules-list元素');
                 return;
             }
             
             listEl.innerHTML = '';
             
             const modules = result.modules || [];
-            console.log('[导出模块列表] 模块数量:', modules.length);
             
             if (modules.length === 0) {
                 listEl.innerHTML = '<div style="text-align: center; color: #6b7280; padding: 20px;">当前用例库暂无模块</div>';
@@ -25595,7 +32483,7 @@ async function loadExportModulesList() {
                 item.innerHTML = `
                     <input type="checkbox" id="export-module-${module.id}" style="display: none;">
                     <span class="checkbox-custom"></span>
-                    <span class="module-name">${module.name}</span>
+                    <span class="module-name">${escapeHtml(module.name)}</span>
                     <span class="module-count">${module.caseCount || 0} 条用例</span>
                 `;
                 
@@ -25612,10 +32500,10 @@ async function loadExportModulesList() {
             // 默认全选
             selectAllExportModules(true);
         } else {
-            console.error('[导出模块列表] API返回失败:', result.message);
+            logger.error('[导出模块列表] API返回失败:', result.message);
         }
     } catch (error) {
-        console.error('[导出模块列表] 加载失败:', error);
+        logger.error('[导出模块列表] 加载失败:', error);
         showErrorMessage('加载模块列表失败');
     }
 }
@@ -25723,10 +32611,2957 @@ document.addEventListener('DOMContentLoaded', function() {
             
             const files = e.dataTransfer.files;
             if (files.length > 0) {
-                const fileInput = document.getElementById('excel-file-input');
-                fileInput.files = files;
-                handleExcelFileSelect({ target: fileInput });
+                handleExcelFileSelect({ target: { files: files } });
             }
         });
     }
 });
+
+// ==================== 评审功能 ====================
+
+// 全局变量
+let selectedReviewerIds = [];
+let selectedReviewerNames = [];
+let allReviewersList = [];
+let filteredReviewersList = [];
+let currentUserPage = 1;
+const usersPerPage = 10;
+let currentReviewHistoryExpanded = false;
+let currentReviewCaseId = null;
+
+// 提交评审
+async function submitForReview() {
+    const caseId = currentEditingTestCaseId;
+    if (!caseId) {
+        showErrorMessage('用例ID不存在');
+        return;
+    }
+    
+    openSubmitReviewModal(caseId);
+}
+
+// 打开提交评审对话框
+async function openSubmitReviewModal(caseId) {
+    try {
+        selectedReviewerIds = [];
+        selectedReviewerNames = [];
+        
+        const response = await apiRequest('/users/list');
+        if (response.success) {
+            allReviewersList = response.users || [];
+            renderUserList(allReviewersList);
+            renderFrequentReviewers();
+            document.getElementById('users-count').textContent = allReviewersList.length;
+        }
+        
+        updateSelectedReviewersDisplay();
+        document.getElementById('submit-review-modal').style.display = 'block';
+    } catch (error) {
+        logger.error('加载用户列表失败:', error);
+        showErrorMessage('加载用户列表失败');
+    }
+}
+
+// 渲染用户列表
+function renderUserList(users) {
+    filteredReviewersList = users.filter(user => {
+        const username = user.username.toLowerCase();
+        return !['admin', 'administrator', 'root', 'system', 'sys'].includes(username);
+    });
+    
+    allReviewersList = filteredReviewersList;
+    currentUserPage = 1;
+    
+    renderUserPage();
+    document.getElementById('users-count').textContent = filteredReviewersList.length;
+    
+    const pagination = document.getElementById('user-pagination');
+    if (filteredReviewersList.length > usersPerPage) {
+        pagination.style.display = 'flex';
+    } else {
+        pagination.style.display = 'none';
+    }
+}
+
+// 渲染当前页的用户
+function renderUserPage() {
+    const startIndex = (currentUserPage - 1) * usersPerPage;
+    const endIndex = startIndex + usersPerPage;
+    const pageUsers = filteredReviewersList.slice(startIndex, endIndex);
+    
+    const userListHtml = pageUsers.map(user => {
+        const isSelected = selectedReviewerIds.includes(user.id);
+        return `
+        <div class="user-item ${isSelected ? 'selected' : ''}" data-user-id="${user.id}" data-username="${escapeHtml(user.username)}" onclick="toggleReviewer(${user.id}, '${escapeHtml(user.username)}')">
+            <input type="checkbox" name="reviewer" value="${user.id}" id="reviewer-${user.id}" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation()">
+            <label for="reviewer-${user.id}" onclick="event.stopPropagation(); toggleReviewer(${user.id}, '${escapeHtml(user.username)}')">
+                <span class="user-avatar">${escapeHtml(user.username.charAt(0).toUpperCase())}</span>
+                <div class="user-info">
+                    <div class="user-name">${escapeHtml(user.username)}</div>
+                </div>
+            </label>
+        </div>
+    `}).join('');
+    
+    document.getElementById('all-users-list').innerHTML = userListHtml;
+    
+    const totalPages = Math.ceil(filteredReviewersList.length / usersPerPage);
+    document.getElementById('current-page').textContent = currentUserPage;
+    document.getElementById('total-pages').textContent = totalPages;
+    
+    document.getElementById('prev-page-btn').disabled = currentUserPage === 1;
+    document.getElementById('next-page-btn').disabled = currentUserPage === totalPages;
+}
+
+// 上一页
+function prevUserPage() {
+    if (currentUserPage > 1) {
+        currentUserPage--;
+        renderUserPage();
+    }
+}
+
+// 下一页
+function nextUserPage() {
+    const totalPages = Math.ceil(filteredReviewersList.length / usersPerPage);
+    if (currentUserPage < totalPages) {
+        currentUserPage++;
+        renderUserPage();
+    }
+}
+
+// 渲染常用评审人
+function renderFrequentReviewers() {
+    const frequentReviewers = JSON.parse(localStorage.getItem('frequentReviewers') || '[]');
+    
+    const section = document.getElementById('frequent-reviewers-section');
+    const chipsContainer = document.getElementById('frequent-reviewers-chips');
+    
+    if (frequentReviewers.length === 0) {
+        section.style.display = 'none';
+        return;
+    }
+    
+    section.style.display = 'block';
+    
+    const chipsHtml = frequentReviewers.slice(0, 5).filter(user => user && user.id && user.name).map(user => {
+        const isSelected = selectedReviewerIds.includes(user.id);
+        const displayName = user.name || '未知用户';
+        return `
+        <div class="user-chip ${isSelected ? 'selected' : ''}" data-user-id="${user.id}" onclick="toggleReviewer(${user.id}, '${escapeHtml(displayName)}')">
+            <span class="user-avatar">${escapeHtml(displayName.charAt(0).toUpperCase())}</span>
+            <span class="user-name">${escapeHtml(displayName)}</span>
+            ${isSelected ? '<span class="check-icon">✓</span>' : '<span class="star-icon">⭐</span>'}
+        </div>
+    `}).join('');
+    
+    chipsContainer.innerHTML = chipsHtml;
+}
+
+// 切换评审人选择（多选）
+function toggleReviewer(userId, userName) {
+    const index = selectedReviewerIds.indexOf(userId);
+    
+    if (index === -1) {
+        selectedReviewerIds.push(userId);
+        selectedReviewerNames.push(userName);
+    } else {
+        selectedReviewerIds.splice(index, 1);
+        selectedReviewerNames.splice(index, 1);
+    }
+    
+    renderUserPage();
+    renderFrequentReviewers();
+    updateSelectedReviewersDisplay();
+}
+
+// 更新已选评审人显示
+function updateSelectedReviewersDisplay() {
+    const container = document.getElementById('selected-reviewers-display');
+    const countSpan = document.getElementById('selected-reviewers-count');
+    
+    if (!container) return;
+    
+    countSpan.textContent = selectedReviewerIds.length;
+    
+    if (selectedReviewerIds.length === 0) {
+        container.innerHTML = '<span class="no-selection">请选择评审人（可多选）</span>';
+    } else {
+        container.innerHTML = selectedReviewerNames.map((name, index) => `
+            <span class="selected-reviewer-tag">
+                ${escapeHtml(name)}
+                <span class="remove-btn" onclick="event.stopPropagation(); toggleReviewer(${selectedReviewerIds[index]}, '${escapeHtml(name)}')">×</span>
+            </span>
+        `).join('');
+    }
+}
+
+// 选择评审人（单选兼容）
+function selectReviewer(userId, userName) {
+    toggleReviewer(userId, userName);
+}
+
+// 过滤评审人
+function filterReviewers(keyword) {
+    const filteredUsers = allReviewersList.filter(user => 
+        user.username.toLowerCase().includes(keyword.toLowerCase()) ||
+        (user.role && user.role.toLowerCase().includes(keyword.toLowerCase()))
+    );
+    renderUserList(filteredUsers);
+    document.getElementById('users-count').textContent = filteredUsers.length;
+}
+
+// 更新评审说明字符计数
+function updateReviewCommentCount() {
+    const textarea = document.getElementById('review-comment');
+    const countSpan = document.getElementById('review-comment-count');
+    if (textarea && countSpan) {
+        countSpan.textContent = textarea.value.length;
+    }
+}
+
+// 确认提交评审
+async function confirmSubmitReview() {
+    if (selectedReviewerIds.length === 0) {
+        showErrorMessage('请选择至少一位评审人');
+        return;
+    }
+    
+    const caseId = currentEditingTestCaseId;
+    const comment = document.getElementById('review-comment').value;
+    
+    try {
+        const response = await apiRequest(`/testcases/${caseId}/submit-review`, {
+            method: 'POST',
+            body: JSON.stringify({
+                reviewer_ids: selectedReviewerIds,
+                comment: comment
+            })
+        });
+        
+        if (response.success) {
+            showSuccessMessage(response.message || '提交成功');
+            closeSubmitReviewModal();
+            
+            for (let i = 0; i < selectedReviewerIds.length; i++) {
+                saveFrequentReviewer(selectedReviewerIds[i], selectedReviewerNames[i]);
+            }
+            
+            apiCache.deleteByPrefix('/workspace');
+            apiCache.deleteByPrefix('/testcases/review/pending');
+            
+            if (typeof loadCaseDetail === 'function') {
+                loadCaseDetail(caseId);
+            }
+        } else {
+            showErrorMessage(response.message || '提交失败');
+        }
+    } catch (error) {
+        logger.error('提交评审失败:', error);
+        showErrorMessage('提交失败: ' + error.message);
+    }
+}
+
+// 保存常用评审人
+function saveFrequentReviewer(userId, userName) {
+    let frequentReviewers = JSON.parse(localStorage.getItem('frequentReviewers') || '[]');
+    
+    frequentReviewers = frequentReviewers.filter(r => r.id !== userId);
+    
+    frequentReviewers.unshift({ id: userId, name: userName });
+    
+    frequentReviewers = frequentReviewers.slice(0, 5);
+    
+    localStorage.setItem('frequentReviewers', JSON.stringify(frequentReviewers));
+}
+
+// 关闭提交评审对话框
+function closeSubmitReviewModal() {
+    document.getElementById('submit-review-modal').style.display = 'none';
+    selectedReviewerIds = [];
+    selectedReviewerNames = [];
+    document.getElementById('review-comment').value = '';
+    document.getElementById('review-comment-count').textContent = '0';
+    document.getElementById('reviewer-search').value = '';
+}
+
+// 通过评审
+function approveReview() {
+    const caseId = currentEditingTestCaseId;
+    openApproveReviewModal(caseId);
+}
+
+// 打开通过评审对话框
+function openApproveReviewModal(caseId) {
+    // 填充用例信息
+    const caseName = document.getElementById('detail-case-name')?.value || '-';
+    const casePriority = document.getElementById('detail-case-priority')?.selectedOptions[0]?.text || '-';
+    const caseModule = document.getElementById('detail-case-module')?.selectedOptions[0]?.text || '-';
+    
+    document.getElementById('approve-case-name').textContent = caseName;
+    document.getElementById('approve-case-priority').textContent = casePriority;
+    document.getElementById('approve-case-module').textContent = caseModule || '-';
+    
+    document.getElementById('approve-review-modal').style.display = 'block';
+}
+
+// 插入快捷评语
+function insertQuickComment(comment) {
+    const textarea = document.getElementById('approve-comment');
+    const currentValue = textarea.value;
+    textarea.value = currentValue ? currentValue + '，' + comment : comment;
+    updateApproveCommentCount();
+}
+
+// 更新通过评审字符计数
+function updateApproveCommentCount() {
+    const textarea = document.getElementById('approve-comment');
+    const countSpan = document.getElementById('approve-char-count');
+    if (textarea && countSpan) {
+        countSpan.textContent = textarea.value.length;
+    }
+}
+
+// 确认通过评审
+async function confirmApproveReview() {
+    const caseId = currentEditingTestCaseId;
+    const comment = document.getElementById('approve-comment').value;
+    
+    try {
+        const response = await apiRequest(`/testcases/${caseId}/review`, {
+            method: 'POST',
+            body: JSON.stringify({
+                action: 'approve',
+                comment: comment
+            })
+        });
+        
+        if (response.success) {
+            showSuccessMessage('评审完成');
+            closeApproveReviewModal();
+            closeTestCaseDetailModal();
+            
+            apiCache.deleteByPrefix('/workspace');
+            apiCache.deleteByPrefix('/testcases/review/pending');
+            
+            Router.navigateTo('workspace');
+        } else {
+            showErrorMessage(response.message || '评审失败');
+        }
+    } catch (error) {
+        logger.error('通过评审失败:', error);
+        showErrorMessage('评审失败: ' + error.message);
+    }
+}
+
+// 关闭通过评审对话框
+function closeApproveReviewModal() {
+    document.getElementById('approve-review-modal').style.display = 'none';
+    document.getElementById('approve-comment').value = '';
+    document.getElementById('approve-char-count').textContent = '0';
+}
+
+// 驳回评审
+function rejectReview() {
+    const caseId = currentEditingTestCaseId;
+    openRejectReviewModal(caseId);
+}
+
+// 打开驳回评审对话框
+function openRejectReviewModal(caseId) {
+    document.getElementById('reject-review-modal').style.display = 'block';
+}
+
+// 选择驳回原因
+function selectRejectReason(reason) {
+    document.getElementById('reject-reason').value = reason;
+    updateRejectReasonCount();
+}
+
+// 更新驳回原因字符计数
+function updateRejectReasonCount() {
+    const textarea = document.getElementById('reject-reason');
+    const countSpan = document.getElementById('reject-char-count');
+    if (textarea && countSpan) {
+        const length = textarea.value.length;
+        countSpan.textContent = length;
+        
+        if (length > 0) {
+            countSpan.style.color = '#8c8c8c';
+        } else {
+            countSpan.style.color = '#8c8c8c';
+        }
+    }
+}
+
+// 更新修改建议字符计数
+function updateRejectSuggestionCount() {
+    const textarea = document.getElementById('reject-suggestion');
+    const countSpan = document.getElementById('reject-suggestion-count');
+    if (textarea && countSpan) {
+        countSpan.textContent = textarea.value.length;
+    }
+}
+
+// 确认驳回评审
+async function confirmRejectReview() {
+    const caseId = currentEditingTestCaseId;
+    const reason = document.getElementById('reject-reason').value;
+    const suggestion = document.getElementById('reject-suggestion').value;
+    
+    // 验证驳回原因
+    if (!reason || reason.length < 1) {
+        showErrorMessage('驳回原因不能为空');
+        return;
+    }
+    
+    try {
+        const response = await apiRequest(`/testcases/${caseId}/review`, {
+            method: 'POST',
+            body: JSON.stringify({
+                action: 'reject',
+                comment: reason,
+                suggestion: suggestion
+            })
+        });
+        
+        if (response.success) {
+            showSuccessMessage('评审完成');
+            closeRejectReviewModal();
+            closeTestCaseDetailModal();
+            
+            apiCache.deleteByPrefix('/workspace');
+            apiCache.deleteByPrefix('/testcases/review/pending');
+            
+            Router.navigateTo('workspace');
+        } else {
+            showErrorMessage(response.message || '评审失败');
+        }
+    } catch (error) {
+        logger.error('驳回评审失败:', error);
+        showErrorMessage('评审失败: ' + error.message);
+    }
+}
+
+// 关闭驳回评审对话框
+function closeRejectReviewModal() {
+    document.getElementById('reject-review-modal').style.display = 'none';
+    document.getElementById('reject-reason').value = '';
+    document.getElementById('reject-char-count').textContent = '0';
+    document.getElementById('reject-suggestion').value = '';
+    document.getElementById('reject-suggestion-count').textContent = '0';
+    
+    // 清除选中的常见驳回原因
+    document.querySelectorAll('input[name="reject-reason-option"]').forEach(radio => {
+        radio.checked = false;
+    });
+}
+
+// 加载评审历史
+async function loadReviewHistory(caseId) {
+    currentReviewCaseId = caseId;
+    try {
+        const response = await apiRequest(`/testcases/${caseId}/review-history`, { useCache: false });
+        
+        if (currentReviewCaseId !== caseId) {
+            return;
+        }
+        
+        if (response.success) {
+            renderReviewHistory(response.data.review_records);
+            updateReviewStatus(response.data);
+        }
+    } catch (error) {
+        logger.error('加载评审历史失败:', error);
+    }
+}
+
+// 更新评审状态显示
+function updateReviewStatus(data) {
+    const statusBadge = document.getElementById('review-status-badge');
+    const reviewerName = document.getElementById('reviewer-name');
+    const submittedTime = document.getElementById('review-submitted-time');
+    const waitingTime = document.getElementById('review-waiting-time');
+    const reviewActions = document.getElementById('review-actions');
+    const submitReviewBtn = document.getElementById('submit-review-btn');
+    
+    if (!statusBadge) return;
+    
+    // 更新状态徽章
+    const statusMap = {
+        'draft': { icon: '📝', text: '草稿', class: 'draft' },
+        'pending': { icon: '⏳', text: '待评审', class: 'pending' },
+        'approved': { icon: '✓', text: '已通过', class: 'approved' },
+        'rejected': { icon: '✗', text: '被驳回', class: 'rejected' }
+    };
+    
+    const status = statusMap[data.current_status] || statusMap['draft'];
+    statusBadge.className = `review-status-badge ${status.class}`;
+    statusBadge.innerHTML = `
+        <span class="status-icon">${status.icon}</span>
+        <span class="status-text">${status.text}</span>
+    `;
+    
+    // 更新评审人
+    if (reviewerName) {
+        reviewerName.textContent = data.reviewer_name || '-';
+    }
+    
+    // 更新提交时间
+    if (submittedTime) {
+        submittedTime.textContent = data.review_submitted_at ? formatDateTime(data.review_submitted_at) : '-';
+    }
+    
+    // 更新等待时间
+    if (waitingTime) {
+        if (data.review_submitted_at && data.current_status === 'pending') {
+            const submitted = new Date(data.review_submitted_at);
+            const now = new Date();
+            const diff = now - submitted;
+            const hours = Math.floor(diff / (1000 * 60 * 60));
+            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+            
+            if (hours > 0) {
+                waitingTime.textContent = `${hours}小时${minutes}分`;
+            } else {
+                waitingTime.textContent = `${minutes}分钟`;
+            }
+        } else {
+            waitingTime.textContent = '-';
+        }
+    }
+    
+    // 显示/隐藏评审操作按钮
+    if (reviewActions) {
+        const currentUser = window.currentUser;
+        const isReviewer = currentUser && data.reviewer_id === currentUser.id;
+        
+        if (isReviewer && data.current_status === 'pending') {
+            reviewActions.style.display = 'flex';
+        } else {
+            reviewActions.style.display = 'none';
+        }
+    }
+    
+    // 更新提交评审按钮状态
+    if (submitReviewBtn) {
+        if (data.current_status === 'pending') {
+            submitReviewBtn.disabled = true;
+            submitReviewBtn.title = '用例已提交评审';
+        } else if (data.current_status === 'approved') {
+            submitReviewBtn.disabled = true;
+            submitReviewBtn.title = '用例已通过评审';
+        } else {
+            submitReviewBtn.disabled = false;
+            submitReviewBtn.title = '';
+        }
+    }
+}
+
+// 渲染评审历史 - 紧凑表格样式
+function renderReviewHistory(records) {
+    const container = document.getElementById('review-history-timeline');
+
+    if (!container) {
+        logger.error('renderReviewHistory: 找不到 review-history-timeline 元素');
+        return;
+    }
+
+    // 重置展开/收起状态
+    currentReviewHistoryExpanded = false;
+    container.style.maxHeight = '400px';
+    container.style.overflowY = 'auto';
+    
+    // 重置按钮文本
+    const expandBtn = document.querySelector('.expand-btn[onclick="toggleReviewHistory(this)"]');
+    if (expandBtn) {
+        expandBtn.textContent = '展开全部';
+    }
+
+    if (!records || records.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state" style="text-align: center; padding: 32px 24px;">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#667eea" stroke-width="1.5" style="margin: 0 auto 12px; opacity: 0.6;">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+                <p style="color: #868e96; font-size: 14px; margin: 0;">暂无评审历史</p>
+            </div>
+        `;
+        return;
+    }
+
+    // 按日期分组
+    const groupedRecords = {};
+    records.forEach(record => {
+        const date = new Date(record.created_at);
+        const dateStr = formatDate(date);
+        if (!groupedRecords[dateStr]) {
+            groupedRecords[dateStr] = [];
+        }
+        groupedRecords[dateStr].push(record);
+    });
+
+    // SVG用户图标 - 更小
+    const userIconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+        <circle cx="12" cy="7" r="4"></circle>
+    </svg>`;
+
+    // 渲染紧凑表格
+    let timelineHtml = '';
+    Object.keys(groupedRecords).forEach(dateStr => {
+        timelineHtml += `<div class="timeline-date-group">`;
+        timelineHtml += `<div class="date-label">${dateStr}</div>`;
+
+        groupedRecords[dateStr].forEach(record => {
+            const date = new Date(record.created_at);
+            const timeStr = formatDateTime(record.created_at).split(' ')[1];
+            const actionText = getActionText(record.action);
+            const actionDesc = getActionDesc(record.action);
+
+            // 根据操作类型构建用户信息
+            let userInfoHtml = '';
+            if (record.action === 'submit' || record.action === 'resubmit') {
+                userInfoHtml = `
+                    <span class="user-avatar">${userIconSvg}</span>
+                    <span class="user-name">${escapeHtml(record.submitter_name || '未知')}</span>
+                    <span class="action-text">${actionDesc}</span>
+                    ${record.reviewer_name ? `<span style="color:#868e96;">→</span> <strong style="color:#667eea;">${escapeHtml(record.reviewer_name)}</strong>` : ''}
+                `;
+            } else {
+                userInfoHtml = `
+                    <span class="user-avatar">${userIconSvg}</span>
+                    <span class="user-name">${escapeHtml(record.reviewer_name || '未知')}</span>
+                    <span class="action-text">${actionDesc}</span>
+                `;
+            }
+
+            // 评论 - 内联显示
+            const commentHtml = record.comment
+                ? `<span class="comment-inline" title="${escapeHtml(record.comment)}">${escapeHtml(record.comment)}</span>`
+                : '';
+
+            timelineHtml += `
+                <div class="timeline-item">
+                    <div class="timeline-dot ${record.action}"></div>
+                    <div class="timeline-content">
+                        <div class="timeline-header">
+                            <span class="timeline-time">${timeStr}</span>
+                            <span class="timeline-action ${record.action}">${actionText}</span>
+                        </div>
+                        <div class="user-info">
+                            ${userInfoHtml}
+                            ${commentHtml}
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+
+        timelineHtml += `</div>`;
+    });
+
+    container.innerHTML = timelineHtml;
+}
+
+// 获取操作文本
+function getActionText(action) {
+    const actionMap = {
+        'submit': '提交评审',
+        'approve': '通过评审',
+        'reject': '驳回评审',
+        'resubmit': '重新提审'
+    };
+    return actionMap[action] || action;
+}
+
+// 获取操作描述
+function getActionDesc(action) {
+    const descMap = {
+        'submit': '提交了评审',
+        'approve': '通过了评审',
+        'reject': '驳回了评审',
+        'resubmit': '重新提交了评审'
+    };
+    return descMap[action] || '';
+}
+
+// 切换评审历史展开/收起
+function toggleReviewHistory(btn) {
+    const container = document.getElementById('review-history-timeline');
+    
+    if (!container || !btn) {
+        logger.error('toggleReviewHistory: 找不到必要的DOM元素');
+        return;
+    }
+    
+    if (currentReviewHistoryExpanded) {
+        // 收起时，限制高度
+        container.style.maxHeight = '400px';
+        container.style.overflowY = 'auto';
+        btn.textContent = '展开全部';
+    } else {
+        // 展开时，直接去除高度限制
+        container.style.maxHeight = 'none';
+        container.style.overflow = 'visible';
+        btn.textContent = '收起';
+    }
+    
+    currentReviewHistoryExpanded = !currentReviewHistoryExpanded;
+}
+
+function initReviewSocketListeners() {
+    if (!socket) {
+        logger.warn('WebSocket未初始化，等待连接...');
+        return;
+    }
+
+    if (socket._reviewListenersAttached) {
+        return;
+    }
+    socket._reviewListenersAttached = true;
+
+    socket.on('review:submitted', (data) => {
+        if (data.reviewerId === currentUser.id) {
+            showSuccessMessage(`${data.submitterName} 提交了一个测试用例待您评审`);
+        }
+        updatePendingReviewCount();
+    });
+
+    socket.on('review:completed', (data) => {
+        showSuccessMessage(`${data.reviewerName} ${data.action === 'approve' ? '通过了' : '驳回了'}您的用例评审`);
+        updatePendingReviewCount();
+    });
+}
+
+function updatePendingReviewCount() {
+    const summaryCard = document.querySelector('.workspace-summary-card .pending-reviews');
+    if (!summaryCard) return;
+
+    const countSpan = summaryCard.querySelector('.pending-reviews-count');
+    if (!countSpan) return;
+
+    const currentCount = parseInt(countSpan.textContent) || 0;
+    countSpan.textContent = currentCount;
+    countSpan.style.animation = 'pulse 0.5s';
+    countSpan.style.color = '#fa8c16';
+}
+
+// ==================== 工作台功能 ====================
+
+let workspaceData = {
+    summary: null,
+    pendingReviews: [],
+    pendingExecutions: [],
+    myPlans: [],
+    recentActivities: []
+};
+
+async function initWorkspace() {
+    
+    updateWorkspaceDate();
+    updateWorkspaceUsername();
+    initWorkspaceTabs();
+    await loadWorkspaceData();
+}
+
+function updateWorkspaceDate() {
+    const dateEl = document.getElementById('workspace-current-date');
+    if (dateEl) {
+        const now = new Date();
+        const options = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' };
+        dateEl.textContent = now.toLocaleDateString('zh-CN', options);
+    }
+}
+
+function updateWorkspaceUsername() {
+    const usernameEl = document.getElementById('workspace-username');
+    if (usernameEl && currentUser) {
+        usernameEl.textContent = currentUser.username || '用户';
+    }
+}
+
+function initWorkspaceTabs() {
+    const tabs = document.querySelectorAll('.workspace-tab');
+    tabs.forEach(tab => {
+        tab.addEventListener('click', function() {
+            const tabName = this.dataset.tab;
+            switchWorkspaceTab(tabName);
+        });
+    });
+}
+
+function switchWorkspaceTab(tabName) {
+    document.querySelectorAll('.workspace-tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    document.querySelector(`.workspace-tab[data-tab="${tabName}"]`).classList.add('active');
+    
+    document.querySelectorAll('.workspace-panel').forEach(panel => {
+        panel.classList.remove('active');
+    });
+    document.getElementById(`workspace-${tabName}-panel`).classList.add('active');
+}
+
+async function loadWorkspaceData() {
+    try {
+        await Promise.all([
+            loadWorkspaceSummary(),
+            loadPendingReviews(),
+            loadPendingExecutions(),
+            loadMyPlans(),
+            loadRecentActivities()
+        ]);
+        updateWorkspaceBadges();
+    } catch (error) {
+        logger.error('[Workspace] 加载数据失败:', error);
+    }
+}
+
+async function loadWorkspaceSummary() {
+    try {
+        const response = await apiRequest('/workspace/summary');
+        if (response.success) {
+            workspaceData.summary = response.data;
+            renderWorkspaceSummary(response.data);
+        }
+    } catch (error) {
+        logger.error('[Workspace] 加载概览数据失败:', error);
+    }
+}
+
+function renderWorkspaceSummary(data) {
+    const pendingExecutionsEl = document.getElementById('pending-executions-count');
+    const pendingReviewsEl = document.getElementById('pending-reviews-count');
+    const expiringEl = document.getElementById('expiring-count');
+    const weeklyCompletedEl = document.getElementById('weekly-completed-count');
+    
+    if (pendingExecutionsEl) pendingExecutionsEl.textContent = data.pending_executions || 0;
+    if (pendingReviewsEl) pendingReviewsEl.textContent = data.pending_reviews || 0;
+    if (expiringEl) expiringEl.textContent = data.expiring_plans || 0;
+    if (weeklyCompletedEl) weeklyCompletedEl.textContent = data.weekly_completed || 0;
+}
+
+async function loadPendingReviews() {
+    try {
+        const response = await apiRequest('/workspace/pending-reviews?pageSize=5');
+        if (response.success) {
+            workspaceData.pendingReviews = response.data.cases;
+            renderPendingReviewsList(response.data.cases);
+            const countEl = document.getElementById('pending-reviews-list-count');
+            if (countEl) {
+                countEl.textContent = `(${response.data.pagination.total})`;
+            }
+        }
+    } catch (error) {
+        logger.error('[Workspace] 加载待评审列表失败:', error);
+    }
+}
+
+function renderPendingReviewsList(cases) {
+    const container = document.getElementById('pending-reviews-list');
+    if (!container) return;
+    
+    if (!cases || cases.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <span class="empty-icon">🎉</span>
+                <p>暂无待评审用例</p>
+            </div>
+        `;
+        const batchActions = document.getElementById('review-batch-actions');
+        if (batchActions) {
+            batchActions.style.display = 'none';
+        }
+        return;
+    }
+    
+    container.innerHTML = cases.map(c => `
+        <div class="workspace-list-item" data-case-id="${c.id}">
+            <div class="list-item-checkbox">
+                <input type="checkbox" 
+                       class="review-case-checkbox" 
+                       data-case-id="${c.id}"
+                       onchange="updateReviewBatchSelection()">
+            </div>
+            <div class="list-item-left">
+                <div class="list-item-title">
+                    <span>📋</span>
+                    <span>${escapeHtml(c.name)}</span>
+                </div>
+                <div class="list-item-meta">
+                    <span>${escapeHtml(c.module_name || '未分类')}</span>
+                    <span>|</span>
+                    <span>${escapeHtml(c.submitter_name || '未知')} 提交</span>
+                    <span>|</span>
+                    <span>${c.time_ago || ''}</span>
+                    <span class="priority-badge ${getPriorityClass(c.priority)}">${escapeHtml(c.priority || '中')}</span>
+                </div>
+            </div>
+            <div class="list-item-right">
+                <button class="list-item-btn" onclick="viewCaseDetail(${c.id})">查看</button>
+                <button class="list-item-btn warning" onclick="quickReviewCase(${c.id})">快速评审</button>
+            </div>
+        </div>
+    `).join('');
+    
+    let batchActions = document.getElementById('review-batch-actions');
+    if (!batchActions) {
+        const parentContainer = container.parentElement;
+        if (parentContainer) {
+            batchActions = document.createElement('div');
+            batchActions.id = 'review-batch-actions';
+            batchActions.className = 'batch-action-toolbar';
+            batchActions.style.cssText = 'display: none; margin-top: 12px;';
+            batchActions.innerHTML = `
+                <div class="selection-info">
+                    <span class="selected-count">已选择 <strong id="selected-review-count">0</strong> 项</span>
+                    <button class="clear-selection-btn" onclick="clearReviewSelection()">清除选择</button>
+                </div>
+                <div class="batch-actions">
+                    <button class="btn btn-success" onclick="batchApproveReview()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        批量通过
+                    </button>
+                    <button class="btn btn-danger" onclick="batchRejectReview()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="15" y1="9" x2="9" y2="15"></line>
+                            <line x1="9" y1="9" x2="15" y2="15"></line>
+                        </svg>
+                        批量驳回
+                    </button>
+                </div>
+            `;
+            parentContainer.appendChild(batchActions);
+        }
+    }
+}
+
+async function loadPendingExecutions() {
+    try {
+        const response = await apiRequest('/workspace/pending-executions?pageSize=5');
+        if (response.success) {
+            workspaceData.pendingExecutions = response.data.cases;
+            renderPendingExecutionsList(response.data.cases);
+            const countEl = document.getElementById('pending-executions-list-count');
+            if (countEl) {
+                countEl.textContent = `(${response.data.pagination.total})`;
+            }
+        }
+    } catch (error) {
+        logger.error('[Workspace] 加载待执行列表失败:', error);
+    }
+}
+
+function renderPendingExecutionsList(cases) {
+    const container = document.getElementById('pending-executions-list');
+    if (!container) return;
+    
+    if (!cases || cases.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <span class="empty-icon">🎉</span>
+                <p>暂无待执行用例</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = cases.map(c => `
+        <div class="workspace-list-item" data-case-id="${c.id}" data-plan-id="${c.plan_id || ''}">
+            <div class="list-item-left">
+                <div class="list-item-title">
+                    <span>📋</span>
+                    <span>${escapeHtml(c.name)}</span>
+                </div>
+                <div class="list-item-meta">
+                    <span>${escapeHtml(c.plan_name || '未分配计划')}</span>
+                    <span>|</span>
+                    <span class="priority-badge ${getPriorityClass(c.priority)}">${escapeHtml(c.priority || '中')}</span>
+                    <span>|</span>
+                    <span>${c.days_remaining !== null ? (c.days_remaining > 0 ? `剩余${c.days_remaining}天` : '已到期') : ''}</span>
+                </div>
+            </div>
+            <div class="list-item-right">
+                <button class="list-item-btn" onclick="viewPendingExecutionPlan(${c.plan_id})">查看</button>
+                <button class="list-item-btn primary" onclick="executeCase(${c.id}, ${c.plan_id || 'null'})">执行</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function loadMyPlans() {
+    try {
+        const response = await apiRequest('/workspace/my-plans?pageSize=5');
+        if (response.success) {
+            workspaceData.myPlans = response.data.plans;
+            renderMyPlansList(response.data.plans);
+            const countEl = document.getElementById('my-plans-count');
+            if (countEl) {
+                countEl.textContent = `(${response.data.pagination.total})`;
+            }
+        }
+    } catch (error) {
+        logger.error('[Workspace] 加载我的计划失败:', error);
+    }
+}
+
+function renderMyPlansList(plans) {
+    const container = document.getElementById('my-plans-list');
+    if (!container) return;
+    
+    if (!plans || plans.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <span class="empty-icon">🎉</span>
+                <p>暂无参与的测试计划</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = plans.map(p => `
+        <div class="workspace-plan-card" data-plan-id="${p.id}">
+            <div class="plan-card-header">
+                <span class="plan-name">${escapeHtml(p.name)}</span>
+                <span class="plan-status ${getPlanStatusClass(p.status)}">${escapeHtml(p.status)}</span>
+            </div>
+            <div class="plan-card-body">
+                <div class="plan-meta">
+                    <span>📅 ${p.start_date || ''} 至 ${p.end_date || ''}</span>
+                    <span>${p.days_remaining !== null ? (p.days_remaining > 0 ? `剩余${p.days_remaining}天` : '已到期') : ''}</span>
+                </div>
+                <div class="plan-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill ${getProgressClass(p.pass_rate)}" style="width: ${p.progress_percentage || 0}%"></div>
+                    </div>
+                    <div class="progress-text">
+                        <span>执行进度: ${p.progress_percentage || 0}% (${p.tested_cases || 0}/${p.total_cases || 0})</span>
+                        <span>通过率: ${p.pass_rate || 0}%</span>
+                    </div>
+                </div>
+            </div>
+            <div class="plan-card-footer">
+                <button class="list-item-btn" onclick="viewPlanDetail(${p.id})">查看详情</button>
+                <button class="list-item-btn primary" onclick="executePlan(${p.id})">执行用例</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function loadRecentActivities() {
+    try {
+        const response = await apiRequest('/workspace/recent-activities?days=7&limit=10');
+        if (response.success) {
+            workspaceData.recentActivities = response.data.activities;
+            renderRecentActivitiesList(response.data.activities);
+            const countEl = document.getElementById('recent-activities-count');
+            if (countEl) {
+                countEl.textContent = `(${response.data.activities.length})`;
+            }
+        }
+    } catch (error) {
+        logger.error('[Workspace] 加载最近活动失败:', error);
+    }
+}
+
+function renderRecentActivitiesList(activities) {
+    const container = document.getElementById('recent-activities-list');
+    if (!container) return;
+    
+    if (!activities || activities.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <span class="empty-icon">📝</span>
+                <p>暂无最近处理记录</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const groupedActivities = groupActivitiesByDate(activities);
+    
+    let html = '';
+    for (const [date, items] of Object.entries(groupedActivities)) {
+        html += `
+            <div class="activity-date-group">
+                <div class="activity-date-label">${date}</div>
+                ${items.map(a => {
+                    const icon = getActivityIcon(a.action, a.entity_type);
+                    const dotClass = getActivityDotClass(a.action);
+                    const linkHtml = getActivityLinkHtml(a.entity_type, a.entity_id, a.description);
+                    return `
+                    <div class="activity-timeline-item" ${linkHtml ? `data-entity-type="${a.entity_type || ''}" data-entity-id="${a.entity_id || ''}"` : ''}>
+                        <div class="activity-dot ${dotClass}">
+                            <span class="activity-dot-icon">${icon}</span>
+                        </div>
+                        <div class="activity-content">
+                            <div class="activity-header">
+                                <span class="activity-action">${escapeHtml(a.action)}</span>
+                                <span class="activity-time">${a.time_ago || ''}</span>
+                            </div>
+                            <div class="activity-desc">${escapeHtml(a.description || '')}</div>
+                            ${linkHtml ? `<div class="activity-link">${linkHtml}</div>` : ''}
+                        </div>
+                    </div>
+                `}).join('')}
+            </div>
+        `;
+    }
+    
+    container.innerHTML = html;
+    
+    container.querySelectorAll('.activity-link a').forEach(link => {
+        link.addEventListener('click', function(e) {
+            e.preventDefault();
+            const href = this.getAttribute('href');
+            if (href && href !== '#') {
+                window.location.hash = href;
+            }
+        });
+    });
+}
+
+function groupActivitiesByDate(activities) {
+    const groups = {};
+    const today = new Date().toLocaleDateString('zh-CN');
+    const yesterday = new Date(Date.now() - 86400000).toLocaleDateString('zh-CN');
+    
+    activities.forEach(a => {
+        const date = new Date(a.created_at).toLocaleDateString('zh-CN');
+        let label = date;
+        if (date === today) label = '今天';
+        else if (date === yesterday) label = '昨天';
+        
+        if (!groups[label]) groups[label] = [];
+        groups[label].push(a);
+    });
+    
+    return groups;
+}
+
+function updateWorkspaceBadges() {
+    const todoCount = (workspaceData.pendingReviews?.length || 0) + (workspaceData.pendingExecutions?.length || 0);
+    const plansCount = workspaceData.myPlans?.length || 0;
+    const activitiesCount = workspaceData.recentActivities?.length || 0;
+    
+    const todoBadgeEl = document.getElementById('todo-badge');
+    const plansBadgeEl = document.getElementById('plans-badge');
+    const activitiesBadgeEl = document.getElementById('activities-badge');
+    
+    if (todoBadgeEl) todoBadgeEl.textContent = todoCount;
+    if (plansBadgeEl) plansBadgeEl.textContent = plansCount;
+    if (activitiesBadgeEl) activitiesBadgeEl.textContent = activitiesCount;
+}
+
+// 辅助函数
+function getPriorityClass(priority) {
+    if (!priority) return 'medium';
+    const p = priority.toLowerCase();
+    if (p === '高' || p === 'high' || p === 'p0') return 'high';
+    if (p === '低' || p === 'low' || p === 'p2') return 'low';
+    return 'medium';
+}
+
+function getPlanStatusClass(status) {
+    if (!status) return 'active';
+    const s = status.toLowerCase();
+    if (s === '已完成' || s === 'completed') return 'completed';
+    if (s === '已延期' || s === 'delayed') return 'delayed';
+    return 'active';
+}
+
+function getProgressClass(passRate) {
+    if (passRate >= 80) return 'green';
+    if (passRate >= 60) return 'yellow';
+    return 'red';
+}
+
+function getActivityDotClass(action) {
+    if (!action) return 'execution';
+    const a = action.toLowerCase();
+    if (a.includes('评审') || a.includes('review')) return 'review';
+    if (a.includes('创建') || a.includes('create') || a.includes('克隆')) return 'create';
+    if (a.includes('提交') || a.includes('submit')) return 'submit';
+    if (a.includes('删除') || a.includes('delete') || a.includes('移除')) return 'delete';
+    if (a.includes('执行') || a.includes('execute')) return 'execution';
+    if (a.includes('更新') || a.includes('update') || a.includes('编辑')) return 'update';
+    return 'default';
+}
+
+function getActivityIcon(action, entityType) {
+    if (!action) return '📋';
+    const a = action.toLowerCase();
+    if (a.includes('执行测试') || a.includes('批量执行')) return '✅';
+    if (a.includes('评审') || a.includes('review')) return '🔍';
+    if (a.includes('创建') || a.includes('create')) {
+        if (entityType === 'test_case') return '🧪';
+        if (entityType === 'test_plan') return '📋';
+        if (entityType === 'case_library') return '📚';
+        if (entityType === 'module') return '📁';
+        if (entityType === 'test_report') return '📊';
+        return '➕';
+    }
+    if (a.includes('克隆')) return '📋';
+    if (a.includes('删除') || a.includes('移除')) return '🗑️';
+    if (a.includes('更新') || a.includes('编辑')) return '✏️';
+    if (a.includes('提交')) return '📤';
+    if (entityType === 'test_case') return '🧪';
+    if (entityType === 'test_plan') return '📋';
+    if (entityType === 'case_library') return '📚';
+    if (entityType === 'module') return '📁';
+    if (entityType === 'test_report') return '📊';
+    if (entityType === 'test_plan_case') return '✅';
+    return '📋';
+}
+
+function getActivityLinkHtml(entityType, entityId, description) {
+    if (!entityType || !entityId) return '';
+    switch (entityType) {
+        case 'test_plan':
+            return `<a href="#testplans" class="activity-goto-link">查看测试计划 →</a>`;
+        case 'test_case':
+            return `<a href="#testcases" class="activity-goto-link">查看测试用例 →</a>`;
+        case 'case_library':
+            return `<a href="#libraries" class="activity-goto-link">查看用例库 →</a>`;
+        case 'module':
+            return `<a href="#libraries" class="activity-goto-link">查看模块 →</a>`;
+        case 'test_report':
+            return `<a href="#reports" class="activity-goto-link">查看测试报告 →</a>`;
+        case 'test_plan_case':
+            return `<a href="#testplans" class="activity-goto-link">查看执行详情 →</a>`;
+        default:
+            return '';
+    }
+}
+
+// 处理URL参数中的action
+function handleUrlAction() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const action = urlParams.get('action');
+    const returnUrl = urlParams.get('returnUrl');
+    const caseId = urlParams.get('id');
+    
+    if (action === 'pending_reviews') {
+        // 清除URL参数，避免刷新时重复执行
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        
+        // 延迟执行，确保页面完全加载
+        setTimeout(() => {
+            if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
+                // 已登录，直接打开待评审列表
+                viewAllPendingReviews();
+            } else {
+                // 未登录，不做任何操作，用户会看到登录页面
+            }
+        }, 1000);
+    } else if (action === 'review_case' && caseId) {
+        // 处理单个用例评审
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        const parsedCaseId = parseInt(caseId);
+
+        setTimeout(() => {
+            if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
+                if (isNaN(parsedCaseId)) {
+                    showErrorMessage('无效的用例ID: ' + caseId);
+                    return;
+                }
+                openTestCaseDetailModal({ id: parsedCaseId });
+            } else {
+            }
+        }, 1000);
+    } else if (action === 'view_case' && caseId) {
+        // 查看用例详情
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        const parsedCaseId = parseInt(caseId);
+
+        setTimeout(() => {
+            if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
+                if (isNaN(parsedCaseId)) {
+                    showErrorMessage('无效的用例ID: ' + caseId);
+                    return;
+                }
+                openTestCaseDetailModal({ id: parsedCaseId });
+            } else {
+            }
+        }, 1000);
+    } else if (action === 'testcases') {
+        // 查看用例列表
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        
+        setTimeout(() => {
+            if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
+                Router.navigateTo('testcases');
+            }
+        }, 1000);
+    } else if (action === 'view_plan' && caseId) {
+        // 查看测试计划
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        
+        setTimeout(() => {
+            if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
+                Router.navigateTo('testplans');
+                setTimeout(() => {
+                    openPlanDetailModal(parseInt(caseId));
+                }, 500);
+            }
+        }, 1000);
+    } else if (action === 'testplans') {
+        // 查看测试计划列表
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        
+        setTimeout(() => {
+            if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
+                Router.navigateTo('testplans');
+            }
+        }, 1000);
+    } else if (action === 'users_config') {
+        // 用户管理
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        
+        setTimeout(() => {
+            if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
+                Router.navigateTo('users-config');
+            }
+        }, 1000);
+    } else if (action === 'forum_post' && caseId) {
+        // 论坛帖子
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        
+        setTimeout(() => {
+            if (localStorage.getItem('authToken') && localStorage.getItem('currentUser')) {
+                window.open(`/forum/post-detail.html?postId=${caseId}`, '_blank');
+            }
+        }, 1000);
+    } else if (returnUrl) {
+        // 处理returnUrl参数（用于登录后跳转）
+    }
+}
+
+// 导航函数
+function navigateToPendingExecutions() {
+    Router.navigateTo('testplans');
+}
+
+function navigateToPendingReviews() {
+    viewAllPendingReviews();
+}
+
+function navigateToExpiringPlans() {
+    Router.navigateTo('testplans');
+}
+
+function navigateToWeeklyCompleted() {
+    Router.navigateTo('reports');
+}
+
+let allPendingReviewsData = [];
+let allPendingReviewsCurrentPage = 1;
+let allPendingReviewsPageSize = 20;
+let allPendingReviewsTotal = 0;
+let allPendingReviewsSearchKeyword = '';
+let selectedAllPendingReviews = new Set();
+
+function viewAllPendingReviews() {
+    const modal = document.getElementById('all-pending-reviews-modal');
+    if (modal) {
+        modal.style.display = 'block';
+        allPendingReviewsCurrentPage = 1;
+        allPendingReviewsSearchKeyword = '';
+        document.getElementById('all-pending-reviews-search').value = '';
+        selectedAllPendingReviews.clear();
+        loadAllPendingReviews(true);
+    }
+}
+
+function closeAllPendingReviewsModal() {
+    const modal = document.getElementById('all-pending-reviews-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+async function loadAllPendingReviews(showLoadingOverlay = false) {
+    
+    try {
+        if (showLoadingOverlay) {
+            showLoading('加载待评审用例...');
+        }
+        
+        const params = new URLSearchParams({
+            page: allPendingReviewsCurrentPage,
+            pageSize: allPendingReviewsPageSize,
+            keyword: allPendingReviewsSearchKeyword
+        });
+        
+        
+        const response = await apiRequest(`/testcases/review/pending?${params.toString()}`, { useCache: false });
+        
+        
+        if (showLoadingOverlay) {
+            hideLoading();
+        }
+        
+        if (response.success) {
+            allPendingReviewsData = response.data.cases || [];
+            allPendingReviewsTotal = response.data.pagination?.total || 0;
+            
+            
+            if (allPendingReviewsData.length === 0 && allPendingReviewsCurrentPage > 1 && allPendingReviewsTotal > 0) {
+                allPendingReviewsCurrentPage = 1;
+                await loadAllPendingReviews(showLoadingOverlay);
+                return;
+            }
+            
+            renderAllPendingReviewsList();
+            updateAllPendingReviewsPagination();
+        } else {
+            showErrorMessage('加载待评审用例失败: ' + (response.message || '未知错误'));
+        }
+    } catch (error) {
+        if (showLoadingOverlay) {
+            hideLoading();
+        }
+        logger.error('加载待评审用例失败:', error);
+        showErrorMessage('加载待评审用例失败: ' + error.message);
+    }
+}
+
+function renderAllPendingReviewsList() {
+    const container = document.getElementById('all-pending-reviews-list');
+    const countElement = document.getElementById('all-pending-reviews-count');
+    const batchActionsDiv = document.getElementById('all-pending-reviews-batch-actions');
+    
+    
+    if (!container) {
+        logger.error('[renderAllPendingReviewsList] container不存在!');
+        return;
+    }
+    
+    if (countElement) {
+        countElement.textContent = `(${allPendingReviewsTotal})`;
+    }
+    
+    if (allPendingReviewsData.length === 0) {
+        container.innerHTML = `
+            <div style="text-align: center; padding: 60px 20px; color: #94a3b8;">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5" style="margin-bottom: 12px;">
+                    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+                </svg>
+                <p>暂无待评审用例</p>
+            </div>
+        `;
+        if (batchActionsDiv) batchActionsDiv.style.display = 'none';
+        return;
+    }
+    
+    container.innerHTML = `
+        <table class="data-table" style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0;">
+                    <th style="width: 40px; padding: 12px 8px; text-align: center;">
+                        <input type="checkbox" id="select-all-pending-reviews" onchange="toggleSelectAllPendingReviews()" style="cursor: pointer;" ${allPendingReviewsData.length > 0 && selectedAllPendingReviews.size === allPendingReviewsData.length ? 'checked' : ''}>
+                    </th>
+                    <th style="padding: 12px 16px; text-align: left; font-size: 13px; font-weight: 600; color: #64748b;">用例名称</th>
+                    <th style="width: 120px; padding: 12px 16px; text-align: left; font-size: 13px; font-weight: 600; color: #64748b;">用例库</th>
+                    <th style="width: 120px; padding: 12px 16px; text-align: left; font-size: 13px; font-weight: 600; color: #64748b;">模块</th>
+                    <th style="width: 80px; padding: 12px 16px; text-align: center; font-size: 13px; font-weight: 600; color: #64748b;">优先级</th>
+                    <th style="width: 100px; padding: 12px 16px; text-align: center; font-size: 13px; font-weight: 600; color: #64748b;">提交人</th>
+                    <th style="width: 140px; padding: 12px 16px; text-align: center; font-size: 13px; font-weight: 600; color: #64748b;">提交时间</th>
+                    <th style="width: 160px; padding: 12px 16px; text-align: center; font-size: 13px; font-weight: 600; color: #64748b;">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${allPendingReviewsData.map(item => {
+                    const priority = item.priority || '-';
+                    const priorityClass = priority === '高' || priority === 'P0' || priority === 'P1' ? 'high' : 
+                                         priority === '中' || priority === 'P2' ? 'medium' : 'low';
+                    const submitTime = item.review_submitted_at ? formatDateTime(item.review_submitted_at) : '-';
+                    const isSelected = selectedAllPendingReviews.has(item.id);
+                    
+                    return `
+                        <tr style="border-bottom: 1px solid #f1f5f9; ${isSelected ? 'background: #f0f9ff;' : ''}" 
+                            onmouseover="this.style.background='#f8fafc'" 
+                            onmouseout="this.style.background='${isSelected ? '#f0f9ff' : 'transparent'}'">
+                            <td style="padding: 12px 8px; text-align: center;">
+                                <input type="checkbox" 
+                                    class="pending-review-checkbox" 
+                                    data-id="${item.id}" 
+                                    ${isSelected ? 'checked' : ''} 
+                                    onchange="togglePendingReviewSelection(${item.id})"
+                                    style="cursor: pointer;">
+                            </td>
+                            <td style="padding: 12px 16px;">
+                                <div style="font-size: 14px; font-weight: 500; color: #1e293b; margin-bottom: 4px;">
+                                    ${escapeHtml(item.name || '-')}
+                                </div>
+                                <div style="font-size: 12px; color: #64748b;">
+                                    ID: ${item.case_id || '-'}
+                                </div>
+                            </td>
+                            <td style="padding: 12px 16px; font-size: 13px; color: #475569;">
+                                ${escapeHtml(item.library_name || 'NetRx')}
+                            </td>
+                            <td style="padding: 12px 16px; font-size: 13px; color: #475569;">
+                                ${escapeHtml(item.module_name || '未分类')}
+                            </td>
+                            <td style="padding: 12px 16px; text-align: center;">
+                                <span class="priority-tag ${priorityClass}">${priority}</span>
+                            </td>
+                            <td style="padding: 12px 16px; text-align: center; font-size: 13px; color: #475569;">
+                                ${escapeHtml(item.submitter_name || item.creator || '-')}
+                            </td>
+                            <td style="padding: 12px 16px; text-align: center; font-size: 13px; color: #64748b;">
+                                ${submitTime}
+                            </td>
+                            <td style="padding: 12px 16px; text-align: center;">
+                                <div style="display: flex; gap: 8px; justify-content: center;">
+                                    <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;" 
+                                        onclick="viewCaseDetail(${item.id})">
+                                        查看
+                                    </button>
+                                    <button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px;" 
+                                        onclick="quickReviewCase(${item.id})">
+                                        快速评审
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                }).join('')}
+            </tbody>
+        </table>
+    `;
+    
+    updateBatchActionsVisibility();
+}
+
+function toggleSelectAllPendingReviews() {
+    const selectAllCheckbox = document.getElementById('select-all-pending-reviews');
+    const checkboxes = document.querySelectorAll('.pending-review-checkbox');
+    
+    if (selectAllCheckbox.checked) {
+        allPendingReviewsData.forEach(item => {
+            selectedAllPendingReviews.add(item.id);
+        });
+        checkboxes.forEach(cb => cb.checked = true);
+    } else {
+        selectedAllPendingReviews.clear();
+        checkboxes.forEach(cb => cb.checked = false);
+    }
+    
+    updateBatchActionsVisibility();
+    renderAllPendingReviewsList();
+}
+
+function togglePendingReviewSelection(id) {
+    if (selectedAllPendingReviews.has(id)) {
+        selectedAllPendingReviews.delete(id);
+    } else {
+        selectedAllPendingReviews.add(id);
+    }
+    
+    updateBatchActionsVisibility();
+    
+    const selectAllCheckbox = document.getElementById('select-all-pending-reviews');
+    if (selectAllCheckbox) {
+        selectAllCheckbox.checked = selectedAllPendingReviews.size === allPendingReviewsData.length;
+    }
+}
+
+function updateBatchActionsVisibility() {
+    const batchActionsDiv = document.getElementById('all-pending-reviews-batch-actions');
+    if (batchActionsDiv) {
+        batchActionsDiv.style.display = selectedAllPendingReviews.size > 0 ? 'flex' : 'none';
+    }
+}
+
+function updateAllPendingReviewsPagination() {
+    const paginationDiv = document.getElementById('all-pending-reviews-pagination');
+    const currentPageSpan = document.getElementById('all-pending-reviews-current-page');
+    const totalPagesSpan = document.getElementById('all-pending-reviews-total-pages');
+    const totalSpan = document.getElementById('all-pending-reviews-total');
+    const prevBtn = document.getElementById('all-pending-reviews-prev-btn');
+    const nextBtn = document.getElementById('all-pending-reviews-next-btn');
+    
+    if (!paginationDiv) return;
+    
+    const totalPages = Math.ceil(allPendingReviewsTotal / allPendingReviewsPageSize);
+    
+    if (totalPages > 1) {
+        paginationDiv.style.display = 'block';
+        
+        if (currentPageSpan) currentPageSpan.textContent = allPendingReviewsCurrentPage;
+        if (totalPagesSpan) totalPagesSpan.textContent = totalPages;
+        if (totalSpan) totalSpan.textContent = allPendingReviewsTotal;
+        if (prevBtn) prevBtn.disabled = allPendingReviewsCurrentPage <= 1;
+        if (nextBtn) nextBtn.disabled = allPendingReviewsCurrentPage >= totalPages;
+    } else {
+        paginationDiv.style.display = 'none';
+    }
+}
+
+function prevAllPendingReviewsPage() {
+    if (allPendingReviewsCurrentPage > 1) {
+        allPendingReviewsCurrentPage--;
+        loadAllPendingReviews();
+    }
+}
+
+function nextAllPendingReviewsPage() {
+    const totalPages = Math.ceil(allPendingReviewsTotal / allPendingReviewsPageSize);
+    if (allPendingReviewsCurrentPage < totalPages) {
+        allPendingReviewsCurrentPage++;
+        loadAllPendingReviews();
+    }
+}
+
+function changeAllPendingReviewsPageSize() {
+    const select = document.getElementById('all-pending-reviews-page-size');
+    if (select) {
+        allPendingReviewsPageSize = parseInt(select.value);
+        allPendingReviewsCurrentPage = 1;
+        loadAllPendingReviews();
+    }
+}
+
+function searchAllPendingReviews() {
+    const searchInput = document.getElementById('all-pending-reviews-search');
+    if (searchInput) {
+        allPendingReviewsSearchKeyword = searchInput.value.trim();
+        allPendingReviewsCurrentPage = 1;
+        loadAllPendingReviews();
+    }
+}
+
+async function batchApproveAllPendingReviews() {
+    if (selectedAllPendingReviews.size === 0) {
+        showErrorMessage('请先选择要评审的用例');
+        return;
+    }
+    
+    if (!(await showConfirmMessage(`确定要批量通过 ${selectedAllPendingReviews.size} 个用例吗？`))) {
+        return;
+    }
+    
+    try {
+        showLoading('批量评审中...');
+        
+        const cases = allPendingReviewsData.filter(item => selectedAllPendingReviews.has(item.id));
+        
+        const response = await apiRequest('/testcases/batch-review', {
+            method: 'POST',
+            body: JSON.stringify({
+                case_ids: cases.map(c => c.id),
+                action: 'approve',
+                comment: ''
+            })
+        });
+        
+        hideLoading();
+        
+        if (response.success) {
+            showSuccessMessage(`批量评审完成：成功 ${response.data.successCount} 个，失败 ${response.data.failCount} 个`);
+            selectedAllPendingReviews.clear();
+            
+            apiCache.deleteByPrefix('/workspace');
+            apiCache.deleteByPrefix('/testcases/review/pending');
+            
+            loadAllPendingReviews();
+            
+            if (typeof loadWorkspaceData === 'function') {
+                await loadWorkspaceData();
+            }
+        } else {
+            showErrorMessage('批量评审失败: ' + (response.message || '未知错误'));
+        }
+    } catch (error) {
+        hideLoading();
+        logger.error('批量评审失败:', error);
+        showErrorMessage('批量评审失败: ' + error.message);
+    }
+}
+
+async function batchRejectAllPendingReviews() {
+    if (selectedAllPendingReviews.size === 0) {
+        showErrorMessage('请先选择要评审的用例');
+        return;
+    }
+    
+    const comment = await showPromptModal({
+        title: '批量驳回用例',
+        message: `确定要批量驳回 ${selectedAllPendingReviews.size} 个用例吗？请输入驳回原因：`,
+        placeholder: '请输入驳回原因...',
+        minLength: 1,
+        hint: '驳回原因不能为空'
+    });
+    
+    if (!comment) {
+        return;
+    }
+    
+    try {
+        showLoading('批量评审中...');
+        
+        const cases = allPendingReviewsData.filter(item => selectedAllPendingReviews.has(item.id));
+        
+        const response = await apiRequest('/testcases/batch-review', {
+            method: 'POST',
+            body: JSON.stringify({
+                case_ids: cases.map(c => c.id),
+                action: 'reject',
+                comment: comment.trim()
+            })
+        });
+        
+        hideLoading();
+        
+        if (response.success) {
+            showSuccessMessage(`批量评审完成：成功 ${response.data.successCount} 个，失败 ${response.data.failCount} 个`);
+            selectedAllPendingReviews.clear();
+            
+            apiCache.deleteByPrefix('/workspace');
+            apiCache.deleteByPrefix('/testcases/review/pending');
+            
+            loadAllPendingReviews();
+            
+            if (typeof loadWorkspaceData === 'function') {
+                await loadWorkspaceData();
+            }
+        } else {
+            showErrorMessage('批量评审失败: ' + (response.message || '未知错误'));
+        }
+    } catch (error) {
+        hideLoading();
+        logger.error('批量评审失败:', error);
+        showErrorMessage('批量评审失败: ' + error.message);
+    }
+}
+
+function viewAllPendingExecutions() {
+    Router.navigateTo('testplans');
+}
+
+function viewAllMyPlans() {
+    Router.navigateTo('testplans');
+}
+
+function viewAllActivities() {
+    switchWorkspaceTab('activities');
+}
+
+async function viewCaseDetail(caseId) {
+    try {
+        showLoading('加载用例详情...');
+        const result = await apiRequest(`/testpoints/detail/${caseId}`);
+        if (result.success && result.data) {
+            hideLoading();
+            if (typeof openTestCaseDetailModal === 'function') {
+                await openTestCaseDetailModal(result.data);
+            } else {
+                Router.navigateTo('cases');
+            }
+        } else {
+            hideLoading();
+            showErrorMessage('获取用例详情失败');
+        }
+    } catch (error) {
+        hideLoading();
+        logger.error('加载用例详情失败:', error);
+        showErrorMessage('加载用例详情失败');
+    }
+}
+
+function quickReviewCase(caseId) {
+    openQuickReviewModal(caseId);
+}
+
+let quickReviewCaseData = null;
+
+async function openQuickReviewModal(caseId) {
+    currentEditingTestCaseId = caseId;
+    
+    try {
+        const response = await apiRequest(`/testcases/${caseId}`);
+        if (response.success) {
+            quickReviewCaseData = response.data;
+            
+            document.getElementById('quick-review-case-name').textContent = response.data.name || '-';
+            
+            const priorityEl = document.getElementById('quick-review-case-priority');
+            const priority = response.data.priority || '-';
+            priorityEl.textContent = priority;
+            priorityEl.className = 'priority-tag ' + (priority === '高' || priority === 'P0' || priority === 'P1' ? 'high' : priority === '中' || priority === 'P2' ? 'medium' : 'low');
+            
+            document.getElementById('quick-review-case-module').textContent = response.data.module_name || '未分类';
+            
+            document.getElementById('quick-review-comment').value = '';
+            document.getElementById('quick-review-char-count').textContent = '0';
+            
+            document.querySelectorAll('.quick-comment-btn').forEach(btn => {
+                btn.classList.remove('active');
+                btn.onclick = function() {
+                    document.getElementById('quick-review-comment').value = this.dataset.comment;
+                    document.getElementById('quick-review-char-count').textContent = this.dataset.comment.length;
+                    document.querySelectorAll('.quick-comment-btn').forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                };
+            });
+            
+            document.getElementById('quick-review-modal').style.display = 'block';
+        } else {
+            showErrorMessage('获取用例信息失败');
+        }
+    } catch (error) {
+        logger.error('获取用例信息失败:', error);
+        showErrorMessage('获取用例信息失败');
+    }
+}
+
+function updateQuickReviewCommentCount() {
+    const textarea = document.getElementById('quick-review-comment');
+    const countSpan = document.getElementById('quick-review-char-count');
+    if (textarea && countSpan) {
+        countSpan.textContent = textarea.value.length;
+    }
+}
+
+function closeQuickReviewModal() {
+    document.getElementById('quick-review-modal').style.display = 'none';
+    quickReviewCaseData = null;
+}
+
+function updateQuickReviewCharCount() {
+    const textarea = document.getElementById('quick-review-comment');
+    const countSpan = document.getElementById('quick-review-char-count');
+    if (textarea && countSpan) {
+        countSpan.textContent = textarea.value.length;
+    }
+}
+
+async function quickApproveReview() {
+    const caseId = currentEditingTestCaseId;
+    const comment = document.getElementById('quick-review-comment').value;
+    
+    
+    try {
+        const response = await apiRequest(`/testcases/${caseId}/review`, {
+            method: 'POST',
+            body: JSON.stringify({
+                action: 'approve',
+                comment: comment
+            })
+        });
+        
+        
+        if (response.success) {
+            showSuccessMessage(response.message || '评审通过');
+            closeQuickReviewModal();
+            selectedAllPendingReviews.delete(caseId);
+            selectedReviewCaseIds = selectedReviewCaseIds.filter(id => id !== caseId);
+            
+            apiCache.deleteByPrefix('/workspace');
+            apiCache.deleteByPrefix('/testcases/review/pending');
+            
+            // 非阻塞刷新工作台数据（如果用户在工作台页面）
+            if (typeof loadWorkspaceData === 'function') {
+                loadWorkspaceData().catch(err => console.error('[快速评审] 工作台数据刷新失败:', err));
+            }
+            
+            // 阻塞刷新当前页面的待评审列表
+            if (typeof loadAllPendingReviews === 'function') {
+                await loadAllPendingReviews();
+            } else {
+                logger.error('[快速评审] loadAllPendingReviews 函数不存在!');
+            }
+        } else {
+            showErrorMessage(response.message || '评审失败');
+        }
+    } catch (error) {
+        logger.error('[快速评审] 评审失败:', error);
+        showErrorMessage('评审失败: ' + error.message);
+    }
+}
+
+async function quickRejectReview() {
+    const caseId = currentEditingTestCaseId;
+    const comment = document.getElementById('quick-review-comment').value;
+    
+    
+    if (!comment || comment.trim().length < 1) {
+        showErrorMessage('驳回原因不能为空');
+        return;
+    }
+    
+    try {
+        const response = await apiRequest(`/testcases/${caseId}/review`, {
+            method: 'POST',
+            body: JSON.stringify({
+                action: 'reject',
+                comment: comment
+            })
+        });
+        
+        
+        if (response.success) {
+            showSuccessMessage(response.message || '已驳回');
+            closeQuickReviewModal();
+            selectedAllPendingReviews.delete(caseId);
+            selectedReviewCaseIds = selectedReviewCaseIds.filter(id => id !== caseId);
+            
+            apiCache.deleteByPrefix('/workspace');
+            apiCache.deleteByPrefix('/testcases/review/pending');
+            
+            // 非阻塞刷新工作台数据（如果用户在工作台页面）
+            if (typeof loadWorkspaceData === 'function') {
+                loadWorkspaceData().catch(err => console.error('[快速评审] 工作台数据刷新失败:', err));
+            }
+            
+            // 阻塞刷新当前页面的待评审列表
+            if (typeof loadAllPendingReviews === 'function') {
+                await loadAllPendingReviews();
+            }
+        } else {
+            showErrorMessage(response.message || '评审失败');
+        }
+    } catch (error) {
+        logger.error('[快速评审] 驳回失败:', error);
+        showErrorMessage('评审失败: ' + error.message);
+    }
+}
+
+function executeCase(caseId, planId) {
+    if (planId && planId !== 'null') {
+        window.location.hash = `#/testplans`;
+        setTimeout(() => {
+            if (typeof openTestExecutionModal === 'function') {
+                openTestExecutionModal(planId);
+            }
+        }, 300);
+    } else {
+        showErrorMessage('该用例未分配到测试计划');
+    }
+}
+
+function viewPlanDetail(planId) {
+    window.location.hash = `#/testplans`;
+}
+
+function executePlan(planId) {
+    window.location.hash = `#/testplans`;
+    setTimeout(() => {
+        if (typeof openTestExecutionModal === 'function') {
+            openTestExecutionModal(planId);
+        }
+    }, 300);
+}
+
+async function viewPendingExecutionPlan(planId) {
+    if (!planId) {
+        showErrorMessage('测试计划ID不存在');
+        return;
+    }
+    
+    window.location.hash = `#/testplans`;
+    
+    setTimeout(async () => {
+        if (typeof openTestPlanDrawer === 'function') {
+            await openTestPlanDrawer(planId);
+        } else {
+            logger.warn('openTestPlanDrawer function not found');
+        }
+    }, 500);
+}
+
+// ==================== 结束工作台功能 ====================
+
+// ==================== 批量评审功能 ====================
+
+function updateBatchSelection() {
+    const checkboxes = document.querySelectorAll('.case-checkbox:checked');
+    selectedCaseIds = Array.from(checkboxes).map(cb => parseInt(cb.dataset.caseId));
+    
+    const count = selectedCaseIds.length;
+    const countElement = document.getElementById('selected-case-count');
+    if (countElement) {
+        countElement.textContent = count;
+    }
+    
+    const toolbar = document.getElementById('batch-action-toolbar');
+    if (toolbar) {
+        toolbar.style.display = count > 0 ? 'flex' : 'none';
+    }
+}
+
+function toggleSelectAllCases(checked) {
+    const checkboxes = document.querySelectorAll('.case-checkbox:not(:disabled)');
+    checkboxes.forEach(cb => cb.checked = checked);
+    updateBatchSelection();
+}
+
+function clearCaseSelection() {
+    document.querySelectorAll('.case-checkbox').forEach(cb => cb.checked = false);
+    const selectAllCheckbox = document.getElementById('select-all-cases');
+    if (selectAllCheckbox) {
+        selectAllCheckbox.checked = false;
+    }
+    updateBatchSelection();
+}
+
+function updateReviewBatchSelection() {
+    const checkboxes = document.querySelectorAll('.review-case-checkbox:checked');
+    selectedReviewCaseIds = Array.from(checkboxes).map(cb => parseInt(cb.dataset.caseId));
+    
+    const count = selectedReviewCaseIds.length;
+    const countElement = document.getElementById('selected-review-count');
+    if (countElement) {
+        countElement.textContent = count;
+    }
+    
+    const batchActions = document.getElementById('review-batch-actions');
+    if (batchActions) {
+        batchActions.style.display = count > 0 ? 'flex' : 'none';
+    }
+}
+
+function clearReviewSelection() {
+    document.querySelectorAll('.review-case-checkbox').forEach(cb => cb.checked = false);
+    selectedReviewCaseIds = [];
+    updateReviewBatchSelection();
+}
+
+async function batchSubmitReview() {
+    
+    if (selectedCaseIds.length === 0) {
+        showErrorMessage('请选择要提交评审的用例');
+        return;
+    }
+    
+    if (selectedCaseIds.length > 50) {
+        showErrorMessage('单次最多提交50个用例');
+        return;
+    }
+    
+    await openBatchSubmitReviewModal(selectedCaseIds);
+}
+
+async function openBatchSubmitReviewModal(caseIds) {
+    
+    const existingModal = document.getElementById('batch-submit-review-modal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    selectedReviewerIds = [];
+    selectedReviewerNames = [];
+
+    try {
+        const usersResult = await apiRequest('/users/list');
+        
+        let users = [];
+        if (usersResult.success && usersResult.users) {
+            users = usersResult.users.filter(user => {
+                const username = user.username.toLowerCase();
+                return !['admin', 'administrator', 'root', 'system', 'sys'].includes(username);
+            });
+        }
+        
+
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.id = 'batch-submit-review-modal';
+        modal.style.cssText = 'display: flex !important; position: fixed !important; z-index: 999999 !important; top: 0 !important; left: 0 !important; width: 100% !important; height: 100% !important; background-color: rgba(0, 0, 0, 0.7) !important; align-items: center !important; justify-content: center !important; opacity: 1 !important; visibility: visible !important;';
+        
+        modal.innerHTML = `
+            <div class="modal-content" style="width: 700px; max-height: 80vh; overflow-y: auto; background: white !important; border-radius: 8px !important; box-shadow: 0 8px 32px rgba(0,0,0,0.3) !important; position: relative !important; z-index: 1000000 !important; opacity: 1 !important; visibility: visible !important;">
+                <div class="modal-header">
+                    <h3>批量提交评审</h3>
+                    <button class="modal-close" onclick="closeBatchSubmitReviewModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="batch-selected-cases" style="background: #fafafa; border: 1px solid #f0f0f0; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+                        <div style="font-size: 13px; color: #64748b;">
+                            已选择 <strong style="color: #1890ff;">${caseIds.length}</strong> 个测试用例
+                        </div>
+                    </div>
+                    
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #1e293b;">
+                            选择评审人 <span style="color: #ef4444;">*</span>（可多选）
+                        </label>
+                        <div id="batch-selected-reviewers" style="min-height: 40px; padding: 8px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fafafa; margin-bottom: 12px;">
+                            <span style="color: #94a3b8; font-size: 14px;">请选择评审人</span>
+                        </div>
+                        <div style="display: flex; flex-wrap: wrap; gap: 8px; max-height: 300px; overflow-y: auto; padding: 8px; border: 1px solid #f0f0f0; border-radius: 6px;">
+                            ${users.map(user => `
+                                <div class="batch-reviewer-item" data-user-id="${user.id}" data-username="${escapeHtml(user.username)}" 
+                                     onclick="toggleBatchReviewer(${user.id}, '${escapeHtml(user.username)}')"
+                                     style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: white; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer; transition: all 0.2s;">
+                                    <input type="checkbox" 
+                                           id="batch-reviewer-${user.id}" 
+                                           onclick="event.stopPropagation(); toggleBatchReviewer(${user.id}, '${escapeHtml(user.username)}')"
+                                           style="width: 16px; height: 16px; cursor: pointer; accent-color: #1890ff;">
+                                    <span style="font-size: 14px; color: #1e293b;">${escapeHtml(user.username)}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #1e293b;">
+                            评审说明（选填）
+                        </label>
+                        <textarea id="batch-review-comment" 
+                                  class="form-control" 
+                                  placeholder="请输入评审说明..." 
+                                  maxlength="500"
+                                  style="width: 100%; min-height: 80px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 14px; resize: vertical;"></textarea>
+                        <div style="text-align: right; font-size: 12px; color: #94a3b8; margin-top: 4px;">
+                            <span id="batch-comment-count">0</span>/500 字符
+                        </div>
+                    </div>
+                    
+                    <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 12px; margin-bottom: 16px;">
+                        <div style="display: flex; align-items: start; gap: 8px;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M12 16v-4M12 8h.01"></path>
+                            </svg>
+                            <span style="font-size: 13px; color: #1e40af;">提交后将通知评审人，所有用例状态将变为"待评审"</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeBatchSubmitReviewModal()">取消</button>
+                    <button class="btn btn-primary" onclick="confirmBatchSubmitReview()" id="confirm-batch-submit-btn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"></path>
+                        </svg>
+                        确认提交
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        const commentTextarea = document.getElementById('batch-review-comment');
+        const commentCount = document.getElementById('batch-comment-count');
+        if (commentTextarea && commentCount) {
+            commentTextarea.addEventListener('input', function() {
+                commentCount.textContent = this.value.length;
+            });
+        }
+        
+    } catch (error) {
+        logger.error('[批量提交评审] 打开对话框失败:', error);
+        showErrorMessage('打开对话框失败: ' + error.message);
+    }
+}
+
+function toggleBatchReviewer(userId, userName) {
+    const index = selectedReviewerIds.indexOf(userId);
+    
+    if (index === -1) {
+        selectedReviewerIds.push(userId);
+        selectedReviewerNames.push(userName);
+    } else {
+        selectedReviewerIds.splice(index, 1);
+        selectedReviewerNames.splice(index, 1);
+    }
+    
+    // 更新复选框状态
+    const checkbox = document.getElementById(`batch-reviewer-${userId}`);
+    if (checkbox) {
+        checkbox.checked = selectedReviewerIds.includes(userId);
+    }
+    
+    // 更新选中项的样式
+    const item = document.querySelector(`.batch-reviewer-item[data-user-id="${userId}"]`);
+    if (item) {
+        if (selectedReviewerIds.includes(userId)) {
+            item.style.background = '#e6f7ff';
+            item.style.borderColor = '#1890ff';
+        } else {
+            item.style.background = 'white';
+            item.style.borderColor = '#e2e8f0';
+        }
+    }
+    
+    // 更新已选评审人显示
+    updateBatchSelectedReviewers();
+}
+
+function updateBatchSelectedReviewers() {
+    const container = document.getElementById('batch-selected-reviewers');
+    if (!container) return;
+    
+    if (selectedReviewerIds.length === 0) {
+        container.innerHTML = '<span style="color: #94a3b8; font-size: 14px;">请选择评审人</span>';
+    } else {
+        container.innerHTML = selectedReviewerNames.map((name, index) => `
+            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; background: #e6f7ff; border: 1px solid #91d5ff; border-radius: 4px; margin-right: 8px; margin-bottom: 4px; font-size: 13px; color: #0050b3;">
+                ${escapeHtml(name)}
+                <span onclick="event.stopPropagation(); toggleBatchReviewer(${selectedReviewerIds[index]}, '${escapeHtml(name)}')" 
+                      style="cursor: pointer; font-size: 16px; color: #1890ff; font-weight: bold; margin-left: 4px;">×</span>
+            </span>
+        `).join('');
+    }
+}
+
+function closeBatchSubmitReviewModal() {
+    const modal = document.getElementById('batch-submit-review-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+async function confirmBatchSubmitReview() {
+    if (selectedReviewerIds.length === 0) {
+        showErrorMessage('请选择至少一位评审人');
+        return;
+    }
+    
+    const commentTextarea = document.getElementById('batch-review-comment');
+    const comment = commentTextarea ? commentTextarea.value : '';
+    
+    const confirmBtn = document.getElementById('confirm-batch-submit-btn');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<span class="loading-spinner-small"></span> 提交中...';
+    }
+    
+    try {
+        const response = await apiRequest('/testcases/batch-submit-review', {
+            method: 'POST',
+            body: JSON.stringify({
+                case_ids: selectedCaseIds,
+                reviewer_ids: selectedReviewerIds,
+                comment: comment
+            })
+        });
+        
+        if (response.success) {
+            const data = response.data;
+            
+            closeBatchSubmitReviewModal();
+            clearCaseSelection();
+            
+            if (data.fail_count > 0) {
+                let failMessages = data.fail_cases.map(c => `• ${c.name}: ${c.reason}`).join('\n');
+                showErrorMessage(`批量提交完成\n成功: ${data.success_count} 个\n失败: ${data.fail_count} 个\n\n失败原因:\n${failMessages}`);
+            } else {
+                showSuccessMessage(`✓ 成功提交 ${data.success_count} 个用例给 ${selectedReviewerNames.join('、')} 进行评审`);
+            }
+            
+            apiCache.deleteByPrefix('/workspace');
+            apiCache.deleteByPrefix('/testcases/review/pending');
+            
+            if (selectedLevel1PointId) {
+                await refreshTestCasesList();
+            }
+        } else {
+            showErrorMessage(response.message || '批量提交失败');
+        }
+    } catch (error) {
+        logger.error('批量提交评审失败:', error);
+        showErrorMessage('批量提交失败: ' + error.message);
+    } finally {
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = `
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"></path>
+                </svg>
+                确认提交
+            `;
+        }
+    }
+}
+
+async function batchApproveReview() {
+    if (selectedReviewCaseIds.length === 0) {
+        showErrorMessage('请选择要评审的用例');
+        return;
+    }
+    
+    await openBatchApproveReviewModal(selectedReviewCaseIds);
+}
+
+async function openBatchApproveReviewModal(caseIds) {
+    const existingModal = document.getElementById('batch-approve-review-modal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'batch-approve-review-modal';
+    modal.style.cssText = 'display: flex; z-index: 99999;';
+    
+    modal.innerHTML = `
+        <div class="modal-content" style="width: 600px; max-height: 80vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3>批量通过评审</h3>
+                <button class="modal-close" onclick="closeBatchApproveReviewModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="batch-selected-cases" style="background: #fafafa; border: 1px solid #f0f0f0; border-radius: 8px; padding: 12px; margin-bottom: 16px; max-height: 200px; overflow-y: auto;">
+                    <div style="font-size: 13px; color: #64748b; margin-bottom: 8px;">
+                        已选择 <strong style="color: #10b981;">${caseIds.length}</strong> 个测试用例待通过
+                    </div>
+                </div>
+                
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #1e293b;">
+                        评审意见（选填）
+                    </label>
+                    <textarea id="batch-approve-comment" 
+                              class="form-control" 
+                              placeholder="用例设计合理，测试覆盖全面..." 
+                              maxlength="500"
+                              style="width: 100%; min-height: 80px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 14px; resize: vertical;"></textarea>
+                    <div style="text-align: right; font-size: 12px; color: #94a3b8; margin-top: 4px;">
+                        <span id="batch-approve-comment-count">0</span>/500 字符
+                    </div>
+                </div>
+                
+                <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 12px; margin-bottom: 16px;">
+                    <div style="display: flex; align-items: start; gap: 8px;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                        </svg>
+                        <span style="font-size: 13px; color: #065f46;">通过后所有用例将变为"已通过"状态，可被执行</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeBatchApproveReviewModal()">取消</button>
+                <button class="btn btn-success" onclick="confirmBatchApproveReview()" id="confirm-batch-approve-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    确认通过
+                </button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    const commentTextarea = document.getElementById('batch-approve-comment');
+    const commentCount = document.getElementById('batch-approve-comment-count');
+    if (commentTextarea && commentCount) {
+        commentTextarea.addEventListener('input', function() {
+            commentCount.textContent = this.value.length;
+        });
+    }
+}
+
+function closeBatchApproveReviewModal() {
+    const modal = document.getElementById('batch-approve-review-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+async function confirmBatchApproveReview() {
+    const commentTextarea = document.getElementById('batch-approve-comment');
+    const comment = commentTextarea ? commentTextarea.value : '';
+    
+    const confirmBtn = document.getElementById('confirm-batch-approve-btn');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<span class="loading-spinner-small"></span> 处理中...';
+    }
+    
+    try {
+        const response = await apiRequest('/testcases/batch-review', {
+            method: 'POST',
+            body: JSON.stringify({
+                case_ids: selectedReviewCaseIds,
+                action: 'approve',
+                comment: comment
+            })
+        });
+        
+        if (response.success) {
+            const data = response.data;
+            
+            closeBatchApproveReviewModal();
+            clearReviewSelection();
+            
+            if (data.fail_count > 0) {
+                let failMessages = data.fail_cases.map(c => `• ${c.name}: ${c.reason}`).join('\n');
+                showErrorMessage(`批量评审完成\n成功: ${data.success_count} 个\n失败: ${data.fail_count} 个\n\n失败原因:\n${failMessages}`);
+            } else {
+                showSuccessMessage(`✓ 成功通过 ${data.success_count} 个用例的评审`);
+            }
+            
+            apiCache.deleteByPrefix('/workspace');
+            apiCache.deleteByPrefix('/testcases/review/pending');
+            
+            if (typeof loadWorkspaceData === 'function') {
+                await loadWorkspaceData();
+            }
+            
+            if (typeof loadAllPendingReviews === 'function') {
+                await loadAllPendingReviews();
+            }
+        } else {
+            showErrorMessage(response.message || '批量评审失败');
+        }
+    } catch (error) {
+        logger.error('批量通过评审失败:', error);
+        showErrorMessage('批量通过失败: ' + error.message);
+    } finally {
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = `
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                确认通过
+            `;
+        }
+    }
+}
+
+async function batchRejectReview() {
+    if (selectedReviewCaseIds.length === 0) {
+        showErrorMessage('请选择要驳回的用例');
+        return;
+    }
+    
+    await openBatchRejectReviewModal(selectedReviewCaseIds);
+}
+
+async function openBatchRejectReviewModal(caseIds) {
+    const existingModal = document.getElementById('batch-reject-review-modal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'batch-reject-review-modal';
+    modal.style.cssText = 'display: flex; z-index: 99999;';
+    
+    modal.innerHTML = `
+        <div class="modal-content" style="width: 600px; max-height: 80vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3>批量驳回评审</h3>
+                <button class="modal-close" onclick="closeBatchRejectReviewModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="batch-selected-cases" style="background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 12px; margin-bottom: 16px; max-height: 200px; overflow-y: auto;">
+                    <div style="font-size: 13px; color: #9a3412; margin-bottom: 8px;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="display: inline-block; vertical-align: middle; margin-right: 4px;">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                            <line x1="12" y1="9" x2="12" y2="13"></line>
+                            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                        </svg>
+                        已选择 <strong style="color: #f59e0b;">${caseIds.length}</strong> 个测试用例待驳回
+                    </div>
+                </div>
+                
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #1e293b;">
+                        驳回原因 <span style="color: #ef4444;">*</span>
+                    </label>
+                    <textarea id="batch-reject-reason" 
+                              class="form-control" 
+                              placeholder="请详细说明驳回原因..." 
+                              maxlength="500"
+                              style="width: 100%; min-height: 100px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 14px; resize: vertical;"></textarea>
+                    <div style="display: flex; justify-content: space-between; font-size: 12px; color: #94a3b8; margin-top: 4px;">
+                        <span id="batch-reject-reason-hint" style="color: #94a3b8;">请输入驳回原因</span>
+                        <span><span id="batch-reject-reason-count">0</span>/500 字符</span>
+                    </div>
+                </div>
+                
+                <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 12px; margin-bottom: 16px;">
+                    <div style="display: flex; align-items: start; gap: 8px;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="15" y1="9" x2="9" y2="15"></line>
+                            <line x1="9" y1="9" x2="15" y2="15"></line>
+                        </svg>
+                        <span style="font-size: 13px; color: #991b1b;">驳回后创建者需修改用例并重新提交评审</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeBatchRejectReviewModal()">取消</button>
+                <button class="btn btn-danger" onclick="confirmBatchRejectReview()" id="confirm-batch-reject-btn" disabled>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="15" y1="9" x2="9" y2="15"></line>
+                        <line x1="9" y1="9" x2="15" y2="15"></line>
+                    </svg>
+                    确认驳回
+                </button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    const reasonTextarea = document.getElementById('batch-reject-reason');
+    const reasonCount = document.getElementById('batch-reject-reason-count');
+    const reasonHint = document.getElementById('batch-reject-reason-hint');
+    const confirmBtn = document.getElementById('confirm-batch-reject-btn');
+    
+    if (reasonTextarea && reasonCount && reasonHint && confirmBtn) {
+        reasonTextarea.addEventListener('input', function() {
+            const length = this.value.trim().length;
+            reasonCount.textContent = this.value.length;
+            
+            if (length >= 1) {
+                reasonHint.textContent = '✓ 已输入驳回原因';
+                reasonHint.style.color = '#10b981';
+                confirmBtn.disabled = false;
+            } else {
+                reasonHint.textContent = '请输入驳回原因';
+                reasonHint.style.color = '#94a3b8';
+                confirmBtn.disabled = true;
+            }
+        });
+    }
+}
+
+function closeBatchRejectReviewModal() {
+    const modal = document.getElementById('batch-reject-review-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+async function confirmBatchRejectReview() {
+    const reasonTextarea = document.getElementById('batch-reject-reason');
+    const reason = reasonTextarea ? reasonTextarea.value.trim() : '';
+    
+    if (reason.length < 1) {
+        showErrorMessage('驳回原因不能为空');
+        return;
+    }
+    
+    const confirmBtn = document.getElementById('confirm-batch-reject-btn');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<span class="loading-spinner-small"></span> 处理中...';
+    }
+    
+    try {
+        const response = await apiRequest('/testcases/batch-review', {
+            method: 'POST',
+            body: JSON.stringify({
+                case_ids: selectedReviewCaseIds,
+                action: 'reject',
+                comment: reason
+            })
+        });
+        
+        if (response.success) {
+            const data = response.data;
+            
+            closeBatchRejectReviewModal();
+            clearReviewSelection();
+            
+            if (data.fail_count > 0) {
+                let failMessages = data.fail_cases.map(c => `• ${c.name}: ${c.reason}`).join('\n');
+                showErrorMessage(`批量驳回完成\n成功: ${data.success_count} 个\n失败: ${data.fail_count} 个\n\n失败原因:\n${failMessages}`);
+            } else {
+                showSuccessMessage(`✓ 成功驳回 ${data.success_count} 个用例`);
+            }
+            
+            apiCache.deleteByPrefix('/workspace');
+            apiCache.deleteByPrefix('/testcases/review/pending');
+            
+            if (typeof loadWorkspaceData === 'function') {
+                await loadWorkspaceData();
+            }
+            
+            if (typeof loadAllPendingReviews === 'function') {
+                await loadAllPendingReviews();
+            }
+        } else {
+            showErrorMessage(response.message || '批量驳回失败');
+        }
+    } catch (error) {
+        logger.error('批量驳回评审失败:', error);
+        showErrorMessage('批量驳回失败: ' + error.message);
+    } finally {
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = `
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="15" y1="9" x2="9" y2="15"></line>
+                    <line x1="9" y1="9" x2="15" y2="15"></line>
+                </svg>
+                确认驳回
+            `;
+        }
+    }
+}
+
+// ==================== 结束批量评审功能 ====================
+
+// ==================== 关联脚本管理功能 ====================
+
+let currentScripts = [];
+let editingScriptId = null;
+
+async function loadScripts(testCaseId) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/testcases/${testCaseId}/scripts`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            }
+        });
+        const data = await response.json();
+        
+        if (data.success && data.scripts) {
+            currentScripts = data.scripts;
+        } else {
+            currentScripts = [];
+        }
+        renderScripts();
+    } catch (error) {
+        logger.error('加载关联脚本失败:', error);
+        currentScripts = [];
+        renderScripts();
+    }
+}
+
+function renderScripts() {
+    const tableBody = document.getElementById('scripts-table-body');
+    const emptyState = document.getElementById('scripts-empty');
+    const tableContainer = document.getElementById('scripts-table-container');
+    
+    if (!tableBody) return;
+    
+    if (currentScripts.length === 0) {
+        tableContainer.style.display = 'none';
+        emptyState.style.display = 'block';
+        return;
+    }
+    
+    tableContainer.style.display = 'block';
+    emptyState.style.display = 'none';
+    
+    tableBody.innerHTML = currentScripts.map((script, index) => `
+        <tr>
+            <td>${index + 1}</td>
+            <td>
+                <span class="script-name">${escapeHtml(script.script_name || '')}</span>
+            </td>
+            <td>
+                <span class="script-type-badge script-type-${script.script_type || 'other'}">${getScriptTypeLabel(script.script_type)}</span>
+            </td>
+            <td>${escapeHtml(script.description || '-')}</td>
+            <td>
+                ${script.file_path ? `<span class="script-file-badge" title="${escapeHtml(script.original_filename || script.script_name)}">${escapeHtml(script.original_filename || script.script_name)}</span>` : '-'}
+            </td>
+            <td>
+                ${script.link_url ? `<a href="${escapeHtml(script.link_url)}" target="_blank" class="script-link">${escapeHtml(script.link_title || '链接')}</a>` : '-'}
+            </td>
+            <td>
+                <div class="action-buttons">
+                    <button type="button" class="btn-icon" onclick="editScript(${script.id})" title="编辑">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                    </button>
+                    <button type="button" class="btn-icon btn-danger" onclick="deleteScript(${script.id})" title="删除">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function getScriptTypeLabel(type) {
+    const labels = {
+        'tcl': 'TCL',
+        'py': 'Python',
+        'sh': 'Shell',
+        'other': '其他'
+    };
+    return labels[type] || '其他';
+}
+
+function openAddScriptModal() {
+    editingScriptId = null;
+    document.getElementById('script-modal-title').textContent = '添加关联脚本';
+    document.getElementById('script-form').reset();
+    document.getElementById('script-id').value = '';
+    document.getElementById('script-file-path').value = '';
+    document.getElementById('script-file-size').value = '';
+    document.getElementById('script-original-filename').value = '';
+    document.querySelector('input[name="link-type"][value="external"]').checked = true;
+    
+    const filePreview = document.getElementById('script-file-preview');
+    const uploadContent = document.getElementById('script-upload-content');
+    if (filePreview) filePreview.style.display = 'none';
+    if (uploadContent) uploadContent.style.display = 'block';
+    
+    document.getElementById('script-modal').style.display = 'block';
+    
+    initScriptFileUpload();
+}
+
+function closeScriptModal() {
+    document.getElementById('script-modal').style.display = 'none';
+    editingScriptId = null;
+}
+
+async function editScript(scriptId) {
+    const script = currentScripts.find(s => s.id === scriptId);
+    if (!script) return;
+    
+    editingScriptId = scriptId;
+    document.getElementById('script-modal-title').textContent = '编辑关联脚本';
+    document.getElementById('script-name').value = script.script_name || '';
+    document.getElementById('script-type').value = script.script_type || 'tcl';
+    document.getElementById('script-description').value = script.description || '';
+    document.getElementById('script-link-url').value = script.link_url || '';
+    document.getElementById('script-link-title').value = script.link_title || '';
+    document.getElementById('script-file-path').value = script.file_path || '';
+    document.getElementById('script-file-size').value = script.file_size || '';
+    document.getElementById('script-original-filename').value = script.original_filename || '';
+    
+    const linkType = script.link_type || 'external';
+    const linkTypeRadio = document.querySelector(`input[name="link-type"][value="${linkType}"]`);
+    if (linkTypeRadio) linkTypeRadio.checked = true;
+    
+    const filePreview = document.getElementById('script-file-preview');
+    const uploadContent = document.getElementById('script-upload-content');
+    
+    if (script.file_path) {
+        document.getElementById('script-file-name').textContent = script.original_filename || script.script_name;
+        if (filePreview) filePreview.style.display = 'flex';
+        if (uploadContent) uploadContent.style.display = 'none';
+    } else {
+        if (filePreview) filePreview.style.display = 'none';
+        if (uploadContent) uploadContent.style.display = 'block';
+    }
+    
+    document.getElementById('script-modal').style.display = 'block';
+    
+    initScriptFileUpload();
+}
+
+function initScriptFileUpload() {
+    const uploadArea = document.getElementById('script-upload-area');
+    const fileInput = document.getElementById('script-file-input');
+    const uploadContent = document.getElementById('script-upload-content');
+    const filePreview = document.getElementById('script-file-preview');
+    
+    if (!uploadArea || !fileInput) return;
+    
+    uploadArea.onclick = () => fileInput.click();
+    
+    uploadArea.ondragover = (e) => {
+        e.preventDefault();
+        uploadArea.classList.add('dragover');
+    };
+    
+    uploadArea.ondragleave = () => {
+        uploadArea.classList.remove('dragover');
+    };
+    
+    uploadArea.ondrop = (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            handleScriptFileUpload(files[0]);
+        }
+    };
+    
+    fileInput.onchange = (e) => {
+        if (e.target.files.length > 0) {
+            handleScriptFileUpload(e.target.files[0]);
+        }
+    };
+}
+
+async function handleScriptFileUpload(file) {
+    const maxSize = 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+        showErrorMessage('文件大小不能超过 10MB');
+        return;
+    }
+    
+    const allowedExtensions = ['.tcl', '.py', '.sh', '.txt', '.json', '.pl', '.rb', '.js', '.yaml', '.yml', '.xml', '.cfg', '.conf', '.ini'];
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+    if (!allowedExtensions.includes(ext)) {
+        showErrorMessage('不支持的文件格式');
+        return;
+    }
+    
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+        if (currentEditingTestCaseId) {
+            formData.append('testCaseId', currentEditingTestCaseId);
+        }
+        
+        const response = await fetch(`${API_BASE_URL}/testcases/scripts/upload`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            },
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            document.getElementById('script-file-path').value = data.filePath;
+            document.getElementById('script-file-size').value = file.size;
+            document.getElementById('script-original-filename').value = file.name;
+            
+            document.getElementById('script-file-name').textContent = file.name;
+            document.getElementById('script-upload-content').style.display = 'none';
+            document.getElementById('script-file-preview').style.display = 'flex';
+            
+            showSuccessMessage('文件上传成功');
+        } else {
+            showErrorMessage(data.message || '文件上传失败');
+        }
+    } catch (error) {
+        logger.error('文件上传失败:', error);
+        showErrorMessage('文件上传失败: ' + error.message);
+    }
+}
+
+function removeScriptFile() {
+    document.getElementById('script-file-path').value = '';
+    document.getElementById('script-file-size').value = '';
+    document.getElementById('script-original-filename').value = '';
+    document.getElementById('script-file-input').value = '';
+    
+    document.getElementById('script-upload-content').style.display = 'block';
+    document.getElementById('script-file-preview').style.display = 'none';
+}
+
+async function saveScript() {
+    const name = document.getElementById('script-name').value.trim();
+    const type = document.getElementById('script-type').value;
+    const description = document.getElementById('script-description').value.trim();
+    const linkUrl = document.getElementById('script-link-url').value.trim();
+    const linkTitle = document.getElementById('script-link-title').value.trim();
+    const linkType = document.querySelector('input[name="link-type"]:checked').value;
+    const filePath = document.getElementById('script-file-path').value;
+    const fileSize = document.getElementById('script-file-size').value;
+    const originalFilename = document.getElementById('script-original-filename').value;
+    
+    if (!name) {
+        showErrorMessage('请输入脚本名称');
+        return;
+    }
+    
+    try {
+        const scriptData = {
+            script_name: name,
+            script_type: type,
+            description: description,
+            link_url: linkUrl,
+            link_title: linkTitle,
+            link_type: linkType,
+            file_path: filePath,
+            file_size: fileSize ? parseInt(fileSize) : null,
+            original_filename: originalFilename
+        };
+        
+        let response;
+        if (editingScriptId) {
+            response = await fetch(`${API_BASE_URL}/testcases/scripts/${editingScriptId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify(scriptData)
+            });
+        } else {
+            response = await fetch(`${API_BASE_URL}/testcases/${currentEditingTestCaseId}/scripts`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify(scriptData)
+            });
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            closeScriptModal();
+            await loadScripts(currentEditingTestCaseId);
+            if (document.getElementById('testcase-edit-drawer')?.classList.contains('open')) {
+                await loadDrawerScripts(currentEditingTestCaseId);
+            }
+            showSuccessMessage(editingScriptId ? '脚本更新成功' : '脚本添加成功');
+        } else {
+            showErrorMessage(data.message || '保存失败');
+        }
+    } catch (error) {
+        logger.error('保存脚本失败:', error);
+        showErrorMessage('保存脚本失败: ' + error.message);
+    }
+}
+
+async function deleteScript(scriptId) {
+    if (!(await showConfirmMessage('确定要删除这个关联脚本吗？'))) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/testcases/scripts/${scriptId}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            await loadScripts(currentEditingTestCaseId);
+            if (document.getElementById('testcase-edit-drawer')?.classList.contains('open')) {
+                await loadDrawerScripts(currentEditingTestCaseId);
+            }
+            showSuccessMessage('脚本删除成功');
+        } else {
+            showErrorMessage(data.message || '删除失败');
+        }
+    } catch (error) {
+        logger.error('删除脚本失败:', error);
+        showErrorMessage('删除脚本失败: ' + error.message);
+    }
+}
+
+// ==================== 结束关联脚本管理功能 ====================

@@ -28,11 +28,14 @@ function formatDateTime(dateStr) {
     if (!dateStr) return '-';
     try {
         const date = new Date(dateStr);
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const hours = String(date.getHours()).padStart(2, '0');
-        const minutes = String(date.getMinutes()).padStart(2, '0');
+        if (Number.isNaN(date.getTime())) return '-';
+        // 转换为北京时间 (UTC+8)
+        const beijingTime = new Date(date.getTime() + (date.getTimezoneOffset() + 480) * 60000);
+        const year = beijingTime.getFullYear();
+        const month = String(beijingTime.getMonth() + 1).padStart(2, '0');
+        const day = String(beijingTime.getDate()).padStart(2, '0');
+        const hours = String(beijingTime.getHours()).padStart(2, '0');
+        const minutes = String(beijingTime.getMinutes()).padStart(2, '0');
         return `${year}/${month}/${day} ${hours}:${minutes}`;
     } catch (e) {
         return dateStr;
@@ -49,9 +52,12 @@ function formatDate(dateStr) {
     if (!dateStr) return '-';
     try {
         const date = new Date(dateStr);
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
+        if (Number.isNaN(date.getTime())) return '-';
+        // 转换为北京时间 (UTC+8)
+        const beijingTime = new Date(date.getTime() + (date.getTimezoneOffset() + 480) * 60000);
+        const year = beijingTime.getFullYear();
+        const month = String(beijingTime.getMonth() + 1).padStart(2, '0');
+        const day = String(beijingTime.getDate()).padStart(2, '0');
         return `${year}/${month}/${day}`;
     } catch (e) {
         return dateStr;

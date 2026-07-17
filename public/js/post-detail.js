@@ -31,14 +31,7 @@ async function loadPostDetail() {
     const postContentEl = document.getElementById('post-content');
     
     try {
-        const token = localStorage.getItem('authToken');
-        const headers = {};
-        if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
-        }
-        
-        const response = await fetch(`/api/forum/posts/${currentPostId}`, { headers });
-        const result = await response.json();
+        const result = await apiRequest(`/posts/${currentPostId}`);
         
         if (!result.success) {
             postContentEl.innerHTML = `
@@ -77,7 +70,8 @@ async function loadPostDetail() {
             ? post.tags.map(tag => `<span class="post-tag" style="background-color: ${tag.color}20; color: ${tag.color};">${escapeHtml(tag.name)}</span>`).join('') 
             : '';
         
-        // 渲染帖子内容
+        const renderedContent = markdownToHtml(post.content || '');
+        
         postContentEl.innerHTML = `
             <article class="post-detail-article">
                 <h1 class="post-detail-title">${escapeHtml(post.title)}</h1>
@@ -93,8 +87,9 @@ async function loadPostDetail() {
                 </div>
                 ${tagsHtml ? `<div class="post-detail-tags">${tagsHtml}</div>` : ''}
                 <div class="post-detail-body">
-                    ${markdownToHtml(post.content || '')}
+                    ${renderedContent}
                 </div>
+                ${renderAttachments(post.attachments)}
                 <div class="post-detail-actions">
                     <button class="action-btn like-btn ${post.liked ? 'liked' : ''}" onclick="toggleLike()">
                         <span class="action-icon">${post.liked ? '❤️' : '🤍'}</span>
@@ -106,7 +101,7 @@ async function loadPostDetail() {
         `;
         
         // 显示评论表单（如果已登录）
-        if (token) {
+        if (Forum.authToken) {
             document.getElementById('comment-form').style.display = 'block';
         }
         
@@ -223,14 +218,9 @@ async function toggleLike() {
     }
     
     try {
-        const response = await fetch(`/api/forum/posts/${currentPostId}/like`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${token}`
-            }
+        const result = await apiRequest(`/forum/posts/${currentPostId}/like`, {
+            method: 'POST'
         });
-        
-        const result = await response.json();
         
         if (result.success) {
             // 更新本地缓存状态
@@ -287,19 +277,13 @@ async function submitComment() {
     }
     
     try {
-        const response = await fetch('/api/forum/comments', {
+        const result = await apiRequest('/comments', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-            },
             body: JSON.stringify({ 
                 postId: currentPostId,
                 content 
             })
         });
-        
-        const result = await response.json();
         
         if (result.success) {
             commentInput.value = '';
@@ -326,14 +310,9 @@ async function deleteComment(commentId) {
         if (!confirmed) return;
         
         try {
-            const response = await fetch(`/api/forum/comments/${commentId}`, {
-                method: 'DELETE',
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
+            const result = await apiRequest(`/comments/${commentId}`, {
+                method: 'DELETE'
             });
-            
-            const result = await response.json();
             
             if (result.success) {
                 showToast('评论已删除', 'success');
@@ -369,7 +348,7 @@ function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML.replace(/'/g, '&#039;').replace(/"/g, '&quot;');
 }
 
 function formatTime(dateStr) {
@@ -387,40 +366,129 @@ function formatTime(dateStr) {
     if (hours < 24) return `${hours}小时前`;
     if (days < 7) return `${days}天前`;
     
-    return date.toLocaleDateString('zh-CN', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-    });
+    return formatDate(date);
+}
+
+function formatDate(date) {
+    if (!date) return '-';
+    if (!(date instanceof Date)) {
+        date = new Date(date);
+    }
+    if (isNaN(date.getTime())) return '-';
+    
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    
+    return `${year}-${month}-${day}`;
 }
 
 function markdownToHtml(text) {
     if (!text) return '';
     
+    let processedText = text;
+    const codeBlockCount = (text.match(/```/g) || []).length;
+    if (codeBlockCount % 2 !== 0) {
+        processedText = text + '\n```';
+    }
+    
+    if (typeof marked !== 'undefined') {
+        try {
+            const markedInstance = marked || window.marked;
+            if (markedInstance && typeof markedInstance.parse === 'function') {
+                const html = markedInstance.parse(processedText, {
+                    breaks: true,
+                    gfm: true,
+                    headerIds: false,
+                    mangle: false
+                });
+                
+                const sanitized = sanitizeHtml(html);
+                
+                if (window.NotificationManager) {
+                    return window.NotificationManager.parseMentions(sanitized);
+                }
+                
+                return sanitized;
+            }
+        } catch (e) {
+            console.error('Markdown解析失败:', e);
+        }
+    }
+    
     let html = escapeHtml(text);
     
-    // 代码块
     html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>');
     
-    // 行内代码
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
     
-    // 粗体
     html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     
-    // 斜体
     html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
     
-    // 链接
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
     
-    // 换行
     html = html.replace(/\n/g, '<br>');
     
-    // @提及
     if (window.NotificationManager) {
         html = window.NotificationManager.parseMentions(html);
     }
     
     return html;
+}
+
+function sanitizeHtml(html) {
+    return html
+        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+        .replace(/\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+        .replace(/<iframe\b[^>]*>/gi, '')
+        .replace(/<object\b[^>]*>/gi, '')
+        .replace(/<embed\b[^>]*>/gi, '')
+        .replace(/javascript\s*:/gi, '');
+}
+
+function renderAttachments(attachments) {
+    if (!attachments || attachments.length === 0) {
+        return '';
+    }
+    
+    let html = '<div class="post-detail-attachments">';
+    html += '<div class="attachment-section"><h4>附件</h4>';
+    
+    attachments.forEach(att => {
+        html += `
+            <div class="edit-attachment-item">
+                <div class="attachment-icon">${getFileIcon(att.file_type)}</div>
+                <div class="attachment-info">
+                    <span class="attachment-name">${escapeHtml(att.file_name)}</span>
+                    <span class="attachment-size">${formatFileSize(att.file_size)}</span>
+                </div>
+                <div class="attachment-actions">
+                    <a href="/api/forum/attachments/download/${att.id}" class="action-link" title="下载">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                        下载
+                    </a>
+                </div>
+            </div>
+        `;
+    });
+    
+    html += '</div></div>';
+    return html;
+}
+
+function getFileIcon(type) {
+    const icons = {
+        'image': '🖼️',
+        'document': '📄',
+        'code': '💻',
+        'other': '📎'
+    };
+    return icons[type] || '📎';
+}
+
+function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }

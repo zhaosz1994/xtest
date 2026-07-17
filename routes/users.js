@@ -3,12 +3,16 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../db');
+const { loginLimiter, writeLimiter } = require('../services/rateLimiter');
+const { getUserAIConfig, getUserAITimeoutConfig, getAITimeoutDefaults } = require('../services/aiService');
 const { authenticateToken, requireAdmin } = require('../middleware');
 const { logActivity } = require('./history');
+const logger = require('../services/logger');
+const tokenBlacklist = require('../services/tokenBlacklist');
 require('dotenv').config();
 
 // 登录
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   const { username, password, rememberMe } = req.body;
   const ipAddress = req.ip || req.connection.remoteAddress;
   const userAgent = req.get('User-Agent');
@@ -45,7 +49,7 @@ router.post('/login', async (req, res) => {
     );
 
     // 记录登录日志
-    await logActivity(user.id, user.username, user.role, '用户登录', `用户 ${user.username} 登录系统${rememberMe ? '' : ''}`, 'user', user.id, ipAddress, userAgent);
+    await logActivity(user.id, user.username, user.role, '用户登录', `用户 ${user.username} 登录系统`, 'user', user.id, ipAddress, userAgent);
 
     res.json({ 
       success: true,
@@ -54,7 +58,7 @@ router.post('/login', async (req, res) => {
       expiresIn: tokenExpiresIn
     });
   } catch (error) {
-    console.error('登录错误:', error);
+    logger.error('登录错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -90,28 +94,67 @@ router.post('/refresh-token', authenticateToken, async (req, res) => {
       expiresIn: '24h'
     });
   } catch (error) {
-    console.error('Token刷新错误:', error);
+    logger.error('Token刷新错误:', { error: error.message });
     res.status(500).json({ success: false, message: 'Token刷新失败' });
   }
 });
 
+router.post('/logout', authenticateToken, async (req, res) => {
+  try {
+    const token = req.token;
+    const userId = req.user.id;
+
+    if (token) {
+      await tokenBlacklist.add(token, userId, 'logout');
+    }
+
+    await logActivity(
+      userId,
+      req.user.username,
+      req.user.role,
+      '用户登出',
+      `用户 ${req.user.username} 登出系统`,
+      'user',
+      userId,
+      req.ip || req.connection.remoteAddress,
+      req.get('User-Agent')
+    );
+
+    res.json({ success: true, message: '登出成功' });
+  } catch (error) {
+    logger.error('登出错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
 // 注册
-router.post('/register', async (req, res) => {
+router.post('/register', loginLimiter, async (req, res) => {
   const { username, password, email } = req.body;
   const ipAddress = req.ip || req.connection.remoteAddress;
   const userAgent = req.get('User-Agent');
 
   try {
-    // 检查用户名是否已存在
-    const [existingUsers] = await pool.execute('SELECT * FROM users WHERE username = ?', [username]);
-    if (existingUsers.length > 0) {
-      return res.status(400).json({ message: '用户名已存在' });
+    if (!username || !password || !email) {
+      return res.status(400).json({ success: false, message: '用户名、密码和邮箱不能为空' });
     }
 
-    // 检查邮箱是否已存在
-    const [existingEmails] = await pool.execute('SELECT * FROM users WHERE email = ?', [email]);
-    if (existingEmails.length > 0) {
-      return res.status(400).json({ message: '邮箱已被注册' });
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: '密码长度不能少于6位' });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ success: false, message: '邮箱格式不正确' });
+    }
+
+    const [existingUsers] = await pool.execute('SELECT * FROM users WHERE username = ?', [username]);
+    if (existingUsers.length > 0) {
+      return res.status(400).json({ success: false, message: '用户名已存在' });
+    }
+
+    const [existingEmail] = await pool.execute('SELECT id FROM users WHERE email = ?', [email]);
+    if (existingEmail.length > 0) {
+      return res.status(400).json({ success: false, message: '邮箱已被注册' });
     }
 
     // 加密密码
@@ -129,15 +172,15 @@ router.post('/register', async (req, res) => {
       await logActivity(newUsers[0].id, username, '测试人员', '用户注册', `新用户 ${username} 注册成功，等待管理员审核`, 'user', newUsers[0].id, ipAddress, userAgent);
     }
 
-    res.json({ message: '注册成功，请等待管理员审核后方可登录' });
+    res.json({ success: true, message: '注册成功，请等待管理员审核后方可登录' });
   } catch (error) {
-    console.error('注册错误:', error);
-    res.status(500).json({ message: '服务器错误' });
+    logger.error('注册错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
 // 获取用户名列表（公开接口，用于@提及验证）
-router.get('/usernames', async (req, res) => {
+router.get('/usernames', authenticateToken, async (req, res) => {
   try {
     const [users] = await pool.execute(
       'SELECT username FROM users WHERE status = "active"'
@@ -147,13 +190,13 @@ router.get('/usernames', async (req, res) => {
       usernames: users.map(u => u.username)
     });
   } catch (error) {
-    console.error('获取用户名列表失败:', error);
+    logger.error('获取用户名列表失败:', { error: error.message });
     res.json({ success: false, usernames: [], message: '获取失败' });
   }
 });
 
 // 获取用户列表（支持分页和搜索）
-router.get('/list', async (req, res) => {
+router.get('/list', authenticateToken, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const pageSize = parseInt(req.query.pageSize) || 50;
@@ -205,7 +248,7 @@ router.get('/list', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取用户列表错误:', error);
+    logger.error('获取用户列表错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -218,10 +261,17 @@ router.post('/add', authenticateToken, requireAdmin, async (req, res) => {
   const userAgent = req.get('User-Agent');
 
   try {
-    // 检查用户名是否已存在
+    if (!username || !password || !email) {
+      return res.status(400).json({ success: false, message: '用户名、密码和邮箱不能为空' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: '密码长度不能少于6位' });
+    }
+
     const [existingUsers] = await pool.execute('SELECT * FROM users WHERE username = ?', [username]);
     if (existingUsers.length > 0) {
-      return res.status(400).json({ message: '用户名已存在' });
+      return res.status(400).json({ success: false, message: '用户名已存在' });
     }
 
     // 加密密码
@@ -239,10 +289,10 @@ router.post('/add', authenticateToken, requireAdmin, async (req, res) => {
       await logActivity(currentUser.id, currentUser.username, currentUser.role, '添加用户', `管理员 ${currentUser.username} 添加了新用户 ${username}`, 'user', newUsers[0].id, ipAddress, userAgent);
     }
 
-    res.json({ message: '用户添加成功' });
+    res.json({ success: true, message: '用户添加成功' });
   } catch (error) {
-    console.error('添加用户错误:', error);
-    res.status(500).json({ message: '服务器错误' });
+    logger.error('添加用户错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -267,7 +317,7 @@ router.get('/profile', authenticateToken, async (req, res) => {
     
     res.json({ success: true, data: users[0] });
   } catch (error) {
-    console.error('获取用户信息错误:', error);
+    logger.error('获取用户信息错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -291,7 +341,7 @@ router.get('/preferences', authenticateToken, async (req, res) => {
     
     res.json({ success: true, data: users[0] });
   } catch (error) {
-    console.error('获取用户偏好设置错误:', error);
+    logger.error('获取用户偏好设置错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -317,7 +367,7 @@ router.put('/preferences', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '偏好设置已更新' });
   } catch (error) {
-    console.error('更新用户偏好设置错误:', error);
+    logger.error('更新用户偏好设置错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -334,7 +384,7 @@ router.put('/edit/:id', authenticateToken, requireAdmin, async (req, res) => {
     // 获取被编辑用户的信息
     const [users] = await pool.execute('SELECT username FROM users WHERE id = ?', [id]);
     if (users.length === 0) {
-      return res.status(404).json({ message: '用户不存在' });
+      return res.status(404).json({ success: false, message: '用户不存在' });
     }
     
     await pool.execute(
@@ -345,10 +395,10 @@ router.put('/edit/:id', authenticateToken, requireAdmin, async (req, res) => {
     // 记录操作日志
     await logActivity(currentUser.id, currentUser.username, currentUser.role, '编辑用户', `管理员 ${currentUser.username} 编辑了用户 ${users[0].username}`, 'user', parseInt(id), ipAddress, userAgent);
 
-    res.json({ message: '用户编辑成功' });
+    res.json({ success: true, message: '用户编辑成功' });
   } catch (error) {
-    console.error('编辑用户错误:', error);
-    res.status(500).json({ message: '服务器错误' });
+    logger.error('编辑用户错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -364,25 +414,25 @@ router.put('/:id/approve', authenticateToken, requireAdmin, async (req, res) => 
     // 验证状态值
     const validStatuses = ['pending', 'active', 'disabled'];
     if (!validStatuses.includes(status)) {
-      return res.status(400).json({ message: '无效的状态值' });
+      return res.status(400).json({ success: false, message: '无效的状态值' });
     }
 
     // 获取用户信息
     const [users] = await pool.execute('SELECT * FROM users WHERE id = ?', [id]);
     if (users.length === 0) {
-      return res.status(404).json({ message: '用户不存在' });
+      return res.status(404).json({ success: false, message: '用户不存在' });
     }
 
     const targetUser = users[0];
 
     // 不允许修改自己的状态
     if (targetUser.id === currentUser.id) {
-      return res.status(400).json({ message: '不能修改自己的状态' });
+      return res.status(400).json({ success: false, message: '不能修改自己的状态' });
     }
     
     // 保护admin账户，不能被禁用
     if (targetUser.username.toLowerCase() === 'admin' && status !== 'active') {
-      return res.status(400).json({ message: '系统管理员账户不允许禁用' });
+      return res.status(400).json({ success: false, message: '系统管理员账户不允许禁用' });
     }
 
     // 更新用户状态
@@ -404,8 +454,8 @@ router.put('/:id/approve', authenticateToken, requireAdmin, async (req, res) => 
 
     res.json({ success: true, message: `用户已${statusText}` });
   } catch (error) {
-    console.error('审核用户错误:', error);
-    res.status(500).json({ message: '服务器错误' });
+    logger.error('审核用户错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -420,23 +470,22 @@ router.delete('/delete/:id', authenticateToken, requireAdmin, async (req, res) =
     // 获取被删除用户的信息
     const [users] = await pool.execute('SELECT username FROM users WHERE id = ?', [id]);
     if (users.length === 0) {
-      return res.status(404).json({ message: '用户不存在' });
+      return res.status(404).json({ success: false, message: '用户不存在' });
     }
     
     // 保护admin账户，不能被删除
     if (users[0].username.toLowerCase() === 'admin') {
-      return res.status(400).json({ message: '系统管理员账户不允许删除' });
+      return res.status(400).json({ success: false, message: '系统管理员账户不允许删除' });
     }
     
     await pool.execute('DELETE FROM users WHERE id = ?', [id]);
 
-    // 记录操作日志
     await logActivity(currentUser.id, currentUser.username, currentUser.role, '删除用户', `管理员 ${currentUser.username} 删除了用户 ${users[0].username}`, 'user', parseInt(id), ipAddress, userAgent);
 
-    res.json({ message: '用户删除成功' });
+    res.json({ success: true, message: '用户删除成功' });
   } catch (error) {
-    console.error('删除用户错误:', error);
-    res.status(500).json({ message: '服务器错误' });
+    logger.error('删除用户错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -448,7 +497,7 @@ router.post('/update', authenticateToken, requireAdmin, async (req, res) => {
     // 根据用户名查找用户ID
     const [users] = await pool.execute('SELECT id FROM users WHERE username = ?', [username]);
     if (users.length === 0) {
-      return res.status(404).json({ message: '用户不存在' });
+      return res.status(404).json({ success: false, message: '用户不存在' });
     }
     
     const userId = users[0].id;
@@ -456,36 +505,50 @@ router.post('/update', authenticateToken, requireAdmin, async (req, res) => {
     let updateQuery = 'UPDATE users SET role = ?, email = ? WHERE id = ?';
     const updateParams = [role, email, userId];
     
-    // 如果提供了密码，则更新密码
     if (password && password !== '********') {
       const hashedPassword = await bcrypt.hash(password, 10);
       updateQuery = 'UPDATE users SET role = ?, email = ?, password = ? WHERE id = ?';
       updateParams.splice(2, 0, hashedPassword);
+
+      await tokenBlacklist.blacklistAllUserTokens(userId, 'admin_password_reset');
     }
     
     await pool.execute(updateQuery, updateParams);
-    res.json({ message: '用户更新成功' });
+    res.json({ success: true, message: '用户更新成功' });
   } catch (error) {
-    console.error('更新用户错误:', error);
-    res.status(500).json({ message: '服务器错误' });
+    logger.error('更新用户错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
 // 删除用户（需要管理员权限）- 兼容客户端调用方式
 router.post('/delete', authenticateToken, requireAdmin, async (req, res) => {
   const { username } = req.body;
+  const currentUser = req.user;
+  const ipAddress = req.ip || req.connection.remoteAddress;
+  const userAgent = req.get('User-Agent');
 
   try {
-    // 根据用户名删除用户
-    const [result] = await pool.execute('DELETE FROM users WHERE username = ?', [username]);
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: '用户不存在' });
+    if (username && username.toLowerCase() === 'admin') {
+      return res.status(400).json({ success: false, message: '系统管理员账户不允许删除' });
     }
-    
-    res.json({ message: '用户删除成功' });
+
+    const [users] = await pool.execute('SELECT id, username FROM users WHERE username = ?', [username]);
+    if (users.length === 0) {
+      return res.status(404).json({ success: false, message: '用户不存在' });
+    }
+
+    const targetUser = users[0];
+
+    await pool.execute('DELETE FROM users WHERE id = ?', [targetUser.id]);
+
+    await logActivity(currentUser.id, currentUser.username, currentUser.role, '删除用户',
+      `管理员 ${currentUser.username} 删除了用户 ${targetUser.username}`, 'user', targetUser.id, ipAddress, userAgent);
+
+    res.json({ success: true, message: '用户删除成功' });
   } catch (error) {
-    console.error('删除用户错误:', error);
-    res.status(500).json({ message: '服务器错误' });
+    logger.error('删除用户错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -539,7 +602,7 @@ router.put('/email', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '邮箱修改成功' });
   } catch (error) {
-    console.error('修改邮箱错误:', error);
+    logger.error('修改邮箱错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
@@ -599,10 +662,312 @@ router.put('/password', authenticateToken, async (req, res) => {
       ipAddress, 
       userAgent
     );
+
+    if (req.token) {
+      await tokenBlacklist.add(req.token, userId, 'password_change');
+    }
     
-    res.json({ success: true, message: '密码修改成功' });
+    res.json({ success: true, message: '密码修改成功，请重新登录' });
   } catch (error) {
-    console.error('修改密码错误:', error);
+    logger.error('修改密码错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+router.get('/ai-timeout-config', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+
+  try {
+    const config = await getUserAITimeoutConfig(userId);
+    const defaults = getAITimeoutDefaults();
+    res.json({ success: true, data: { config, defaults } });
+  } catch (error) {
+    logger.error('获取用户AI超时配置错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+router.put('/ai-timeout-config', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const { generalAITask, reportGeneration } = req.body;
+
+  try {
+    const config = {};
+    const fields = { generalAITask, reportGeneration };
+    const defaults = getAITimeoutDefaults();
+    const validators = {
+      generalAITask: { min: 10000, max: 3600000 },
+      reportGeneration: { min: 60000, max: 7200000 }
+    };
+
+    for (const [key, value] of Object.entries(fields)) {
+      if (value !== undefined && value !== null) {
+        const numVal = parseInt(value, 10);
+        const { min, max } = validators[key] || { min: 5000, max: 3600000 };
+        if (isNaN(numVal) || numVal < min || numVal > max) {
+          return res.status(400).json({
+            success: false,
+            message: `${key} 的值必须在 ${min}-${max} 毫秒之间`
+          });
+        }
+        config[key] = numVal;
+      }
+    }
+
+    if (Object.keys(config).length === 0) {
+      await pool.execute(
+        'UPDATE users SET ai_timeout_config = NULL, updated_at = NOW() WHERE id = ?',
+        [userId]
+      );
+    } else {
+      const fullConfig = { ...defaults, ...config };
+      await pool.execute(
+        'UPDATE users SET ai_timeout_config = ?, updated_at = NOW() WHERE id = ?',
+        [JSON.stringify(fullConfig), userId]
+      );
+    }
+
+    const updatedConfig = await getUserAITimeoutConfig(userId);
+    res.json({ success: true, message: 'AI超时配置已更新', data: updatedConfig });
+  } catch (error) {
+    logger.error('更新用户AI超时配置错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+router.get('/ai-generation-params', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { getUserAIGenerationParams, getAIGenerationParams } = require('../services/aiService');
+    
+    const userParams = await getUserAIGenerationParams(userId);
+    const globalParams = await getAIGenerationParams();
+    
+    const [users] = await pool.execute(
+      'SELECT ai_generation_params, ai_scene_params FROM users WHERE id = ?',
+      [userId]
+    );
+    
+    const user = users.length > 0 ? users[0] : null;
+    const userGenParams = user?.ai_generation_params 
+      ? (typeof user.ai_generation_params === 'string' ? JSON.parse(user.ai_generation_params) : user.ai_generation_params)
+      : {};
+    const userSceneParams = user?.ai_scene_params
+      ? (typeof user.ai_scene_params === 'string' ? JSON.parse(user.ai_scene_params) : user.ai_scene_params)
+      : {};
+    
+    res.json({
+      success: true,
+      data: {
+        global: globalParams,
+        user: {
+          generation: userGenParams,
+          scene: userSceneParams
+        },
+        effective: userParams
+      }
+    });
+  } catch (error) {
+    logger.error('获取用户AI生成参数错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+router.put('/ai-generation-params', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { generationParams, sceneParams } = req.body;
+    
+    const updates = [];
+    const values = [];
+    
+    if (generationParams !== undefined) {
+      const validKeys = ['temperature', 'max_tokens', 'top_p', 'frequency_penalty', 'presence_penalty',
+                        'tool_choice', 'response_format', 'request_timeout', 'max_retries', 'ai_rate_limit', 'seed'];
+      
+      const [existingRows] = await pool.execute(
+        'SELECT ai_generation_params FROM users WHERE id = ?',
+        [userId]
+      );
+      const existingGenParams = existingRows.length > 0 && existingRows[0].ai_generation_params
+        ? (typeof existingRows[0].ai_generation_params === 'string' ? JSON.parse(existingRows[0].ai_generation_params) : existingRows[0].ai_generation_params)
+        : {};
+      
+      const mergedParams = { ...existingGenParams };
+      
+      for (const key of validKeys) {
+        if (generationParams[key] !== undefined) {
+          if (key === 'temperature' || key === 'top_p' || key === 'frequency_penalty' || key === 'presence_penalty') {
+            const val = parseFloat(generationParams[key]);
+            if (isNaN(val)) continue;
+            if (key === 'temperature' && (val < 0 || val > 2)) {
+              return res.status(400).json({ success: false, message: 'temperature 必须在 0-2 之间' });
+            }
+            if (key === 'top_p' && (val < 0 || val > 1)) {
+              return res.status(400).json({ success: false, message: 'top_p 必须在 0-1 之间' });
+            }
+            if (key === 'frequency_penalty' && (val < -2 || val > 2)) {
+              return res.status(400).json({ success: false, message: 'frequency_penalty 必须在 -2 到 2 之间' });
+            }
+            if (key === 'presence_penalty' && (val < -2 || val > 2)) {
+              return res.status(400).json({ success: false, message: 'presence_penalty 必须在 -2 到 2 之间' });
+            }
+            mergedParams[key] = val;
+          } else if (key === 'max_tokens' || key === 'request_timeout' || key === 'max_retries' || key === 'ai_rate_limit') {
+            const val = parseInt(generationParams[key]);
+            if (isNaN(val) || val < 0) continue;
+            if (key === 'max_tokens' && val > 128000) {
+              return res.status(400).json({ success: false, message: 'max_tokens 不能超过 128000' });
+            }
+            if (key === 'request_timeout' && val > 600000) {
+              return res.status(400).json({ success: false, message: 'request_timeout 不能超过 600000ms' });
+            }
+            mergedParams[key] = val;
+          } else if (key === 'seed') {
+            if (generationParams[key] === '' || generationParams[key] === null) {
+              delete mergedParams[key];
+            } else {
+              const val = parseInt(generationParams[key]);
+              if (isNaN(val)) continue;
+              mergedParams[key] = val;
+            }
+          } else if (key === 'tool_choice') {
+            const validChoices = ['auto', 'none', 'required'];
+            if (!validChoices.includes(generationParams[key])) {
+              return res.status(400).json({ success: false, message: 'tool_choice 必须是 auto, none 或 required' });
+            }
+            mergedParams[key] = generationParams[key];
+          } else if (key === 'response_format') {
+            const validFormats = ['text', 'json_object'];
+            if (!validFormats.includes(generationParams[key])) {
+              return res.status(400).json({ success: false, message: 'response_format 必须是 text 或 json_object' });
+            }
+            mergedParams[key] = generationParams[key];
+          }
+        }
+      }
+      
+      updates.push('ai_generation_params = ?');
+      values.push(Object.keys(mergedParams).length > 0 ? JSON.stringify(mergedParams) : null);
+    }
+    
+    if (sceneParams !== undefined) {
+      const validScenes = ['scene_data_analysis', 'scene_case_generation', 'scene_report_analysis', 'scene_memory_distillation'];
+      
+      const [existingSceneRows] = await pool.execute(
+        'SELECT ai_scene_params FROM users WHERE id = ?',
+        [userId]
+      );
+      const existingSceneParams = existingSceneRows.length > 0 && existingSceneRows[0].ai_scene_params
+        ? (typeof existingSceneRows[0].ai_scene_params === 'string' ? JSON.parse(existingSceneRows[0].ai_scene_params) : existingSceneRows[0].ai_scene_params)
+        : {};
+      
+      const mergedSceneParams = { ...existingSceneParams };
+      
+      for (const sceneKey of validScenes) {
+        if (sceneParams[sceneKey] !== undefined) {
+          const scene = sceneParams[sceneKey];
+          if (typeof scene !== 'object' || scene === null) continue;
+          
+          const existingScene = mergedSceneParams[sceneKey] || {};
+          const mergedScene = { ...existingScene };
+          
+          if (scene.temperature !== undefined) {
+            const val = parseFloat(scene.temperature);
+            if (!isNaN(val) && val >= 0 && val <= 2) {
+              mergedScene.temperature = val;
+            }
+          }
+          if (scene.max_tokens !== undefined) {
+            const val = parseInt(scene.max_tokens);
+            if (!isNaN(val) && val > 0 && val <= 128000) {
+              mergedScene.max_tokens = val;
+            }
+          }
+          if (scene.max_context_rounds !== undefined) {
+            const val = parseInt(scene.max_context_rounds);
+            if (!isNaN(val) && val > 0 && val <= 100) {
+              mergedScene.max_context_rounds = val;
+            }
+          }
+          if (scene.max_context_chars !== undefined) {
+            const val = parseInt(scene.max_context_chars);
+            if (!isNaN(val) && val >= 0 && val <= 10000) {
+              mergedScene.max_context_chars = val;
+            }
+          }
+          
+          if (scene.retry_interval !== undefined) {
+            const val = parseInt(scene.retry_interval);
+            if (!isNaN(val) && val >= 5 && val <= 300) {
+              mergedScene.retry_interval = val;
+            }
+          }
+          
+          if (Object.keys(mergedScene).length > 0) {
+            mergedSceneParams[sceneKey] = mergedScene;
+          }
+        }
+      }
+      
+      updates.push('ai_scene_params = ?');
+      values.push(Object.keys(mergedSceneParams).length > 0 ? JSON.stringify(mergedSceneParams) : null);
+    }
+    
+    if (updates.length === 0) {
+      return res.status(400).json({ success: false, message: '没有有效的配置参数' });
+    }
+    
+    updates.push('updated_at = NOW()');
+    values.push(userId);
+    
+    await pool.execute(
+      `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
+      values
+    );
+    
+    const { getUserAIGenerationParams, invalidateAIConfigCache } = require('../services/aiService');
+    invalidateAIConfigCache(userId);
+    const updatedParams = await getUserAIGenerationParams(userId);
+    
+    res.json({ success: true, message: 'AI生成参数已更新', data: updatedParams });
+  } catch (error) {
+    logger.error('更新用户AI生成参数错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+router.delete('/ai-generation-params', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { type } = req.query;
+    
+    if (type === 'generation') {
+      await pool.execute(
+        'UPDATE users SET ai_generation_params = NULL, updated_at = NOW() WHERE id = ?',
+        [userId]
+      );
+    } else if (type === 'scene') {
+      await pool.execute(
+        'UPDATE users SET ai_scene_params = NULL, updated_at = NOW() WHERE id = ?',
+        [userId]
+      );
+    } else if (type === 'all') {
+      await pool.execute(
+        'UPDATE users SET ai_generation_params = NULL, ai_scene_params = NULL, updated_at = NOW() WHERE id = ?',
+        [userId]
+      );
+    } else {
+      return res.status(400).json({ success: false, message: '无效的重置类型' });
+    }
+    
+    const { getUserAIGenerationParams, invalidateAIConfigCache } = require('../services/aiService');
+    invalidateAIConfigCache(userId);
+    const updatedParams = await getUserAIGenerationParams(userId);
+    
+    res.json({ success: true, message: 'AI生成参数已重置', data: updatedParams });
+  } catch (error) {
+    logger.error('重置用户AI生成参数错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });

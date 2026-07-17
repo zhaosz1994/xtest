@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>批量查看测试用例 - xTest</title>
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/styles-theme.css">
+    <link rel="stylesheet" href="/css/batch-create-cases.css">
+</head>
+<body>
+    <div class="batch-create-container">
+        <header class="batch-header">
+            <div class="header-left">
+                <button class="back-btn" id="back-btn">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M19 12H5M12 19l-7-7 7-7"/>
+                    </svg>
+                    <span>返回列表</span>
+                </button>
+                <nav class="breadcrumb">
+                    <span class="breadcrumb-item" id="breadcrumb-library"></span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-item" id="breadcrumb-module"></span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-item clickable" id="breadcrumb-level1">
+                        <span id="breadcrumb-level1-name"></span>
+                        <svg class="dropdown-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M6 9l6 6 6-6"/>
+                        </svg>
+                    </span>
+                </nav>
+            </div>
+            <div class="header-right">
+                <button class="btn btn-secondary" id="bulk-defaults-btn">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                    <span>批量默认值</span>
+                </button>
+                <button class="btn btn-secondary" id="cancel-btn">取消</button>
+                <button class="btn btn-primary" id="save-btn">
+                    <span class="btn-text">保存修改</span>
+                    <span class="btn-loading" style="display: none;">
+                        <span class="loading-spinner"></span>
+                        <span>保存中...</span>
+                    </span>
+                </button>
+            </div>
+        </header>
+
+        <main class="batch-main">
+            <div class="table-container">
+                <div class="table-wrapper" id="table-wrapper">
+                    <table class="batch-table" id="batch-table">
+                        <thead id="table-head-normal">
+                            <tr>
+                                <th class="col-index">#</th>
+                                <th class="col-name">用例名称 <span class="required">*</span></th>
+                                <th class="col-priority">优先级</th>
+                                <th class="col-type">测试类型</th>
+                                <th class="col-owner">负责人</th>
+                                <th class="col-phase">测试阶段</th>
+                                <th class="col-env">测试环境</th>
+                                <th class="col-actions">操作</th>
+                            </tr>
+                        </thead>
+                        <thead id="table-head-level1" style="display: none;">
+                            <tr>
+                                <th class="col-expand" style="width: 40px;"></th>
+                                <th class="col-index" style="width: 50px;">编号</th>
+                                <th class="col-name">一级测试点名称 <span class="required">*</span></th>
+                                <th class="col-type">测试类型</th>
+                                <th class="col-actions">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-body">
+                        </tbody>
+                    </table>
+                </div>
+                <div class="table-resizer" id="table-resizer"></div>
+            </div>
+
+            <div class="add-row-section" id="add-row-section">
+                <button class="add-row-btn" id="add-row-btn">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    <span>添加一行</span>
+                </button>
+                <span id="row-count-hint" class="row-count-hint">共 0 条</span>
+            </div>
+            
+            <div class="add-row-section" id="add-level1-section" style="display: none;">
+                <div class="add-buttons-group">
+                    <button class="add-level1-btn" id="add-level1-btn">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        <span>添加一级测试点</span>
+                    </button>
+                    <button class="add-case-row-btn" id="add-case-to-level1-btn" disabled>
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        <span>添加测试用例</span>
+                    </button>
+                </div>
+                <span id="level1-count-hint" class="row-count-hint">共 0 个测试点</span>
+            </div>
+        </main>
+    </div>
+
+    <div id="error-modal" class="modal" style="display: none; z-index: 9999999;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="modal-icon error-icon">⚠</span>
+                <h3>错误提示</h3>
+            </div>
+            <div class="modal-body">
+                <p id="error-message"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="error-modal-close">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="success-toast" class="success-toast" style="display: none;">
+        <div class="success-toast-content"></div>
+    </div>
+
+    <div id="confirm-modal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="modal-icon confirm-icon">?</span>
+                <h3>确认操作</h3>
+            </div>
+            <div class="modal-body">
+                <p id="confirm-message"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="confirm-cancel">取消</button>
+                <button class="btn btn-primary" id="confirm-ok">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="unsaved-modal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="modal-icon warning-icon">⚠</span>
+                <h3>提示</h3>
+            </div>
+            <div class="modal-body">
+                <p>您有未保存的修改，是否保存后返回列表？</p>
+            </div>
+            <div class="modal-footer" style="justify-content: center; gap: 12px;">
+                <button class="btn btn-secondary" id="unsaved-cancel">取消</button>
+                <button class="btn btn-primary" id="unsaved-save-and-back">保存并返回列表</button>
+                <button class="btn btn-secondary" id="unsaved-back-only">直接返回</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="drawer-overlay" class="drawer-overlay"></div>
+    
+    <div id="level1-panel-overlay" class="level1-panel-overlay"></div>
+    <div id="level1-panel" class="level1-panel">
+        <div class="level1-panel-resizer" id="level1-panel-resizer"></div>
+        <div class="level1-panel-header">
+            <div class="level1-panel-title">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                </svg>
+                <span>测试点列表</span>
+            </div>
+            <button class="level1-panel-close-btn" id="level1-panel-close-btn">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
+        </div>
+        <div class="level1-panel-search">
+            <div class="level1-search-wrapper">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.35-4.35"></path>
+                </svg>
+                <input type="text" placeholder="搜索测试点..." id="level1-search-input">
+            </div>
+        </div>
+        <div class="level1-panel-body">
+            <div class="level1-panel-list" id="level1-dropdown-list"></div>
+        </div>
+    </div>
+    
+    <div id="detail-drawer" class="drawer">
+        <div class="drawer-resizer" id="drawer-resizer"></div>
+        <div class="drawer-header">
+            <h3 class="drawer-title">编辑用例详情</h3>
+            <button class="drawer-close-btn" id="drawer-close-btn">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
+        </div>
+        <div class="drawer-body">
+            <div class="drawer-section-title">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                </svg>
+                测试内容
+            </div>
+            <div class="drawer-form-group">
+                <label class="drawer-form-label">📌 前置条件</label>
+                <textarea class="drawer-textarea precondition" id="drawer-precondition" placeholder="请输入前置条件，如：&#10;1. 系统已启动&#10;2. 用户已登录"></textarea>
+            </div>
+            <div class="drawer-form-group">
+                <label class="drawer-form-label">🎯 测试目的</label>
+                <textarea class="drawer-textarea purpose" id="drawer-purpose" placeholder="请输入测试目的，描述本次测试要验证的内容"></textarea>
+            </div>
+            <div class="drawer-form-group">
+                <label class="drawer-form-label">📝 测试步骤</label>
+                <textarea class="drawer-textarea steps" id="drawer-steps" placeholder="请输入测试步骤，如：&#10;步骤1: 打开登录页面&#10;步骤2: 输入用户名和密码&#10;步骤3: 点击登录按钮"></textarea>
+            </div>
+            <div class="drawer-form-group">
+                <label class="drawer-form-label">✅ 预期结果</label>
+                <textarea class="drawer-textarea expected" id="drawer-expected" placeholder="请输入预期结果，描述测试通过的标准"></textarea>
+            </div>
+            <div class="drawer-form-group">
+                <label class="drawer-form-label">⚙️ 关键配置</label>
+                <textarea class="drawer-textarea key-config" id="drawer-key-config" placeholder="请输入关键配置命令，如：&#10;l2 fdb add port 1 vlan 100 mac 00:11:22:33:44:55&#10;sai_acl_create_entry ..."></textarea>
+                <p class="drawer-field-hint">记录测试用例的关键配置命令或参数</p>
+            </div>
+            <div class="drawer-form-group">
+                <label class="drawer-form-label">💬 测试备注</label>
+                <textarea class="drawer-textarea remark" id="drawer-remark" placeholder="请输入测试备注，如：注意事项、依赖说明等"></textarea>
+            </div>
+            <div class="drawer-section-title">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
+                    <line x1="7" y1="7" x2="7.01" y2="7"></line>
+                </svg>
+                分类标签
+            </div>
+            <div class="drawer-form-row">
+                <div class="drawer-form-group">
+                    <label class="drawer-form-label">测试环境 <span class="required">*</span></label>
+                    <div class="tag-selector" id="drawer-environments-selector">
+                        <div class="tag-selector-tags" id="drawer-environments-tags"></div>
+                        <div class="tag-selector-dropdown" id="drawer-environments-dropdown"></div>
+                    </div>
+                    <select id="drawer-environments" multiple style="display: none;"></select>
+                </div>
+                <div class="drawer-form-group">
+                    <label class="drawer-form-label">测试方式 <span class="required">*</span></label>
+                    <div class="tag-selector" id="drawer-methods-selector">
+                        <div class="tag-selector-tags" id="drawer-methods-tags"></div>
+                        <div class="tag-selector-dropdown" id="drawer-methods-dropdown"></div>
+                    </div>
+                    <select id="drawer-methods" multiple style="display: none;"></select>
+                </div>
+                <div class="drawer-form-group">
+                    <label class="drawer-form-label">测试点来源</label>
+                    <div class="tag-selector" id="drawer-sources-selector">
+                        <div class="tag-selector-tags" id="drawer-sources-tags"></div>
+                        <div class="tag-selector-dropdown" id="drawer-sources-dropdown"></div>
+                    </div>
+                    <select id="drawer-sources" multiple style="display: none;"></select>
+                </div>
+            </div>
+            <div class="drawer-section-title">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                </svg>
+                关联信息
+            </div>
+            <div class="drawer-form-group">
+                <label class="drawer-form-label">📁 关联项目</label>
+                <div class="drawer-projects-summary" id="drawer-projects-summary">
+                    <div class="drawer-projects-empty" id="drawer-projects-empty">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        <p>暂未关联项目</p>
+                        <button type="button" class="btn btn-sm btn-primary" onclick="openDrawerProjectSelector()">添加关联</button>
+                    </div>
+                    <div class="drawer-projects-list" id="drawer-projects-list" style="display: none;"></div>
+                </div>
+                <button type="button" onclick="openDrawerProjectSelector()" class="btn btn-sm btn-secondary" style="margin-top: 8px; display: none;" id="drawer-edit-projects-btn">
+                    编辑关联
+                </button>
+                <input type="hidden" id="drawer-projects" value="">
+            </div>
+            <div class="drawer-form-group">
+                <label class="drawer-form-label">📜 关联脚本</label>
+                <div class="drawer-scripts-summary" id="drawer-scripts-summary">
+                    <div class="drawer-scripts-empty" id="drawer-scripts-empty">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <polyline points="16 18 22 12 16 6"></polyline>
+                            <polyline points="8 6 2 12 8 18"></polyline>
+                        </svg>
+                        <p>暂无关联脚本</p>
+                        <button type="button" class="btn btn-sm btn-primary" onclick="openDrawerScriptModal()">添加脚本</button>
+                    </div>
+                    <div class="drawer-scripts-list" id="drawer-scripts-list" style="display: none;"></div>
+                </div>
+                <button type="button" onclick="openDrawerScriptModal()" class="btn btn-sm btn-secondary" style="margin-top: 8px; display: none;" id="drawer-edit-scripts-btn">
+                    编辑脚本
+                </button>
+                <input type="hidden" id="drawer-scripts" value="">
+            </div>
+        </div>
+        <div class="drawer-footer">
+            <button class="btn btn-secondary" id="drawer-cancel">取消</button>
+            <button class="btn btn-primary" id="drawer-save">保存详情</button>
+        </div>
+    </div>
+
+    <!-- 关联项目选择模态框 -->
+    <div id="drawer-project-selector-modal" class="modal" style="display: none; z-index: 10010;">
+        <div class="modal-content project-association-content" style="max-width: 800px;">
+            <div class="modal-header project-association-header">
+                <div class="pa-header-info">
+                    <h3>编辑关联项目</h3>
+                    <p class="pa-header-desc">选择要关联的项目，设置测试进度和状态</p>
+                </div>
+                <button class="close-modal" onclick="closeDrawerProjectSelector()">&times;</button>
+            </div>
+            
+            <div class="pa-toolbar">
+                <div class="pa-search-box">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <path d="m21 21-4.35-4.35"></path>
+                    </svg>
+                    <input type="text" id="drawer-project-search" placeholder="搜索项目名称..." oninput="filterDrawerProjects()">
+                </div>
+                <div class="pa-stats">
+                    <span class="pa-stat-item">
+                        <span class="pa-stat-label">已选择</span>
+                        <span class="pa-stat-value" id="drawer-pa-selected-count">0</span>
+                    </span>
+                    <span class="pa-stat-divider">/</span>
+                    <span class="pa-stat-item">
+                        <span class="pa-stat-value" id="drawer-pa-total-count">0</span>
+                        <span class="pa-stat-label">个项目</span>
+                    </span>
+                </div>
+                <div class="pa-actions">
+                    <button type="button" onclick="selectAllDrawerProjects()" class="btn btn-sm btn-secondary">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="9 11 12 14 22 4"></polyline>
+                            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                        </svg>
+                        全选
+                    </button>
+                    <button type="button" onclick="deselectAllDrawerProjects()" class="btn btn-sm btn-secondary">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        </svg>
+                        取消全选
+                    </button>
+                </div>
+            </div>
+            
+            <div class="modal-body project-association-body">
+                <div class="pa-table-container">
+                    <table class="pa-projects-table" id="drawer-pa-projects-table">
+                        <thead>
+                            <tr>
+                                <th class="pa-col-checkbox">
+                                    <input type="checkbox" id="drawer-pa-select-all-checkbox" onchange="toggleAllDrawerProjectsFromCheckbox(this.checked)">
+                                </th>
+                                <th class="pa-col-name">项目名称</th>
+                                <th class="pa-col-owner">负责人</th>
+                                <th class="pa-col-progress">测试进度</th>
+                                <th class="pa-col-status">测试状态</th>
+                                <th class="pa-col-remark">备注</th>
+                            </tr>
+                        </thead>
+                        <tbody id="drawer-project-selector-list">
+                            <!-- 动态生成 -->
+                            <tr><td colspan="6" style="text-align:center;padding:20px;">加载中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <div class="modal-footer project-association-footer">
+                <div class="pa-footer-info">
+                    <span class="pa-footer-hint">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="M12 16v-4"></path>
+                            <path d="M12 8h.01"></path>
+                        </svg>
+                        勾选项目后可设置测试进度和状态
+                    </span>
+                </div>
+                <div class="pa-footer-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeDrawerProjectSelector()">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="confirmDrawerProjectSelection()">保存关联</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 关联脚本编辑弹窗 -->
+    <div id="drawer-script-modal" class="modal" style="display: none; z-index: 10020;">
+        <div class="modal-content" style="width: 600px; max-width: 95%;">
+            <div class="modal-header">
+                <h3 id="drawer-script-modal-title">添加关联脚本</h3>
+                <button class="close-modal" onclick="closeDrawerScriptModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="drawer-script-form">
+                    <input type="hidden" id="drawer-script-id">
+                    <input type="hidden" id="drawer-script-file-path">
+                    <input type="hidden" id="drawer-script-file-size">
+                    <input type="hidden" id="drawer-script-original-filename">
+                    
+                    <div class="form-group">
+                        <label class="form-label required">脚本名称</label>
+                        <input type="text" id="drawer-script-name-input" class="form-input" placeholder="如：sdk_fdb_func_xxx_xxx.tcl" required>
+                        <p class="form-hint">支持 .tcl, .py, .sh 等脚本文件名称</p>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">脚本类型</label>
+                            <select id="drawer-script-type-input" class="form-select">
+                                <option value="tcl">TCL</option>
+                                <option value="py">Python</option>
+                                <option value="sh">Shell</option>
+                                <option value="other">其他</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">脚本描述</label>
+                        <textarea id="drawer-script-desc-input" class="form-textarea" rows="2" placeholder="脚本功能描述"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">源文件上传</label>
+                        <div class="file-upload-area" id="drawer-script-upload-area">
+                            <input type="file" id="drawer-script-file-input" style="display: none;" accept=".tcl,.py,.sh,.txt,.json,.pl,.rb,.js,.yaml,.yml,.xml,.cfg,.conf,.ini">
+                            <div class="file-upload-content" id="drawer-script-upload-content">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="17 8 12 3 7 8"></polyline>
+                                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                                </svg>
+                                <p>点击上传或拖拽文件到此处</p>
+                                <span class="file-upload-hint">支持 .tcl, .py, .sh 等格式，最大 10MB</span>
+                            </div>
+                            <div class="file-upload-preview" id="drawer-script-file-preview" style="display: none;">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                    <polyline points="14 2 14 8 20 8"></polyline>
+                                </svg>
+                                <span id="drawer-script-file-name"></span>
+                                <button type="button" class="btn-remove-file" onclick="removeDrawerScriptFile()">×</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">外部链接</label>
+                        <input type="url" id="drawer-script-link-input" class="form-input" placeholder="https://gitlab.xxx.com/xxx.tcl">
+                        <input type="text" id="drawer-script-link-title-input" class="form-input" placeholder="链接标题（如：GitLab源码）" style="margin-top: 8px;">
+                        <div class="link-type-selector" style="margin-top: 8px;">
+                            <label class="radio-item">
+                                <input type="radio" name="drawer-link-type" value="external" checked>
+                                <span>外部链接</span>
+                            </label>
+                            <label class="radio-item">
+                                <input type="radio" name="drawer-link-type" value="gitlab">
+                                <span>GitLab</span>
+                            </label>
+                            <label class="radio-item">
+                                <input type="radio" name="drawer-link-type" value="other">
+                                <span>其他</span>
+                            </label>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeDrawerScriptModal()">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveDrawerScript()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/batch-view-cases.js"></script>
+</body>
+</html>

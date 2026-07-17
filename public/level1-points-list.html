@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>一级测试点列表 - xTest</title>
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/styles-theme.css">
+    <link rel="stylesheet" href="/css/level1-points-list.css">
+    <link rel="stylesheet" href="/css/evidence-drawer.css">
+</head>
+<body>
+    <div class="level1-page-container">
+        <header class="level1-header">
+            <div class="header-left">
+                <button class="back-btn" id="back-btn">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M19 12H5M12 19l-7-7 7-7"/>
+                    </svg>
+                    <span>返回</span>
+                </button>
+                <nav class="breadcrumb" id="breadcrumb">
+                    <span class="breadcrumb-item" id="breadcrumb-library"></span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-item" id="breadcrumb-module"></span>
+                </nav>
+            </div>
+            <div class="header-right">
+                <div class="search-box">
+                    <svg class="search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <path d="M21 21l-4.35-4.35"></path>
+                    </svg>
+                    <input type="text" class="search-input" id="search-input" placeholder="搜索测试点名称...">
+                </div>
+                <button class="btn btn-secondary" id="filter-btn">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"></path>
+                    </svg>
+                    <span>筛选</span>
+                </button>
+                <button class="btn btn-secondary" id="expand-all-btn">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                    </svg>
+                    <span class="btn-text">全展开</span>
+                </button>
+                <button class="btn btn-primary" id="add-level1-btn">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    <span>新建测试点</span>
+                </button>
+                <button class="btn btn-secondary" id="expand-points-btn">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"></path>
+                    </svg>
+                    <span>5维度扩展</span>
+                </button>
+                <div class="level1-adaptive-select-group">
+                    <select class="level1-adaptive-select" id="level-chip-version-select">
+                        <option value="">通用芯片</option>
+                    </select>
+                    <select class="level1-adaptive-select" id="level-execution-env-select">
+                        <option value="">默认执行环境</option>
+                    </select>
+                </div>
+                <button class="btn btn-secondary" id="generate-tcl-btn">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="16 18 22 12 16 6"></polyline>
+                        <polyline points="8 6 2 12 8 18"></polyline>
+                    </svg>
+                    <span>生成TCL</span>
+                </button>
+            </div>
+        </header>
+
+        <main class="level1-main">
+            <div class="level1-list-container" id="level1-list-container">
+                <div class="loading-state" id="loading-state" style="display: none;">
+                    <div class="loading-spinner"></div>
+                    <p>加载中...</p>
+                </div>
+
+                <div class="empty-state" id="empty-state" style="display: none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="64" height="64">
+                        <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                    </svg>
+                    <h3>暂无一级测试点</h3>
+                    <p>点击右上角"新建测试点"按钮开始创建</p>
+                    <button class="btn btn-primary" id="empty-add-btn">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        <span>新建测试点</span>
+                    </button>
+                </div>
+
+                <div class="error-state" id="error-state" style="display: none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48">
+                        <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                    <h3>加载失败</h3>
+                    <p id="error-message">网络连接异常，请稍后重试</p>
+                    <button class="btn btn-secondary" id="retry-btn">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M23 4v6h-6M1 20v-6h6"></path>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                        </svg>
+                        <span>重新加载</span>
+                    </button>
+                </div>
+
+                <div class="level1-list" id="level1-list"></div>
+
+                <div class="pagination" id="pagination"></div>
+            </div>
+        </main>
+    </div>
+
+    <div class="drawer-overlay" id="drawer-overlay"></div>
+    <div class="drawer" id="testcase-drawer">
+        <div class="drawer-header">
+            <button class="drawer-close-btn" id="drawer-close-btn">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 6L6 18M6 6l12 12"></path>
+                </svg>
+            </button>
+            <h2 class="drawer-title">编辑测试用例</h2>
+            <div class="drawer-actions">
+                <button class="btn btn-danger" id="drawer-delete-btn">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                    <span>删除</span>
+                </button>
+                <button class="btn btn-primary" id="drawer-save-btn">
+                    <span class="btn-text">保存</span>
+                    <span class="btn-loading" style="display: none;">
+                        <span class="loading-spinner loading-spinner-sm"></span>
+                        <span>保存中...</span>
+                    </span>
+                </button>
+            </div>
+        </div>
+
+        <div class="drawer-meta">
+            <div class="meta-item">
+                <span class="meta-label">创建时间：</span>
+                <span class="meta-value" id="drawer-created-time">-</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">更新时间：</span>
+                <span class="meta-value" id="drawer-updated-time">-</span>
+            </div>
+        </div>
+
+        <div class="drawer-content">
+            <form id="testcase-form">
+                <input type="hidden" id="testcase-id">
+                
+                <div class="form-section">
+                    <h3 class="form-section-title">基本信息</h3>
+                    
+                    <div class="form-group">
+                        <label class="form-label required">用例名称</label>
+                        <input type="text" class="form-input" id="testcase-name" required maxlength="200">
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">所属模块</label>
+                            <select class="form-select" id="testcase-module" disabled>
+                                <option value="">请选择模块</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">所属测试点</label>
+                            <select class="form-select" id="testcase-level1" disabled>
+                                <option value="">请选择测试点</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">优先级</label>
+                            <select class="form-select" id="testcase-priority">
+                                <option value="高">高</option>
+                                <option value="中" selected>中</option>
+                                <option value="低">低</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">测试类型</label>
+                            <select class="form-select" id="testcase-type">
+                                <option value="功能测试" selected>功能测试</option>
+                                <option value="性能测试">性能测试</option>
+                                <option value="安全测试">安全测试</option>
+                                <option value="兼容性测试">兼容性测试</option>
+                                <option value="其他">其他</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">测试阶段</label>
+                            <select class="form-select" id="testcase-phase">
+                                <option value="单元测试">单元测试</option>
+                                <option value="集成测试" selected>集成测试</option>
+                                <option value="系统测试">系统测试</option>
+                                <option value="验收测试">验收测试</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">测试环境</label>
+                            <select class="form-select" id="testcase-env">
+                                <option value="开发环境">开发环境</option>
+                                <option value="测试环境" selected>测试环境</option>
+                                <option value="预发布环境">预发布环境</option>
+                                <option value="生产环境">生产环境</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">负责人</label>
+                            <input type="text" class="form-input" id="testcase-owner" maxlength="50">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <h3 class="form-section-title">测试详情</h3>
+                    
+                    <div class="form-group">
+                        <label class="form-label">前置条件</label>
+                        <textarea class="form-textarea" id="testcase-precondition" rows="3" maxlength="1000"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">测试目的</label>
+                        <textarea class="form-textarea" id="testcase-purpose" rows="3" maxlength="1000"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">测试步骤</label>
+                        <textarea class="form-textarea" id="testcase-steps" rows="5" maxlength="2000"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">预期结果</label>
+                        <textarea class="form-textarea" id="testcase-expected" rows="3" maxlength="1000"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">关键配置</label>
+                        <textarea class="form-textarea" id="testcase-key-config" rows="2" maxlength="500"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">备注</label>
+                        <textarea class="form-textarea" id="testcase-remark" rows="2" maxlength="500"></textarea>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <div class="drawer-footer">
+            <button class="btn btn-secondary" id="drawer-cancel-btn">取消</button>
+            <button class="btn btn-secondary" id="drawer-save-continue-btn">
+                <span>保存并继续</span>
+            </button>
+            <button class="btn btn-primary" id="drawer-save-btn-bottom">
+                <span>保存</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="filter-panel" id="filter-panel" style="display: none;">
+        <div class="filter-panel-header">
+            <h3>筛选条件</h3>
+            <button class="filter-close-btn" id="filter-close-btn">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 6L6 18M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+        <div class="filter-panel-content">
+            <div class="filter-group">
+                <label class="filter-label">测试类型</label>
+                <div class="filter-options" id="filter-test-type">
+                    <label class="filter-checkbox">
+                        <input type="checkbox" value="功能测试" checked>
+                        <span>功能测试</span>
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" value="性能测试">
+                        <span>性能测试</span>
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" value="安全测试">
+                        <span>安全测试</span>
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" value="兼容性测试">
+                        <span>兼容性测试</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="filter-group">
+                <label class="filter-label">用例数量范围</label>
+                <div class="filter-range">
+                    <input type="number" class="form-input" id="filter-case-count-min" placeholder="最小值" min="0">
+                    <span class="range-separator">至</span>
+                    <input type="number" class="form-input" id="filter-case-count-max" placeholder="最大值" min="0">
+                </div>
+            </div>
+
+            <div class="filter-group">
+                <label class="filter-label">创建时间</label>
+                <div class="filter-date-range">
+                    <input type="date" class="form-input" id="filter-date-start">
+                    <span class="range-separator">至</span>
+                    <input type="date" class="form-input" id="filter-date-end">
+                </div>
+            </div>
+        </div>
+        <div class="filter-panel-footer">
+            <button class="btn btn-secondary" id="filter-reset-btn">重置</button>
+            <button class="btn btn-primary" id="filter-apply-btn">应用</button>
+        </div>
+    </div>
+
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="/js/modules/core/apiClient.js"></script>
+    <div class="evidence-drawer-overlay" id="evidence-drawer-overlay"></div>
+    <aside class="evidence-drawer" id="evidence-drawer">
+        <div class="evidence-drawer-header">
+            <h2>证据链</h2>
+            <button class="evidence-drawer-close" id="evidence-drawer-close" type="button">✕</button>
+        </div>
+        <div class="evidence-drawer-content" id="evidence-drawer-content"></div>
+    </aside>
+
+    <script src="/js/level1-points-list.js"></script>
+</body>
+</html>

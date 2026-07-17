@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>全局搜索功能测试</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .test-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f0f0f0;
+            border-radius: 6px;
+        }
+        .test-section h3 {
+            color: #666;
+            margin-bottom: 10px;
+        }
+        .test-item {
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+            background: #f9f9f9;
+        }
+        .test-item.pass {
+            background: #d4edda;
+            border-left: 4px solid #52c41a;
+        }
+        .test-item.fail {
+            background: #fff3f3;
+            border-left: 4px solid #ff4d4f;
+        }
+        .test-item.pending {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+        }
+        .summary {
+            margin-top: 20px;
+            padding: 15px;
+            background: #e8f5e9;
+            border-radius: 6px;
+        }
+        .summary h3 {
+            margin: 0 0 10px 0;
+        }
+        .summary .stats {
+            display: flex;
+            gap: 20px;
+            margin-top: 10px;
+        }
+        .stat {
+            flex: 1;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+        }
+        .instructions {
+            margin-top: 20px;
+            padding: 15px;
+            background: #e3f2fd;
+            border-radius: 6px;
+        }
+        .instructions h4 {
+            color: #1976d2;
+            margin-bottom: 10px;
+        }
+        .instructions ul {
+            margin: 0;
+            padding-left: 20px;
+        }
+        .instructions li {
+            margin: 5px 0;
+        }
+        .back-link {
+            display: inline-block;
+            margin-top: 20px;
+            color: #007bff;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 全局搜索功能测试</h1>
+        
+        <div class="test-section">
+            <h3>功能测试</h3>
+            <div id="test-results"></div>
+        </div>
+        
+        <div class="summary">
+            <h3>测试统计</h3>
+            <div class="stats">
+                <div class="stat">
+                    <div class="stat-value" id="pass-count">0</div>
+                    <div class="stat-label">通过</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="fail-count">0</div>
+                    <div class="stat-label">失败</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="total-count">0</div>
+                    <div class="stat-label">总计</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="instructions">
+            <h4>使用说明</h4>
+            <ul>
+                <li>打开浏览器访问 <a href="http://localhost:3000">http://localhost:3000</a></li>
+                <li>登录系统</li>
+                <li>按 <strong>Ctrl/Cmd + K</strong> 打开命令面板</li>
+                <li>按 <strong>/</strong> 进入搜索模式</li>
+                <li>输入关键词进行搜索</li>
+                <li>使用 <strong>↑↓</strong> 键导航结果</li>
+                <li>按 <strong>Enter</strong> 跳转到详情页</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3000';
+        let authToken = '';
+        let passCount = 0;
+        let failCount = 0;
+        let totalTests = 0;
+
+        function updateStats() {
+            document.getElementById('pass-count').textContent = passCount;
+            document.getElementById('fail-count').textContent = failCount;
+            document.getElementById('total-count').textContent = totalTests;
+        }
+
+        
+        function addTestResult(name, status, message) {
+            totalTests++;
+            const resultsDiv = document.getElementById('test-results');
+            const testItem = document.createElement('div');
+            testItem.className = `test-item ${status}`;
+            testItem.innerHTML = `
+                <strong>${name}</strong>: ${message}
+            `;
+            resultsDiv.appendChild(testItem);
+            
+            if (status === 'pass') passCount++;
+            else if (status === 'fail') failCount++;
+            
+            updateStats();
+        }
+
+        async function login() {
+            try {
+                const response = await fetch(`${API_BASE}/api/users/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        username: 'zhaosz',
+                        password: '123456'
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        authToken = data.token;
+                        addTestResult('用户登录', 'pass', '成功');
+                        return true;
+                    } else {
+                        addTestResult('用户登录', 'fail', data.message || '登录失败');
+                        return false;
+                    }
+                } else {
+                    addTestResult('用户登录', 'fail', `HTTP ${response.status}`);
+                    return false;
+                }
+            } catch (error) {
+                addTestResult('用户登录', 'fail', error.message);
+                return false;
+            }
+        }
+
+        async function testSearch(keyword, types = 'all') {
+            const testName = `搜索 "${keyword}"`;
+            try {
+                const url = `${API_BASE}/api/search?keyword=${encodeURIComponent(keyword)}&types=${types}`;
+                const response = await fetch(url, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        const total = data.meta.totalResults;
+                        const time = data.meta.searchTime;
+                        addTestResult(testName, 'pass', `找到 ${total} 条结果，耗时 ${time}ms`);
+                        return true;
+                    } else {
+                        addTestResult(testName, 'fail', data.error?.message || '搜索失败');
+                        return false;
+                    }
+                } else {
+                    addTestResult(testName, 'fail', `HTTP ${response.status}`);
+                    return false;
+                }
+            } catch (error) {
+                addTestResult(testName, 'fail', error.message);
+                return false;
+            }
+        }
+
+        async function testInvalidSearch() {
+                const testName = '测试无效关键词';
+            try {
+                const url = `${API_BASE}/api/search?keyword=测`;
+                const response = await fetch(url, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                if (response.status === 400) {
+                    addTestResult(testName, 'pass', '正确返回400错误');
+                    return true;
+                } else {
+                    addTestResult(testName, 'fail', `期望400，实际${response.status}`);
+                    return false;
+                }
+            } catch (error) {
+                addTestResult(testName, 'fail', error.message);
+                return false;
+            }
+        }
+
+        async function testTypeFilter() {
+                const testName = '测试类型过滤';
+            try {
+                const url = `${API_BASE}/api/search?keyword=测试&types=testplan,post`;
+                const response = await fetch(url, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        const hasTestPlans = data.data.testPlans !== undefined;
+                        const hasTestCases = data.data.testCases !== undefined;
+                        const hasPosts = data.data.posts !== undefined;
+                        const hasComments = data.data.comments !== undefined;
+                        
+                        if (hasTestPlans && !hasTestCases && !hasComments) {
+                            addTestResult(testName, 'pass', '正确过滤了类型');
+                            return true;
+                        } else {
+                            addTestResult(testName, 'fail', '类型过滤不正确');
+                            return false;
+                        }
+                    } else {
+                        addTestResult(testName, 'fail', data.error?.message || '搜索失败');
+                        return false;
+                    }
+                } else {
+                    addTestResult(testName, 'fail', `HTTP ${response.status}`);
+                    return false;
+                }
+            } catch (error) {
+                addTestResult(testName, 'fail', error.message);
+                return false;
+            }
+        }
+
+        async function testPerformance() {
+                const testName = '性能测试';
+                const keywords = ['测试', '性能', '登录', '用户'];
+                const times = [];
+                
+                for (const keyword of keywords) {
+                    const start = Date.now();
+                    try {
+                        await fetch(`${API_BASE}/api/search?keyword=${encodeURIComponent(keyword)}`, {
+                            headers: {
+                                'Authorization': `Bearer ${authToken}`
+                            }
+                        });
+                        times.push(Date.now() - start);
+                    } catch (error) {
+                        // 忽略错误
+                    }
+                }
+                
+                const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
+                if (avgTime < 500) {
+                    addTestResult(testName, 'pass', `平均响应时间 ${avgTime.toFixed(0)}ms`);
+                    return true;
+                } else {
+                    addTestResult(testName, 'fail', `平均响应时间 ${avgTime.toFixed(0)}ms，超过500ms`);
+                    return false;
+                }
+            }
+
+        async function runAllTests() {
+                addTestResult('开始测试', 'pending', '正在执行测试...');
+                
+                const loginSuccess = await login();
+                if (!loginSuccess) {
+                    addTestResult('测试终止', 'fail', '登录失败，无法继续测试');
+                    return;
+                }
+
+                await testSearch('测试');
+                await testSearch('性能');
+                await testSearch('登录');
+                await testInvalidSearch();
+                await testTypeFilter();
+                await testPerformance();
+
+                addTestResult('测试完成', 'pending', `通过: ${passCount}, 失败: ${failCount}, 总计: ${totalTests}`);
+            }
+
+        // 运行测试
+        runAllTests();
+    </script>
+</body>
+</html>

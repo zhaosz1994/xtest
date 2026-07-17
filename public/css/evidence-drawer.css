@@ -1,0 +1,101 @@
+.level1-page-container .level1-adaptive-select-group {
+    display: inline-flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.level1-page-container .level1-adaptive-select {
+    height: 34px;
+    min-width: 130px;
+    border: 1px solid var(--color-border, #e2e8f0);
+    border-radius: 8px;
+    padding: 0 10px;
+    background: var(--color-bg-primary, #fff);
+    color: var(--color-text-primary, #1e293b);
+    font-size: 13px;
+}
+
+.evidence-drawer-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.35);
+    z-index: 9998;
+    display: none;
+}
+
+.evidence-drawer-overlay.active {
+    display: block;
+}
+
+.evidence-drawer {
+    position: fixed;
+    top: 0;
+    right: -420px;
+    width: 420px;
+    max-width: 92vw;
+    height: 100vh;
+    background: var(--color-bg-primary, #fff);
+    z-index: 10000;
+    box-shadow: -8px 0 24px rgba(15, 23, 42, 0.18);
+    transition: right 0.24s ease;
+    display: flex;
+    flex-direction: column;
+}
+
+.evidence-drawer.open {
+    right: 0;
+}
+
+.evidence-drawer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--color-border, #e2e8f0);
+}
+
+.evidence-drawer-header h2 {
+    margin: 0;
+    font-size: 18px;
+}
+
+.evidence-drawer-close {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 16px;
+}
+
+.evidence-drawer-content {
+    flex: 1;
+    overflow: auto;
+    padding: 16px;
+}
+
+.evidence-card {
+    border: 1px solid var(--color-border, #e2e8f0);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 12px;
+    background: var(--color-bg-secondary, #f8fafc);
+}
+
+.evidence-card-title {
+    font-weight: 600;
+    color: var(--color-text-primary, #1e293b);
+    margin-bottom: 6px;
+}
+
+.evidence-card-meta {
+    font-size: 12px;
+    color: var(--color-text-secondary, #64748b);
+    margin-bottom: 8px;
+}
+
+.evidence-card-excerpt,
+.evidence-empty {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--color-text-secondary, #64748b);
+    white-space: pre-wrap;
+}

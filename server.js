@@ -1,11 +1,16 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const crypto = require('crypto');
 const pool = require('./db');
 const { authenticateToken, requireAdmin } = require('./middleware');
 const usersRouter = require('./routes/users');
 const logger = require('./services/logger');
+const { loginLimiter, apiLimiter, dashboardLimiter, writeLimiter, aiLimiter } = require('./services/rateLimiter');
+const AuditLogService = require('./services/auditLogService');
 const { getUserAIConfig } = require('./services/aiService');
+const { buildAIHeaders } = require('./services/aiCallWrapper');
+const autoMigration = require('./services/autoMigration');
 // 暂时注释掉模块路由，直接在server.js中实现
 // const modulesRouter = require('./routes/modules');
 const testpointsRouter = require('./routes/testpoints');
@@ -20,6 +25,7 @@ const reportsRouter = require('./routes/reports');
 const projectsRouter = require('./routes/projects');
 const librariesRouter = require('./routes/libraries');
 const aiSkillsRouter = require('./routes/aiSkills');
+const aiOperationLogsRouter = require('./routes/aiOperationLogs');
 const forumRouter = require('./routes/forum');
 const http = require('http');
 const socketIO = require('socket.io');
@@ -34,19 +40,51 @@ function parseIntField(value) {
     return isNaN(parsed) ? null : parsed;
 }
 
+// 辅助函数：从SQL中提取表名
+function extractTablesFromSQL(sql) {
+    const tables = [];
+    const sqlUpper = sql.toUpperCase();
+    
+    // 提取FROM后面的表名
+    const fromMatch = sqlUpper.match(/FROM\s+([a-zA-Z_][a-zA-Z0-9_]*)/i);
+    if (fromMatch) {
+        tables.push(fromMatch[1].toLowerCase());
+    }
+    
+    // 提取JOIN后面的表名
+    const joinMatches = sqlUpper.match(/JOIN\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi);
+    if (joinMatches) {
+        joinMatches.forEach(match => {
+            const tableName = match.replace(/JOIN\s+/i, '').toLowerCase();
+            tables.push(tableName);
+        });
+    }
+    
+    return [...new Set(tables)];
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const cors_config = {
-    origin: function (origin, callback) {
-        const allowedOrigins = process.env.CORS_ORIGINS 
+let _allowedOriginsSet = null;
+function getAllowedOriginsSet() {
+    if (!_allowedOriginsSet) {
+        const origins = process.env.CORS_ORIGINS 
             ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
             : ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://10.10.25.154:8000'];
+        _allowedOriginsSet = new Set(origins);
+    }
+    return _allowedOriginsSet;
+}
+
+const cors_config = {
+    origin: function (origin, callback) {
+        const allowedOrigins = getAllowedOriginsSet();
         
-        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+        if (!origin || allowedOrigins.has(origin)) {
             callback(null, true);
         } else {
-            console.warn(`[CORS] 拒绝来自 ${origin} 的请求`);
+            logger.warn(`[CORS] 拒绝来自 ${origin} 的请求`);
             callback(new Error('不允许的来源'));
         }
     },
@@ -59,8 +97,16 @@ app.use(cors(cors_config));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+app.use('/api/', apiLimiter);
+app.use('/api/dashboard', dashboardLimiter);
+
 // 静态文件服务 - 暴露 public 目录
 app.use(express.static(path.join(__dirname, 'public')));
+// favicon 处理
+app.get('/favicon.ico', (req, res) => {
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.sendFile(path.join(__dirname, 'public/favicon.svg'));
+});
 // 额外暴露根目录的 CSS 和 JS 文件
 app.use('/styles.css', express.static(path.join(__dirname, 'styles.css')));
 app.use('/styles-dashboard.css', express.static(path.join(__dirname, 'styles-dashboard.css')));
@@ -69,6 +115,8 @@ app.use('/styles-design-system.css', express.static(path.join(__dirname, 'styles
 app.use('/script.js', express.static(path.join(__dirname, 'script.js')));
 app.use('/context-menu.css', express.static(path.join(__dirname, 'context-menu.css')));
 app.use('/js', express.static(path.join(__dirname, 'js')));
+// 暴露uploads目录，用于访问上传的脚本文件
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // 根路径重定向到 index.html
 app.get('/', (req, res) => {
@@ -90,66 +138,123 @@ app.use('/api/reports', reportsRouter);
 app.use('/api/projects', projectsRouter);
 app.use('/api/libraries', librariesRouter);
 app.use('/api/ai-skills', aiSkillsRouter.router);
+app.use('/api/ai-operation-logs', aiOperationLogsRouter);
 app.use('/api/email', require('./routes/email'));
 app.use('/api/templates', require('./routes/reportTemplates'));
 app.use('/api/forum', forumRouter);
 app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/notification-prefs', require('./routes/notificationPrefs'));
 app.use('/api/testcases', require('./routes/testcases'));
+app.use('/api', require('./routes/scripts'));
+app.use('/api/workspace', require('./routes/workspace'));
+app.use('/api', require('./routes/search'));
+app.use('/api/knowledge', require('./routes/knowledge'));
+app.use('/api/tcl-generation', require('./routes/tclGeneration'));
+app.use('/api/ai-generation', require('./routes/aiGeneration'));
+app.use('/api/ai-tasks', require('./routes/aiTasks'));
+app.use('/api/temp-cases', require('./routes/tempCases'));
+app.use('/api/ai-sub-agents', require('./routes/aiSubAgents'));
+app.use('/api/ai-tools', require('./routes/aiTools'));
+app.use('/api/ai-sub-agents/config-files', require('./routes/aiSubAgentConfigFiles'));
+app.use('/api/ai-memories', require('./routes/aiMemories'));
+app.use('/api/ai-review', require('./routes/aiReview'));
+app.use('/api/ai-qa', require('./routes/aiQA'));
+app.use('/api/ai-import', require('./routes/aiImportOptimize'));
+app.use('/api/chip-versions', require('./routes/chipVersions'));
+app.use('/api/svd', require('./routes/svd'));
+app.use('/api/sdk-ast', require('./routes/sdkAst'));
+app.use('/api/bug-rag', require('./routes/bugRag'));
+app.use('/api/adaptive-generation', require('./routes/adaptiveGeneration'));
+app.use('/api/execution-environments', require('./routes/executionEnvironments'));
+app.use('/api/agent-console', require('./routes/agentConsole'));
+app.use('/api/resource-scheduler', require('./routes/resourceScheduler'));
+app.use('/api/traffic-agent', require('./routes/trafficAgent'));
+app.use('/api/sdk-cli-agent', require('./routes/sdkCliAgent'));
+app.use('/api/bug-learning', require('./routes/bugLearning'));
+app.use('/api/agent-catalog', require('./routes/agentCatalog'));
+app.use('/api/agent-tools', require('./routes/agentTools'));
+app.use('/api/diagram', require('./routes/diagramUpload'));
+app.use('/api/agent-pipeline', require('./routes/agentPipeline'));
 
-// 配置数据 API 端点（不带认证，供前端下拉框使用）
-app.get('/priorities/list', async (req, res) => {
+// CTA: 声明式工作流 + 深度测试 + 硬约束 + SSH 真机交互
+app.use('/api/workflow', require('./routes/workflow'));
+app.use('/api/constraints', require('./routes/constraints'));
+app.use('/api/ssh', require('./routes/ssh'));
+app.use('/api/deep-test', require('./routes/deepTest'));
+
+app.get('/api/audit-logs', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { page, pageSize, action, targetType, userId, startDate, endDate } = req.query;
+        const result = await AuditLogService.getLogs({
+            page: parseInt(page) || 1,
+            pageSize: parseInt(pageSize) || 20,
+            action,
+            targetType,
+            userId: userId ? parseInt(userId) : null,
+            startDate,
+            endDate
+        });
+        res.json({ success: true, data: result });
+    } catch (error) {
+        logger.error('获取审计日志错误:', { error: error.message });
+        res.status(500).json({ success: false, message: '获取审计日志失败' });
+    }
+});
+
+// 配置数据 API 端点（需要认证，供前端下拉框使用）
+app.get('/priorities/list', authenticateToken, async (req, res) => {
   try {
     const [priorities] = await pool.execute('SELECT id, name FROM test_priorities ORDER BY id');
     res.json({ success: true, priorities });
   } catch (error) {
-    console.error('获取优先级列表错误:', error);
+    logger.error('获取优先级列表错误:', { error: error.message });
     res.json({ success: false, priorities: [], message: '获取失败' });
   }
 });
 
-app.get('/test-types/list', async (req, res) => {
+app.get('/test-types/list', authenticateToken, async (req, res) => {
   try {
     const [testTypes] = await pool.execute('SELECT id, name FROM test_types ORDER BY id');
     res.json({ success: true, testTypes });
   } catch (error) {
-    console.error('获取测试类型列表错误:', error);
+    logger.error('获取测试类型列表错误:', { error: error.message });
     res.json({ success: false, testTypes: [], message: '获取失败' });
   }
 });
 
-app.get('/test-phases/list', async (req, res) => {
+app.get('/test-phases/list', authenticateToken, async (req, res) => {
   try {
     const [testPhases] = await pool.execute('SELECT id, name FROM test_phases ORDER BY id');
     res.json({ success: true, testPhases });
   } catch (error) {
-    console.error('获取测试阶段列表错误:', error);
+    logger.error('获取测试阶段列表错误:', { error: error.message });
     res.json({ success: false, testPhases: [], message: '获取失败' });
   }
 });
 
-app.get('/environments/list', async (req, res) => {
+app.get('/environments/list', authenticateToken, async (req, res) => {
   try {
     const [environments] = await pool.execute('SELECT id, name FROM environments ORDER BY id');
     res.json({ success: true, environments });
   } catch (error) {
-    console.error('获取环境列表错误:', error);
+    logger.error('获取环境列表错误:', { error: error.message });
     res.json({ success: false, environments: [], message: '获取失败' });
   }
 });
 
-// 用户列表 API（供前端负责人下拉框使用）
-app.get('/users/list', async (req, res) => {
+// 用户列表 API（供前端负责人下拉框使用，需要认证）
+app.get('/users/list', authenticateToken, async (req, res) => {
   try {
     const [users] = await pool.execute('SELECT id, username FROM users ORDER BY username');
     res.json({ success: true, users });
   } catch (error) {
-    console.error('获取用户列表错误:', error);
+    logger.error('获取用户列表错误:', { error: error.message });
     res.json({ success: false, users: [], message: '获取失败' });
   }
 });
 
-// 一级测试点列表 API（供批量创建用例页面使用）
-app.post('/testpoints/level1/all', async (req, res) => {
+// 一级测试点列表 API（供批量创建用例页面使用，需要认证）
+app.post('/testpoints/level1/all', authenticateToken, async (req, res) => {
   const { libraryId, keyword } = req.body;
 
   try {
@@ -158,15 +263,18 @@ app.post('/testpoints/level1/all', async (req, res) => {
         l1.id, 
         l1.name, 
         l1.test_type, 
+        l1.summary,
         l1.created_at, 
         l1.updated_at,
         l1.order_index,
-        COUNT(tc.id) as test_case_count,
+        COUNT(DISTINCT tc.id) as test_case_count,
+        COUNT(DISTINCT cer.id) as bug_count,
         m.name as module_name, 
         m.id as module_id
       FROM level1_points l1
       JOIN modules m ON l1.module_id = m.id
       LEFT JOIN test_cases tc ON l1.id = tc.level1_id
+      LEFT JOIN case_execution_records cer ON tc.id = cer.case_id AND cer.record_type = 'defect'
       WHERE m.library_id = ?
     `;
     
@@ -177,23 +285,20 @@ app.post('/testpoints/level1/all', async (req, res) => {
       params.push(`%${keyword.trim()}%`);
     }
     
-    query += ' GROUP BY l1.id, l1.name, l1.test_type, l1.created_at, l1.updated_at, l1.order_index, m.name, m.id ORDER BY m.order_index ASC, l1.order_index ASC';
+    query += ' GROUP BY l1.id, l1.name, l1.test_type, l1.summary, l1.created_at, l1.updated_at, l1.order_index, m.name, m.id ORDER BY m.order_index ASC, l1.order_index ASC';
     
     const [points] = await pool.execute(query, params);
     res.json({ success: true, level1Points: points });
   } catch (error) {
-    console.error('获取所有一级测试点错误:', error);
+    logger.error('获取所有一级测试点错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
-// 静态文件服务 - 用于访问上传的图片
-app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
-
 // 直接在server.js中实现模块路由
-app.post('/api/modules/list', async (req, res) => {
+app.post('/api/modules/list', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到模块列表请求:', req.body);
+    logger.debug('接收到模块列表请求:', req.body);
     const { libraryId, page = 1, pageSize = 32 } = req.body;
     const offset = (page - 1) * pageSize;
     
@@ -204,6 +309,7 @@ app.post('/api/modules/list', async (req, res) => {
         m.name, 
         m.library_id, 
         m.order_index,
+        m.created_by,
         (SELECT COUNT(*) FROM level1_points l1 WHERE l1.module_id = m.id) as level1_count,
         (SELECT COUNT(*) FROM test_cases tc WHERE tc.module_id = m.id AND tc.is_deleted = 0) as case_count
       FROM modules m
@@ -221,12 +327,9 @@ app.post('/api/modules/list', async (req, res) => {
       LIMIT ${parseInt(pageSize)} OFFSET ${parseInt(offset)}
     `;
     
-    console.log('执行SQL查询:', query);
-    console.log('查询参数:', params);
     
     const [modules] = await pool.query(query, params);
     
-    console.log('查询结果:', modules);
     
     res.json({ 
       success: true,
@@ -234,39 +337,37 @@ app.post('/api/modules/list', async (req, res) => {
         id: module.id,
         name: module.name,
         orderIndex: module.order_index,
+        createdBy: module.created_by || null,
         level1Count: module.level1_count || 0,
         caseCount: module.case_count || 0
       }))
     });
   } catch (error) {
-    console.error('获取模块列表错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取模块列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
-app.post('/api/modules/create', async (req, res) => {
+app.post('/api/modules/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建模块请求:', req.body);
+    logger.debug('接收到创建模块请求:', req.body);
     const { name, libraryId, parentId } = req.body;
     
     // 验证模块名唯一性
     if (libraryId) {
-      console.log('验证模块名唯一性:', { libraryId, name });
       const [existingModules] = await pool.execute(
         'SELECT COUNT(*) as count FROM modules WHERE library_id = ? AND name = ?',
         [libraryId, name]
       );
-      console.log('唯一性检查结果:', existingModules[0]);
       
       if (existingModules[0].count > 0) {
-        console.log('模块名已存在，拒绝创建');
+        logger.info('模块名已存在，拒绝创建');
         return res.json({ success: false, message: '该用例库下已存在同名模块' });
       }
     }
     
     // 生成唯一的module_id
-    const moduleId = 'MODULE_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const moduleId = 'MODULE_' + crypto.randomUUID();
     
     // 获取当前最大的order_index
     let orderIndex = 0;
@@ -280,79 +381,212 @@ app.post('/api/modules/create', async (req, res) => {
       }
     }
     
-    console.log('插入新模块:', { name, libraryId, moduleId, orderIndex, parentId });
     
     await pool.execute(
-      'INSERT INTO modules (module_id, name, library_id, order_index, parent_id) VALUES (?, ?, ?, ?, ?)',
-      [moduleId, name, libraryId, orderIndex, parentId || null]
+      'INSERT INTO modules (module_id, name, library_id, order_index, parent_id, created_by) VALUES (?, ?, ?, ?, ?, ?)',
+      [moduleId, name, libraryId, orderIndex, parentId || null, req.user.username]
     );
+    
+    AuditLogService.logModuleAction({
+        userId: req.user.id,
+        username: req.user.username,
+        userRole: req.user.role,
+        action: 'create',
+        moduleId: moduleId,
+        moduleName: name,
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent'),
+        afterData: { moduleId, name, libraryId, orderIndex, parentId }
+    });
     
     res.json({ success: true, message: '模块添加成功' });
   } catch (error) {
-    console.error('添加模块错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('添加模块错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
-app.post('/api/modules/update', async (req, res) => {
+app.post('/api/modules/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新模块请求:', req.body);
+    logger.debug('接收到更新模块请求:', req.body);
     const { id, name, libraryId } = req.body;
     
     // 验证模块名唯一性
     if (libraryId) {
-      console.log('验证模块名唯一性:', { libraryId, name, id });
       const [existingModules] = await pool.execute(
         'SELECT COUNT(*) as count FROM modules WHERE library_id = ? AND name = ? AND id != ?',
         [libraryId, name, id]
       );
-      console.log('唯一性检查结果:', existingModules[0]);
       
       if (existingModules[0].count > 0) {
-        console.log('模块名已存在，拒绝更新');
+        logger.info('模块名已存在，拒绝更新');
         return res.json({ success: false, message: '该用例库下已存在同名模块' });
       }
     }
     
-    console.log('更新模块:', { id, name });
     
     await pool.execute(
       'UPDATE modules SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
       [name, id]
     );
     
-    res.json({ success: true, message: '模块更新成功' });
+    res.json({ success: true, message: '模块更新成功', data: { id, name } });
   } catch (error) {
-    console.error('更新模块错误:', error);
-    console.error('错误堆栈:', error.stack);
-    res.json({ success: false, message: '服务器错误', error: error.message });
+    logger.error('更新模块错误:', { error: error.message });
+    res.json({ success: false, message: '服务器错误' });
   }
 });
 
-app.post('/api/modules/delete', async (req, res) => {
+app.post('/api/modules/delete', authenticateToken, async (req, res) => {
+  const connection = await pool.getConnection();
   try {
-    console.log('接收到删除模块请求:', req.body);
-    const { id, libraryId } = req.body;
+    const { id, libraryId, force = false } = req.body;
     
-    console.log('删除模块:', { id, libraryId });
-    
-    await pool.execute(
+    const [modules] = await connection.execute(
+      'SELECT module_id, name FROM modules WHERE id = ? AND library_id = ?',
+      [id, libraryId]
+    );
+
+    if (modules.length === 0) {
+      return res.status(404).json({ success: false, message: '模块不存在' });
+    }
+
+    const [level1Points] = await connection.execute(
+      'SELECT COUNT(*) as count FROM level1_points WHERE module_id = ?',
+      [id]
+    );
+
+    const [testCases] = await connection.execute(
+      'SELECT COUNT(*) as count FROM test_cases WHERE module_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)',
+      [id]
+    );
+
+    if (!force && (level1Points[0].count > 0 || testCases[0].count > 0)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `该模块下还有 ${level1Points[0].count} 个测试点和 ${testCases[0].count} 个测试用例，请先删除或迁移后再删除模块，或使用强制删除`,
+        data: {
+          level1Count: level1Points[0].count,
+          testCaseCount: testCases[0].count
+        }
+      });
+    }
+
+    await connection.beginTransaction();
+
+    if (force) {
+      const [level1Ids] = await connection.execute(
+        'SELECT id FROM level1_points WHERE module_id = ?',
+        [id]
+      );
+
+      if (level1Ids.length > 0) {
+        const ids = level1Ids.map(p => p.id);
+        const batchSize = 1000;
+        for (let i = 0; i < ids.length; i += batchSize) {
+          const batch = ids.slice(i, i + batchSize);
+          const placeholders = batch.map(() => '?').join(',');
+
+          const [caseIds] = await connection.execute(
+            `SELECT id FROM test_cases WHERE level1_id IN (${placeholders})`,
+            batch
+          );
+
+          if (caseIds.length > 0) {
+            const caseIdList = caseIds.map(c => c.id);
+            for (let j = 0; j < caseIdList.length; j += batchSize) {
+              const caseBatch = caseIdList.slice(j, j + batchSize);
+              const casePlaceholders = caseBatch.map(() => '?').join(',');
+              await connection.execute(
+                `DELETE FROM test_case_projects WHERE test_case_id IN (${casePlaceholders})`,
+                caseBatch
+              );
+            }
+
+            for (let j = 0; j < caseIdList.length; j += batchSize) {
+              const caseBatch = caseIdList.slice(j, j + batchSize);
+              const casePlaceholders = caseBatch.map(() => '?').join(',');
+              await connection.execute(
+                `UPDATE test_cases SET is_deleted = 1, deleted_at = NOW() WHERE id IN (${casePlaceholders})`,
+                caseBatch
+              );
+            }
+          }
+
+          for (let j = 0; j < batch.length; j += batchSize) {
+            const l1Batch = batch.slice(j, j + batchSize);
+            const l1Placeholders = l1Batch.map(() => '?').join(',');
+            await connection.execute(
+              `DELETE FROM level1_points WHERE id IN (${l1Placeholders})`,
+              l1Batch
+            );
+          }
+        }
+      } else {
+        const [caseIds] = await connection.execute(
+          'SELECT id FROM test_cases WHERE module_id = ?',
+          [id]
+        );
+        if (caseIds.length > 0) {
+          const caseIdList = caseIds.map(c => c.id);
+          const batchSize = 1000;
+          for (let j = 0; j < caseIdList.length; j += batchSize) {
+            const caseBatch = caseIdList.slice(j, j + batchSize);
+            const casePlaceholders = caseBatch.map(() => '?').join(',');
+            await connection.execute(
+              `DELETE FROM test_case_projects WHERE test_case_id IN (${casePlaceholders})`,
+              caseBatch
+            );
+          }
+          for (let j = 0; j < caseIdList.length; j += batchSize) {
+            const caseBatch = caseIdList.slice(j, j + batchSize);
+            const casePlaceholders = caseBatch.map(() => '?').join(',');
+            await connection.execute(
+              `UPDATE test_cases SET is_deleted = 1, deleted_at = NOW() WHERE id IN (${casePlaceholders})`,
+              caseBatch
+            );
+          }
+        }
+      }
+    }
+
+    await connection.execute(
       'DELETE FROM modules WHERE id = ? AND library_id = ?',
       [id, libraryId]
     );
+
+    await connection.commit();
+
+    AuditLogService.logModuleAction({
+        userId: req.user.id,
+        username: req.user.username,
+        userRole: req.user.role,
+        action: force ? 'force_delete' : 'delete',
+        moduleId: modules[0].module_id,
+        moduleName: modules[0].name,
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent'),
+        beforeData: { id, libraryId, name: modules[0].name, force, deletedLevel1: level1Points[0].count, deletedCases: testCases[0].count }
+    });
     
-    res.json({ success: true, message: '模块删除成功' });
+    res.json({ 
+      success: true, 
+      message: force 
+        ? `模块及关联数据已级联删除（${level1Points[0].count} 个测试点，${testCases[0].count} 个用例已软删除）`
+        : '模块删除成功' 
+    });
   } catch (error) {
-    console.error('删除模块错误:', error);
-    console.error('错误堆栈:', error.stack);
-    res.json({ success: false, message: '服务器错误', error: error.message });
+    await connection.rollback();
+    logger.error('删除模块错误:', { error: error.message });
+    res.status(500).json({ success: false, message: '服务器错误' });
+  } finally {
+    connection.release();
   }
 });
 
-app.post('/api/modules/search', async (req, res) => {
+app.post('/api/modules/search', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到模块搜索请求:', req.body);
+    logger.debug('接收到模块搜索请求:', req.body);
     const { libraryId, searchTerm, page = 1, pageSize = 32 } = req.body;
     const offset = (page - 1) * pageSize;
     
@@ -362,7 +596,8 @@ app.post('/api/modules/search', async (req, res) => {
         m.module_id, 
         m.name, 
         m.library_id, 
-        m.order_index, 
+        m.order_index,
+        m.created_by,
         COUNT(l1.id) as level1_count
       FROM modules m
       LEFT JOIN level1_points l1 ON m.id = l1.module_id
@@ -381,17 +616,14 @@ app.post('/api/modules/search', async (req, res) => {
     }
     
     query += ` 
-      GROUP BY m.id, m.module_id, m.name, m.library_id, m.order_index 
+      GROUP BY m.id, m.module_id, m.name, m.library_id, m.order_index, m.created_by 
       ORDER BY m.order_index ASC, m.created_at DESC 
       LIMIT ${parseInt(pageSize)} OFFSET ${parseInt(offset)}
     `;
     
-    console.log('执行SQL查询:', query);
-    console.log('查询参数:', params);
     
     const [modules] = await pool.query(query, params);
     
-    console.log('查询结果:', modules);
     
     res.json({ 
       success: true,
@@ -399,19 +631,19 @@ app.post('/api/modules/search', async (req, res) => {
         id: module.id,
         name: module.name,
         orderIndex: module.order_index,
+        createdBy: module.created_by || null,
         level1Count: module.level1_count
       }))
     });
   } catch (error) {
-    console.error('搜索模块错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('搜索模块错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
 
-app.post('/api/modules/reorder', async (req, res) => {
+app.post('/api/modules/reorder', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到模块重排序请求:', req.body);
+    logger.debug('接收到模块重排序请求:', req.body);
     const { modules, libraryId } = req.body;
     
     if (!Array.isArray(modules) || !libraryId) {
@@ -440,15 +672,14 @@ app.post('/api/modules/reorder', async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error('调整模块顺序错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('调整模块顺序错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
 
-app.post('/api/modules/batchCreate', async (req, res) => {
+app.post('/api/modules/batchCreate', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到批量创建模块请求:', req.body);
+    logger.debug('接收到批量创建模块请求:', req.body);
     const { modules } = req.body;
     
     if (!Array.isArray(modules)) {
@@ -456,23 +687,22 @@ app.post('/api/modules/batchCreate', async (req, res) => {
     }
     
     for (const module of modules) {
-      const moduleId = 'MODULE_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+      const moduleId = 'MODULE_' + crypto.randomUUID();
       await pool.execute(
-        'INSERT INTO modules (module_id, name, library_id) VALUES (?, ?, ?)',
-        [moduleId, module.name, module.libraryId]
+        'INSERT INTO modules (module_id, name, library_id, created_by) VALUES (?, ?, ?, ?)',
+        [moduleId, module.name, module.libraryId, req.user.username]
       );
     }
     
     res.json({ success: true, message: '批量创建模块成功' });
   } catch (error) {
-    console.error('批量创建模块错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('批量创建模块错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
 
 // 获取指定项目关联的模块列表（通过测试用例关联）
-app.get('/api/modules/by-project/:projectId', async (req, res) => {
+app.get('/api/modules/by-project/:projectId', authenticateToken, async (req, res) => {
   try {
     const { projectId } = req.params;
     
@@ -496,7 +726,7 @@ app.get('/api/modules/by-project/:projectId', async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('获取项目模块列表错误:', error);
+    logger.error('获取项目模块列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
@@ -541,14 +771,14 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
     const sourceModule = sourceModules[0];
     
     // 2. 创建新模块
-    const newModuleId = 'MODULE_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+    const newModuleId = 'MODULE_' + crypto.randomUUID();
     const [moduleResult] = await connection.execute(
-      'INSERT INTO modules (module_id, name, library_id, order_index) VALUES (?, ?, ?, ?)',
-      [newModuleId, newModuleName, targetLibraryId, 0]
+      'INSERT INTO modules (module_id, name, library_id, order_index, created_by) VALUES (?, ?, ?, ?, ?)',
+      [newModuleId, newModuleName, targetLibraryId, 0, req.user.username]
     );
     const newModuleDbId = moduleResult.insertId;
     
-    console.log(`[克隆] 创建新模块: ${newModuleName}, ID: ${newModuleDbId}`);
+    logger.info(`[克隆] 创建新模块: ${newModuleName}, ID: ${newModuleDbId}`);
     
     // ID映射表：old_id -> new_id
     const level1IdMap = new Map();
@@ -572,15 +802,18 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
         clonedLevel1Count++;
       }
       
-      console.log(`[克隆] 克隆了 ${clonedLevel1Count} 个一级测试点`);
+      logger.info(`[克隆] 克隆了 ${clonedLevel1Count} 个一级测试点`);
     }
     
     // 4. 克隆测试用例
     if (includeTestCases) {
       const [testCases] = await connection.execute(
-        'SELECT * FROM test_cases WHERE module_id = ?',
+        'SELECT * FROM test_cases WHERE module_id = ? LIMIT 5000',
         [sourceModuleId]
       );
+      if (testCases.length === 5000) {
+        logger.warn('模块克隆: 测试用例查询达到LIMIT 5000上限，数据可能被截断', { sourceModuleId });
+      }
       
       // 测试用例ID映射表：old_id -> new_id
       const testCaseIdMap = new Map();
@@ -588,7 +821,7 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
       for (let i = 0; i < testCases.length; i++) {
         const tc = testCases[i];
         // 生成新的case_id - 使用时间戳+索引+随机数确保唯一性
-        const newCaseId = `CASE-${Date.now()}-${i}-${Math.floor(Math.random() * 100000)}`;
+        const newCaseId = `CASE-${crypto.randomUUID()}`;
         
         // 确定level1_id的映射
         let newLevel1Id = null;
@@ -640,7 +873,7 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
         clonedCaseCount++;
       }
       
-      console.log(`[克隆] 克隆了 ${clonedCaseCount} 个测试用例`);
+      logger.info(`[克隆] 克隆了 ${clonedCaseCount} 个测试用例`);
       
       // 5. 克隆测试用例的关联环境
       if (testCaseIdMap.size > 0) {
@@ -789,7 +1022,7 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
     
   } catch (error) {
     await connection.rollback();
-    console.error('克隆模块错误:', error);
+    logger.error('克隆模块错误:', { error: error.message });
     res.json({ success: false, message: '克隆失败: ' + error.message });
   } finally {
     connection.release();
@@ -797,7 +1030,7 @@ app.post('/api/modules/clone', authenticateToken, async (req, res) => {
 });
 
 // 获取指定用例库下的模块列表（用于克隆选择）
-app.get('/api/modules/by-library/:libraryId', async (req, res) => {
+app.get('/api/modules/by-library/:libraryId', authenticateToken, async (req, res) => {
   try {
     const { libraryId } = req.params;
     
@@ -815,7 +1048,7 @@ app.get('/api/modules/by-library/:libraryId', async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('获取模块列表错误:', error);
+    logger.error('获取模块列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
@@ -823,7 +1056,7 @@ app.get('/api/modules/by-library/:libraryId', async (req, res) => {
 // 添加一级测试点
 app.post('/api/testpoints/level1/add', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到添加一级测试点请求:', req.body);
+    logger.debug('接收到添加一级测试点请求:', req.body);
     const { name, test_type, module_id } = req.body;
     
     if (!name || !module_id) {
@@ -848,7 +1081,7 @@ app.post('/api/testpoints/level1/add', authenticateToken, async (req, res) => {
       [numericModuleId, name, test_type || '功能测试', nextOrder]
     );
     
-    console.log('一级测试点添加成功，ID:', result.insertId);
+    logger.info('一级测试点添加成功，ID:', result.insertId);
     
     res.json({ 
       success: true, 
@@ -862,14 +1095,13 @@ app.post('/api/testpoints/level1/add', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('添加一级测试点错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('添加一级测试点错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 获取模块下的一级测试点列表
-app.get('/api/testpoints/level1/:moduleId', async (req, res) => {
+app.get('/api/testpoints/level1/:moduleId', authenticateToken, async (req, res) => {
   try {
     const { moduleId } = req.params;
     const numericModuleId = parseInt(moduleId);
@@ -878,8 +1110,36 @@ app.get('/api/testpoints/level1/:moduleId', async (req, res) => {
       return res.json({ success: false, message: '模块ID无效' });
     }
     
+    const page = parseInt(req.query.page) || 1;
+    const pageSize = parseInt(req.query.pageSize) || 100;
+    const offset = (page - 1) * pageSize;
+    
+    // 获取总数
+    const [countResult] = await pool.execute(
+      `SELECT COUNT(*) as total FROM level1_points WHERE module_id = ?`,
+      [numericModuleId]
+    );
+    const total = countResult[0].total;
+    
     const [points] = await pool.execute(
-      'SELECT * FROM level1_points WHERE module_id = ? ORDER BY order_index ASC, created_at ASC',
+      `SELECT 
+        l1.id, 
+        l1.name, 
+        l1.test_type, 
+        l1.summary,
+        l1.module_id,
+        l1.order_index,
+        l1.created_at, 
+        l1.updated_at,
+        COUNT(DISTINCT tc.id) as test_case_count,
+        COUNT(DISTINCT cer.id) as bug_count
+      FROM level1_points l1
+      LEFT JOIN test_cases tc ON l1.id = tc.level1_id
+      LEFT JOIN case_execution_records cer ON tc.id = cer.case_id AND cer.record_type = 'defect'
+      WHERE l1.module_id = ?
+      GROUP BY l1.id, l1.name, l1.test_type, l1.summary, l1.module_id, l1.order_index, l1.created_at, l1.updated_at
+      ORDER BY l1.order_index ASC, l1.created_at ASC
+      LIMIT ${pageSize} OFFSET ${offset}`,
       [numericModuleId]
     );
     
@@ -889,14 +1149,23 @@ app.get('/api/testpoints/level1/:moduleId', async (req, res) => {
         id: p.id,
         name: p.name,
         test_type: p.test_type,
+        summary: p.summary,
         module_id: p.module_id,
         order_index: p.order_index,
+        test_case_count: p.test_case_count,
+        bug_count: p.bug_count,
         created_at: p.created_at,
         updated_at: p.updated_at
-      }))
+      })),
+      pagination: {
+        page: page,
+        pageSize: pageSize,
+        total: total,
+        totalPages: Math.ceil(total / pageSize)
+      }
     });
   } catch (error) {
-    console.error('获取一级测试点列表错误:', error);
+    logger.error('获取一级测试点列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
@@ -909,14 +1178,14 @@ app.get('/health', (req, res) => {
 
 // 测试端点
 app.get('/api/test', (req, res) => {
-  console.log('接收到测试请求');
+  logger.info('接收到测试请求');
   res.json({ success: true, message: '测试成功', timestamp: new Date().toISOString() });
 });
 
 // 测试用例管理路由
-app.post('/api/cases/create', async (req, res) => {
+app.post('/api/cases/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建测试用例请求:', req.body);
+    logger.debug('接收到创建测试用例请求:', req.body);
     const { 
       caseId, 
       name, 
@@ -949,27 +1218,6 @@ app.post('/api/cases/create', async (req, res) => {
       phases = [];
     }
     
-    // 验证数据类型
-    console.log('Data types:', {
-      caseId: typeof caseId,
-      name: typeof name,
-      priority: typeof priority,
-      type: typeof type,
-      precondition: typeof precondition,
-      purpose: typeof purpose,
-      steps: typeof steps,
-      expected: typeof expected,
-      creator: typeof creator,
-      libraryId: typeof libraryId,
-      moduleId: typeof moduleId,
-      level1Id: typeof level1Id,
-      projects: typeof projects,
-      environments: typeof environments,
-      methods: typeof methods,
-      testTypes: typeof testTypes,
-      testStatuses: typeof testStatuses
-    });
-    
     // 确保所有参数都有默认值，避免undefined
     const safeCaseId = caseId || 'CASE_' + Date.now();
     const safePriority = priority || 'medium';
@@ -991,23 +1239,6 @@ app.post('/api/cases/create', async (req, res) => {
     if (isNaN(numericModuleId)) {
       return res.json({ success: false, message: '模块ID无效，请选择正确的模块' });
     }
-    
-    console.log('Safe values:', {
-      caseId: safeCaseId,
-      priority: safePriority,
-      type: safeType,
-      precondition: safePrecondition,
-      purpose: safePurpose,
-      steps: safeSteps,
-      expected: safeExpected,
-      creator: safeCreator
-    });
-    
-    console.log('Converted values:', {
-      moduleId: numericModuleId,
-      level1Id: numericLevel1Id,
-      libraryId: numericLibraryId
-    });
     
     // 开始事务
     const connection = await pool.getConnection();
@@ -1051,7 +1282,7 @@ app.post('/api/cases/create', async (req, res) => {
       );
       
       const testCaseId = result.insertId;
-      console.log('测试用例创建成功，ID:', testCaseId);
+      logger.info('测试用例创建成功，ID:', testCaseId);
       
       // 处理项目关联
       if (projects && projects.length > 0) {
@@ -1081,110 +1312,63 @@ app.post('/api/cases/create', async (req, res) => {
             }
           }
         } else {
-          // 兼容旧版API，只使用项目ID
-          for (const projectId of projects) {
-            await connection.execute(
-              `INSERT INTO test_case_projects (
-                test_case_id, 
-                project_id, 
-                created_at
-              ) VALUES (?, ?, CURRENT_TIMESTAMP)`,
-              [testCaseId, projectId]
-            );
+          // 兼容旧版API，只使用项目ID - batch insert
+          if (projects && projects.length > 0 && !req.body.projectAssociations) {
+            const projPlaceholders = projects.map(() => '(?, ?, CURRENT_TIMESTAMP)').join(',');
+            const projValues = projects.flatMap(projId => [testCaseId, projId]);
+            await connection.execute(`INSERT INTO test_case_projects (test_case_id, project_id, created_at) VALUES ${projPlaceholders}`, projValues);
           }
         }
-        console.log('项目关联添加成功');
+        logger.info('项目关联添加成功');
       }
       
-      // 处理环境关联
+      // Environments batch insert
       if (environments && environments.length > 0) {
-        for (const environmentId of environments) {
-          await connection.execute(
-            `INSERT INTO test_case_environments (
-              test_case_id, 
-              environment_id, 
-              created_at
-            ) VALUES (?, ?, CURRENT_TIMESTAMP)`,
-            [testCaseId, environmentId]
-          );
-        }
-        console.log('环境关联添加成功');
+        const envPlaceholders = environments.map(() => '(?, ?, CURRENT_TIMESTAMP)').join(',');
+        const envValues = environments.flatMap(envId => [testCaseId, envId]);
+        await connection.execute(`INSERT INTO test_case_environments (test_case_id, environment_id, created_at) VALUES ${envPlaceholders}`, envValues);
+        logger.info('环境关联添加成功');
       }
       
-      // 处理测试点来源关联
+      // Sources batch insert
       const sources = req.body.sources;
       if (sources && sources.length > 0) {
-        for (const sourceId of sources) {
-          await connection.execute(
-            `INSERT INTO test_case_sources (
-              test_case_id, 
-              source_id, 
-              created_at
-            ) VALUES (?, ?, CURRENT_TIMESTAMP)`,
-            [testCaseId, sourceId]
-          );
-        }
-        console.log('测试点来源关联添加成功');
+        const sourcePlaceholders = sources.map(() => '(?, ?, CURRENT_TIMESTAMP)').join(',');
+        const sourceValues = sources.flatMap(sourceId => [testCaseId, sourceId]);
+        await connection.execute(`INSERT INTO test_case_sources (test_case_id, source_id, created_at) VALUES ${sourcePlaceholders}`, sourceValues);
+        logger.info('测试点来源关联添加成功');
       }
       
-      // 处理测试方式关联
+      // Methods batch insert
       if (methods && methods.length > 0) {
-        for (const methodId of methods) {
-          await connection.execute(
-            `INSERT INTO test_case_methods (
-              test_case_id, 
-              method_id, 
-              created_at
-            ) VALUES (?, ?, CURRENT_TIMESTAMP)`,
-            [testCaseId, methodId]
-          );
-        }
-        console.log('测试方式关联添加成功');
+        const methodPlaceholders = methods.map(() => '(?, ?, CURRENT_TIMESTAMP)').join(',');
+        const methodValues = methods.flatMap(methodId => [testCaseId, methodId]);
+        await connection.execute(`INSERT INTO test_case_methods (test_case_id, method_id, created_at) VALUES ${methodPlaceholders}`, methodValues);
+        logger.info('测试方式关联添加成功');
       }
       
-      // 处理测试类型关联
+      // Test types batch insert
       if (testTypes && Array.isArray(testTypes) && testTypes.length > 0) {
-        for (const testTypeId of testTypes) {
-          await connection.execute(
-            `INSERT INTO test_case_test_types (
-              test_case_id, 
-              test_type_id, 
-              created_at
-            ) VALUES (?, ?, CURRENT_TIMESTAMP)`,
-            [testCaseId, testTypeId]
-          );
-        }
-        console.log('测试类型关联添加成功');
+        const ttPlaceholders = testTypes.map(() => '(?, ?, CURRENT_TIMESTAMP)').join(',');
+        const ttValues = testTypes.flatMap(ttId => [testCaseId, ttId]);
+        await connection.execute(`INSERT INTO test_case_test_types (test_case_id, test_type_id, created_at) VALUES ${ttPlaceholders}`, ttValues);
+        logger.info('测试类型关联添加成功');
       }
       
-      // 处理测试状态关联
+      // Test statuses batch insert
       if (testStatuses && Array.isArray(testStatuses) && testStatuses.length > 0) {
-        for (const statusId of testStatuses) {
-          await connection.execute(
-            `INSERT INTO test_case_statuses (
-              test_case_id, 
-              status_id, 
-              created_at
-            ) VALUES (?, ?, CURRENT_TIMESTAMP)`,
-            [testCaseId, statusId]
-          );
-        }
-        console.log('测试状态关联添加成功');
+        const tsPlaceholders = testStatuses.map(() => '(?, ?, CURRENT_TIMESTAMP)').join(',');
+        const tsValues = testStatuses.flatMap(tsId => [testCaseId, tsId]);
+        await connection.execute(`INSERT INTO test_case_statuses (test_case_id, status_id, created_at) VALUES ${tsPlaceholders}`, tsValues);
+        logger.info('测试状态关联添加成功');
       }
       
-      // 处理测试阶段关联
+      // Phases batch insert
       if (phases && Array.isArray(phases) && phases.length > 0) {
-        for (const phaseId of phases) {
-          await connection.execute(
-            `INSERT INTO test_case_phases (
-              test_case_id, 
-              phase_id, 
-              created_at
-            ) VALUES (?, ?, CURRENT_TIMESTAMP)`,
-            [testCaseId, phaseId]
-          );
-        }
-        console.log('测试阶段关联添加成功');
+        const phasePlaceholders = phases.map(() => '(?, ?, CURRENT_TIMESTAMP)').join(',');
+        const phaseValues = phases.flatMap(phaseId => [testCaseId, phaseId]);
+        await connection.execute(`INSERT INTO test_case_phases (test_case_id, phase_id, created_at) VALUES ${phasePlaceholders}`, phaseValues);
+        logger.info('测试阶段关联添加成功');
       }
       
       await connection.commit();
@@ -1197,19 +1381,30 @@ app.post('/api/cases/create', async (req, res) => {
     }
     
   } catch (error) {
-    console.error('创建测试用例错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('创建测试用例错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
-app.post('/api/cases/list', async (req, res) => {
+app.post('/api/cases/list', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到测试用例列表请求:', req.body);
+    logger.debug('接收到测试用例列表请求:', req.body);
     const { libraryId, moduleId, level1Id, page = 1, pageSize = 32 } = req.body;
     const offset = (page - 1) * pageSize;
     
-    let query = 'SELECT id, case_id, name, priority, type, method, status, key_config, precondition, purpose, steps, expected, remark, creator, owner, library_id, module_id, level1_id, created_at, updated_at FROM test_cases WHERE 1=1';
+    let query = `SELECT tc.id, tc.case_id, tc.name, tc.priority, tc.type, tc.method, tc.status, tc.key_config, tc.precondition, tc.purpose, tc.steps, tc.expected, tc.remark, tc.creator, tc.owner, tc.library_id, tc.module_id, tc.level1_id, tc.created_at, tc.updated_at,
+      (SELECT COUNT(*) FROM case_execution_records cer WHERE cer.case_id = tc.id AND cer.record_type = 'defect') as bug_count,
+      CASE 
+        WHEN EXISTS (
+          SELECT 1 FROM case_execution_records cer 
+          WHERE cer.case_id = tc.id AND cer.record_type = 'defect'
+        ) OR EXISTS (
+          SELECT 1 FROM test_plan_cases tpc 
+          WHERE tpc.case_id = tc.id AND tpc.bug_id IS NOT NULL AND tpc.bug_id != ''
+        ) THEN 1 
+        ELSE 0 
+      END as has_defect
+      FROM test_cases tc WHERE 1=1`;
     let params = [];
     
     // 转换为正确的数据类型，并确保是有效的数字
@@ -1244,8 +1439,6 @@ app.post('/api/cases/list', async (req, res) => {
     query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
     params.push(numericPageSize, numericOffset);
     
-    console.log('执行SQL查询:', query);
-    console.log('查询参数:', params);
     
     // 确保所有参数都是原始类型的数字
     const safeParams = params.map(param => {
@@ -1258,7 +1451,6 @@ app.post('/api/cases/list', async (req, res) => {
       }
     });
     
-    console.log('安全参数:', safeParams);
     
     // 使用query方法代替execute方法，可能对参数类型的处理更宽松
     const [testCases] = await pool.query(query, safeParams);
@@ -1364,7 +1556,6 @@ app.post('/api/cases/list', async (req, res) => {
       });
     }
     
-    console.log('查询结果:', testCases);
     
     res.json({ 
       success: true,
@@ -1397,6 +1588,8 @@ app.post('/api/cases/list', async (req, res) => {
           libraryId: testCase.library_id,
           moduleId: testCase.module_id,
           level1Id: testCase.level1_id,
+          bug_count: testCase.bug_count || 0,
+          has_defect: testCase.has_defect || 0,
           environments: environmentsMap.get(testCase.id) || [],
           sources: sourcesMap.get(testCase.id) || [],
           methods: methods,
@@ -1408,16 +1601,15 @@ app.post('/api/cases/list', async (req, res) => {
       })
     });
   } catch (error) {
-    console.error('获取测试用例列表错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取测试用例列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 更新测试用例
-app.post('/api/cases/update', async (req, res) => {
+app.post('/api/cases/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新测试用例请求:', req.body);
+    logger.debug('接收到更新测试用例请求:', req.body);
     const { 
       id, 
       caseId, 
@@ -1479,7 +1671,7 @@ app.post('/api/cases/update', async (req, res) => {
         [caseId, name, priority, type, precondition, purpose, steps, expected, creator, numericLibraryId, numericModuleId, numericLevel1Id, req.body.key_config || '', remark, numericId]
       );
       
-      console.log('测试用例更新成功，影响行数:', result.affectedRows);
+      logger.info('测试用例更新成功，影响行数:', result.affectedRows);
       
       // 只有当明确传递了projects或projectAssociations参数时才更新项目关联
       // 这样可以避免在保存测试用例时意外删除已有的关联项目
@@ -1523,7 +1715,7 @@ app.post('/api/cases/update', async (req, res) => {
               );
             }
           }
-          console.log('项目关联更新成功');
+          logger.info('项目关联更新成功');
         }
       }
       
@@ -1542,7 +1734,7 @@ app.post('/api/cases/update', async (req, res) => {
             [numericId, testTypeId]
           );
         }
-        console.log('测试类型关联更新成功');
+        logger.info('测试类型关联更新成功');
       }
       
       // 先删除现有的测试状态关联
@@ -1560,7 +1752,7 @@ app.post('/api/cases/update', async (req, res) => {
             [numericId, statusId]
           );
         }
-        console.log('测试状态关联更新成功');
+        logger.info('测试状态关联更新成功');
       }
       
       // 先删除现有的测试阶段关联
@@ -1578,7 +1770,7 @@ app.post('/api/cases/update', async (req, res) => {
             [numericId, phaseId]
           );
         }
-        console.log('测试阶段关联更新成功');
+        logger.info('测试阶段关联更新成功');
       }
       
       // 先删除现有的测试环境关联
@@ -1596,7 +1788,7 @@ app.post('/api/cases/update', async (req, res) => {
             [numericId, envId]
           );
         }
-        console.log('测试环境关联更新成功');
+        logger.info('测试环境关联更新成功');
       }
       
       // 先删除现有的测试点来源关联
@@ -1615,7 +1807,7 @@ app.post('/api/cases/update', async (req, res) => {
             [numericId, sourceId]
           );
         }
-        console.log('测试点来源关联更新成功');
+        logger.info('测试点来源关联更新成功');
       }
       
       // 先删除现有的测试方式关联
@@ -1633,7 +1825,7 @@ app.post('/api/cases/update', async (req, res) => {
             [numericId, methodId]
           );
         }
-        console.log('测试方式关联更新成功');
+        logger.info('测试方式关联更新成功');
       }
       
       await connection.commit();
@@ -1645,8 +1837,7 @@ app.post('/api/cases/update', async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error('更新测试用例错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('更新测试用例错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -1654,7 +1845,7 @@ app.post('/api/cases/update', async (req, res) => {
 // 单独更新测试用例的项目关联
 app.post('/api/cases/projects/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新测试用例项目关联请求:', req.body);
+    logger.debug('接收到更新测试用例项目关联请求:', req.body);
     const { testCaseId, projectAssociations } = req.body;
     
     if (!testCaseId) {
@@ -1678,7 +1869,7 @@ app.post('/api/cases/projects/update', authenticateToken, async (req, res) => {
       }
       
       numericTestCaseId = testCases[0].id;
-      console.log(`根据case_id "${testCaseId}" 找到数字ID: ${numericTestCaseId}`);
+      logger.info(`根据case_id "${testCaseId}" 找到数字ID: ${numericTestCaseId}`);
     }
     
     const connection = await pool.getConnection();
@@ -1711,7 +1902,7 @@ app.post('/api/cases/projects/update', authenticateToken, async (req, res) => {
             ]
           );
         }
-        console.log('项目关联更新成功，数量:', projectAssociations.length);
+        logger.info('项目关联更新成功，数量:', projectAssociations.length);
       }
       
       await connection.commit();
@@ -1723,9 +1914,140 @@ app.post('/api/cases/projects/update', authenticateToken, async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error('更新项目关联错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('更新项目关联错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
+  }
+});
+
+// 删除单个测试用例
+app.delete('/api/cases/delete', authenticateToken, requireAdmin, async (req, res) => {
+  const connection = await pool.getConnection();
+  
+  try {
+    const { id } = req.query;
+    const currentUser = req.user;
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.get('User-Agent');
+    
+    if (!id) {
+      return res.json({ success: false, message: '缺少测试用例ID' });
+    }
+    
+    const numericId = parseInt(id);
+    
+    await connection.beginTransaction();
+    
+    // 查询测试用例信息
+    const [caseRows] = await connection.execute(
+      'SELECT id, case_id, name, module_id FROM test_cases WHERE id = ?',
+      [numericId]
+    );
+    
+    if (caseRows.length === 0) {
+      await connection.rollback();
+      return res.json({ success: false, message: '测试用例不存在' });
+    }
+    
+    const caseData = caseRows[0];
+    
+    // 删除测试用例（关联数据会通过外键级联删除）
+    await connection.execute('DELETE FROM test_cases WHERE id = ?', [numericId]);
+    
+    // 记录操作日志
+    await logActivity(
+      currentUser.id,
+      currentUser.username,
+      currentUser.role,
+      '删除测试用例',
+      `删除测试用例 [${caseData.name}]`,
+      'test_case',
+      numericId,
+      ipAddress,
+      userAgent
+    );
+    
+    await connection.commit();
+    
+    res.json({ 
+      success: true, 
+      message: '测试用例删除成功',
+      data: { id: numericId, name: caseData.name }
+    });
+    
+  } catch (error) {
+    await connection.rollback();
+    logger.error('删除测试用例错误:', { error: error.message });
+    res.json({ success: false, message: '删除失败: ' + error.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// 批量删除测试用例
+app.post('/api/cases/batch-delete', authenticateToken, requireAdmin, async (req, res) => {
+  const connection = await pool.getConnection();
+  
+  try {
+    const { caseIds } = req.body;
+    const currentUser = req.user;
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.get('User-Agent');
+    
+    if (!caseIds || !Array.isArray(caseIds) || caseIds.length === 0) {
+      return res.json({ success: false, message: '请选择要删除的测试用例' });
+    }
+    
+    if (caseIds.length > 100) {
+      return res.json({ success: false, message: '单次最多删除100个测试用例' });
+    }
+    
+    await connection.beginTransaction();
+    
+    const placeholders = caseIds.map(() => '?').join(',');
+    const [cases] = await connection.execute(
+      `SELECT id, case_id, name FROM test_cases WHERE id IN (${placeholders})`,
+      caseIds
+    );
+    
+    if (cases.length === 0) {
+      await connection.rollback();
+      return res.json({ success: false, message: '未找到要删除的测试用例' });
+    }
+    
+    // 批量删除测试用例（关联数据会通过外键级联删除）
+    await connection.execute(
+      `DELETE FROM test_cases WHERE id IN (${placeholders})`,
+      caseIds
+    );
+    
+    // 记录操作日志
+    await logActivity(
+      currentUser.id,
+      currentUser.username,
+      currentUser.role,
+      '批量删除测试用例',
+      `批量删除 ${cases.length} 个测试用例`,
+      'test_case',
+      null,
+      ipAddress,
+      userAgent
+    );
+    
+    await connection.commit();
+    
+    res.json({ 
+      success: true, 
+      message: `成功删除 ${cases.length} 个测试用例`,
+      count: cases.length,
+      data: { deletedCases: cases }
+    });
+    
+  } catch (error) {
+    await connection.rollback();
+    logger.error('批量删除测试用例错误:', { error: error.message });
+    res.json({ success: false, message: '批量删除失败: ' + error.message });
+  } finally {
+    connection.release();
   }
 });
 
@@ -1764,15 +2086,15 @@ app.get('/api/test/data', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('检查数据失败:', error);
+    logger.error('检查数据失败:', { error: error.message });
     res.json({ success: false, message: '检查数据失败', error: error.message });
   }
 });
 
 // 创建环境
-app.post('/api/environments/create', async (req, res) => {
+app.post('/api/environments/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建环境请求:', req.body);
+    logger.debug('接收到创建环境请求:', req.body);
     const { name, description, creator } = req.body;
     
     // 验证必填字段
@@ -1781,7 +2103,7 @@ app.post('/api/environments/create', async (req, res) => {
     }
     
     // 生成唯一的env_id
-    const envId = 'ENV-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const envId = 'ENV-' + crypto.randomUUID();
     
     // 插入环境记录
     await pool.execute(
@@ -1792,8 +2114,7 @@ app.post('/api/environments/create', async (req, res) => {
     
     res.json({ success: true, message: '环境创建成功', envId });
   } catch (error) {
-    console.error('创建环境错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('创建环境错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -1801,7 +2122,7 @@ app.post('/api/environments/create', async (req, res) => {
 // 获取环境列表
 app.get('/api/environments/list', async (req, res) => {
   try {
-    console.log('接收到获取环境列表请求');
+    logger.info('接收到获取环境列表请求');
     
     // 查询所有环境
     const [environments] = await pool.execute(
@@ -1812,8 +2133,7 @@ app.get('/api/environments/list', async (req, res) => {
     
     res.json({ success: true, environments });
   } catch (error) {
-    console.error('获取环境列表错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取环境列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -1822,7 +2142,7 @@ app.get('/api/environments/list', async (req, res) => {
 app.get('/api/environments/get', async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到获取单个环境请求:', { id });
+    logger.debug('接收到获取单个环境请求:', { id });
     
     // 查询单个环境
     const [environments] = await pool.execute(
@@ -1838,16 +2158,15 @@ app.get('/api/environments/get', async (req, res) => {
     
     res.json({ success: true, environment: environments[0] });
   } catch (error) {
-    console.error('获取单个环境错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取单个环境错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 更新环境
-app.post('/api/environments/update', async (req, res) => {
+app.post('/api/environments/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新环境请求:', req.body);
+    logger.debug('接收到更新环境请求:', req.body);
     const { id, name, description } = req.body;
     
     // 验证必填字段
@@ -1865,17 +2184,16 @@ app.post('/api/environments/update', async (req, res) => {
     
     res.json({ success: true, message: '环境更新成功' });
   } catch (error) {
-    console.error('更新环境错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('更新环境错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 删除环境
-app.delete('/api/environments/delete', async (req, res) => {
+app.delete('/api/environments/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到删除环境请求:', { id });
+    logger.debug('接收到删除环境请求:', { id });
     
     // 验证必填字段
     if (!id) {
@@ -1890,8 +2208,7 @@ app.delete('/api/environments/delete', async (req, res) => {
     
     res.json({ success: true, message: '环境删除成功' });
   } catch (error) {
-    console.error('删除环境错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('删除环境错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -1899,16 +2216,16 @@ app.delete('/api/environments/delete', async (req, res) => {
 // ==================== 测试点来源管理API ====================
 
 // 创建测试点来源
-app.post('/api/test-sources/create', async (req, res) => {
+app.post('/api/test-sources/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建测试点来源请求:', req.body);
+    logger.debug('接收到创建测试点来源请求:', req.body);
     const { name, description, creator } = req.body;
     
     if (!name || !creator) {
       return res.json({ success: false, message: '测试点来源名称和创建者不能为空' });
     }
     
-    const sourceId = 'SRC-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const sourceId = 'SRC-' + crypto.randomUUID();
     
     await pool.execute(
       `INSERT INTO test_sources (source_id, name, description, creator) VALUES (?, ?, ?, ?)`,
@@ -1917,7 +2234,7 @@ app.post('/api/test-sources/create', async (req, res) => {
     
     res.json({ success: true, message: '测试点来源创建成功', sourceId });
   } catch (error) {
-    console.error('创建测试点来源错误:', error);
+    logger.error('创建测试点来源错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -1930,7 +2247,7 @@ app.get('/api/test-sources/list', async (req, res) => {
     );
     res.json({ success: true, sources });
   } catch (error) {
-    console.error('获取测试点来源列表错误:', error);
+    logger.error('获取测试点来源列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -1950,15 +2267,15 @@ app.get('/api/test-sources/get', async (req, res) => {
     
     res.json({ success: true, source: sources[0] });
   } catch (error) {
-    console.error('获取单个测试点来源错误:', error);
+    logger.error('获取单个测试点来源错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 更新测试点来源
-app.post('/api/test-sources/update', async (req, res) => {
+app.post('/api/test-sources/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新测试点来源请求:', req.body);
+    logger.debug('接收到更新测试点来源请求:', req.body);
     const { id, name, description } = req.body;
     
     if (!id || !name) {
@@ -1972,16 +2289,16 @@ app.post('/api/test-sources/update', async (req, res) => {
     
     res.json({ success: true, message: '测试点来源更新成功' });
   } catch (error) {
-    console.error('更新测试点来源错误:', error);
+    logger.error('更新测试点来源错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 删除测试点来源
-app.delete('/api/test-sources/delete', async (req, res) => {
+app.delete('/api/test-sources/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到删除测试点来源请求:', { id });
+    logger.debug('接收到删除测试点来源请求:', { id });
     
     if (!id) {
       return res.json({ success: false, message: '测试点来源ID不能为空' });
@@ -1991,7 +2308,7 @@ app.delete('/api/test-sources/delete', async (req, res) => {
     
     res.json({ success: true, message: '测试点来源删除成功' });
   } catch (error) {
-    console.error('删除测试点来源错误:', error);
+    logger.error('删除测试点来源错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -1999,9 +2316,9 @@ app.delete('/api/test-sources/delete', async (req, res) => {
 // 测试类型管理相关路由
 
 // 创建测试类型
-app.post('/api/test-types/create', async (req, res) => {
+app.post('/api/test-types/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建测试类型请求:', req.body);
+    logger.debug('接收到创建测试类型请求:', req.body);
     const { name, description, creator } = req.body;
     
     // 验证必填字段
@@ -2010,7 +2327,7 @@ app.post('/api/test-types/create', async (req, res) => {
     }
     
     // 生成唯一的type_id
-    const typeId = 'TYPE-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const typeId = 'TYPE-' + crypto.randomUUID();
     
     // 插入测试类型记录
     await pool.execute(
@@ -2021,8 +2338,7 @@ app.post('/api/test-types/create', async (req, res) => {
     
     res.json({ success: true, message: '测试类型创建成功', typeId });
   } catch (error) {
-    console.error('创建测试类型错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('创建测试类型错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2030,7 +2346,7 @@ app.post('/api/test-types/create', async (req, res) => {
 // 获取测试类型列表
 app.get('/api/test-types/list', async (req, res) => {
   try {
-    console.log('接收到获取测试类型列表请求');
+    logger.info('接收到获取测试类型列表请求');
     
     // 查询所有测试类型
     const [testTypes] = await pool.execute(
@@ -2041,8 +2357,7 @@ app.get('/api/test-types/list', async (req, res) => {
     
     res.json({ success: true, testTypes });
   } catch (error) {
-    console.error('获取测试类型列表错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取测试类型列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2051,7 +2366,7 @@ app.get('/api/test-types/list', async (req, res) => {
 app.get('/api/test-types/get', async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到获取单个测试类型请求:', { id });
+    logger.debug('接收到获取单个测试类型请求:', { id });
     
     // 查询单个测试类型
     const [testTypes] = await pool.execute(
@@ -2067,16 +2382,15 @@ app.get('/api/test-types/get', async (req, res) => {
     
     res.json({ success: true, testType: testTypes[0] });
   } catch (error) {
-    console.error('获取单个测试类型错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取单个测试类型错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 更新测试类型
-app.post('/api/test-types/update', async (req, res) => {
+app.post('/api/test-types/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新测试类型请求:', req.body);
+    logger.debug('接收到更新测试类型请求:', req.body);
     const { id, name, description } = req.body;
     
     // 验证必填字段
@@ -2094,17 +2408,16 @@ app.post('/api/test-types/update', async (req, res) => {
     
     res.json({ success: true, message: '测试类型更新成功' });
   } catch (error) {
-    console.error('更新测试类型错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('更新测试类型错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 删除测试类型
-app.delete('/api/test-types/delete', async (req, res) => {
+app.delete('/api/test-types/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到删除测试类型请求:', { id });
+    logger.debug('接收到删除测试类型请求:', { id });
     
     // 验证必填字段
     if (!id) {
@@ -2119,8 +2432,7 @@ app.delete('/api/test-types/delete', async (req, res) => {
     
     res.json({ success: true, message: '测试类型删除成功' });
   } catch (error) {
-    console.error('删除测试类型错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('删除测试类型错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2128,9 +2440,9 @@ app.delete('/api/test-types/delete', async (req, res) => {
 // ==================== 测试软件管理相关路由 ====================
 
 // 创建测试软件
-app.post('/api/test-softwares/create', async (req, res) => {
+app.post('/api/test-softwares/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建测试软件请求:', req.body);
+    logger.debug('接收到创建测试软件请求:', req.body);
     const { name, description, creator } = req.body;
     
     // 验证必填字段
@@ -2139,7 +2451,7 @@ app.post('/api/test-softwares/create', async (req, res) => {
     }
     
     // 生成唯一的software_id
-    const softwareId = 'SOFTWARE-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const softwareId = 'SOFTWARE-' + crypto.randomUUID();
     
     // 插入测试软件记录
     await pool.execute(
@@ -2150,8 +2462,7 @@ app.post('/api/test-softwares/create', async (req, res) => {
     
     res.json({ success: true, message: '测试软件创建成功', softwareId });
   } catch (error) {
-    console.error('创建测试软件错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('创建测试软件错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2165,7 +2476,7 @@ app.get('/api/test-softwares/list', async (req, res) => {
     
     res.json({ success: true, softwares });
   } catch (error) {
-    console.error('获取测试软件列表错误:', error);
+    logger.error('获取测试软件列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2190,13 +2501,13 @@ app.get('/api/test-softwares/get', async (req, res) => {
     
     res.json({ success: true, software: softwares[0] });
   } catch (error) {
-    console.error('获取测试软件错误:', error);
+    logger.error('获取测试软件错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 更新测试软件
-app.post('/api/test-softwares/update', async (req, res) => {
+app.post('/api/test-softwares/update', authenticateToken, async (req, res) => {
   try {
     const { id, name, description } = req.body;
     
@@ -2211,16 +2522,16 @@ app.post('/api/test-softwares/update', async (req, res) => {
     
     res.json({ success: true, message: '测试软件更新成功' });
   } catch (error) {
-    console.error('更新测试软件错误:', error);
+    logger.error('更新测试软件错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 删除测试软件
-app.delete('/api/test-softwares/delete', async (req, res) => {
+app.delete('/api/test-softwares/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到删除测试软件请求:', { id });
+    logger.debug('接收到删除测试软件请求:', { id });
     
     if (!id) {
       return res.json({ success: false, message: '测试软件ID不能为空' });
@@ -2233,7 +2544,7 @@ app.delete('/api/test-softwares/delete', async (req, res) => {
     
     res.json({ success: true, message: '测试软件删除成功' });
   } catch (error) {
-    console.error('删除测试软件错误:', error);
+    logger.error('删除测试软件错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2241,9 +2552,9 @@ app.delete('/api/test-softwares/delete', async (req, res) => {
 // 测试阶段管理相关路由
 
 // 创建测试阶段
-app.post('/api/test-phases/create', async (req, res) => {
+app.post('/api/test-phases/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建测试阶段请求:', req.body);
+    logger.debug('接收到创建测试阶段请求:', req.body);
     const { name, description, creator } = req.body;
     
     // 验证必填字段
@@ -2252,7 +2563,7 @@ app.post('/api/test-phases/create', async (req, res) => {
     }
     
     // 生成唯一的phase_id
-    const phaseId = 'PHASE-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const phaseId = 'PHASE-' + crypto.randomUUID();
     
     // 插入测试阶段记录
     await pool.execute(
@@ -2263,8 +2574,7 @@ app.post('/api/test-phases/create', async (req, res) => {
     
     res.json({ success: true, message: '测试阶段创建成功', phaseId });
   } catch (error) {
-    console.error('创建测试阶段错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('创建测试阶段错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2272,7 +2582,7 @@ app.post('/api/test-phases/create', async (req, res) => {
 // 获取测试阶段列表
 app.get('/api/test-phases/list', async (req, res) => {
   try {
-    console.log('接收到获取测试阶段列表请求');
+    logger.info('接收到获取测试阶段列表请求');
     
     // 查询所有测试阶段
     const [testPhases] = await pool.execute(
@@ -2283,8 +2593,7 @@ app.get('/api/test-phases/list', async (req, res) => {
     
     res.json({ success: true, testPhases });
   } catch (error) {
-    console.error('获取测试阶段列表错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取测试阶段列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2293,7 +2602,7 @@ app.get('/api/test-phases/list', async (req, res) => {
 app.get('/api/test-phases/get', async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到获取单个测试阶段请求:', { id });
+    logger.debug('接收到获取单个测试阶段请求:', { id });
     
     // 查询单个测试阶段
     const [testPhases] = await pool.execute(
@@ -2309,16 +2618,15 @@ app.get('/api/test-phases/get', async (req, res) => {
     
     res.json({ success: true, testPhase: testPhases[0] });
   } catch (error) {
-    console.error('获取单个测试阶段错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取单个测试阶段错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 更新测试阶段
-app.post('/api/test-phases/update', async (req, res) => {
+app.post('/api/test-phases/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新测试阶段请求:', req.body);
+    logger.debug('接收到更新测试阶段请求:', req.body);
     const { id, name, description } = req.body;
     
     // 验证必填字段
@@ -2336,17 +2644,16 @@ app.post('/api/test-phases/update', async (req, res) => {
     
     res.json({ success: true, message: '测试阶段更新成功' });
   } catch (error) {
-    console.error('更新测试阶段错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('更新测试阶段错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 删除测试阶段
-app.delete('/api/test-phases/delete', async (req, res) => {
+app.delete('/api/test-phases/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到删除测试阶段请求:', { id });
+    logger.debug('接收到删除测试阶段请求:', { id });
     
     // 验证必填字段
     if (!id) {
@@ -2361,8 +2668,7 @@ app.delete('/api/test-phases/delete', async (req, res) => {
     
     res.json({ success: true, message: '测试阶段删除成功' });
   } catch (error) {
-    console.error('删除测试阶段错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('删除测试阶段错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2370,9 +2676,9 @@ app.delete('/api/test-phases/delete', async (req, res) => {
 // 测试进度管理相关路由
 
 // 创建测试进度
-app.post('/api/test-progresses/create', async (req, res) => {
+app.post('/api/test-progresses/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建测试进度请求:', req.body);
+    logger.debug('接收到创建测试进度请求:', req.body);
     const { name, description, creator } = req.body;
     
     // 验证必填字段
@@ -2381,7 +2687,7 @@ app.post('/api/test-progresses/create', async (req, res) => {
     }
     
     // 生成唯一的progress_id
-    const progressId = 'PROGRESS-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const progressId = 'PROGRESS-' + crypto.randomUUID();
     
     // 插入测试进度记录
     await pool.execute(
@@ -2392,8 +2698,7 @@ app.post('/api/test-progresses/create', async (req, res) => {
     
     res.json({ success: true, message: '测试进度创建成功', progressId });
   } catch (error) {
-    console.error('创建测试进度错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('创建测试进度错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2401,7 +2706,7 @@ app.post('/api/test-progresses/create', async (req, res) => {
 // 获取测试进度列表
 app.get('/api/test-progresses/list', async (req, res) => {
   try {
-    console.log('接收到获取测试进度列表请求');
+    logger.info('接收到获取测试进度列表请求');
     
     // 查询所有测试进度
     const [testProgresses] = await pool.execute(
@@ -2412,8 +2717,7 @@ app.get('/api/test-progresses/list', async (req, res) => {
     
     res.json({ success: true, testProgresses });
   } catch (error) {
-    console.error('获取测试进度列表错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取测试进度列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2421,7 +2725,7 @@ app.get('/api/test-progresses/list', async (req, res) => {
 // 获取AI配置
 app.get('/api/ai-config/get', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到获取AI配置请求');
+    logger.info('接收到获取AI配置请求');
     
     const [configs] = await pool.execute(
       'SELECT config_key, config_value, description, updated_by, updated_at FROM ai_config'
@@ -2439,7 +2743,7 @@ app.get('/api/ai-config/get', authenticateToken, async (req, res) => {
     
     res.json({ success: true, config: configMap });
   } catch (error) {
-    console.error('获取AI配置错误:', error);
+    logger.error('获取AI配置错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2447,9 +2751,9 @@ app.get('/api/ai-config/get', authenticateToken, async (req, res) => {
 // 保存AI配置
 app.post('/api/ai-config/save', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    console.log('接收到保存AI配置请求:', req.body);
+    logger.debug('接收到保存AI配置请求:', req.body);
     
-    const { enabled, defaultModelId, username } = req.body;
+    const { enabled, defaultModelId, username, generationParams, sceneParams } = req.body;
     
     if (enabled !== undefined) {
       await pool.execute(
@@ -2464,43 +2768,115 @@ app.post('/api/ai-config/save', authenticateToken, requireAdmin, async (req, res
         [defaultModelId, username || 'admin', 'default_model_id']
       );
     }
+
+    if (generationParams && typeof generationParams === 'object') {
+      for (const [key, value] of Object.entries(generationParams)) {
+        if (value !== undefined && value !== null) {
+          await pool.execute(
+            'INSERT INTO ai_config (config_key, config_value, description, updated_by) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_by = VALUES(updated_by)',
+            [key, String(value), '', username || 'admin']
+          );
+        }
+      }
+    }
+
+    if (sceneParams && typeof sceneParams === 'object') {
+      for (const [key, value] of Object.entries(sceneParams)) {
+        if (value !== undefined && value !== null) {
+          const jsonValue = typeof value === 'string' ? value : JSON.stringify(value);
+          await pool.execute(
+            'INSERT INTO ai_config (config_key, config_value, description, updated_by) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_by = VALUES(updated_by)',
+            [key, jsonValue, '', username || 'admin']
+          );
+        }
+      }
+    }
+
+    const { invalidateAIConfigCache } = require('./services/aiService');
+    invalidateAIConfigCache();
     
     res.json({ success: true, message: 'AI配置保存成功' });
   } catch (error) {
-    console.error('保存AI配置错误:', error);
+    logger.error('保存AI配置错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
-// 获取AI模型列表（只有admin用户可以看所有模型，其他用户只能看自己的）
+app.get('/api/ai-generation-params/get', authenticateToken, async (req, res) => {
+  try {
+    const [configs] = await pool.execute(
+      'SELECT config_key, config_value FROM ai_config WHERE config_key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ['temperature', 'max_tokens', 'top_p', 'frequency_penalty', 'presence_penalty',
+       'tool_choice', 'response_format', 'request_timeout', 'max_retries', 'ai_rate_limit', 'request_interval', 'retry_mode', 'seed',
+       'scene_data_analysis', 'scene_case_generation', 'scene_report_analysis', 'scene_memory_distillation']
+    );
+
+    const result = {};
+    const sceneKeys = ['scene_data_analysis', 'scene_case_generation', 'scene_report_analysis', 'scene_memory_distillation'];
+
+    for (const config of configs) {
+      if (sceneKeys.includes(config.config_key)) {
+        try {
+          result[config.config_key] = JSON.parse(config.config_value || '{}');
+        } catch (e) {
+          result[config.config_key] = {};
+        }
+      } else {
+        result[config.config_key] = config.config_value;
+      }
+    }
+
+    const defaults = {
+      temperature: '0.3', max_tokens: '4000', top_p: '1.0',
+      frequency_penalty: '0', presence_penalty: '0',
+      tool_choice: 'auto', response_format: 'text',
+      request_timeout: '120000', max_retries: '3',
+      ai_rate_limit: '10', request_interval: '0', retry_mode: 'finite', seed: '',
+      scene_data_analysis: { temperature: '0.3', max_tokens: '2000', max_context_rounds: '10' },
+      scene_case_generation: { temperature: '0.7', max_tokens: '4000' },
+      scene_report_analysis: { temperature: '0.3', max_tokens: '2000', tool_choice: 'function' },
+      scene_memory_distillation: { temperature: '0.3', max_tokens: '800' }
+    };
+
+    for (const [key, val] of Object.entries(defaults)) {
+      if (result[key] === undefined) {
+        result[key] = val;
+      }
+    }
+
+    res.json({ success: true, params: result });
+  } catch (error) {
+    logger.error('获取AI生成参数错误:', { error: error.message });
+    res.json({ success: false, message: '服务器错误', error: error.message });
+  }
+});
+
+// 获取AI模型列表（只有admin用户可以看所有模型，其他用户只能看自己的模型和admin公开的模型）
 app.get('/api/ai-models/list', authenticateToken, async (req, res) => {
   try {
     const currentUserId = req.user.id;
     const currentUsername = req.user.username;
     
-    console.log('接收到获取AI模型列表请求, 用户:', currentUsername, 'ID:', currentUserId);
+    logger.debug('接收到获取AI模型列表请求, 用户:', currentUsername, 'ID:', currentUserId);
     
     const isAdminUser = currentUsername === 'admin';
-    console.log('是否admin用户:', isAdminUser);
     
     let query, params;
     if (isAdminUser) {
-      console.log('admin用户，查询所有模型');
-      query = `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, created_by, created_at, updated_at 
+      query = `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, is_public, created_by, created_at, updated_at 
                FROM ai_models 
                ORDER BY is_default DESC, created_at ASC`;
       params = [];
     } else {
-      console.log('非admin用户，只查询自己的模型，user_id:', currentUserId);
-      query = `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, created_by, created_at, updated_at 
-               FROM ai_models 
-               WHERE user_id = ?
-               ORDER BY is_default DESC, created_at ASC`;
+      query = `SELECT m.id, m.model_id, m.name, m.provider, m.api_key, m.endpoint, m.model_name, m.is_default, m.is_enabled, m.description, m.user_id, m.is_public, m.created_by, m.created_at, m.updated_at 
+               FROM ai_models m
+               LEFT JOIN users u ON m.user_id = u.id
+               WHERE m.user_id = ? OR (u.username = 'admin' AND m.is_public = 1)
+               ORDER BY m.is_default DESC, m.created_at ASC`;
       params = [currentUserId];
     }
     
     const [models] = await pool.execute(query, params);
-    console.log('查询到的模型数量:', models.length, '模型IDs:', models.map(m => m.model_id));
     
     res.json({ 
       success: true, 
@@ -2515,7 +2891,7 @@ app.get('/api/ai-models/list', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取AI模型列表错误:', error);
+    logger.error('获取AI模型列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2524,12 +2900,12 @@ app.get('/api/ai-models/list', authenticateToken, async (req, res) => {
 app.get('/api/ai-models/get', authenticateToken, async (req, res) => {
   try {
     const { modelId } = req.query;
-    console.log('接收到获取单个AI模型请求:', { modelId });
+    logger.debug('接收到获取单个AI模型请求:', { modelId });
     const currentUserId = req.user.id;
     const currentUsername = req.user.username;
     
     const [models] = await pool.execute(
-      `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, created_by, created_at, updated_at 
+      `SELECT id, model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, is_public, created_by, created_at, updated_at 
        FROM ai_models 
        WHERE model_id = ?`,
       [modelId]
@@ -2556,7 +2932,7 @@ app.get('/api/ai-models/get', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取AI模型错误:', error);
+    logger.error('获取AI模型错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2564,10 +2940,12 @@ app.get('/api/ai-models/get', authenticateToken, async (req, res) => {
 // 添加AI模型（支持 RBAC）
 app.post('/api/ai-models/add', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到添加AI模型请求:', req.body);
+    logger.debug('接收到添加AI模型请求:', req.body);
     
-    const { modelId, name, provider, apiKey, endpoint, modelName, isDefault, isEnabled, description } = req.body;
+    const { modelId, name, provider, apiKey, endpoint, modelName, isDefault, isEnabled, description, isPublic, requestIntervalMs, maxRetries, retryMode } = req.body;
     const currentUserId = req.user.id;
+    const currentUsername = req.user.username;
+    const isAdminUser = currentUsername === 'admin' || req.user.role === '管理员' || req.user.role === 'admin' || req.user.role === 'Administrator';
     
     const [existingModels] = await pool.execute(
       'SELECT model_id FROM ai_models WHERE model_id = ?',
@@ -2579,31 +2957,103 @@ app.post('/api/ai-models/add', authenticateToken, async (req, res) => {
     }
     
     if (isDefault) {
-      // 支持中英文角色值判断管理员权限
-      if (req.user.role === '管理员' || req.user.role === 'admin' || req.user.role === 'Administrator') {
+      if (isAdminUser) {
         await pool.execute('UPDATE ai_models SET is_default = FALSE');
       }
     }
     
+    const modelIsPublic = isAdminUser && (isPublic === true || isPublic === 'true') ? 1 : 0;
+    const effectiveRequestIntervalMs = parseInt(requestIntervalMs) || 0;
+    const effectiveMaxRetries = parseInt(maxRetries);
+    const effectiveRetryMode = retryMode === 'infinite' ? 'infinite' : 'finite';
+    
     await pool.execute(
-      `INSERT INTO ai_models (model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [modelId, name, provider, apiKey, endpoint, modelName, isDefault ? true : false, isEnabled !== false, description || '', currentUserId, req.user.username]
+      `INSERT INTO ai_models (model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, user_id, is_public, created_by, request_interval_ms, max_retries, retry_mode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [modelId, name, provider, apiKey, endpoint, modelName, isDefault ? true : false, isEnabled !== false, description || '', currentUserId, modelIsPublic, req.user.username, effectiveRequestIntervalMs, isNaN(effectiveMaxRetries) ? 3 : effectiveMaxRetries, effectiveRetryMode]
     );
     
     res.json({ success: true, message: 'AI模型添加成功' });
   } catch (error) {
-    console.error('添加AI模型错误:', error);
-    res.json({ success: false, message: '服务器错误', error: error.message });
+    logger.error('添加AI模型错误:', { error: error.message });
+    res.json({ success: false, message: '添加AI模型失败' });
+  }
+});
+
+// 测试AI模型连接
+app.post('/api/ai-models/test', authenticateToken, async (req, res) => {
+  try {
+    const { modelId } = req.body;
+    const currentUserId = req.user.id;
+    const currentUsername = req.user.username;
+
+    const [models] = await pool.execute(
+      `SELECT model_id, name, provider, api_key, endpoint, model_name, user_id, is_public FROM ai_models WHERE model_id = ?`,
+      [modelId]
+    );
+
+    if (models.length === 0) {
+      return res.json({ success: false, message: 'AI模型不存在' });
+    }
+
+    const model = models[0];
+
+    const isAdminUser = currentUsername === 'admin';
+    if (!isAdminUser && model.user_id !== currentUserId && !model.is_public) {
+      return res.status(403).json({ success: false, message: '您没有权限测试此AI模型' });
+    }
+
+    if (!model.api_key) {
+      return res.json({ success: false, message: '该模型未配置API密钥' });
+    }
+
+    const headers = buildAIHeaders(model.provider, model.api_key);
+
+    const testBody = {
+      model: model.model_name,
+      messages: [{ role: 'user', content: 'Hello' }],
+      max_tokens: 10
+    };
+
+    const testResponse = await fetch(model.endpoint, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify(testBody),
+      signal: AbortSignal.timeout(15000)
+    });
+
+    if (testResponse.ok) {
+      res.json({ success: true, message: `模型 "${model.name}" 连接成功！AI服务可用` });
+    } else {
+      let errorMessage = '未知错误';
+      try {
+        const contentType = testResponse.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const errorData = await testResponse.json();
+          errorMessage = errorData.error?.message || errorData.message || JSON.stringify(errorData);
+        } else {
+          errorMessage = await testResponse.text();
+        }
+      } catch (parseError) {
+        errorMessage = `HTTP ${testResponse.status}: ${testResponse.statusText}`;
+      }
+      res.json({ success: false, message: `模型 "${model.name}" 连接失败: ${errorMessage}` });
+    }
+  } catch (error) {
+    logger.error('测试AI模型连接错误:', { error: error.message });
+    if (error.name === 'TimeoutError') {
+      return res.json({ success: false, message: '连接超时，请检查端点地址是否正确' });
+    }
+    res.json({ success: false, message: '连接测试失败: ' + error.message });
   }
 });
 
 // 更新AI模型（支持 RBAC）
 app.post('/api/ai-models/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新AI模型请求:', req.body);
+    logger.debug('接收到更新AI模型请求:', req.body);
     
-    const { modelId, name, provider, apiKey, endpoint, modelName, isDefault, isEnabled, description } = req.body;
+    const { modelId, name, provider, apiKey, endpoint, modelName, isDefault, isEnabled, description, isPublic, requestIntervalMs, maxRetries, retryMode } = req.body;
     const currentUserId = req.user.id;
     const currentUsername = req.user.username;
     
@@ -2616,7 +3066,7 @@ app.post('/api/ai-models/update', authenticateToken, async (req, res) => {
       return res.json({ success: false, message: 'AI模型不存在' });
     }
     
-    const isAdminUser = currentUsername === 'admin';
+    const isAdminUser = currentUsername === 'admin' || req.user.role === '管理员' || req.user.role === 'admin' || req.user.role === 'Administrator';
     
     if (!isAdminUser && models[0].user_id !== currentUserId) {
       return res.status(403).json({ success: false, message: '您没有权限修改此AI模型' });
@@ -2626,24 +3076,29 @@ app.post('/api/ai-models/update', authenticateToken, async (req, res) => {
       await pool.execute('UPDATE ai_models SET is_default = FALSE');
     }
     
+    const modelIsPublic = isAdminUser && (isPublic === true || isPublic === 'true') ? 1 : 0;
+    const effectiveRequestIntervalMs = parseInt(requestIntervalMs) || 0;
+    const effectiveMaxRetries = parseInt(maxRetries);
+    const effectiveRetryMode = retryMode === 'infinite' ? 'infinite' : 'finite';
+    
     await pool.execute(
       `UPDATE ai_models 
-       SET name = ?, provider = ?, api_key = ?, endpoint = ?, model_name = ?, is_default = ?, is_enabled = ?, description = ?
+       SET name = ?, provider = ?, api_key = ?, endpoint = ?, model_name = ?, is_default = ?, is_enabled = ?, description = ?, is_public = ?, request_interval_ms = ?, max_retries = ?, retry_mode = ?
        WHERE model_id = ?`,
-      [name, provider, apiKey, endpoint, modelName, isDefault ? true : false, isEnabled !== false, description || '', modelId]
+      [name, provider, apiKey, endpoint, modelName, isDefault ? true : false, isEnabled !== false, description || '', modelIsPublic, effectiveRequestIntervalMs, isNaN(effectiveMaxRetries) ? 3 : effectiveMaxRetries, effectiveRetryMode, modelId]
     );
     
     res.json({ success: true, message: 'AI模型更新成功' });
   } catch (error) {
-    console.error('更新AI模型错误:', error);
-    res.json({ success: false, message: '服务器错误', error: error.message });
+    logger.error('更新AI模型错误:', { error: error.message });
+    res.json({ success: false, message: '更新AI模型失败' });
   }
 });
 
 // 删除AI模型（支持 RBAC）
 app.post('/api/ai-models/delete', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到删除AI模型请求:', req.body);
+    logger.debug('接收到删除AI模型请求:', req.body);
     
     const { modelId } = req.body;
     const currentUserId = req.user.id;
@@ -2668,7 +3123,7 @@ app.post('/api/ai-models/delete', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: 'AI模型删除成功' });
   } catch (error) {
-    console.error('删除AI模型错误:', error);
+    logger.error('删除AI模型错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -2677,7 +3132,7 @@ app.post('/api/ai-models/delete', authenticateToken, async (req, res) => {
 app.post('/api/ai-models/set-default', authenticateToken, requireAdmin, async (req, res) => {
   const conn = await pool.getConnection();
   try {
-    console.log('接收到设置默认AI模型请求:', req.body);
+    logger.debug('接收到设置默认AI模型请求:', req.body);
     
     const { modelId } = req.body;
     
@@ -2697,7 +3152,7 @@ app.post('/api/ai-models/set-default', authenticateToken, requireAdmin, async (r
     res.json({ success: true, message: '默认AI模型设置成功' });
   } catch (error) {
     await conn.rollback();
-    console.error('设置默认AI模型错误:', error);
+    logger.error('设置默认AI模型错误:', { error: error.message });
     res.status(500).json({ success: false, message: '服务器错误', error: error.message });
   } finally {
     conn.release();
@@ -2709,6 +3164,7 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
   try {
     const { query, modelId, conversationHistory } = req.body;
     const currentUserId = req.user.id;
+    const currentUsername = req.user.username;
     
     if (!query || query.trim() === '') {
       return res.json({ success: false, message: '请输入您的问题' });
@@ -2724,7 +3180,7 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
       return res.json({ success: false, message: 'AI模型未配置API密钥，请先在配置中心配置' });
     }
     
-    console.log('AI数据分析使用模型:', aiModel.name, '(' + aiModel.model_id + ')');
+    logger.info('AI数据分析使用模型:', aiModel.name, '(' + aiModel.model_id + ')');
     
     // AI 数据分析 System Prompt
     const systemPrompt = `# Role (角色定位)
@@ -2796,10 +3252,10 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
     const { getEnabledSkillsAsTools } = require('./routes/aiSkills');
     let dynamicTools = [];
     try {
-      dynamicTools = await getEnabledSkillsAsTools();
-      console.log(`加载了 ${dynamicTools.length} 个动态AI技能`);
+      dynamicTools = await getEnabledSkillsAsTools(currentUserId);
+      logger.info(`加载了 ${dynamicTools.length} 个动态AI技能`);
     } catch (error) {
-      console.error('加载动态技能失败:', error);
+      logger.error('加载动态技能失败:', { error: error.message });
     }
     
     // 合并基础工具和动态技能
@@ -2821,36 +3277,46 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
     messages.push({ role: 'user', content: query });
     
     // 第一次调用 AI
+    const { getUserAIGenerationParams, getSceneParams } = require('./services/aiService');
+    const _genParams = await getUserAIGenerationParams(currentUserId);
+    const _sceneParams = getSceneParams(_genParams, 'scene_data_analysis');
+
     const response = await fetch(aiModel.endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${aiModel.api_key}`
-      },
+      headers: buildAIHeaders(aiModel.provider, aiModel.api_key),
       body: JSON.stringify({
         model: aiModel.model_name,
         messages: messages,
         tools: tools,
-        tool_choice: 'auto',
-        temperature: 0.3,
-        max_tokens: 2000
+        tool_choice: _genParams.tool_choice || 'auto',
+        temperature: _sceneParams.temperature,
+        max_tokens: _sceneParams.max_tokens
       })
     });
     
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('AI模型调用失败:', errorText);
+      logger.error('AI模型调用失败:', { error: errorText });
       return res.json({ success: false, message: 'AI模型调用失败: ' + response.status });
     }
     
     const aiResult = await response.json();
     const assistantMessage = aiResult.choices?.[0]?.message;
     
+    // 打印完整的AI响应结构（用于调试）
+    
+    // 提取token使用量
+    const tokenUsage = {
+      promptTokens: aiResult.usage?.prompt_tokens || 0,
+      completionTokens: aiResult.usage?.completion_tokens || 0,
+      totalTokens: aiResult.usage?.total_tokens || 0
+    };
+    
+    
     // 检查是否需要调用工具
     const toolCalls = assistantMessage?.tool_calls;
     
     if (toolCalls && toolCalls.length > 0) {
-      console.log('AI 请求调用工具:', toolCalls.map(tc => tc.function.name).join(', '));
       
       // 处理所有工具调用
       const toolResults = [];
@@ -2863,7 +3329,6 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
         if (toolName === 'query_database') {
           const sql = args.sql_query;
           
-          console.log('AI 生成的 SQL:', sql);
           
           // 安全校验：只允许 SELECT
           const normalizedSql = sql.trim().toUpperCase();
@@ -2889,15 +3354,59 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
           
           try {
             // 执行数据库查询
+            const startTime = Date.now();
             const [rows] = await pool.execute(sql);
-            console.log('查询结果行数:', rows.length);
+            const executionTimeMs = Date.now() - startTime;
+            
+            
+            // 记录AI操作日志
+            const aiAuditLogger = require('./services/aiAuditLogger');
+            await aiAuditLogger.logSuccess({
+              userId: currentUserId,
+              username: currentUsername,
+              skillName: 'AI问答',
+              skillId: null,
+              operationType: 'SELECT',
+              sqlQuery: sql,
+              sqlParams: null,
+              tablesAccessed: extractTablesFromSQL(sql),
+              resultCount: rows.length,
+              executionTimeMs: executionTimeMs,
+              promptTokens: tokenUsage.promptTokens,
+              completionTokens: tokenUsage.completionTokens,
+              totalTokens: tokenUsage.totalTokens,
+              modelName: aiModel.model_name,
+              status: 'success'
+            });
             
             toolResults.push({
               tool_call_id: toolCall.id,
               content: JSON.stringify(rows)
             });
           } catch (dbError) {
-            console.error('数据库查询错误:', dbError.message);
+            logger.error('数据库查询错误:', { error: dbError.message });
+            
+            // 记录失败的AI操作日志
+            const aiAuditLogger = require('./services/aiAuditLogger');
+            await aiAuditLogger.logFailure({
+              userId: currentUserId,
+              username: currentUsername,
+              skillName: 'AI问答',
+              skillId: null,
+              operationType: 'SELECT',
+              sqlQuery: sql,
+              sqlParams: null,
+              tablesAccessed: [],
+              resultCount: 0,
+              executionTimeMs: 0,
+              promptTokens: tokenUsage.promptTokens,
+              completionTokens: tokenUsage.completionTokens,
+              totalTokens: tokenUsage.totalTokens,
+              modelName: aiModel.model_name,
+              errorMessage: dbError.message,
+              status: 'failed'
+            });
+            
             toolResults.push({
               tool_call_id: toolCall.id,
               content: JSON.stringify({ error: '数据库查询错误: ' + dbError.message })
@@ -2905,15 +3414,18 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
           }
         } else {
           // 处理动态技能
-          console.log(`执行动态技能: ${toolName}`);
           
           try {
             const { executeSkillCode } = require('./routes/aiSkills');
-            const result = await executeSkillCode(toolName, args);
+            const result = await executeSkillCode(toolName, args, {
+              userId: currentUserId,
+              username: currentUsername,
+              userRole: currentUserRole
+            });
             
             // 检查是否为报告生成类型的技能
             if (result && result.type === 'report_generation') {
-              console.log('检测到报告生成技能，准备生成最终报告');
+              logger.info('检测到报告生成技能，准备生成最终报告');
               
               // 构建报告生成的特殊提示词
               const reportPrompt = `你是一个专业的测试报告撰写专家。请根据以下数据和模板，生成一份完整的测试报告。
@@ -2951,15 +3463,12 @@ ${result.instructions}
               
               const reportResponse = await fetch(aiModel.endpoint, {
                 method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${aiModel.api_key}`
-                },
+                headers: buildAIHeaders(aiModel.provider, aiModel.api_key),
                 body: JSON.stringify({
                   model: aiModel.model_name,
                   messages: reportMessages,
-                  temperature: 0.3,
-                  max_tokens: 4000
+                  temperature: _sceneParams.temperature,
+                  max_tokens: _sceneParams.max_tokens
                 })
               });
               
@@ -2991,9 +3500,8 @@ ${result.instructions}
               });
             }
             
-            console.log(`技能 ${toolName} 执行完成`);
           } catch (skillError) {
-            console.error(`执行技能 ${toolName} 错误:`, skillError);
+            logger.error(`执行技能 ${toolName} 错误:`, { error: skillError.message });
             toolResults.push({
               tool_call_id: toolCall.id,
               content: JSON.stringify({ error: '技能执行错误: ' + skillError.message })
@@ -3027,7 +3535,7 @@ ${result.instructions}
       
       // 如果有报告结果，直接返回报告内容
       if (hasReportResult && reportContent) {
-        console.log('返回生成的测试报告');
+        logger.info('返回生成的测试报告');
         return res.json({
           success: true,
           answer: reportContent.content,
@@ -3053,27 +3561,23 @@ ${result.instructions}
       
       while (iteration < maxIterations) {
         iteration++;
-        console.log(`\n=== 第 ${iteration} 轮对话 ===`);
         
         const loopResponse = await fetch(aiModel.endpoint, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${aiModel.api_key}`
-          },
+          headers: buildAIHeaders(aiModel.provider, aiModel.api_key),
           body: JSON.stringify({
             model: aiModel.model_name,
             messages: currentMessages,
             tools: tools,
-            tool_choice: 'auto',
-            temperature: 0.3,
-            max_tokens: 4000
+            tool_choice: _genParams.tool_choice || 'auto',
+            temperature: _sceneParams.temperature,
+            max_tokens: _sceneParams.max_tokens
           })
         });
         
         if (!loopResponse.ok) {
           const errorText = await loopResponse.text();
-          console.error('AI 调用失败:', errorText);
+          logger.error('AI 调用失败:', { error: errorText });
           return res.json({ success: false, message: 'AI处理结果失败: ' + loopResponse.status });
         }
         
@@ -3081,7 +3585,7 @@ ${result.instructions}
         const loopAssistantMessage = loopResult.choices?.[0]?.message;
         
         if (!loopAssistantMessage) {
-          console.error('AI 返回格式错误');
+          logger.error('AI 返回格式错误');
           return res.json({ success: false, message: 'AI返回格式错误' });
         }
         
@@ -3090,12 +3594,11 @@ ${result.instructions}
         
         if (!loopToolCalls || loopToolCalls.length === 0) {
           // 没有工具调用，返回最终结果
-          console.log('AI 返回最终文本回答');
+          logger.info('AI 返回最终文本回答');
           finalAnswer = loopAssistantMessage.content || '';
           break;
         }
         
-        console.log(`AI 请求调用 ${loopToolCalls.length} 个工具:`, loopToolCalls.map(tc => tc.function.name).join(', '));
         
         // 将助手消息添加到对话历史
         currentMessages.push(loopAssistantMessage);
@@ -3110,7 +3613,6 @@ ${result.instructions}
           
           if (toolName === 'query_database') {
             const sql = args.sql_query;
-            console.log('执行 SQL:', sql);
             
             // 安全校验
             const normalizedSql = sql.trim().toUpperCase();
@@ -3125,24 +3627,25 @@ ${result.instructions}
               } else {
                 try {
                   const [rows] = await pool.execute(sql);
-                  console.log('查询结果行数:', rows.length);
                   toolResult = rows;
                 } catch (dbError) {
-                  console.error('数据库查询错误:', dbError.message);
+                  logger.error('数据库查询错误:', { error: dbError.message });
                   toolResult = { error: '数据库查询错误: ' + dbError.message };
                 }
               }
             }
           } else {
             // 处理动态技能
-            console.log(`执行动态技能: ${toolName}`);
             
             try {
               const { executeSkillCode } = require('./routes/aiSkills');
-              toolResult = await executeSkillCode(toolName, args);
-              console.log(`技能 ${toolName} 执行完成`);
+              toolResult = await executeSkillCode(toolName, args, {
+                userId: currentUserId,
+                username: currentUsername,
+                userRole: currentUserRole
+              });
             } catch (skillError) {
-              console.error(`执行技能 ${toolName} 错误:`, skillError);
+              logger.error(`执行技能 ${toolName} 错误:`, { error: skillError.message });
               toolResult = { error: '技能执行错误: ' + skillError.message };
             }
           }
@@ -3178,7 +3681,7 @@ ${result.instructions}
     }
     
   } catch (error) {
-    console.error('AI 数据分析错误:', error);
+    logger.error('AI 数据分析错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误: ' + error.message });
   }
 });
@@ -3187,7 +3690,7 @@ ${result.instructions}
 app.get('/api/test-progresses/get', async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到获取单个测试进度请求:', { id });
+    logger.debug('接收到获取单个测试进度请求:', { id });
     
     // 查询单个测试进度
     const [testProgresses] = await pool.execute(
@@ -3203,16 +3706,15 @@ app.get('/api/test-progresses/get', async (req, res) => {
     
     res.json({ success: true, testProgress: testProgresses[0] });
   } catch (error) {
-    console.error('获取单个测试进度错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取单个测试进度错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 更新测试进度
-app.post('/api/test-progresses/update', async (req, res) => {
+app.post('/api/test-progresses/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新测试进度请求:', req.body);
+    logger.debug('接收到更新测试进度请求:', req.body);
     const { id, name, description } = req.body;
     
     // 验证必填字段
@@ -3230,17 +3732,16 @@ app.post('/api/test-progresses/update', async (req, res) => {
     
     res.json({ success: true, message: '测试进度更新成功' });
   } catch (error) {
-    console.error('更新测试进度错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('更新测试进度错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 删除测试进度
-app.delete('/api/test-progresses/delete', async (req, res) => {
+app.delete('/api/test-progresses/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到删除测试进度请求:', { id });
+    logger.debug('接收到删除测试进度请求:', { id });
     
     // 验证必填字段
     if (!id) {
@@ -3255,8 +3756,7 @@ app.delete('/api/test-progresses/delete', async (req, res) => {
     
     res.json({ success: true, message: '测试进度删除成功' });
   } catch (error) {
-    console.error('删除测试进度错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('删除测试进度错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3264,9 +3764,9 @@ app.delete('/api/test-progresses/delete', async (req, res) => {
 // 测试状态管理相关路由
 
 // 创建测试状态
-app.post('/api/test-statuses/create', async (req, res) => {
+app.post('/api/test-statuses/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建测试状态请求:', req.body);
+    logger.debug('接收到创建测试状态请求:', req.body);
     const { name, description, creator } = req.body;
     
     // 验证必填字段
@@ -3275,7 +3775,7 @@ app.post('/api/test-statuses/create', async (req, res) => {
     }
     
     // 生成唯一的status_id
-    const statusId = 'STATUS-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const statusId = 'STATUS-' + crypto.randomUUID();
     
     // 插入测试状态记录
     await pool.execute(
@@ -3286,8 +3786,7 @@ app.post('/api/test-statuses/create', async (req, res) => {
     
     res.json({ success: true, message: '测试状态创建成功', statusId });
   } catch (error) {
-    console.error('创建测试状态错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('创建测试状态错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3295,7 +3794,7 @@ app.post('/api/test-statuses/create', async (req, res) => {
 // 获取测试状态列表
 app.get('/api/test-statuses/list', async (req, res) => {
   try {
-    console.log('接收到获取测试状态列表请求');
+    logger.info('接收到获取测试状态列表请求');
     
     // 查询所有测试状态（按sort_order排序）
     const [testStatuses] = await pool.execute(
@@ -3307,8 +3806,7 @@ app.get('/api/test-statuses/list', async (req, res) => {
     
     res.json({ success: true, testStatuses });
   } catch (error) {
-    console.error('获取测试状态列表错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取测试状态列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3326,7 +3824,7 @@ app.get('/api/hyperlink-configs/list', async (req, res) => {
     );
     res.json({ success: true, configs });
   } catch (error) {
-    console.error('获取超链接配置列表错误:', error);
+    logger.error('获取超链接配置列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3347,7 +3845,7 @@ app.post('/api/hyperlink-configs/add', authenticateToken, requireAdmin, async (r
     
     res.json({ success: true, id: result.insertId, message: '添加成功' });
   } catch (error) {
-    console.error('添加超链接配置错误:', error);
+    logger.error('添加超链接配置错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3368,7 +3866,7 @@ app.post('/api/hyperlink-configs/update', authenticateToken, requireAdmin, async
     
     res.json({ success: true, message: '更新成功' });
   } catch (error) {
-    console.error('更新超链接配置错误:', error);
+    logger.error('更新超链接配置错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3385,7 +3883,7 @@ app.delete('/api/hyperlink-configs/:id', authenticateToken, requireAdmin, async 
     
     res.json({ success: true, message: '删除成功' });
   } catch (error) {
-    console.error('删除超链接配置错误:', error);
+    logger.error('删除超链接配置错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3394,7 +3892,7 @@ app.delete('/api/hyperlink-configs/:id', authenticateToken, requireAdmin, async 
 app.get('/api/test-statuses/get', async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到获取单个测试状态请求:', { id });
+    logger.debug('接收到获取单个测试状态请求:', { id });
     
     // 查询单个测试状态
     const [testStatuses] = await pool.execute(
@@ -3410,16 +3908,15 @@ app.get('/api/test-statuses/get', async (req, res) => {
     
     res.json({ success: true, testStatus: testStatuses[0] });
   } catch (error) {
-    console.error('获取单个测试状态错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取单个测试状态错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 更新测试状态
-app.post('/api/test-statuses/update', async (req, res) => {
+app.post('/api/test-statuses/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新测试状态请求:', req.body);
+    logger.debug('接收到更新测试状态请求:', req.body);
     const { id, name, description } = req.body;
     
     // 验证必填字段
@@ -3437,50 +3934,102 @@ app.post('/api/test-statuses/update', async (req, res) => {
     
     res.json({ success: true, message: '测试状态更新成功' });
   } catch (error) {
-    console.error('更新测试状态错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('更新测试状态错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 删除测试状态
-app.delete('/api/test-statuses/delete', async (req, res) => {
+app.delete('/api/test-statuses/delete', authenticateToken, async (req, res) => {
+  const { id } = req.query;
+  logger.debug('接收到删除测试状态请求:', { id });
+  
+  // 验证必填字段
+  if (!id) {
+    return res.json({ success: false, message: '测试状态ID不能为空' });
+  }
+  
+  const connection = await pool.getConnection();
+  
   try {
-    const { id } = req.query;
-    console.log('接收到删除测试状态请求:', { id });
+    await connection.beginTransaction();
     
-    // 验证必填字段
-    if (!id) {
-      return res.json({ success: false, message: '测试状态ID不能为空' });
-    }
+    // 1. 删除 test_case_statuses 中的关联记录（CASCADE会自动处理，但显式删除更安全）
+    const [deleteStatusesResult] = await connection.execute(
+      'DELETE FROM test_case_statuses WHERE status_id = ?',
+      [id]
+    );
+    logger.info('删除 test_case_statuses 关联记录:', deleteStatusesResult.affectedRows, '条');
     
-    // 删除测试状态记录
-    await pool.execute(
-      `DELETE FROM test_statuses WHERE id = ?`,
+    // 2. 将 test_case_projects 中的 status_id 设置为 NULL
+    const [updateProjectsResult] = await connection.execute(
+      'UPDATE test_case_projects SET status_id = NULL WHERE status_id = ?',
+      [id]
+    );
+    logger.info('更新 test_case_projects 关联记录:', updateProjectsResult.affectedRows, '条');
+    
+    // 3. 删除测试状态记录
+    const [deleteResult] = await connection.execute(
+      'DELETE FROM test_statuses WHERE id = ?',
       [id]
     );
     
-    res.json({ success: true, message: '测试状态删除成功' });
+    if (deleteResult.affectedRows === 0) {
+      await connection.rollback();
+      return res.json({ success: false, message: '测试状态不存在或已被删除' });
+    }
+    
+    await connection.commit();
+    logger.info('测试状态删除成功, ID:', id);
+    
+    res.json({ 
+      success: true, 
+      message: '测试状态删除成功',
+      data: {
+        deletedStatuses: deleteStatusesResult.affectedRows,
+        updatedProjects: updateProjectsResult.affectedRows
+      }
+    });
   } catch (error) {
-    console.error('删除测试状态错误:', error);
-    console.error('错误堆栈:', error.stack);
-    res.json({ success: false, message: '服务器错误', error: error.message });
+    await connection.rollback();
+    logger.error('删除测试状态错误:', { error: error.message, code: error.code, errno: error.errno, sqlState: error.sqlState, sqlMessage: error.sqlMessage });
+    
+    // 根据错误类型返回更具体的错误信息
+    let errorMessage = '服务器错误';
+    if (error.code === 'ER_ROW_IS_REFERENCED_2') {
+      errorMessage = '该测试状态正在被其他记录使用，无法删除';
+    } else if (error.code === 'ER_NO_REFERENCED_ROW_2') {
+      errorMessage = '引用的测试状态不存在';
+    } else if (error.code === 'ER_ACCESS_DENIED_ERROR') {
+      errorMessage = '数据库访问权限不足';
+    } else if (error.code === 'ECONNREFUSED') {
+      errorMessage = '数据库连接失败';
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      message: errorMessage, 
+      error: error.message,
+      code: error.code 
+    });
+  } finally {
+    connection.release();
   }
 });
 
 // ==================== 优先级管理相关路由 ====================
 
 // 创建优先级
-app.post('/api/priorities/create', async (req, res) => {
+app.post('/api/priorities/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建优先级请求:', req.body);
+    logger.debug('接收到创建优先级请求:', req.body);
     const { name, description, creator } = req.body;
     
     if (!name || !creator) {
       return res.json({ success: false, message: '优先级名称和创建者不能为空' });
     }
     
-    const priorityId = 'PRIORITY-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const priorityId = 'PRIORITY-' + crypto.randomUUID();
     
     await pool.execute(
       `INSERT INTO test_priorities (priority_id, name, description, creator) 
@@ -3490,7 +4039,7 @@ app.post('/api/priorities/create', async (req, res) => {
     
     res.json({ success: true, message: '优先级创建成功', priorityId });
   } catch (error) {
-    console.error('创建优先级错误:', error);
+    logger.error('创建优先级错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3506,7 +4055,7 @@ app.get('/api/priorities/list', async (req, res) => {
     
     res.json({ success: true, priorities });
   } catch (error) {
-    console.error('获取优先级列表错误:', error);
+    logger.error('获取优先级列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3529,13 +4078,13 @@ app.get('/api/priorities/get', async (req, res) => {
     
     res.json({ success: true, priority: priorities[0] });
   } catch (error) {
-    console.error('获取单个优先级错误:', error);
+    logger.error('获取单个优先级错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 更新优先级
-app.post('/api/priorities/update', async (req, res) => {
+app.post('/api/priorities/update', authenticateToken, async (req, res) => {
   try {
     const { id, name, description } = req.body;
     
@@ -3550,16 +4099,16 @@ app.post('/api/priorities/update', async (req, res) => {
     
     res.json({ success: true, message: '优先级更新成功' });
   } catch (error) {
-    console.error('更新优先级错误:', error);
+    logger.error('更新优先级错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 删除优先级
-app.delete('/api/priorities/delete', async (req, res) => {
+app.delete('/api/priorities/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到删除优先级请求:', { id });
+    logger.debug('接收到删除优先级请求:', { id });
     
     if (!id) {
       return res.json({ success: false, message: '优先级ID不能为空' });
@@ -3572,7 +4121,7 @@ app.delete('/api/priorities/delete', async (req, res) => {
     
     res.json({ success: true, message: '优先级删除成功' });
   } catch (error) {
-    console.error('删除优先级错误:', error);
+    logger.error('删除优先级错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3580,9 +4129,9 @@ app.delete('/api/priorities/delete', async (req, res) => {
 // 测试方式管理相关路由
 
 // 创建测试方式
-app.post('/api/test-methods/create', async (req, res) => {
+app.post('/api/test-methods/create', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到创建测试方式请求:', req.body);
+    logger.debug('接收到创建测试方式请求:', req.body);
     const { name, description, creator } = req.body;
     
     // 验证必填字段
@@ -3591,7 +4140,7 @@ app.post('/api/test-methods/create', async (req, res) => {
     }
     
     // 生成唯一的method_id
-    const methodId = 'METHOD-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const methodId = 'METHOD-' + crypto.randomUUID();
     
     // 插入测试方式记录
     await pool.execute(
@@ -3602,8 +4151,7 @@ app.post('/api/test-methods/create', async (req, res) => {
     
     res.json({ success: true, message: '测试方式创建成功', methodId });
   } catch (error) {
-    console.error('创建测试方式错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('创建测试方式错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3611,7 +4159,7 @@ app.post('/api/test-methods/create', async (req, res) => {
 // 获取测试方式列表
 app.get('/api/test-methods/list', async (req, res) => {
   try {
-    console.log('接收到获取测试方式列表请求');
+    logger.info('接收到获取测试方式列表请求');
     
     // 查询所有测试方式
     const [testMethods] = await pool.execute(
@@ -3622,8 +4170,7 @@ app.get('/api/test-methods/list', async (req, res) => {
     
     res.json({ success: true, testMethods });
   } catch (error) {
-    console.error('获取测试方式列表错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取测试方式列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3632,7 +4179,7 @@ app.get('/api/test-methods/list', async (req, res) => {
 app.get('/api/test-methods/get', async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到获取单个测试方式请求:', { id });
+    logger.debug('接收到获取单个测试方式请求:', { id });
     
     // 查询单个测试方式
     const [testMethods] = await pool.execute(
@@ -3648,16 +4195,15 @@ app.get('/api/test-methods/get', async (req, res) => {
     
     res.json({ success: true, testMethod: testMethods[0] });
   } catch (error) {
-    console.error('获取单个测试方式错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取单个测试方式错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 更新测试方式
-app.post('/api/test-methods/update', async (req, res) => {
+app.post('/api/test-methods/update', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到更新测试方式请求:', req.body);
+    logger.debug('接收到更新测试方式请求:', req.body);
     const { id, name, description } = req.body;
     
     // 验证必填字段
@@ -3675,17 +4221,16 @@ app.post('/api/test-methods/update', async (req, res) => {
     
     res.json({ success: true, message: '测试方式更新成功' });
   } catch (error) {
-    console.error('更新测试方式错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('更新测试方式错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 删除测试方式
-app.delete('/api/test-methods/delete', async (req, res) => {
+app.delete('/api/test-methods/delete', authenticateToken, async (req, res) => {
   try {
     const { id } = req.query;
-    console.log('接收到删除测试方式请求:', { id });
+    logger.debug('接收到删除测试方式请求:', { id });
     
     // 验证必填字段
     if (!id) {
@@ -3700,18 +4245,17 @@ app.delete('/api/test-methods/delete', async (req, res) => {
     
     res.json({ success: true, message: '测试方式删除成功' });
   } catch (error) {
-    console.error('删除测试方式错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('删除测试方式错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 根据library_id、module_id和level1_id获取匹配的测试用例
-app.get('/api/cases/match/:libraryId/:moduleId/:level1Id', async (req, res) => {
+app.get('/api/cases/match/:libraryId/:moduleId/:level1Id', authenticateToken, async (req, res) => {
   try {
     const { libraryId, moduleId, level1Id } = req.params;
     const { keyword } = req.query; // 获取搜索关键词
-    console.log('接收到匹配测试用例请求:', { libraryId, moduleId, level1Id, keyword });
+    logger.debug('接收到匹配测试用例请求:', { libraryId, moduleId, level1Id, keyword });
     
     // 构建基础查询
     let query = `
@@ -3734,12 +4278,9 @@ app.get('/api/cases/match/:libraryId/:moduleId/:level1Id', async (req, res) => {
     
     query += ` ORDER BY tc.created_at DESC`;
     
-    console.log('执行SQL查询:', query);
-    console.log('查询参数:', params);
     
     const [testCases] = await pool.execute(query, params);
     
-    console.log('查询结果:', testCases);
     
     // 获取测试用例环境信息
     const testCaseIds = testCases.map(tc => tc.id);
@@ -3749,54 +4290,51 @@ app.get('/api/cases/match/:libraryId/:moduleId/:level1Id', async (req, res) => {
     let testCaseSources = {};
     
     if (testCaseIds.length > 0) {
-      // 查询测试用例环境关联
+      const caseIdPlaceholders = testCaseIds.map(() => '?').join(',');
       const envQuery = `
         SELECT tce.test_case_id, GROUP_CONCAT(e.name) as environments
         FROM test_case_environments tce
         JOIN environments e ON tce.environment_id = e.id
-        WHERE tce.test_case_id IN (${testCaseIds.join(',')})
+        WHERE tce.test_case_id IN (${caseIdPlaceholders})
         GROUP BY tce.test_case_id
       `;
-      const [envResults] = await pool.execute(envQuery);
+      const [envResults] = await pool.execute(envQuery, testCaseIds);
       envResults.forEach(result => {
         testCaseEnvironments[result.test_case_id] = result.environments;
       });
       
-      // 查询测试用例测试方式关联
       const methodQuery = `
         SELECT tcm.test_case_id, GROUP_CONCAT(tm.name) as methods
         FROM test_case_methods tcm
         JOIN test_methods tm ON tcm.method_id = tm.id
-        WHERE tcm.test_case_id IN (${testCaseIds.join(',')})
+        WHERE tcm.test_case_id IN (${caseIdPlaceholders})
         GROUP BY tcm.test_case_id
       `;
-      const [methodResults] = await pool.execute(methodQuery);
+      const [methodResults] = await pool.execute(methodQuery, testCaseIds);
       methodResults.forEach(result => {
         testCaseMethods[result.test_case_id] = result.methods;
       });
       
-      // 查询测试用例测试阶段关联
       const phaseQuery = `
         SELECT tcp.test_case_id, GROUP_CONCAT(tp.name) as phases
         FROM test_case_phases tcp
         JOIN test_phases tp ON tcp.phase_id = tp.id
-        WHERE tcp.test_case_id IN (${testCaseIds.join(',')})
+        WHERE tcp.test_case_id IN (${caseIdPlaceholders})
         GROUP BY tcp.test_case_id
       `;
-      const [phaseResults] = await pool.execute(phaseQuery);
+      const [phaseResults] = await pool.execute(phaseQuery, testCaseIds);
       phaseResults.forEach(result => {
         testCasePhases[result.test_case_id] = result.phases;
       });
       
-      // 查询测试用例测试点来源关联
       const sourceQuery = `
         SELECT tcs.test_case_id, GROUP_CONCAT(ts.name) as sources
         FROM test_case_sources tcs
         JOIN test_sources ts ON tcs.source_id = ts.id
-        WHERE tcs.test_case_id IN (${testCaseIds.join(',')})
+        WHERE tcs.test_case_id IN (${caseIdPlaceholders})
         GROUP BY tcs.test_case_id
       `;
-      const [sourceResults] = await pool.execute(sourceQuery);
+      const [sourceResults] = await pool.execute(sourceQuery, testCaseIds);
       sourceResults.forEach(result => {
         testCaseSources[result.test_case_id] = result.sources;
       });
@@ -3836,34 +4374,29 @@ app.get('/api/cases/match/:libraryId/:moduleId/:level1Id', async (req, res) => {
       testCases: formattedTestCases
     });
   } catch (error) {
-    console.error('获取匹配测试用例错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取匹配测试用例错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 更新测试用例
-app.put('/api/testcases/:id', async (req, res) => {
+app.put('/api/testcases/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, priority, owner, type, precondition, purpose, steps, expected, test_environment } = req.body;
+    const { name, priority, owner, type, precondition, purpose, steps, expected, test_environment, key_config, remark } = req.body;
     
-    console.log('接收到更新测试用例请求:', { id, name, priority, owner, type, precondition, purpose, steps, expected, test_environment });
+    logger.debug('接收到更新测试用例请求:', { id, name, priority, owner, type, precondition, purpose, steps, expected, test_environment, key_config, remark });
     
-    // 更新test_cases表
     const updateQuery = `
       UPDATE test_cases 
-      SET name = ?, priority = ?, owner = ?, type = ?, precondition = ?, purpose = ?, steps = ?, expected = ?
+      SET name = ?, priority = ?, owner = ?, type = ?, precondition = ?, purpose = ?, steps = ?, expected = ?, key_config = ?, remark = ?
       WHERE id = ?
     `;
     
-    const updateParams = [name, priority, owner, type, precondition, purpose, steps, expected, id];
-    console.log('执行SQL更新:', updateQuery);
-    console.log('更新参数:', updateParams);
+    const updateParams = [name, priority, owner, type, precondition, purpose, steps, expected, key_config || '', remark || '', id];
     
     const [updateResult] = await pool.execute(updateQuery, updateParams);
     
-    console.log('更新结果:', updateResult);
     
     if (updateResult.affectedRows === 0) {
       return res.json({ success: false, message: '测试用例不存在' });
@@ -3908,8 +4441,7 @@ app.put('/api/testcases/:id', async (req, res) => {
     
     res.json({ success: true, message: '测试用例更新成功' });
   } catch (error) {
-    console.error('更新测试用例错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('更新测试用例错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -3917,14 +4449,13 @@ app.put('/api/testcases/:id', async (req, res) => {
 // 获取测试类型列表
 app.get('/api/testtypes/list', async (req, res) => {
   try {
-    console.log('接收到获取测试类型列表请求');
+    logger.info('接收到获取测试类型列表请求');
     
     // 查询test_types表
     const query = 'SELECT id, name, description FROM test_types ORDER BY id ASC';
     
     const [testTypes] = await pool.execute(query);
     
-    console.log('查询到的测试类型:', testTypes);
     
     res.json({ 
       success: true, 
@@ -3935,17 +4466,55 @@ app.get('/api/testtypes/list', async (req, res) => {
       })) 
     });
   } catch (error) {
-    console.error('获取测试类型列表错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取测试类型列表错误:', { error: error.message });
+    res.json({ success: false, message: '服务器错误', error: error.message });
+  }
+});
+
+// 获取测试用例详情
+app.get('/api/testcases/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    logger.debug('接收到获取测试用例详情请求:', { id });
+    
+    let testCaseId = id;
+    if (isNaN(Number(id))) {
+      const [testCases] = await pool.execute(
+        'SELECT id FROM test_cases WHERE case_id = ?', [id]
+      );
+      if (testCases.length === 0) {
+        return res.status(404).json({ success: false, message: '测试用例不存在' });
+      }
+      testCaseId = testCases[0].id;
+    }
+    
+    const [cases] = await pool.execute(
+      `SELECT tc.*, m.name as module_name, p.name as project_name,
+              tc.review_status, tc.review_submitted_at, tc.review_completed_at
+       FROM test_cases tc
+       LEFT JOIN modules m ON tc.module_id = m.id
+       LEFT JOIN test_case_projects tcp ON tc.id = tcp.test_case_id
+       LEFT JOIN projects p ON tcp.project_id = p.id
+       WHERE tc.id = ?`,
+      [testCaseId]
+    );
+    
+    if (cases.length === 0) {
+      return res.status(404).json({ success: false, message: '测试用例不存在' });
+    }
+    
+    res.json({ success: true, data: cases[0] });
+  } catch (error) {
+    logger.error('获取测试用例详情错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 获取测试用例关联的项目
-app.get('/api/testcases/:id/projects', async (req, res) => {
+app.get('/api/testcases/:id/projects', authenticateToken, async (req, res) => {
   try {
     let { id } = req.params;
-    console.log('接收到获取测试用例关联项目请求:', { id });
+    logger.debug('接收到获取测试用例关联项目请求:', { id });
     
     // 检查id是否为字符串（如CASE-20260118-8279），如果是则查找对应的整数id
     let testCaseId = id;
@@ -3961,7 +4530,7 @@ app.get('/api/testcases/:id/projects', async (req, res) => {
       }
       
       testCaseId = testCases[0].id;
-      console.log(`根据case_id ${id} 查找到整数id: ${testCaseId}`);
+      logger.info(`根据case_id ${id} 查找到整数id: ${testCaseId}`);
     } else {
       // 是数字，直接使用
       testCaseId = Number(id);
@@ -3982,12 +4551,10 @@ app.get('/api/testcases/:id/projects', async (req, res) => {
     
     const [projects] = await pool.execute(query, [testCaseId]);
     
-    console.log('查询到的测试用例关联项目:', projects);
     
     res.json({ success: true, projects: projects });
   } catch (error) {
-    console.error('获取测试用例关联项目错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取测试用例关联项目错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4001,7 +4568,6 @@ async function initTestCaseProjectsTable() {
     );
     
     const columnNames = columns.map(col => col.Field);
-    console.log('test_case_projects当前字段:', columnNames);
     
     // 定义需要的字段
     const requiredFields = [
@@ -4018,7 +4584,6 @@ async function initTestCaseProjectsTable() {
         await pool.execute(
           `ALTER TABLE test_case_projects ADD COLUMN ${field.name} ${field.type} DEFAULT ${field.default}`
         );
-        console.log(`已添加${field.name}字段到test_case_projects表`);
       }
     }
     
@@ -4028,56 +4593,50 @@ async function initTestCaseProjectsTable() {
         "ALTER TABLE test_case_projects ADD UNIQUE KEY IF NOT EXISTS unique_test_case_project (test_case_id, project_id)"
       );
     } catch (error) {
-      console.log('test_case_projects表已存在唯一约束');
+      logger.info('test_case_projects表已存在唯一约束');
     }
     
-    console.log('test_case_projects表初始化完成');
+    logger.info('test_case_projects表初始化完成');
   } catch (error) {
-    console.error('初始化test_case_projects表失败:', error);
+    logger.error('初始化test_case_projects表失败:', { error: error.message });
   }
 }
 
 // 更新测试用例关联的项目
-app.put('/api/testcases/:id/projects', async (req, res) => {
+app.put('/api/testcases/:id/projects', authenticateToken, async (req, res) => {
   try {
     let { id } = req.params;
     const { associations, projectIds } = req.body;
-    console.log('接收到更新测试用例关联项目请求:', { id, associations, projectIds });
+    logger.debug('接收到更新测试用例关联项目请求:', { id, associations, projectIds });
     
-    // 开始事务
-    await pool.query('START TRANSACTION');
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
     
     try {
-      // 检查id是否为字符串（如CASE-20260118-8279），如果是则查找对应的整数id
       let testCaseId = id;
       if (isNaN(Number(id))) {
-        // 是字符串，根据case_id查找对应的整数id
-        const [testCases] = await pool.execute(
+        const [testCases] = await connection.execute(
           'SELECT id FROM test_cases WHERE case_id = ?', [id]
         );
         
         if (testCases.length === 0) {
-          throw new Error(`测试用例不存在: ${id}`);
+          await connection.rollback();
+          connection.release();
+          return res.json({ success: false, message: `测试用例不存在: ${id}` });
         }
         
         testCaseId = testCases[0].id;
-        console.log(`根据case_id ${id} 查找到整数id: ${testCaseId}`);
+        logger.info(`根据case_id ${id} 查找到整数id: ${testCaseId}`);
       } else {
-        // 是数字，直接使用
         testCaseId = Number(id);
       }
       
-      // 删除现有关联
-      await pool.execute('DELETE FROM test_case_projects WHERE test_case_id = ?', [testCaseId]);
-      
-      // 处理关联数据
-      let insertValues = [];
+      await connection.execute('DELETE FROM test_case_projects WHERE test_case_id = ?', [testCaseId]);
       
       if (associations && Array.isArray(associations) && associations.length > 0) {
-        // 处理详细关联信息，使用循环插入而不是批量插入，避免语法错误
         for (const assoc of associations) {
             const insertQuery = 'INSERT INTO test_case_projects (test_case_id, project_id, owner, progress_id, status_id, remark) VALUES (?, ?, ?, ?, ?, ?)';
-            await pool.execute(insertQuery, [
+            await connection.execute(insertQuery, [
                 testCaseId, 
                 assoc.project_id, 
                 assoc.owner || '', 
@@ -4086,31 +4645,26 @@ app.put('/api/testcases/:id/projects', async (req, res) => {
                 assoc.remark || ''
             ]);
         }
-        console.log('插入了', associations.length, '条关联项目记录');
         } else if (projectIds && Array.isArray(projectIds) && projectIds.length > 0) {
-        // 兼容旧格式，只处理项目ID，使用循环插入
         for (const projectId of projectIds) {
             const insertQuery = 'INSERT INTO test_case_projects (test_case_id, project_id) VALUES (?, ?)';
-            await pool.execute(insertQuery, [testCaseId, projectId]);
+            await connection.execute(insertQuery, [testCaseId, projectId]);
         }
-        console.log('插入了', projectIds.length, '条关联项目记录（旧格式）');
         } else {
-        console.log('没有关联项目数据需要保存');
+        logger.info('没有关联项目数据需要保存');
         }
       
-      // 提交事务
-      await pool.query('COMMIT');
+      await connection.commit();
+      connection.release();
       
-      console.log('测试用例关联项目更新成功:', { id, associations, projectIds });
       res.json({ success: true, message: '测试用例关联项目更新成功' });
     } catch (transactionError) {
-      // 回滚事务
-      await pool.query('ROLLBACK');
+      await connection.rollback();
+      connection.release();
       throw transactionError;
     }
   } catch (error) {
-    console.error('更新测试用例关联项目错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('更新测试用例关联项目错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4118,7 +4672,7 @@ app.put('/api/testcases/:id/projects', async (req, res) => {
 // 获取测试管理统计数据
 app.get('/api/dashboard/stats', async (req, res) => {
   try {
-    console.log('接收到获取测试管理统计数据请求');
+    logger.info('接收到获取测试管理统计数据请求');
     
     const [testCaseResult] = await pool.execute('SELECT COUNT(*) as count FROM test_cases');
     const testCaseCount = testCaseResult[0].count;
@@ -4138,7 +4692,7 @@ app.get('/api/dashboard/stats', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取测试管理统计数据错误:', error);
+    logger.error('获取测试管理统计数据错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4146,7 +4700,7 @@ app.get('/api/dashboard/stats', async (req, res) => {
 // 获取项目测试进度数据
 app.get('/api/dashboard/project-progress', async (req, res) => {
   try {
-    console.log('接收到获取项目测试进度数据请求');
+    logger.info('接收到获取项目测试进度数据请求');
     
     const { projectId, owner, statusId, progressId, libraryId } = req.query;
     
@@ -4202,20 +4756,27 @@ app.get('/api/dashboard/project-progress', async (req, res) => {
     // 通过率分母：pass + fail + asic_hang + core_dump + traffic_drop（不包含 blocked 和 paused）
     // 进度分母：所有非 pending 的用例
     const projectProgress = projectStats.map(project => {
-      const validTested = (project.passed_count || 0) + (project.failed_count || 0);
-      const testedForProgress = (project.passed_count || 0) + (project.failed_count || 0) + (project.blocked_count || 0) + (project.paused_count || 0);
-      const passRate = validTested > 0 ? ((project.passed_count || 0) / validTested * 100).toFixed(1) : 0;
-      const progress = project.total_cases > 0 ? (testedForProgress / project.total_cases * 100).toFixed(1) : 0;
+      const passedCount = Number(project.passed_count) || 0;
+      const failedCount = Number(project.failed_count) || 0;
+      const blockedCount = Number(project.blocked_count) || 0;
+      const pausedCount = Number(project.paused_count) || 0;
+      const totalCases = Number(project.total_cases) || 0;
+      const pendingCount = Number(project.pending_count) || 0;
+      
+      const validTested = passedCount + failedCount;
+      const testedForProgress = passedCount + failedCount + blockedCount + pausedCount;
+      const passRate = validTested > 0 ? (passedCount / validTested * 100).toFixed(1) : 0;
+      const progress = totalCases > 0 ? (testedForProgress / totalCases * 100).toFixed(1) : 0;
       
       return {
         projectId: project.id,
         projectName: project.project_name,
-        totalCases: project.total_cases || 0,
-        passedCount: project.passed_count || 0,
-        failedCount: project.failed_count || 0,
-        blockedCount: project.blocked_count || 0,
-        pausedCount: project.paused_count || 0,
-        pendingCount: project.pending_count || 0,
+        totalCases: totalCases,
+        passedCount: passedCount,
+        failedCount: failedCount,
+        blockedCount: blockedCount,
+        pausedCount: pausedCount,
+        pendingCount: pendingCount,
         passRate: passRate + '%',
         progress: progress + '%'
       };
@@ -4226,7 +4787,7 @@ app.get('/api/dashboard/project-progress', async (req, res) => {
       projectProgress
     });
   } catch (error) {
-    console.error('获取项目测试进度数据错误:', error);
+    logger.error('获取项目测试进度数据错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4234,7 +4795,7 @@ app.get('/api/dashboard/project-progress', async (req, res) => {
 // 获取负责人任务分析数据
 app.get('/api/dashboard/owner-analysis', async (req, res) => {
   try {
-    console.log('接收到获取负责人任务分析数据请求');
+    logger.info('接收到获取负责人任务分析数据请求');
     
     const { projectId, owner, statusId, progressId, libraryId } = req.query;
     
@@ -4292,20 +4853,30 @@ app.get('/api/dashboard/owner-analysis', async (req, res) => {
     // 计算每个负责人的通过率
     // 通过率分母：pass + fail + asic_hang + core_dump + traffic_drop（不包含 blocked 和 paused）
     const ownerAnalysis = ownerStats.map(owner => {
-      const validTested = (owner.passed_count || 0) + (owner.failed_count || 0);
-      const passRate = validTested > 0 ? ((owner.passed_count || 0) / validTested * 100).toFixed(1) : 0;
+      const passedCount = Number(owner.passed_count) || 0;
+      const failedCount = Number(owner.failed_count) || 0;
+      const blockedCount = Number(owner.blocked_count) || 0;
+      const pausedCount = Number(owner.paused_count) || 0;
+      const pendingCount = Number(owner.pending_count) || 0;
+      const totalTasks = Number(owner.total_tasks) || 0;
+      const completedCount = Number(owner.completed_count) || 0;
+      const inProgressCount = Number(owner.in_progress_count) || 0;
+      const notStartedCount = Number(owner.not_started_count) || 0;
+      
+      const validTested = passedCount + failedCount;
+      const passRate = validTested > 0 ? (passedCount / validTested * 100).toFixed(1) : 0;
       
       return {
         owner: owner.owner,
-        totalTasks: owner.total_tasks || 0,
-        passedCount: owner.passed_count || 0,
-        failedCount: owner.failed_count || 0,
-        blockedCount: owner.blocked_count || 0,
-        pausedCount: owner.paused_count || 0,
-        pendingCount: owner.pending_count || 0,
-        completedCount: owner.completed_count || 0,
-        inProgressCount: owner.in_progress_count || 0,
-        notStartedCount: owner.not_started_count || 0,
+        totalTasks: totalTasks,
+        passedCount: passedCount,
+        failedCount: failedCount,
+        blockedCount: blockedCount,
+        pausedCount: pausedCount,
+        pendingCount: pendingCount,
+        completedCount: completedCount,
+        inProgressCount: inProgressCount,
+        notStartedCount: notStartedCount,
         passRate: passRate + '%'
       };
     });
@@ -4315,7 +4886,7 @@ app.get('/api/dashboard/owner-analysis', async (req, res) => {
       ownerAnalysis
     });
   } catch (error) {
-    console.error('获取负责人任务分析数据错误:', error);
+    logger.error('获取负责人任务分析数据错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4323,7 +4894,7 @@ app.get('/api/dashboard/owner-analysis', async (req, res) => {
 // 获取测试状态分布数据
 app.get('/api/dashboard/status-distribution', async (req, res) => {
   try {
-    console.log('接收到获取测试状态分布数据请求');
+    logger.info('接收到获取测试状态分布数据请求');
     
     const { projectId, owner, statusId, progressId, libraryId } = req.query;
     
@@ -4374,7 +4945,7 @@ app.get('/api/dashboard/status-distribution', async (req, res) => {
       statusDistribution
     });
   } catch (error) {
-    console.error('获取测试状态分布数据错误:', error);
+    logger.error('获取测试状态分布数据错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4382,7 +4953,7 @@ app.get('/api/dashboard/status-distribution', async (req, res) => {
 // 获取测试进度分布数据
 app.get('/api/dashboard/progress-distribution', async (req, res) => {
   try {
-    console.log('接收到获取测试进度分布数据请求');
+    logger.info('接收到获取测试进度分布数据请求');
     
     const { projectId, owner, statusId, progressId, libraryId } = req.query;
     
@@ -4433,7 +5004,7 @@ app.get('/api/dashboard/progress-distribution', async (req, res) => {
       progressDistribution
     });
   } catch (error) {
-    console.error('获取测试进度分布数据错误:', error);
+    logger.error('获取测试进度分布数据错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4441,7 +5012,7 @@ app.get('/api/dashboard/progress-distribution', async (req, res) => {
 // 获取通过率趋势数据
 app.get('/api/dashboard/trend/pass-rate', async (req, res) => {
   try {
-    console.log('接收到获取通过率趋势数据请求');
+    logger.info('接收到获取通过率趋势数据请求');
     
     const { projectId, owner, statusId, progressId, libraryId, days = 7 } = req.query;
     const daysNum = parseInt(days) || 7;
@@ -4512,10 +5083,12 @@ app.get('/api/dashboard/trend/pass-rate', async (req, res) => {
         return dbDateStr === dateStr;
       });
       if (dayData) {
-        const validTested = (dayData.passed || 0) + (dayData.failed || 0);
-        passRates.push(validTested > 0 ? ((dayData.passed / validTested) * 100).toFixed(1) : 0);
-        passedCounts.push(dayData.passed || 0);
-        failedCounts.push(dayData.failed || 0);
+        const passedVal = Number(dayData.passed) || 0;
+        const failedVal = Number(dayData.failed) || 0;
+        const validTested = passedVal + failedVal;
+        passRates.push(validTested > 0 ? ((passedVal / validTested) * 100).toFixed(1) : 0);
+        passedCounts.push(passedVal);
+        failedCounts.push(failedVal);
       } else {
         passRates.push(0);
         passedCounts.push(0);
@@ -4528,7 +5101,7 @@ app.get('/api/dashboard/trend/pass-rate', async (req, res) => {
       trendData: { labels, passRates, passedCounts, failedCounts }
     });
   } catch (error) {
-    console.error('获取通过率趋势数据错误:', error);
+    logger.error('获取通过率趋势数据错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4536,7 +5109,7 @@ app.get('/api/dashboard/trend/pass-rate', async (req, res) => {
 // 获取执行次数趋势数据
 app.get('/api/dashboard/trend/executions', async (req, res) => {
   try {
-    console.log('接收到获取执行次数趋势数据请求');
+    logger.info('接收到获取执行次数趋势数据请求');
     
     const { projectId, owner, statusId, progressId, libraryId, days = 7 } = req.query;
     const daysNum = parseInt(days) || 7;
@@ -4617,7 +5190,7 @@ app.get('/api/dashboard/trend/executions', async (req, res) => {
       trendData: { labels, passedCounts, failedCounts }
     });
   } catch (error) {
-    console.error('获取执行次数趋势数据错误:', error);
+    logger.error('获取执行次数趋势数据错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4625,7 +5198,7 @@ app.get('/api/dashboard/trend/executions', async (req, res) => {
 // 获取测试进度趋势数据
 app.get('/api/dashboard/trend/progress', async (req, res) => {
   try {
-    console.log('接收到获取测试进度趋势数据请求');
+    logger.info('接收到获取测试进度趋势数据请求');
     
     const { projectId, owner, statusId, progressId, libraryId, days = 7 } = req.query;
     const daysNum = parseInt(days) || 7;
@@ -4737,58 +5310,55 @@ app.get('/api/dashboard/trend/progress', async (req, res) => {
       trendData: { labels, datasets: chartDatasets }
     });
   } catch (error) {
-    console.error('获取测试进度趋势数据错误:', error);
+    logger.error('获取测试进度趋势数据错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 删除测试用例
-app.delete('/api/testcases/:id', async (req, res) => {
+app.delete('/api/testcases/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    console.log('接收到删除测试用例请求:', { id });
+    logger.debug('接收到删除测试用例请求:', { id });
     
-    // 开始事务
-    await pool.query('START TRANSACTION');
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
     
     try {
-      // 删除测试用例环境关联
-      await pool.execute('DELETE FROM test_case_environments WHERE test_case_id = ?', [id]);
+      await connection.execute('DELETE FROM test_case_environments WHERE test_case_id = ?', [id]);
       
-      // 删除测试用例测试方式关联
-      await pool.execute('DELETE FROM test_case_methods WHERE test_case_id = ?', [id]);
+      await connection.execute('DELETE FROM test_case_methods WHERE test_case_id = ?', [id]);
       
-      // 删除测试用例测试类型关联（正确的表名）
-      await pool.execute('DELETE FROM test_case_test_types WHERE test_case_id = ?', [id]);
+      await connection.execute('DELETE FROM test_case_test_types WHERE test_case_id = ?', [id]);
       
-      // 删除测试用例测试状态关联
-      await pool.execute('DELETE FROM test_case_statuses WHERE test_case_id = ?', [id]);
+      await connection.execute('DELETE FROM test_case_statuses WHERE test_case_id = ?', [id]);
       
-      // 删除测试用例项目关联
-      await pool.execute('DELETE FROM test_case_projects WHERE test_case_id = ?', [id]);
+      await connection.execute('DELETE FROM test_case_projects WHERE test_case_id = ?', [id]);
       
-      // 删除测试用例
+      await connection.execute('DELETE FROM test_case_sources WHERE test_case_id = ?', [id]);
+      
+      await connection.execute('DELETE FROM test_plan_cases WHERE case_id = ?', [id]);
+      
       const deleteQuery = 'DELETE FROM test_cases WHERE id = ?';
-      const [deleteResult] = await pool.execute(deleteQuery, [id]);
+      const [deleteResult] = await connection.execute(deleteQuery, [id]);
       
       if (deleteResult.affectedRows === 0) {
-        await pool.query('ROLLBACK');
+        await connection.rollback();
+        connection.release();
         return res.json({ success: false, message: '测试用例不存在' });
       }
       
-      // 提交事务
-      await pool.query('COMMIT');
+      await connection.commit();
+      connection.release();
       
-      console.log('测试用例删除成功:', { id });
       res.json({ success: true, message: '测试用例删除成功' });
     } catch (transactionError) {
-      // 回滚事务
-      await pool.query('ROLLBACK');
+      await connection.rollback();
+      connection.release();
       throw transactionError;
     }
   } catch (error) {
-    console.error('删除测试用例错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('删除测试用例错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -4796,7 +5366,7 @@ app.delete('/api/testcases/:id', async (req, res) => {
 // 初始化数据库
 async function initDatabase() {
   try {
-    console.log('开始初始化数据库...');
+    logger.info('开始初始化数据库...');
     
     // 连接到MySQL服务器
     const connection = await pool.getConnection();
@@ -4808,9 +5378,9 @@ async function initDatabase() {
       if (databases.length === 0) {
         // 创建数据库
         await connection.execute(`CREATE DATABASE ${process.env.DB_NAME}`);
-        console.log(`数据库 ${process.env.DB_NAME} 创建成功`);
+        logger.info(`数据库 ${process.env.DB_NAME} 创建成功`);
       } else {
-        console.log(`数据库 ${process.env.DB_NAME} 已存在`);
+        logger.info(`数据库 ${process.env.DB_NAME} 已存在`);
       }
       
       // 不需要执行USE命令，因为已经在连接时指定了数据库名
@@ -4827,7 +5397,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      console.log('用户表创建成功');
+      logger.info('用户表创建成功');
       
       // 确保users表有必要的拓展字段
       try {
@@ -4838,9 +5408,9 @@ async function initDatabase() {
           await connection.execute(
             "ALTER TABLE users ADD COLUMN status ENUM('pending', 'active', 'disabled') DEFAULT 'active' COMMENT '用户状态: pending-待审核, active-正常, disabled-禁用'"
           );
-          console.log('用户表status字段添加成功');
+          logger.info('用户表status字段添加成功');
         } else {
-          console.log('用户表status字段已存在');
+          logger.info('用户表status字段已存在');
         }
 
         // 添加统一的通知偏好字段
@@ -4848,17 +5418,25 @@ async function initDatabase() {
           await connection.execute("ALTER TABLE users ADD COLUMN email_notify_mentions BOOLEAN DEFAULT TRUE COMMENT '接收@提醒邮件'");
           await connection.execute("ALTER TABLE users ADD COLUMN email_notify_comments BOOLEAN DEFAULT TRUE COMMENT '接收评论提醒邮件'");
           await connection.execute("ALTER TABLE users ADD COLUMN email_notify_likes BOOLEAN DEFAULT FALSE COMMENT '接收被赞提醒邮件'");
-          console.log('用户表邮件偏好通知字段添加成功');
+          logger.info('用户表邮件偏好通知字段添加成功');
+        }
+        
+        // 添加全局邮件偏好字段
+        if (!columnNames.includes('email_global_enabled')) {
+          await connection.execute("ALTER TABLE users ADD COLUMN email_global_enabled BOOLEAN DEFAULT TRUE COMMENT '全局邮件开关'");
+          await connection.execute("ALTER TABLE users ADD COLUMN email_quiet_hours_start TIME DEFAULT NULL COMMENT '免打扰开始时间'");
+          await connection.execute("ALTER TABLE users ADD COLUMN email_quiet_hours_end TIME DEFAULT NULL COMMENT '免打扰结束时间'");
+          logger.info('用户表全局邮件偏好字段添加成功');
         }
         
         // 添加 muted_until 字段（用户禁言到期时间）
         if (!columnNames.includes('muted_until')) {
           await connection.execute("ALTER TABLE users ADD COLUMN muted_until TIMESTAMP NULL COMMENT '禁言到期时间'");
-          console.log('用户表muted_until字段添加成功');
+          logger.info('用户表muted_until字段添加成功');
         }
 
       } catch (error) {
-        console.error('检查或添加用户表拓展字段错误:', error);
+        logger.error('检查或添加用户表拓展字段错误:', { error: error.message });
       }
       
       // 创建模块表
@@ -4879,23 +5457,31 @@ async function initDatabase() {
       try {
         await connection.execute(`ALTER TABLE modules ADD COLUMN library_id INT`);
       } catch (error) {
-        console.log('library_id字段已存在');
+        logger.info('library_id字段已存在');
       }
       
       // 确保parent_id字段存在
       try {
         await connection.execute(`ALTER TABLE modules ADD COLUMN parent_id INT`);
       } catch (error) {
-        console.log('parent_id字段已存在');
+        logger.info('parent_id字段已存在');
       }
       
       // 确保order_index字段存在
       try {
         await connection.execute(`ALTER TABLE modules ADD COLUMN order_index INT DEFAULT 0`);
       } catch (error) {
-        console.log('order_index字段已存在');
+        logger.info('order_index字段已存在');
       }
-      console.log('模块表创建成功');
+      
+      // 确保created_by字段存在
+      try {
+        await connection.execute(`ALTER TABLE modules ADD COLUMN created_by VARCHAR(100) NULL COMMENT '创建者用户名'`);
+        logger.info('modules表created_by字段添加成功');
+      } catch (error) {
+        logger.info('created_by字段已存在');
+      }
+      logger.info('模块表创建成功');
       
       // 创建一级测试点表
       await connection.execute(`
@@ -4914,9 +5500,9 @@ async function initDatabase() {
       try {
         await connection.execute(`ALTER TABLE level1_points ADD COLUMN order_index INT DEFAULT 0`);
       } catch (error) {
-        console.log('level1_points表order_index字段已存在');
+        logger.info('level1_points表order_index字段已存在');
       }
-      console.log('一级测试点表创建成功');
+      logger.info('一级测试点表创建成功');
       
       // 创建芯片表
       await connection.execute(`
@@ -4929,7 +5515,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      console.log('芯片表创建成功');
+      logger.info('芯片表创建成功');
       
       // 创建二级测试点表
       await connection.execute(`
@@ -4946,7 +5532,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      console.log('二级测试点表创建成功');
+      logger.info('二级测试点表创建成功');
       
       // 创建历史记录表
       await connection.execute(`
@@ -4972,7 +5558,7 @@ async function initDatabase() {
           UNIQUE KEY unique_testpoint_chip (testpoint_id, chip_id)
         )
       `);
-      console.log('测试点芯片关联表创建成功');
+      logger.info('测试点芯片关联表创建成功');
       
       // 检查并修改现有表结构，添加默认值
       try {
@@ -4980,9 +5566,9 @@ async function initDatabase() {
           ALTER TABLE testpoint_chips 
           MODIFY COLUMN chip_sequence VARCHAR(255) NOT NULL DEFAULT ''
         `);
-        console.log('测试点芯片关联表结构已更新');
+        logger.info('测试点芯片关联表结构已更新');
       } catch (error) {
-        console.log('测试点芯片关联表结构已是最新');
+        logger.info('测试点芯片关联表结构已是最新');
       }
       
       // 创建测试点状态表（每个芯片对应一个状态）
@@ -4997,7 +5583,7 @@ async function initDatabase() {
           UNIQUE KEY unique_testpoint_chip_status (testpoint_id, chip_id)
         )
       `);
-      console.log('测试点状态表创建成功');
+      logger.info('测试点状态表创建成功');
       
       // 创建历史快照表（用于版本恢复）
       await connection.execute(`
@@ -5012,8 +5598,8 @@ async function initDatabase() {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      console.log('历史快照表创建成功');
-      console.log('历史记录表创建成功');
+      logger.info('历史快照表创建成功');
+      logger.info('历史记录表创建成功');
       
       // 创建测试计划表
       await connection.execute(`
@@ -5035,7 +5621,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试计划表创建成功');
+      logger.info('测试计划表创建成功');
       
       // 创建测试报告表
       await connection.execute(`
@@ -5059,14 +5645,17 @@ async function initDatabase() {
           FOREIGN KEY (test_plan_id) REFERENCES test_plans(id) ON DELETE SET NULL
         )
       `);
-      console.log('测试报告表创建成功');
+      logger.info('测试报告表创建成功');
       
       // 添加新字段（逐个添加，忽略已存在错误）
       const alterStatements = [
         'ALTER TABLE test_reports ADD COLUMN has_ai_analysis BOOLEAN DEFAULT FALSE',
         'ALTER TABLE test_reports ADD COLUMN status VARCHAR(20) DEFAULT "ready"',
         'ALTER TABLE test_reports ADD COLUMN job_id VARCHAR(100)',
-        'ALTER TABLE test_reports ADD COLUMN creator_id INT'
+        'ALTER TABLE test_reports ADD COLUMN creator_id INT',
+        'ALTER TABLE test_reports ADD COLUMN dimension VARCHAR(20) DEFAULT "testplan"',
+        'ALTER TABLE test_reports ADD COLUMN target_id INT',
+        'ALTER TABLE test_reports ADD COLUMN statistics_json JSON'
       ];
       
       for (const sql of alterStatements) {
@@ -5075,11 +5664,32 @@ async function initDatabase() {
         } catch (e) {
           // 忽略字段已存在错误
           if (!e.message.includes('Duplicate column')) {
-            console.log('添加字段警告:', e.message);
+            logger.info('添加字段警告:', e.message);
           }
         }
       }
-      console.log('测试报告表字段检查完成');
+      logger.info('测试报告表字段检查完成');
+      
+      // 创建报告生成任务表
+      await connection.execute(`
+        CREATE TABLE IF NOT EXISTS report_jobs (
+          id VARCHAR(100) PRIMARY KEY COMMENT '任务ID',
+          user_id INT NOT NULL COMMENT '用户ID',
+          username VARCHAR(50) NOT NULL COMMENT '用户名',
+          status VARCHAR(20) NOT NULL DEFAULT 'pending' COMMENT '任务状态: pending, processing, completed, failed, cancelled',
+          progress INT NOT NULL DEFAULT 0 COMMENT '进度百分比 0-100',
+          message VARCHAR(500) DEFAULT '' COMMENT '进度消息',
+          error_message TEXT DEFAULT NULL COMMENT '错误信息',
+          config JSON DEFAULT NULL COMMENT '任务配置',
+          report_id INT DEFAULT NULL COMMENT '生成的报告ID',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+          INDEX idx_user_id (user_id),
+          INDEX idx_status (status),
+          INDEX idx_created_at (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='报告生成任务表'
+      `);
+      logger.info('报告生成任务表创建成功');
       
       // 创建项目表
       await connection.execute(`
@@ -5092,7 +5702,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('项目表创建成功');
+      logger.info('项目表创建成功');
       
       // 创建用例库表
       await connection.execute(`
@@ -5106,7 +5716,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('用例库表创建成功');
+      logger.info('用例库表创建成功');
       
       // 创建用例库用例关联表
       await connection.execute(`
@@ -5118,7 +5728,7 @@ async function initDatabase() {
           UNIQUE KEY unique_library_case (library_id, case_id)
         )
       `);
-      console.log('用例库用例关联表创建成功');
+      logger.info('用例库用例关联表创建成功');
       
       // 创建测试用例表
       await connection.execute(`
@@ -5140,7 +5750,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试用例表创建成功');
+      logger.info('测试用例表创建成功');
       
       // 确保测试用例表有level1_id字段
       try {
@@ -5152,12 +5762,12 @@ async function initDatabase() {
         if (columns.length === 0) {
           // 字段不存在，添加level1_id字段
           await connection.execute('ALTER TABLE test_cases ADD COLUMN level1_id INT');
-          console.log('测试用例表level1_id字段添加成功');
+          logger.info('测试用例表level1_id字段添加成功');
         } else {
-          console.log('测试用例表level1_id字段已存在');
+          logger.info('测试用例表level1_id字段已存在');
         }
       } catch (error) {
-        console.error('检查或添加测试用例表level1_id字段错误:', error);
+        logger.error('检查或添加测试用例表level1_id字段错误:', { error: error.message });
         // 忽略错误，继续执行
       }
       
@@ -5171,12 +5781,12 @@ async function initDatabase() {
         if (columns.length === 0) {
           // 字段不存在，添加owner字段
           await connection.execute('ALTER TABLE test_cases ADD COLUMN owner VARCHAR(50) NOT NULL DEFAULT "admin"');
-          console.log('测试用例表owner字段添加成功');
+          logger.info('测试用例表owner字段添加成功');
         } else {
-          console.log('测试用例表owner字段已存在');
+          logger.info('测试用例表owner字段已存在');
         }
       } catch (error) {
-        console.error('检查或添加测试用例表owner字段错误:', error);
+        logger.error('检查或添加测试用例表owner字段错误:', { error: error.message });
         // 忽略错误，继续执行
       }
       
@@ -5190,12 +5800,12 @@ async function initDatabase() {
         if (columns.length === 0) {
           // 字段不存在，添加remark字段
           await connection.execute('ALTER TABLE test_cases ADD COLUMN remark TEXT');
-          console.log('测试用例表remark字段添加成功');
+          logger.info('测试用例表remark字段添加成功');
         } else {
-          console.log('测试用例表remark字段已存在');
+          logger.info('测试用例表remark字段已存在');
         }
       } catch (error) {
-        console.error('检查或添加测试用例表remark字段错误:', error);
+        logger.error('检查或添加测试用例表remark字段错误:', { error: error.message });
         // 忽略错误，继续执行
       }
       
@@ -5207,12 +5817,12 @@ async function initDatabase() {
         
         if (columns.length === 0) {
           await connection.execute('ALTER TABLE test_cases ADD COLUMN key_config TEXT');
-          console.log('测试用例表key_config字段添加成功');
+          logger.info('测试用例表key_config字段添加成功');
         } else {
-          console.log('测试用例表key_config字段已存在');
+          logger.info('测试用例表key_config字段已存在');
         }
       } catch (error) {
-        console.error('检查或添加测试用例表key_config字段错误:', error);
+        logger.error('检查或添加测试用例表key_config字段错误:', { error: error.message });
       }
       
       // 确保测试用例表有method字段（测试方式）
@@ -5223,12 +5833,12 @@ async function initDatabase() {
         
         if (columns.length === 0) {
           await connection.execute('ALTER TABLE test_cases ADD COLUMN method VARCHAR(50) DEFAULT "自动化"');
-          console.log('测试用例表method字段添加成功');
+          logger.info('测试用例表method字段添加成功');
         } else {
-          console.log('测试用例表method字段已存在');
+          logger.info('测试用例表method字段已存在');
         }
       } catch (error) {
-        console.error('检查或添加测试用例表method字段错误:', error);
+        logger.error('检查或添加测试用例表method字段错误:', { error: error.message });
       }
       
       // 确保测试用例表有status字段（测试状态）
@@ -5239,12 +5849,12 @@ async function initDatabase() {
         
         if (columns.length === 0) {
           await connection.execute('ALTER TABLE test_cases ADD COLUMN status VARCHAR(50) DEFAULT "维护中"');
-          console.log('测试用例表status字段添加成功');
+          logger.info('测试用例表status字段添加成功');
         } else {
-          console.log('测试用例表status字段已存在');
+          logger.info('测试用例表status字段已存在');
         }
       } catch (error) {
-        console.error('检查或添加测试用例表status字段错误:', error);
+        logger.error('检查或添加测试用例表status字段错误:', { error: error.message });
       }
       
       // 确保 test_cases 表有 is_deleted 软删除字段
@@ -5256,13 +5866,108 @@ async function initDatabase() {
         if (columns.length === 0) {
           await connection.execute('ALTER TABLE test_cases ADD COLUMN is_deleted TINYINT(1) DEFAULT 0 COMMENT \'软删除标记\'');
           await connection.execute('ALTER TABLE test_cases ADD COLUMN deleted_at TIMESTAMP NULL COMMENT \'删除时间\'');
-          console.log('测试用例表软删除字段添加成功');
+          logger.info('测试用例表软删除字段添加成功');
         } else {
-          console.log('测试用例表软删除字段已存在');
+          logger.info('测试用例表软删除字段已存在');
         }
       } catch (error) {
-        console.error('检查或添加测试用例表软删除字段错误:', error);
+        logger.error('检查或添加测试用例表软删除字段错误:', { error: error.message });
       }
+      
+      // 确保测试用例表有评审相关字段
+      try {
+        const [columns] = await connection.execute(
+          "SHOW COLUMNS FROM test_cases LIKE 'review_status'"
+        );
+        
+        if (columns.length === 0) {
+          await connection.execute(`ALTER TABLE test_cases 
+            ADD COLUMN review_status ENUM('draft', 'pending', 'approved', 'rejected') DEFAULT 'draft' COMMENT '评审状态' AFTER is_deleted`);
+          await connection.execute(`ALTER TABLE test_cases 
+            ADD COLUMN reviewer_id INT NULL COMMENT '评审人ID' AFTER review_status`);
+          await connection.execute(`ALTER TABLE test_cases 
+            ADD COLUMN review_submitted_at TIMESTAMP NULL COMMENT '提交评审时间' AFTER reviewer_id`);
+          await connection.execute(`ALTER TABLE test_cases 
+            ADD COLUMN review_completed_at TIMESTAMP NULL COMMENT '评审完成时间' AFTER review_submitted_at`);
+          await connection.execute(`ALTER TABLE test_cases 
+            ADD INDEX idx_review_status (review_status)`);
+          await connection.execute(`ALTER TABLE test_cases 
+            ADD INDEX idx_reviewer_id (reviewer_id)`);
+          logger.info('测试用例表评审字段添加成功');
+        } else {
+          logger.info('测试用例表评审字段已存在');
+        }
+      } catch (error) {
+        logger.error('检查或添加测试用例表评审字段错误:', { error: error.message });
+      }
+      
+      // 创建测试用例关联脚本表
+      await connection.execute(`
+        CREATE TABLE IF NOT EXISTS test_case_scripts (
+          id INT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+          test_case_id INT NOT NULL COMMENT '测试用例ID',
+          script_name VARCHAR(255) NOT NULL COMMENT '脚本名称',
+          script_type VARCHAR(50) DEFAULT 'tcl' COMMENT '脚本类型：tcl/py/sh/other',
+          description TEXT COMMENT '脚本描述',
+          file_path VARCHAR(500) COMMENT '上传文件的存储路径',
+          file_size BIGINT COMMENT '文件大小（字节）',
+          file_hash VARCHAR(64) COMMENT '文件MD5哈希值',
+          original_filename VARCHAR(255) COMMENT '原始文件名',
+          link_url VARCHAR(1000) COMMENT '外部链接URL',
+          link_title VARCHAR(255) COMMENT '链接显示标题',
+          link_type VARCHAR(20) DEFAULT 'external' COMMENT '链接类型',
+          order_index INT DEFAULT 0 COMMENT '排序序号',
+          creator VARCHAR(50) NOT NULL COMMENT '创建人',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+          INDEX idx_test_case_id (test_case_id),
+          INDEX idx_script_type (script_type),
+          INDEX idx_script_name (script_name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例关联脚本表'
+      `);
+      logger.info('测试用例关联脚本表创建成功');
+      
+      // 创建评审记录表
+      await connection.execute(`
+        CREATE TABLE IF NOT EXISTS review_records (
+          id INT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+          case_id INT NOT NULL COMMENT '测试用例ID',
+          reviewer_id INT NOT NULL COMMENT '评审人ID',
+          submitter_id INT NOT NULL COMMENT '提交人ID',
+          action ENUM('submit', 'approve', 'reject', 'resubmit') NOT NULL COMMENT '操作类型',
+          comment TEXT COMMENT '评审意见',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+          INDEX idx_case_id (case_id),
+          INDEX idx_reviewer_id (reviewer_id),
+          INDEX idx_submitter_id (submitter_id),
+          INDEX idx_action (action),
+          INDEX idx_created_at (created_at),
+          FOREIGN KEY (case_id) REFERENCES test_cases(id) ON DELETE CASCADE,
+          FOREIGN KEY (reviewer_id) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY (submitter_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例评审记录表'
+      `);
+      logger.info('评审记录表创建成功');
+      
+      // 创建用例评审人表（支持多人评审）
+      await connection.execute(`
+        CREATE TABLE IF NOT EXISTS case_reviewers (
+          id INT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+          case_id INT NOT NULL COMMENT '测试用例ID',
+          reviewer_id INT NOT NULL COMMENT '评审人ID',
+          status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending' COMMENT '评审状态',
+          comment TEXT COMMENT '评审意见',
+          reviewed_at TIMESTAMP NULL COMMENT '评审时间',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+          UNIQUE KEY uk_case_reviewer (case_id, reviewer_id),
+          INDEX idx_case_id (case_id),
+          INDEX idx_reviewer_id (reviewer_id),
+          INDEX idx_status (status),
+          FOREIGN KEY (case_id) REFERENCES test_cases(id) ON DELETE CASCADE,
+          FOREIGN KEY (reviewer_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用例评审人表'
+      `);
+      logger.info('用例评审人表创建成功');
       
       // ==================== 先创建配置表（被其他表外键引用） ====================
       
@@ -5279,17 +5984,17 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试进度表创建成功');
+      logger.info('测试进度表创建成功');
       
       // 确保test_progresses表有status_category字段
       try {
         const [progressColumns] = await connection.execute("SHOW COLUMNS FROM test_progresses LIKE 'status_category'");
         if (progressColumns.length === 0) {
           await connection.execute("ALTER TABLE test_progresses ADD COLUMN status_category VARCHAR(50) DEFAULT 'not_started' COMMENT '进度分类: not_started, in_progress, completed'");
-          console.log('test_progresses表status_category字段添加成功');
+          logger.info('test_progresses表status_category字段添加成功');
         }
       } catch (error) {
-        console.log('检查test_progresses表status_category字段:', error.message);
+        logger.warn('检查test_progresses表status_category字段:', error.message);
       }
       
       // 插入默认测试进度数据
@@ -5302,7 +6007,7 @@ async function initDatabase() {
             ('PROGRESS_002', '进行中', '测试任务正在进行', 'in_progress', 'admin'),
             ('PROGRESS_003', '已完成', '测试任务已完成', 'completed', 'admin')
           `);
-          console.log('默认测试进度数据插入成功');
+          logger.info('默认测试进度数据插入成功');
         } else {
           // 更新现有测试进度数据的status_category字段
           await connection.execute(`
@@ -5318,10 +6023,10 @@ async function initDatabase() {
           await connection.execute(`
             UPDATE test_progresses SET status_category = 'not_started' WHERE status_category IS NULL
           `);
-          console.log('测试进度数据status_category字段已更新');
+          logger.info('测试进度数据status_category字段已更新');
         }
       } catch (error) {
-        console.log('插入默认测试进度数据错误:', error.message);
+        logger.error('插入默认测试进度数据错误:', error.message);
       }
       
       // 创建测试状态表（test_case_projects 外键依赖）
@@ -5339,7 +6044,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试状态表创建成功');
+      logger.info('测试状态表创建成功');
       
       // 确保test_statuses表有必要字段
       try {
@@ -5348,18 +6053,18 @@ async function initDatabase() {
         
         if (!columnNames.includes('status_category')) {
           await connection.execute("ALTER TABLE test_statuses ADD COLUMN status_category VARCHAR(50) DEFAULT 'pending' COMMENT '状态分类: passed, failed, pending, blocked'");
-          console.log('test_statuses表status_category字段添加成功');
+          logger.info('test_statuses表status_category字段添加成功');
         }
         if (!columnNames.includes('sort_order')) {
           await connection.execute("ALTER TABLE test_statuses ADD COLUMN sort_order INT DEFAULT 0 COMMENT '排序顺序'");
-          console.log('test_statuses表sort_order字段添加成功');
+          logger.info('test_statuses表sort_order字段添加成功');
         }
         if (!columnNames.includes('is_active')) {
           await connection.execute("ALTER TABLE test_statuses ADD COLUMN is_active TINYINT(1) DEFAULT 1 COMMENT '是否启用'");
-          console.log('test_statuses表is_active字段添加成功');
+          logger.info('test_statuses表is_active字段添加成功');
         }
       } catch (error) {
-        console.log('检查test_statuses表字段:', error.message);
+        logger.warn('检查test_statuses表字段:', error.message);
       }
       
       // 插入默认测试状态数据
@@ -5373,7 +6078,7 @@ async function initDatabase() {
             ('STATUS_003', '失败', '测试用例执行失败', 'failed', 3, 1, 'admin'),
             ('STATUS_004', '阻塞', '测试用例被阻塞无法执行', 'blocked', 4, 1, 'admin')
           `);
-          console.log('默认测试状态数据插入成功');
+          logger.info('默认测试状态数据插入成功');
         } else {
           // 更新现有测试状态数据的status_category字段
           await connection.execute(`
@@ -5392,10 +6097,10 @@ async function initDatabase() {
           await connection.execute(`
             UPDATE test_statuses SET status_category = 'pending' WHERE status_category IS NULL
           `);
-          console.log('测试状态数据status_category字段已更新');
+          logger.info('测试状态数据status_category字段已更新');
         }
       } catch (error) {
-        console.log('插入默认测试状态数据错误:', error.message);
+        logger.error('插入默认测试状态数据错误:', error.message);
       }
       
       // 创建测试用例项目关联表（现在可以安全创建，因为外键依赖的表已存在）
@@ -5417,7 +6122,7 @@ async function initDatabase() {
           FOREIGN KEY (status_id) REFERENCES test_statuses(id) ON DELETE SET NULL
         )
       `);
-      console.log('测试用例项目关联表创建成功');
+      logger.info('测试用例项目关联表创建成功');
       
       // 确保test_case_projects表包含所有必要字段
       await initTestCaseProjectsTable();
@@ -5434,7 +6139,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('环境表创建成功');
+      logger.info('环境表创建成功');
       
       // 创建测试方式表
       await connection.execute(`
@@ -5448,7 +6153,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试方式表创建成功');
+      logger.info('测试方式表创建成功');
       
       // 插入默认测试方式数据
       await connection.execute(`
@@ -5456,7 +6161,7 @@ async function initDatabase() {
         ('METHOD_001', '手动测试', '通过人工操作进行测试', 'admin'),
         ('METHOD_002', '自动化测试', '通过自动化脚本进行测试', 'admin')
       `);
-      console.log('默认测试方式数据插入成功');
+      logger.info('默认测试方式数据插入成功');
       
       // 插入默认环境数据
       await connection.execute(`
@@ -5465,7 +6170,7 @@ async function initDatabase() {
         ('ENV_002', '测试环境', '测试人员使用的环境', 'admin'),
         ('ENV_003', '生产环境', '最终用户使用的环境', 'admin')
       `);
-      console.log('默认环境数据插入成功');
+      logger.info('默认环境数据插入成功');
       
       // 创建测试类型表
       await connection.execute(`
@@ -5479,7 +6184,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试类型表创建成功');
+      logger.info('测试类型表创建成功');
       
       // 创建测试阶段表
       await connection.execute(`
@@ -5493,7 +6198,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试阶段表创建成功');
+      logger.info('测试阶段表创建成功');
       
       // 创建测试软件表
       await connection.execute(`
@@ -5507,7 +6212,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试软件表创建成功');
+      logger.info('测试软件表创建成功');
       
       // 插入默认测试软件数据
       await connection.execute(`
@@ -5517,7 +6222,7 @@ async function initDatabase() {
         ('SOFTWARE_003', 'SAI', 'Switch Abstraction Interface测试', 'admin'),
         ('SOFTWARE_004', 'ECPU', '嵌入式CPU测试', 'admin')
       `);
-      console.log('默认测试软件数据插入成功');
+      logger.info('默认测试软件数据插入成功');
       
       // 创建优先级表
       await connection.execute(`
@@ -5531,7 +6236,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('优先级表创建成功');
+      logger.info('优先级表创建成功');
       
       // 插入默认优先级数据
       const [existingPriorities] = await connection.execute('SELECT COUNT(*) as count FROM test_priorities');
@@ -5543,7 +6248,7 @@ async function initDatabase() {
           ('PRIORITY_003', 'P2', '一般级 - 计划修复', 'admin'),
           ('PRIORITY_004', 'P3', '提示级 - 可选修复', 'admin')
         `);
-        console.log('默认优先级数据插入成功');
+        logger.info('默认优先级数据插入成功');
       }
       
       // 创建AI配置表（全局设置）
@@ -5557,7 +6262,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('AI配置表创建成功');
+      logger.info('AI配置表创建成功');
       
       // 创建AI模型表（支持多个模型配置）
       await connection.execute(`
@@ -5573,22 +6278,45 @@ async function initDatabase() {
           is_enabled BOOLEAN DEFAULT TRUE,
           description TEXT,
           user_id INT COMMENT '用户ID',
+          is_public TINYINT(1) DEFAULT 0 COMMENT '是否公开，0-私有，1-公开',
           created_by VARCHAR(50),
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('AI模型表创建成功');
+      logger.info('AI模型表创建成功');
       
       // 确保ai_models表有user_id字段
       try {
         const [modelColumns] = await connection.execute("SHOW COLUMNS FROM ai_models LIKE 'user_id'");
         if (modelColumns.length === 0) {
           await connection.execute("ALTER TABLE ai_models ADD COLUMN user_id INT COMMENT '用户ID'");
-          console.log('ai_models表user_id字段添加成功');
+          logger.info('ai_models表user_id字段添加成功');
         }
       } catch (error) {
-        console.log('检查ai_models表user_id字段:', error.message);
+        logger.warn('检查ai_models表user_id字段:', error.message);
+      }
+
+      try {
+        const [modelColumns] = await connection.execute("SHOW COLUMNS FROM ai_models");
+        const modelColumnNames = modelColumns.map(c => c.Field);
+
+        if (!modelColumnNames.includes('request_interval_ms')) {
+          await connection.execute("ALTER TABLE ai_models ADD COLUMN request_interval_ms INT DEFAULT 0 COMMENT '请求间隔时间(毫秒)，0表示不限制' AFTER is_public");
+          logger.info('ai_models表request_interval_ms字段添加成功');
+        }
+
+        if (!modelColumnNames.includes('max_retries')) {
+          await connection.execute("ALTER TABLE ai_models ADD COLUMN max_retries INT DEFAULT 3 COMMENT '最大重试次数，0表示不重试' AFTER request_interval_ms");
+          logger.info('ai_models表max_retries字段添加成功');
+        }
+
+        if (!modelColumnNames.includes('retry_mode')) {
+          await connection.execute("ALTER TABLE ai_models ADD COLUMN retry_mode VARCHAR(20) DEFAULT 'finite' COMMENT '重试模式: finite-有限次重试, infinite-无限重试直至成功' AFTER max_retries");
+          logger.info('ai_models表retry_mode字段添加成功');
+        }
+      } catch (error) {
+        logger.warn('检查ai_models表速率限制字段:', error.message);
       }
       
       // 创建AI技能表（动态技能库）
@@ -5615,7 +6343,7 @@ async function initDatabase() {
           INDEX idx_creator_id (creator_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('AI技能表创建成功');
+      logger.info('AI技能表创建成功');
       
       // 确保ai_skills表有必要字段
       try {
@@ -5624,18 +6352,18 @@ async function initDatabase() {
         
         if (!columnNames.includes('is_public')) {
           await connection.execute("ALTER TABLE ai_skills ADD COLUMN is_public BOOLEAN DEFAULT TRUE COMMENT '是否公开'");
-          console.log('ai_skills表is_public字段添加成功');
+          logger.info('ai_skills表is_public字段添加成功');
         }
         if (!columnNames.includes('creator_id')) {
           await connection.execute("ALTER TABLE ai_skills ADD COLUMN creator_id INT COMMENT '创建者ID'");
-          console.log('ai_skills表creator_id字段添加成功');
+          logger.info('ai_skills表creator_id字段添加成功');
         }
         if (!columnNames.includes('updater_id')) {
           await connection.execute("ALTER TABLE ai_skills ADD COLUMN updater_id INT COMMENT '更新者ID'");
-          console.log('ai_skills表updater_id字段添加成功');
+          logger.info('ai_skills表updater_id字段添加成功');
         }
       } catch (error) {
-        console.log('检查ai_skills表字段:', error.message);
+        logger.warn('检查ai_skills表字段:', error.message);
       }
       
       // 创建用户技能设置表
@@ -5652,7 +6380,7 @@ async function initDatabase() {
           INDEX idx_skill_id (skill_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('用户技能设置表创建成功');
+      logger.info('用户技能设置表创建成功');
       
       // 创建报告模板表
       await connection.execute(`
@@ -5671,7 +6399,7 @@ async function initDatabase() {
           INDEX idx_default (is_default)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('报告模板表创建成功');
+      logger.info('报告模板表创建成功');
       
       // 创建超链接配置表
       await connection.execute(`
@@ -5686,7 +6414,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('超链接配置表创建成功');
+      logger.info('超链接配置表创建成功');
       
       // ==================== 论坛模块表 ====================
       
@@ -5714,7 +6442,34 @@ async function initDatabase() {
           INDEX idx_created_at (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('论坛帖子表创建成功');
+      logger.info('论坛帖子表创建成功');
+      
+      // 创建论坛帖子全文索引（用于搜索）
+      try {
+        await connection.execute(`
+          ALTER TABLE forum_posts 
+          ADD FULLTEXT INDEX ft_title_content (title, content) WITH PARSER ngram
+        `);
+        logger.info('论坛帖子全文索引创建成功');
+      } catch (indexError) {
+        if (indexError.code === 'ER_DUP_KEYNAME') {
+          logger.info('论坛帖子全文索引已存在');
+        } else if (indexError.message.includes('ngram')) {
+          try {
+            await connection.execute(`
+              ALTER TABLE forum_posts 
+              ADD FULLTEXT INDEX ft_title_content (title, content)
+            `);
+            logger.info('论坛帖子全文索引创建成功（无ngram解析器）');
+          } catch (fallbackError) {
+            if (fallbackError.code !== 'ER_DUP_KEYNAME') {
+              logger.warn('论坛帖子全文索引创建失败:', { error: fallbackError.message });
+            }
+          }
+        } else {
+          logger.warn('论坛帖子全文索引创建失败:', { error: indexError.message });
+        }
+      }
       
       // 创建论坛评论表
       await connection.execute(`
@@ -5738,7 +6493,7 @@ async function initDatabase() {
           INDEX idx_created_at (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('论坛评论表创建成功');
+      logger.info('论坛评论表创建成功');
       
       // 创建论坛标签表
       await connection.execute(`
@@ -5750,7 +6505,7 @@ async function initDatabase() {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间'
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('论坛标签表创建成功');
+      logger.info('论坛标签表创建成功');
       
       // 创建帖子标签关联表
       await connection.execute(`
@@ -5762,7 +6517,7 @@ async function initDatabase() {
           UNIQUE KEY uk_post_tag (post_id, tag_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('帖子标签关联表创建成功');
+      logger.info('帖子标签关联表创建成功');
       
       // 创建用户点赞表
       await connection.execute(`
@@ -5775,7 +6530,7 @@ async function initDatabase() {
           UNIQUE KEY uk_user_target (user_id, target_type, target_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('用户点赞表创建成功');
+      logger.info('用户点赞表创建成功');
       
       // 插入默认论坛标签
       const [tagCount] = await connection.execute('SELECT COUNT(*) as count FROM forum_tags');
@@ -5790,7 +6545,7 @@ async function initDatabase() {
           ('接口测试', '#1abc9c'),
           ('其他', '#95a5a6')
         `);
-        console.log('默认论坛标签插入成功');
+        logger.info('默认论坛标签插入成功');
       }
       
       // 检查并添加 updated_by 字段（如果表已存在但没有该字段）
@@ -5798,10 +6553,10 @@ async function initDatabase() {
         const [templateColumns] = await connection.execute('SHOW COLUMNS FROM report_templates LIKE "updated_by"');
         if (templateColumns.length === 0) {
           await connection.execute('ALTER TABLE report_templates ADD COLUMN updated_by VARCHAR(50) COMMENT "最后编辑者" AFTER updated_at');
-          console.log('报告模板表添加 updated_by 字段成功');
+          logger.info('报告模板表添加 updated_by 字段成功');
         }
       } catch (alterError) {
-        console.log('检查/添加 updated_by 字段:', alterError.message);
+        logger.warn('检查/添加 updated_by 字段:', alterError.message);
       }
       
       // 插入默认报告模板示例
@@ -5860,7 +6615,7 @@ async function initDatabase() {
           'INSERT INTO report_templates (name, description, file_path, file_type, is_default, created_by) VALUES (?, ?, ?, ?, ?, ?)',
           ['默认测试报告模板', 'xTest 默认测试报告模板，包含测试概览、风险分析和改进建议', defaultTemplatePath, 'md', true, 'system']
         );
-        console.log('默认报告模板插入成功');
+        logger.info('默认报告模板插入成功');
       }
       
       // 插入默认AI技能示例
@@ -5945,7 +6700,7 @@ async function initDatabase() {
             'generate_test_report', '生成测试报告', '根据项目数据生成专业的测试报告，支持概要和详细两种模式', skill4Def, skill4Code, 'report', true, true
           ]
         );
-        console.log('默认AI技能示例插入成功');
+        logger.info('默认AI技能示例插入成功');
       }
       
       // 插入默认AI配置
@@ -5956,19 +6711,7 @@ async function initDatabase() {
           ('ai_enabled', 'true', '是否启用AI功能'),
           ('default_model_id', '', '默认AI模型ID')
         `);
-        console.log('默认AI配置插入成功');
-      }
-      
-      // 插入默认AI模型配置
-      const [aiModelsCount] = await connection.execute('SELECT COUNT(*) as count FROM ai_models');
-      if (aiModelsCount[0].count === 0) {
-        await connection.execute(`
-          INSERT INTO ai_models (model_id, name, provider, api_key, endpoint, model_name, is_default, is_enabled, description, created_by) VALUES
-          ('deepseek-default', 'DeepSeek', 'deepseek', '', 'https://api.deepseek.com/v1/chat/completions', 'deepseek-chat', TRUE, TRUE, 'DeepSeek大模型', 'admin'),
-          ('openai-default', 'OpenAI', 'openai', '', 'https://api.openai.com/v1/chat/completions', 'gpt-3.5-turbo', FALSE, TRUE, 'OpenAI大模型', 'admin'),
-          ('zhipu-default', '智谱AI', 'zhipu', '', 'https://open.bigmodel.cn/api/paas/v4/chat/completions', 'glm-4', FALSE, TRUE, '智谱AI大模型', 'admin')
-        `);
-        console.log('默认AI模型配置插入成功');
+        logger.info('默认AI配置插入成功');
       }
       
       // 创建测试用例环境关联表
@@ -5983,7 +6726,7 @@ async function initDatabase() {
           UNIQUE KEY unique_test_case_environment (test_case_id, environment_id)
         )
       `);
-      console.log('测试用例环境关联表创建成功');
+      logger.info('测试用例环境关联表创建成功');
       
       // 创建测试用例测试方式关联表
       await connection.execute(`
@@ -5997,7 +6740,7 @@ async function initDatabase() {
           UNIQUE KEY unique_test_case_method (test_case_id, method_id)
         )
       `);
-      console.log('测试用例测试方式关联表创建成功');
+      logger.info('测试用例测试方式关联表创建成功');
       
       // 创建测试点来源表
       await connection.execute(`
@@ -6011,7 +6754,7 @@ async function initDatabase() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
       `);
-      console.log('测试点来源表创建成功');
+      logger.info('测试点来源表创建成功');
       
       // 插入默认测试点来源数据
       await connection.execute(`
@@ -6022,7 +6765,7 @@ async function initDatabase() {
         ('SOURCE_004', '缺陷回归', '缺陷修复后的回归测试', 'admin'),
         ('SOURCE_005', '技术方案', '技术方案相关测试', 'admin')
       `);
-      console.log('默认测试点来源数据插入成功');
+      logger.info('默认测试点来源数据插入成功');
       
       // 创建测试用例测试点来源关联表
       await connection.execute(`
@@ -6036,7 +6779,7 @@ async function initDatabase() {
           UNIQUE KEY unique_test_case_source (test_case_id, source_id)
         )
       `);
-      console.log('测试用例测试点来源关联表创建成功');
+      logger.info('测试用例测试点来源关联表创建成功');
       
       // 创建测试用例测试类型关联表
       await connection.execute(`
@@ -6050,7 +6793,7 @@ async function initDatabase() {
           UNIQUE KEY unique_test_case_test_type (test_case_id, test_type_id)
         )
       `);
-      console.log('测试用例测试类型关联表创建成功');
+      logger.info('测试用例测试类型关联表创建成功');
       
       // 创建测试用例测试状态关联表
       await connection.execute(`
@@ -6064,7 +6807,7 @@ async function initDatabase() {
           UNIQUE KEY unique_test_case_status (test_case_id, status_id)
         )
       `);
-      console.log('测试用例测试状态关联表创建成功');
+      logger.info('测试用例测试状态关联表创建成功');
       
       // 创建测试用例测试阶段关联表
       await connection.execute(`
@@ -6078,7 +6821,7 @@ async function initDatabase() {
           UNIQUE KEY unique_test_case_phase (test_case_id, phase_id)
         )
       `);
-      console.log('测试用例测试阶段关联表创建成功');
+      logger.info('测试用例测试阶段关联表创建成功');
       
       // 创建测试用例测试进度关联表
       await connection.execute(`
@@ -6092,7 +6835,7 @@ async function initDatabase() {
           UNIQUE KEY unique_test_case_progress (test_case_id, progress_id)
         )
       `);
-      console.log('测试用例测试进度关联表创建成功');
+      logger.info('测试用例测试进度关联表创建成功');
       
       // 检查是否有管理员用户
       const [users] = await connection.execute('SELECT * FROM users WHERE role = ?', ['管理员']);
@@ -6104,7 +6847,7 @@ async function initDatabase() {
           'INSERT INTO users (username, password, role, email) VALUES (?, ?, ?, ?)',
           ['admin', hashedPassword, '管理员', 'admin@example.com']
         );
-        console.log('默认管理员用户创建成功');
+        logger.info('默认管理员用户创建成功');
       }
       
       // 检查是否有测试人员用户
@@ -6117,7 +6860,7 @@ async function initDatabase() {
           'INSERT INTO users (username, password, role, email) VALUES (?, ?, ?, ?)',
           ['tester1', hashedPassword, '测试人员', 'tester1@example.com']
         );
-        console.log('默认测试人员用户创建成功');
+        logger.info('默认测试人员用户创建成功');
       }
       
       // 检查是否有默认模块
@@ -6127,7 +6870,7 @@ async function initDatabase() {
         await connection.execute('INSERT INTO modules (module_id, name) VALUES (?, ?)', ['module1', '模块1']);
         await connection.execute('INSERT INTO modules (module_id, name) VALUES (?, ?)', ['module2', '模块2']);
         await connection.execute('INSERT INTO modules (module_id, name) VALUES (?, ?)', ['module3', '模块3']);
-        console.log('默认模块创建成功');
+        logger.info('默认模块创建成功');
       }
       
       // 检查是否有默认芯片
@@ -6137,7 +6880,7 @@ async function initDatabase() {
         await connection.execute('INSERT INTO chips (chip_id, name, description) VALUES (?, ?, ?)', ['chip1', '芯片1', '默认测试芯片1']);
         await connection.execute('INSERT INTO chips (chip_id, name, description) VALUES (?, ?, ?)', ['chip2', '芯片2', '默认测试芯片2']);
         await connection.execute('INSERT INTO chips (chip_id, name, description) VALUES (?, ?, ?)', ['chip3', '芯片3', '默认测试芯片3']);
-        console.log('默认芯片创建成功');
+        logger.info('默认芯片创建成功');
       }
       
       // ==================== 测试计划管理相关表 ====================
@@ -6146,29 +6889,29 @@ async function initDatabase() {
       try {
         await connection.execute(`ALTER TABLE test_plans ADD COLUMN stage_id INT COMMENT '测试阶段ID'`);
       } catch (error) {
-        console.log('test_plans.stage_id字段已存在');
+        logger.info('test_plans.stage_id字段已存在');
       }
       
       try {
         await connection.execute(`ALTER TABLE test_plans ADD COLUMN software_id INT COMMENT '测试软件ID'`);
       } catch (error) {
-        console.log('test_plans.software_id字段已存在');
+        logger.info('test_plans.software_id字段已存在');
       }
       
       // 添加实际开始时间和实际完成时间字段
       try {
         await connection.execute(`ALTER TABLE test_plans ADD COLUMN actual_start_time DATETIME COMMENT '实际开始时间'`);
       } catch (error) {
-        console.log('test_plans.actual_start_time字段已存在');
+        logger.info('test_plans.actual_start_time字段已存在');
       }
       
       try {
         await connection.execute(`ALTER TABLE test_plans ADD COLUMN actual_end_time DATETIME COMMENT '实际完成时间'`);
       } catch (error) {
-        console.log('test_plans.actual_end_time字段已存在');
+        logger.info('test_plans.actual_end_time字段已存在');
       }
       
-      console.log('测试计划表字段更新成功');
+      logger.info('测试计划表字段更新成功');
       
       // 创建测试计划动态规则表 (test_plan_rules)
       await connection.execute(`
@@ -6186,7 +6929,7 @@ async function initDatabase() {
           FOREIGN KEY (plan_id) REFERENCES test_plans(id) ON DELETE CASCADE
         )
       `);
-      console.log('测试计划动态规则表创建成功');
+      logger.info('测试计划动态规则表创建成功');
       
       // 创建测试计划用例执行快照表 (test_plan_cases)
       await connection.execute(`
@@ -6212,7 +6955,7 @@ async function initDatabase() {
           UNIQUE KEY unique_plan_case (plan_id, case_id)
         )
       `);
-      console.log('测试计划用例执行快照表创建成功');
+      logger.info('测试计划用例执行快照表创建成功');
       
       // 确保 test_plan_cases 表有 bug_id 字段
       try {
@@ -6222,12 +6965,12 @@ async function initDatabase() {
         
         if (columns.length === 0) {
           await connection.execute('ALTER TABLE test_plan_cases ADD COLUMN bug_id VARCHAR(100) COMMENT \'关联的缺陷ID\' AFTER error_message');
-          console.log('test_plan_cases 表 bug_id 字段添加成功');
+          logger.info('test_plan_cases 表 bug_id 字段添加成功');
         } else {
-          console.log('test_plan_cases 表 bug_id 字段已存在');
+          logger.info('test_plan_cases 表 bug_id 字段已存在');
         }
       } catch (error) {
-        console.error('检查或添加 test_plan_cases 表 bug_id 字段错误:', error);
+        logger.error('检查或添加 test_plan_cases 表 bug_id 字段错误:', { error: error.message });
       }
       
       // 创建测试执行日志表 (test_execution_logs)
@@ -6242,7 +6985,7 @@ async function initDatabase() {
           FOREIGN KEY (plan_case_id) REFERENCES test_plan_cases(id) ON DELETE CASCADE
         )
       `);
-      console.log('测试执行日志表创建成功');
+      logger.info('测试执行日志表创建成功');
       
       // 创建测试用例执行记录表 (case_execution_records)
       await connection.execute(`
@@ -6260,17 +7003,17 @@ async function initDatabase() {
           INDEX idx_created_at (created_at)
         ) COMMENT='测试用例执行记录表'
       `);
-      console.log('测试用例执行记录表创建成功');
+      logger.info('测试用例执行记录表创建成功');
       
       // 检查并添加images字段（如果表已存在但没有该字段）
       try {
         await connection.execute(`
           ALTER TABLE case_execution_records ADD COLUMN images JSON COMMENT '图片列表JSON数组'
         `);
-        console.log('执行记录表添加images字段成功');
+        logger.info('执行记录表添加images字段成功');
       } catch (alterError) {
         if (alterError.code !== 'ER_DUP_FIELDNAME') {
-          console.log('images字段可能已存在，跳过添加');
+          logger.info('images字段可能已存在，跳过添加');
         }
       }
       
@@ -6279,10 +7022,10 @@ async function initDatabase() {
         await connection.execute(`
           ALTER TABLE case_execution_records ADD COLUMN bug_type VARCHAR(50) COMMENT 'Bug类型' AFTER bug_id
         `);
-        console.log('执行记录表添加bug_type字段成功');
+        logger.info('执行记录表添加bug_type字段成功');
       } catch (alterError) {
         if (alterError.code !== 'ER_DUP_FIELDNAME') {
-          console.log('bug_type字段可能已存在，跳过添加');
+          logger.info('bug_type字段可能已存在，跳过添加');
         }
       }
       
@@ -6322,7 +7065,7 @@ async function initDatabase() {
           INDEX idx_is_enabled (is_enabled)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('邮件配置表创建成功');
+      logger.info('邮件配置表创建成功');
       
       // 创建邮件发送日志表
       await connection.execute(`
@@ -6344,7 +7087,7 @@ async function initDatabase() {
           INDEX idx_created_at (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('邮件日志表创建成功');
+      logger.info('邮件日志表创建成功');
 
       // 创建站内通知表 (Notifications)
       await connection.execute(`
@@ -6367,7 +7110,83 @@ async function initDatabase() {
           INDEX idx_notifications_created_at (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
-      console.log('通知记录表创建成功');
+      logger.info('通知记录表创建成功');
+      
+      // 创建邮件类型定义表
+      await connection.execute(`
+        CREATE TABLE IF NOT EXISTS email_types (
+          id INT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+          type_code VARCHAR(50) UNIQUE NOT NULL COMMENT '类型代码',
+          type_name VARCHAR(100) NOT NULL COMMENT '类型名称',
+          category ENUM('account', 'social', 'business', 'approval', 'announcement', 'digest') NOT NULL COMMENT '所属分类',
+          description TEXT COMMENT '详细描述说明',
+          is_required BOOLEAN DEFAULT FALSE COMMENT '是否强制发送',
+          default_email_enabled BOOLEAN DEFAULT TRUE COMMENT '默认邮件开关',
+          default_in_app_enabled BOOLEAN DEFAULT TRUE COMMENT '默认站内通知开关',
+          template_subject VARCHAR(255) COMMENT '邮件主题模板',
+          template_path VARCHAR(255) COMMENT '邮件模板文件路径',
+          supports_in_app BOOLEAN DEFAULT TRUE COMMENT '是否支持站内通知',
+          role_restriction VARCHAR(50) DEFAULT NULL COMMENT '角色限制',
+          sort_order INT DEFAULT 0 COMMENT '排序权重',
+          is_active BOOLEAN DEFAULT TRUE COMMENT '是否启用',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+          INDEX idx_category (category),
+          INDEX idx_is_active (is_active),
+          INDEX idx_sort_order (sort_order)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='邮件类型定义表'
+      `);
+      logger.info('邮件类型定义表创建成功');
+      
+      // 创建用户通知偏好表
+      await connection.execute(`
+        CREATE TABLE IF NOT EXISTS user_notification_prefs (
+          id INT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+          user_id INT NOT NULL COMMENT '用户ID',
+          type_code VARCHAR(50) NOT NULL COMMENT '邮件类型代码',
+          email_enabled BOOLEAN DEFAULT TRUE COMMENT '是否接收邮件通知',
+          in_app_enabled BOOLEAN DEFAULT TRUE COMMENT '是否接收站内通知',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+          UNIQUE KEY uk_user_type (user_id, type_code),
+          INDEX idx_user_id (user_id),
+          INDEX idx_type_code (type_code)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户通知偏好表'
+      `);
+      logger.info('用户通知偏好表创建成功');
+      
+      // 插入默认邮件类型数据
+      const [existingEmailTypes] = await connection.execute('SELECT COUNT(*) as count FROM email_types');
+      if (existingEmailTypes[0].count === 0) {
+        await connection.execute(`
+          INSERT INTO email_types (type_code, type_name, category, description, is_required, default_email_enabled, default_in_app_enabled, template_subject, template_path, supports_in_app, role_restriction, sort_order) VALUES
+          ('mention', '@提及提醒', 'social', '有人在论坛帖子中@你', FALSE, TRUE, TRUE, '【xTest 社区】{senderName} 在论坛中@了你', 'mention', TRUE, NULL, 101),
+          ('comment', '评论提醒', 'social', '有人评论了你的帖子', FALSE, TRUE, TRUE, '【xTest 社区】{senderName} 评论了您的帖子', 'comment', TRUE, NULL, 102),
+          ('like', '点赞提醒', 'social', '有人点赞了你的帖子', FALSE, FALSE, TRUE, '【xTest 社区】{senderName} 赞了您的帖子', 'like', TRUE, NULL, 103),
+          ('follow_post', '关注发帖提醒', 'social', '你关注的人发布了新帖子', FALSE, FALSE, TRUE, '【xTest 社区】{followedUser} 发布了新帖子', 'follow_post', TRUE, NULL, 104),
+          ('plan_assigned', '测试计划分配', 'business', '你被分配了新的测试计划', FALSE, TRUE, TRUE, '【xTest】您被分配了新的测试计划 - {planName}', 'plan_assigned', TRUE, NULL, 201),
+          ('plan_status', '计划状态变更', 'business', '测试计划状态发生变更', FALSE, TRUE, TRUE, '【xTest】测试计划状态变更 - {planName}', 'plan_status', TRUE, NULL, 202),
+          ('case_review', '用例审核结果', 'business', '你提交的用例审核结果通知', FALSE, TRUE, TRUE, '【xTest】用例审核结果 - {caseName}', 'case_review', TRUE, NULL, 203),
+          ('case_review_submit', '用例评审提交通知', 'business', '测试用例提交评审时通知评审人', FALSE, TRUE, TRUE, '【xTest】您有新的测试用例待评审 - {caseName}', 'case_review_submit', TRUE, NULL, 204),
+          ('report_ready', '报告生成完成', 'business', '测试报告生成完成通知', FALSE, TRUE, TRUE, '【xTest】测试报告已生成 - {reportName}', 'report_ready', TRUE, NULL, 205),
+          ('plan_deadline', '测试计划到期提醒', 'business', '测试计划即将到期时提醒负责人', FALSE, TRUE, TRUE, '【xTest】测试计划即将到期 - {planName}', 'plan_deadline', TRUE, NULL, 206),
+          ('plan_progress_alert', '测试计划进度预警', 'business', '测试计划进度异常时预警', FALSE, TRUE, TRUE, '【xTest】测试计划进度预警 - {planName}', 'plan_progress_alert', TRUE, NULL, 207),
+          ('defect_created', '缺陷创建通知', 'business', '新缺陷创建时通知相关人员', FALSE, TRUE, TRUE, '【xTest】新缺陷记录 - {defectTitle}', 'defect_created', TRUE, NULL, 208),
+          ('defect_status', '缺陷状态变更通知', 'business', '缺陷状态变更时通知相关人员', FALSE, TRUE, TRUE, '【xTest】缺陷状态更新 - {defectTitle}', 'defect_status', TRUE, NULL, 210),
+          ('task_assigned', '任务分配通知', 'business', '新任务分配时通知被分配人', FALSE, TRUE, TRUE, '【xTest】您有新的任务 - {taskTitle}', 'task_assigned', TRUE, NULL, 211),
+          ('task_deadline', '任务到期提醒', 'business', '任务即将到期时提醒负责人', FALSE, TRUE, TRUE, '【xTest】任务即将到期 - {taskTitle}', 'task_deadline', TRUE, NULL, 212),
+          ('user_audit', '新用户待审核', 'approval', '有新用户注册等待审核', FALSE, TRUE, TRUE, '【xTest】新用户注册待审核 - {username}', 'user_audit', TRUE, 'admin', 301),
+          ('audit_result', '审核结果通知', 'approval', '账号审核结果通知', FALSE, TRUE, TRUE, '【xTest】您的账号审核结果', 'audit_result', TRUE, NULL, 302),
+          ('role_change', '角色变更通知', 'approval', '用户角色权限变更通知', FALSE, TRUE, TRUE, '【xTest】您的角色权限已变更', 'role_change', TRUE, NULL, 303),
+          ('maintenance', '系统维护通知', 'announcement', '系统维护公告通知', FALSE, TRUE, TRUE, '【xTest 系统公告】系统维护通知', 'maintenance', TRUE, NULL, 401),
+          ('version_update', '版本更新公告', 'announcement', '系统版本更新公告', FALSE, TRUE, TRUE, '【xTest 系统公告】版本更新 - v{version}', 'version_update', TRUE, NULL, 402),
+          ('urgent', '紧急通知', 'announcement', '管理员发送的紧急通知', FALSE, TRUE, TRUE, '【xTest 紧急通知】{title}', 'urgent', TRUE, NULL, 403),
+          ('daily_digest', '每日进度汇总', 'digest', '每日测试进度汇总邮件', FALSE, FALSE, FALSE, '【xTest】每日测试进度汇总 - {date}', 'daily_digest', FALSE, NULL, 501),
+          ('weekly_report', '每周工作报告', 'digest', '每周工作报告邮件', FALSE, FALSE, FALSE, '【xTest】每周工作报告 - {week}', 'weekly_report', FALSE, NULL, 502),
+          ('monthly_stats', '月度统计数据', 'digest', '月度统计数据邮件（仅管理员）', FALSE, FALSE, FALSE, '【xTest】月度统计数据 - {month}', 'monthly_stats', FALSE, 'admin', 503)
+        `);
+        logger.info('默认邮件类型数据插入成功');
+      }
       
       // 插入默认邮件配置模板
       const [existingConfigs] = await connection.execute('SELECT COUNT(*) as count FROM email_config');
@@ -6377,11 +7196,11 @@ async function initDatabase() {
           ('企业邮箱SMTP', 'smtp', 'smtp.exmail.qq.com', 465, TRUE, 'xTest测试管理系统', TRUE, FALSE),
           ('自建邮件服务器', 'self_hosted', NULL, NULL, FALSE, 'xTest测试管理系统', FALSE, FALSE)
         `);
-        console.log('默认邮件配置模板插入成功');
+        logger.info('默认邮件配置模板插入成功');
       }
       
       // 创建性能优化索引
-      console.log('开始创建性能优化索引...');
+      logger.info('开始创建性能优化索引...');
       const indexQueries = [
         'CREATE INDEX idx_users_username ON users(username)',
         'CREATE INDEX idx_users_role ON users(role)',
@@ -6408,23 +7227,335 @@ async function initDatabase() {
         } catch (idxError) {
           // 索引已存在则忽略错误 (错误码 1061 = ER_DUP_KEYNAME)
           if (idxError.errno !== 1061) {
-            console.warn('创建索引警告:', idxError.message);
+            logger.warn('创建索引警告:', { error: idxError.message });
           }
         }
       }
-      console.log('性能优化索引创建完成');
-      
-      console.log('数据库初始化完成');
+      logger.info('性能优化索引创建完成');
+
+      // 创建 AI Agent/工具使用日志表
+      try {
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS ai_agent_tool_usage_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            username VARCHAR(100),
+            item_type VARCHAR(20) NOT NULL COMMENT 'sub_agent | custom_tool',
+            item_code VARCHAR(100) NOT NULL COMMENT 'agent_code 或 tool_name',
+            item_name VARCHAR(200) COMMENT '显示名称',
+            source VARCHAR(50) COMMENT '来源: review, qa, generation, test_run, agent_loop',
+            execution_time_ms INT,
+            prompt_tokens INT DEFAULT 0,
+            completion_tokens INT DEFAULT 0,
+            total_tokens INT DEFAULT 0,
+            model_name VARCHAR(100),
+            status VARCHAR(20) NOT NULL DEFAULT 'success',
+            error_message TEXT,
+            context_info JSON COMMENT '上下文信息如 libraryId, moduleId 等',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_item_type (item_type),
+            INDEX idx_item_code (item_code),
+            INDEX idx_user_id (user_id),
+            INDEX idx_status (status),
+            INDEX idx_created_at (created_at),
+            INDEX idx_item_type_code (item_type, item_code),
+            INDEX idx_source (source)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        logger.info('AI Agent/工具使用日志表创建成功');
+      } catch (agentLogError) {
+        logger.warn('AI Agent/工具使用日志表创建警告:', { error: agentLogError.message });
+      }
+
+      // ========== CTA-v2 自动迁移 ==========
+      try {
+        logger.info('开始执行 CTA-v2 自动迁移...');
+
+        // 判断是否可忽略的错误（列已存在、索引已存在等）
+        const isIgnorableError = (err) => {
+          const ignorableCodes = ['ER_DUP_FIELDNAME', 'ER_DUP_KEYNAME', 'ER_MULTIPLE_PRI_KEY'];
+          const ignorableMessages = ['Duplicate column', 'Duplicate key', 'already exists'];
+          if (ignorableCodes.includes(err.code)) return true;
+          if (err.message && ignorableMessages.some(m => err.message.includes(m))) return true;
+          return false;
+        };
+
+        // 执行单条 SQL，忽略"已存在"错误
+        const safeExec = async (sql, label) => {
+          try {
+            await connection.execute(sql);
+            logger.info(`迁移: ${label} - OK`);
+          } catch (err) {
+            if (isIgnorableError(err)) {
+              logger.info(`迁移: ${label} - 已存在，跳过`);
+            } else {
+              logger.warn(`迁移: ${label} - 警告: ${err.message}`);
+            }
+          }
+        };
+
+        // 1. 工作流定义表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS workflow_definitions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            workflow_type VARCHAR(100) NOT NULL,
+            name VARCHAR(200) NOT NULL,
+            description TEXT,
+            definition_json LONGTEXT NOT NULL,
+            version INT DEFAULT 1,
+            status ENUM('active','inactive','draft','archived') DEFAULT 'active',
+            created_by INT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_workflow_type_version (workflow_type, version)
+          )
+        `);
+
+        // 2. 工作流实例表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS workflow_instances (
+            instance_id VARCHAR(100) PRIMARY KEY,
+            task_id VARCHAR(128) NOT NULL,
+            workflow_type VARCHAR(100) NOT NULL DEFAULT 'default',
+            definition_version INT DEFAULT 1,
+            status ENUM('pending','running','paused','awaiting_approval','completed','failed','cancelled') DEFAULT 'pending',
+            context_json LONGTEXT,
+            result_json LONGTEXT,
+            current_node VARCHAR(100),
+            loop_count_json JSON,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP NULL,
+            error_message TEXT,
+            created_by INT,
+            INDEX idx_workflow_instances_task (task_id),
+            INDEX idx_workflow_instances_status (status)
+          )
+        `);
+
+        // 3. 硬约束表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS hard_constraints (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            task_id VARCHAR(128) NOT NULL,
+            constraint_type ENUM('register','state_machine','parameter_matrix') NOT NULL,
+            constraint_key VARCHAR(200) NOT NULL,
+            constraint_value JSON,
+            source_doc VARCHAR(500),
+            coverage_status ENUM('pending','covered','uncovered') DEFAULT 'pending',
+            coverage_evidence TEXT,
+            covered_by_case_id INT,
+            covered_at TIMESTAMP NULL,
+            checked_at TIMESTAMP NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_hard_constraints_task (task_id),
+            INDEX idx_hard_constraints_type (constraint_type),
+            INDEX idx_hard_constraints_status (coverage_status)
+          )
+        `);
+
+        // 4. SSH 会话表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS ssh_sessions (
+            session_id VARCHAR(100) PRIMARY KEY,
+            host VARCHAR(200) NOT NULL,
+            port INT DEFAULT 22,
+            username VARCHAR(100) NOT NULL,
+            device_type VARCHAR(50) DEFAULT 'generic',
+            resource_id VARCHAR(128),
+            task_id VARCHAR(128),
+            status ENUM('active','error','closed','expired') DEFAULT 'active',
+            reconnect_count INT DEFAULT 0,
+            last_reconnect_at TIMESTAMP NULL,
+            closed_at TIMESTAMP NULL,
+            created_by INT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_ssh_sessions_task (task_id),
+            INDEX idx_ssh_sessions_status (status)
+          )
+        `);
+
+        // 5. SDK 快照表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS sdk_snapshots (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            session_id VARCHAR(100) NOT NULL,
+            task_id VARCHAR(128),
+            snapshot_type VARCHAR(50) DEFAULT 'config',
+            config_json LONGTEXT,
+            diff_json LONGTEXT,
+            created_by INT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_sdk_snapshots_session (session_id),
+            INDEX idx_sdk_snapshots_task (task_id)
+          )
+        `);
+
+        // 6. 测试用例表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS test_cases (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            task_id VARCHAR(128) NOT NULL DEFAULT '',
+            testpoint_id INT NULL,
+            name VARCHAR(200) NOT NULL,
+            description TEXT NULL,
+            command_list JSON NULL,
+            expected_result JSON NULL,
+            actual_output JSON NULL,
+            priority INT DEFAULT 5,
+            path_type VARCHAR(32) DEFAULT 'cli_command',
+            status ENUM('pending','running','pass','fail','error','skipped') DEFAULT 'pending',
+            output LONGTEXT NULL,
+            execution_time_ms INT NULL,
+            retest_count INT DEFAULT 0,
+            created_by INT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            executed_at TIMESTAMP NULL,
+            INDEX idx_test_cases_task (task_id),
+            INDEX idx_test_cases_status (status),
+            INDEX idx_test_cases_testpoint (testpoint_id)
+          )
+        `);
+
+        // 7. 测试Bug表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS test_bugs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            task_id VARCHAR(128) NOT NULL DEFAULT '',
+            test_case_id INT NULL,
+            bug_type VARCHAR(50) DEFAULT 'other',
+            severity VARCHAR(20) DEFAULT 'minor',
+            description TEXT NULL,
+            path_a VARCHAR(200) NULL,
+            path_a_result TEXT NULL,
+            path_b VARCHAR(200) NULL,
+            path_results JSON NULL,
+            status ENUM('open','confirmed','fixed','wontfix') DEFAULT 'open',
+            created_by INT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_test_bugs_task (task_id),
+            INDEX idx_test_bugs_case (test_case_id),
+            INDEX idx_test_bugs_status (status)
+          )
+        `);
+
+        // 8. Agent 配置表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS agent_configs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            agent_name VARCHAR(100) NOT NULL,
+            agent_type VARCHAR(50) DEFAULT 'ai',
+            config_json JSON NOT NULL,
+            soul_md LONGTEXT,
+            user_md LONGTEXT,
+            version INT DEFAULT 1,
+            status ENUM('active','inactive','draft') DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_agent_name_version (agent_name, version),
+            INDEX idx_agent_configs_name (agent_name)
+          )
+        `);
+
+        // 9. 知识沉淀表
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS knowledge_artifacts (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            task_id VARCHAR(128) NOT NULL,
+            artifact_type ENUM('design_understanding','test_plan','test_results','coverage_report','lessons_learned','cross_validation') NOT NULL,
+            title VARCHAR(500),
+            content LONGTEXT,
+            metadata_json JSON,
+            embedding LONGBLOB NULL,
+            embedding_status ENUM('pending','processing','completed','failed') DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_knowledge_artifacts_task (task_id),
+            INDEX idx_knowledge_artifacts_type (artifact_type)
+          )
+        `);
+
+        // 10. 补列（fixup 迁移）
+        const fixupStatements = [
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN task_id VARCHAR(128) NOT NULL DEFAULT \'\''],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN testpoint_id INT NULL'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN description TEXT NULL'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN command_list JSON NULL'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN expected_result JSON NULL'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN actual_output JSON NULL'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN priority INT DEFAULT 5'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN path_type VARCHAR(32) DEFAULT \'cli_command\''],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN retest_count INT DEFAULT 0'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN output LONGTEXT NULL'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN execution_time_ms INT NULL'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN executed_at TIMESTAMP NULL'],
+          ['test_cases', 'ALTER TABLE test_cases ADD COLUMN created_by INT NULL'],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN task_id VARCHAR(128) NOT NULL DEFAULT \'\''],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN test_case_id INT NULL'],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN bug_type VARCHAR(50) DEFAULT \'other\''],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN severity VARCHAR(20) DEFAULT \'minor\''],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN description TEXT NULL'],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN path_a VARCHAR(200) NULL'],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN path_a_result TEXT NULL'],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN path_b VARCHAR(200) NULL'],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN path_results JSON NULL'],
+          ['test_bugs', 'ALTER TABLE test_bugs ADD COLUMN created_by INT NULL'],
+          ['hard_constraints', 'ALTER TABLE hard_constraints ADD COLUMN source_doc VARCHAR(500) NULL'],
+          ['hard_constraints', 'ALTER TABLE hard_constraints ADD COLUMN coverage_evidence TEXT NULL'],
+          ['hard_constraints', 'ALTER TABLE hard_constraints ADD COLUMN covered_by_case_id INT NULL'],
+          ['hard_constraints', 'ALTER TABLE hard_constraints ADD COLUMN covered_at TIMESTAMP NULL'],
+          ['hard_constraints', 'ALTER TABLE hard_constraints ADD COLUMN checked_at TIMESTAMP NULL'],
+          ['agent_tasks', 'ALTER TABLE agent_tasks ADD COLUMN workflow_type VARCHAR(100) DEFAULT \'default\''],
+          ['agent_tasks', 'ALTER TABLE agent_tasks ADD COLUMN workflow_instance_id VARCHAR(100) NULL'],
+          ['agent_tool_registry', 'ALTER TABLE agent_tool_registry ADD COLUMN timeout_ms INT DEFAULT 30000'],
+          ['agent_tool_registry', 'ALTER TABLE agent_tool_registry ADD COLUMN handler VARCHAR(200) NULL'],
+          ['workflow_instances', 'ALTER TABLE workflow_instances ADD COLUMN definition_version INT DEFAULT 1'],
+          ['workflow_instances', 'ALTER TABLE workflow_instances ADD COLUMN result_json LONGTEXT NULL'],
+          ['workflow_instances', 'ALTER TABLE workflow_instances ADD COLUMN loop_count_json JSON NULL'],
+          ['ssh_sessions', 'ALTER TABLE ssh_sessions ADD COLUMN reconnect_count INT DEFAULT 0'],
+          ['ssh_sessions', 'ALTER TABLE ssh_sessions ADD COLUMN last_reconnect_at TIMESTAMP NULL'],
+          ['ssh_sessions', 'ALTER TABLE ssh_sessions ADD COLUMN closed_at TIMESTAMP NULL'],
+          ['knowledge_artifacts', 'ALTER TABLE knowledge_artifacts ADD COLUMN embedding LONGBLOB NULL'],
+          ['knowledge_artifacts', 'ALTER TABLE knowledge_artifacts ADD COLUMN embedding_status ENUM(\'pending\',\'processing\',\'completed\',\'failed\') DEFAULT \'pending\''],
+        ];
+        for (const [table, sql] of fixupStatements) {
+          await safeExec(sql, `补列 ${table}`);
+        }
+
+        // 11. 工作流种子数据
+        try {
+          await connection.execute(`
+            INSERT INTO workflow_definitions (workflow_type, name, description, definition_json, version, status)
+            VALUES ('default', '默认测试工作流', '完整的深度测试闭环工作流', '{"nodes":[{"id":"env_prepare","label":"环境准备","handler":"env_prepare","agent":"env_preparer"},{"id":"learn_context","label":"学习上下文","handler":"learn_context","agent":"context_learner"},{"id":"approval_gate","label":"审批门控","handler":"approval_gate","agent":"approver","requires_approval":true},{"id":"test_dispatch","label":"测试派发","handler":"test_dispatch","agent":"test_dispatcher"},{"id":"test_hunt","label":"测试执行","handler":"test_hunt","agent":"test_hunter"},{"id":"test_completeness_gate","label":"完整性门控","handler":"test_completeness_gate","agent":"completeness_checker"},{"id":"hard_constraint_check","label":"硬约束裁决","handler":"hard_constraint_check","agent":"constraint_checker"},{"id":"knowledge_settle","label":"知识沉淀","handler":"knowledge_settle","agent":"knowledge_settler"}],"edges":[{"from":"__START__","to":"env_prepare"},{"from":"env_prepare","to":"learn_context"},{"from":"learn_context","to":"approval_gate"},{"from":"approval_gate","to":"test_dispatch","condition":"nodeResults.approval_gate.output.decision == approved"},{"from":"test_dispatch","to":"test_hunt"},{"from":"test_hunt","to":"test_completeness_gate"},{"from":"test_completeness_gate","to":"hard_constraint_check","condition":"nodeResults.test_completeness_gate.output.coverage_met == true"},{"from":"test_completeness_gate","to":"test_dispatch","condition":"nodeResults.test_completeness_gate.output.coverage_met == false && nodeResults.test_completeness_gate.output.retest_count < 3"},{"from":"test_hunt","to":"test_dispatch","on_error":true},{"from":"hard_constraint_check","to":"knowledge_settle"},{"from":"knowledge_settle","to":"__END__"}],"max_loops_per_node":10}', 1, 'active')
+            ON DUPLICATE KEY UPDATE status = 'active'
+          `);
+          await connection.execute(`
+            INSERT INTO workflow_definitions (workflow_type, name, description, definition_json, version, status)
+            VALUES ('regression', '回归测试工作流', '简化版回归测试工作流', '{"nodes":[{"id":"env_prepare","label":"环境准备","handler":"env_prepare","agent":"env_preparer"},{"id":"learn_context","label":"学习上下文","handler":"learn_context","agent":"context_learner"},{"id":"test_dispatch","label":"测试分发","handler":"test_dispatch","agent":"test_dispatcher"},{"id":"test_hunt","label":"测试执行","handler":"test_hunt","agent":"test_hunter"},{"id":"critic_gate","label":"评审门","handler":"critic_gate","agent":"critic"},{"id":"knowledge_settle","label":"知识沉淀","handler":"knowledge_settle","agent":"knowledge_settler"}],"edges":[{"from":"__START__","to":"env_prepare"},{"from":"env_prepare","to":"learn_context"},{"from":"learn_context","to":"test_dispatch"},{"from":"test_dispatch","to":"test_hunt"},{"from":"test_hunt","to":"critic_gate"},{"from":"critic_gate","to":"knowledge_settle"},{"from":"knowledge_settle","to":"__END__"}],"max_loops_per_node":5}', 1, 'active')
+            ON DUPLICATE KEY UPDATE status = 'active'
+          `);
+          await connection.execute(`
+            INSERT INTO workflow_definitions (workflow_type, name, description, definition_json, version, status)
+            VALUES ('legacy', '传统流水线工作流', '兼容旧7阶段流水线的工作流定义', '{"nodes":[{"id":"learn_context","label":"学习上下文","handler":"learn_context","agent":"context_learner"},{"id":"approval_gate","label":"审批门","handler":"approval_gate","agent":"approver","requires_approval":true},{"id":"execute_config","label":"SDK配置","handler":"execute_config","agent":"config_executor"},{"id":"execute_traffic","label":"流量执行","handler":"execute_traffic","agent":"traffic_executor"},{"id":"critic_gate","label":"评审门","handler":"critic_gate","agent":"critic"},{"id":"completed","label":"完成","handler":"completed","agent":"completer"}],"edges":[{"from":"__START__","to":"learn_context"},{"from":"learn_context","to":"approval_gate"},{"from":"approval_gate","to":"execute_config","condition":"nodeResults.approval_gate.output.decision == approved"},{"from":"execute_config","to":"execute_traffic"},{"from":"execute_traffic","to":"critic_gate"},{"from":"critic_gate","to":"completed"},{"from":"completed","to":"__END__"}],"max_loops_per_node":3}', 1, 'active')
+            ON DUPLICATE KEY UPDATE status = 'active'
+          `);
+          logger.info('工作流种子数据初始化完成');
+        } catch (seedErr) {
+          logger.info('工作流种子数据已存在，跳过');
+        }
+
+        logger.info('CTA-v2 自动迁移完成');
+      } catch (ctaError) {
+        logger.warn('CTA-v2 自动迁移警告:', { error: ctaError.message });
+      }
+
+      logger.info('数据库初始化完成');
     } finally {
       connection.release();
     }
   } catch (error) {
-    console.error('数据库初始化失败:', error);
-    console.error('错误代码:', error.errno);
-    console.error('SQL状态:', error.sqlState);
-    console.error('错误信息:', error.sqlMessage);
-    console.warn('服务器将在没有数据库连接的情况下启动...');
-    console.warn('某些功能可能无法正常工作');
+    logger.error('数据库初始化失败:', { error: error.message, errno: error.errno, sqlState: error.sqlState, sqlMessage: error.sqlMessage });
+    logger.warn('服务器将在没有数据库连接的情况下启动...');
+    logger.warn('某些功能可能无法正常工作');
   }
 }
 
@@ -6438,7 +7569,7 @@ app.get('/api/configs/stages', async (req, res) => {
     );
     res.json({ success: true, stages });
   } catch (error) {
-    console.error('获取测试阶段列表错误:', error);
+    logger.error('获取测试阶段列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -6451,7 +7582,7 @@ app.get('/api/configs/softwares', async (req, res) => {
     );
     res.json({ success: true, softwares });
   } catch (error) {
-    console.error('获取测试软件列表错误:', error);
+    logger.error('获取测试软件列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -6529,7 +7660,7 @@ app.get('/api/configs/filter_options', async (req, res) => {
     const allFailed = !libraries && !priorities && !methods && !types && !statuses;
     
     if (allFailed) {
-      console.log('所有数据库查询失败，使用Mock数据兜底');
+      logger.info('所有数据库查询失败，使用Mock数据兜底');
       return res.json({ success: true, data: mockData });
     }
     
@@ -6542,7 +7673,7 @@ app.get('/api/configs/filter_options', async (req, res) => {
       statuses: statuses && statuses.length > 0 ? statuses : mockData.statuses
     };
     
-    console.log('筛选器配置加载成功:', {
+    logger.info('筛选器配置加载成功:', {
       libraries: result.libraries.length,
       priorities: result.priorities.length,
       methods: result.methods.length,
@@ -6553,7 +7684,7 @@ app.get('/api/configs/filter_options', async (req, res) => {
     res.json({ success: true, data: result });
     
   } catch (error) {
-    console.error('获取筛选器配置选项错误:', error);
+    logger.error('获取筛选器配置选项错误:', { error: error.message });
     // 出错时返回Mock数据
     res.json({ success: true, data: mockData });
   }
@@ -6581,7 +7712,7 @@ app.post('/api/testplans/ai_parse_filter', authenticateToken, async (req, res) =
       return res.json({ success: false, message: 'AI模型未配置API密钥，请先在配置中心配置' });
     }
     
-    console.log('使用AI模型:', aiModel.name, '(' + aiModel.model_id + ')');
+    logger.info('使用AI模型:', aiModel.name, '(' + aiModel.model_id + ')');
     
     // 构建System Prompt - 注入网络测试领域知识
     const systemPrompt = `你是一个网络交换芯片测试领域的智能筛选助手。你需要解析用户的自然语言描述，提取出结构化的筛选条件。
@@ -6621,26 +7752,27 @@ app.post('/api/testplans/ai_parse_filter', authenticateToken, async (req, res) =
 只返回JSON，不要有其他解释。`;
 
     // 调用AI模型
+    const { getAIGenerationParams: _getGP, getSceneParams: _getSP } = require('./services/aiService');
+    const _gp7 = await _getGP();
+    const _sp7 = _getSP(_gp7, 'scene_data_analysis');
+
     const response = await fetch(aiModel.endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${aiModel.api_key}`
-      },
+      headers: buildAIHeaders(aiModel.provider, aiModel.api_key),
       body: JSON.stringify({
         model: aiModel.model_name,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: query }
         ],
-        temperature: 0.3,
-        max_tokens: 500
+        temperature: _sp7.temperature,
+        max_tokens: _sp7.max_tokens
       })
     });
     
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('AI模型调用失败:', errorText);
+      logger.error('AI模型调用失败:', { error: errorText });
       return res.json({ success: false, message: 'AI模型调用失败: ' + response.status });
     }
     
@@ -6658,7 +7790,7 @@ app.post('/api/testplans/ai_parse_filter', authenticateToken, async (req, res) =
         parsedResult = JSON.parse(content);
       }
     } catch (parseError) {
-      console.error('解析AI返回结果失败:', content);
+      logger.error('解析AI返回结果失败:', { content });
       return res.json({ success: false, message: 'AI返回结果解析失败，请重试' });
     }
     
@@ -6673,11 +7805,10 @@ app.post('/api/testplans/ai_parse_filter', authenticateToken, async (req, res) =
       modules: parsedResult.modules || []
     };
     
-    console.log('AI解析结果:', JSON.stringify(result, null, 2));
     res.json({ success: true, data: result });
     
   } catch (error) {
-    console.error('AI解析筛选条件错误:', error);
+    logger.error('AI解析筛选条件错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误: ' + error.message });
   }
 });
@@ -6993,13 +8124,13 @@ app.get('/api/testassets/tree', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取测试资产树错误:', error);
+    logger.error('获取测试资产树错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 获取单个测试用例详情
-app.get('/api/testpoints/detail/:id', async (req, res) => {
+app.get('/api/testpoints/detail/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -7054,13 +8185,13 @@ app.get('/api/testpoints/detail/:id', async (req, res) => {
     
     res.json({ success: true, data: testCase });
   } catch (error) {
-    console.error('获取用例详情错误:', error);
+    logger.error('获取用例详情错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 创建测试计划（带规则）
-app.post('/api/testplans/create_with_rules', async (req, res) => {
+app.post('/api/testplans/create_with_rules', authenticateToken, async (req, res) => {
   const connection = await pool.getConnection();
   
   try {
@@ -7085,7 +8216,7 @@ app.post('/api/testplans/create_with_rules', async (req, res) => {
       status_id
     } = req.body;
     
-    console.log('创建测试计划请求:', { name, owner, project, stage_id, software_id, selectedCases: selectedCases?.length });
+    logger.debug('创建测试计划请求:', { name, owner, project, stage_id, software_id, selectedCases: selectedCases?.length });
     
     // 1. 创建测试计划主记录
     const [planResult] = await connection.execute(
@@ -7095,7 +8226,7 @@ app.post('/api/testplans/create_with_rules', async (req, res) => {
     );
     
     const planId = planResult.insertId;
-    console.log('测试计划创建成功, ID:', planId);
+    logger.info('测试计划创建成功, ID:', planId);
     
     // 2. 保存筛选规则（新的5个维度）
     const filterRules = {
@@ -7160,17 +8291,18 @@ app.post('/api/testplans/create_with_rules', async (req, res) => {
       
       const [cases] = await connection.execute(querySql, queryParams);
       caseIdsToInsert = cases.map(c => c.id);
-      console.log(`根据筛选条件查询到 ${caseIdsToInsert.length} 条用例`);
     }
     
     if (caseIdsToInsert && caseIdsToInsert.length > 0) {
       const batchSize = 500;
       for (let i = 0; i < caseIdsToInsert.length; i += batchSize) {
         const batch = caseIdsToInsert.slice(i, i + batchSize);
-        const values = batch.map(caseId => `(${planId}, ${caseId}, 'pending')`).join(',');
+        const placeholders = batch.map(() => '(?, ?, ?)').join(',');
+        const values = batch.flatMap(caseId => [planId, caseId, 'pending']);
         
         await connection.execute(
-          `INSERT IGNORE INTO test_plan_cases (plan_id, case_id, status) VALUES ${values}`
+          `INSERT IGNORE INTO test_plan_cases (plan_id, case_id, status) VALUES ${placeholders}`,
+          values
         );
       }
       
@@ -7192,7 +8324,7 @@ app.post('/api/testplans/create_with_rules', async (req, res) => {
     
   } catch (error) {
     await connection.rollback();
-    console.error('创建测试计划错误:', error);
+    logger.error('创建测试计划错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误: ' + error.message });
   } finally {
     connection.release();
@@ -7200,7 +8332,7 @@ app.post('/api/testplans/create_with_rules', async (req, res) => {
 });
 
 // 自动同步执行结果（Webhook接口）
-app.post('/api/testplans/auto_sync', async (req, res) => {
+app.post('/api/testplans/auto_sync', authenticateToken, async (req, res) => {
   const connection = await pool.getConnection();
   
   try {
@@ -7220,7 +8352,7 @@ app.post('/api/testplans/auto_sync', async (req, res) => {
       metadata
     } = req.body;
     
-    console.log('接收到自动同步请求:', { plan_id, case_id, case_external_id, status });
+    logger.debug('接收到自动同步请求:', { plan_id, case_id, case_external_id, status });
     
     const normalizeStatus = (status) => {
       if (!status) return null;
@@ -7335,7 +8467,7 @@ app.post('/api/testplans/auto_sync', async (req, res) => {
     
   } catch (error) {
     await connection.rollback();
-    console.error('自动同步错误:', error);
+    logger.error('自动同步错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   } finally {
     connection.release();
@@ -7515,7 +8647,7 @@ app.get('/api/testplans/:id/report', async (req, res) => {
     res.json(report);
     
   } catch (error) {
-    console.error('获取测试计划报告错误:', error);
+    logger.error('获取测试计划报告错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -7557,7 +8689,7 @@ app.get('/api/testplans/list', async (req, res) => {
     res.json({ success: true, plans });
     
   } catch (error) {
-    console.error('获取测试计划列表错误:', error);
+    logger.error('获取测试计划列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -7647,13 +8779,13 @@ app.get('/api/testplans/:id', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('获取测试计划详情错误:', error);
+    logger.error('获取测试计划详情错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 预览计划用例
-app.post('/api/testplans/preview_cases', async (req, res) => {
+app.post('/api/testplans/preview_cases', authenticateToken, async (req, res) => {
   try {
     const { selectedModules, priorities, rules } = req.body;
     
@@ -7706,13 +8838,13 @@ app.post('/api/testplans/preview_cases', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('预览用例错误:', error);
+    logger.error('预览用例错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 更新测试计划状态
-app.post('/api/testplans/:id/status', async (req, res) => {
+app.post('/api/testplans/:id/status', authenticateToken, async (req, res) => {
   try {
     const planId = req.params.id;
     const { status } = req.body;
@@ -7742,13 +8874,13 @@ app.post('/api/testplans/:id/status', async (req, res) => {
     res.json({ success: true, message: '状态更新成功' });
     
   } catch (error) {
-    console.error('更新测试计划状态错误:', error);
+    logger.error('更新测试计划状态错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 更新测试计划实际完成时间
-app.post('/api/testplans/:id/end-time', async (req, res) => {
+app.post('/api/testplans/:id/end-time', authenticateToken, async (req, res) => {
   try {
     const planId = req.params.id;
     const { actual_end_time } = req.body;
@@ -7761,13 +8893,13 @@ app.post('/api/testplans/:id/end-time', async (req, res) => {
     res.json({ success: true, message: '完成时间更新成功' });
     
   } catch (error) {
-    console.error('更新测试计划完成时间错误:', error);
+    logger.error('更新测试计划完成时间错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 更新测试计划
-app.put('/api/testplans/:id', async (req, res) => {
+app.put('/api/testplans/:id', authenticateToken, async (req, res) => {
   try {
     const planId = req.params.id;
     const { name, owner, project, stage_id, software_id, iteration, description, start_date, end_date, actual_end_time, selectedCases } = req.body;
@@ -7795,10 +8927,12 @@ app.put('/api/testplans/:id', async (req, res) => {
         const batchSize = 500;
         for (let i = 0; i < selectedCases.length; i += batchSize) {
           const batch = selectedCases.slice(i, i + batchSize);
-          const values = batch.map(caseId => `(${planId}, ${caseId}, 'pending')`).join(',');
+          const placeholders = batch.map(() => '(?, ?, ?)').join(',');
+          const insertValues = batch.flatMap(caseId => [planId, caseId, 'pending']);
           
           await connection.execute(
-            `INSERT IGNORE INTO test_plan_cases (plan_id, case_id, status) VALUES ${values}`
+            `INSERT IGNORE INTO test_plan_cases (plan_id, case_id, status) VALUES ${placeholders}`,
+            insertValues
           );
         }
         
@@ -7821,13 +8955,13 @@ app.put('/api/testplans/:id', async (req, res) => {
     }
     
   } catch (error) {
-    console.error('更新测试计划错误:', error);
+    logger.error('更新测试计划错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
 // 删除测试计划
-app.delete('/api/testplans/:id', async (req, res) => {
+app.delete('/api/testplans/:id', authenticateToken, async (req, res) => {
   try {
     const planId = req.params.id;
     
@@ -7836,51 +8970,817 @@ app.delete('/api/testplans/:id', async (req, res) => {
     res.json({ success: true, message: '测试计划删除成功' });
     
   } catch (error) {
-    console.error('删除测试计划错误:', error);
+    logger.error('删除测试计划错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
 
+async function tableExists(tableName) {
+  try {
+    const [rows] = await pool.query(
+      "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
+      [tableName]
+    );
+    return rows.length > 0;
+  } catch (error) {
+    logger.error(`检查表 ${tableName} 失败:`, error.message);
+    return false;
+  }
+}
+
+async function columnExists(tableName, columnName) {
+  try {
+    const [rows] = await pool.query(
+      `SELECT COUNT(*) as count 
+       FROM information_schema.columns 
+       WHERE table_schema = DATABASE() 
+         AND table_name = ? 
+         AND column_name = ?`,
+      [tableName, columnName]
+    );
+    return rows[0].count > 0;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function ensureAITablesExist() {
+  logger.info('智能检测 AI 相关表结构...');
+  
+  let fixedCount = 0;
+  const missingTables = [];
+  const missingColumns = [];
+
+  // 1. 检查并创建缺失的表
+  const aiTables = [
+    {
+      name: 'ai_sub_agents',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_sub_agents\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+        \`agent_code\` VARCHAR(50) NOT NULL COMMENT '系统唯一标识',
+        \`display_name\` VARCHAR(100) NOT NULL COMMENT '中文显示名称',
+        \`description\` VARCHAR(255) DEFAULT NULL COMMENT '代理描述',
+        \`category\` VARCHAR(50) DEFAULT NULL COMMENT '分类: test_generation, test_review, qa_assistant',
+        \`is_system\` TINYINT(1) DEFAULT 0 COMMENT '是否系统内置',
+        \`allow_qa\` TINYINT(1) DEFAULT 1 COMMENT '是否允许QA问答',
+        \`is_enabled\` TINYINT(1) DEFAULT 1 COMMENT '是否启用',
+        \`creator_id\` INT DEFAULT NULL COMMENT '创建者ID',
+        \`visibility\` ENUM('public','private') DEFAULT 'public' COMMENT '可见性',
+        \`memory_enabled\` TINYINT(1) DEFAULT 1 COMMENT '是否启用记忆',
+        \`memory_distill_threshold\` INT DEFAULT 2000 COMMENT '记忆蒸馏阈值(字符数)',
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+        \`updated_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_agent_code_creator\` (\`agent_code\`, \`creator_id\`),
+        KEY \`idx_category\` (\`category\`),
+        KEY \`idx_is_system\` (\`is_system\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_custom_tools',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_custom_tools\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`tool_name\` VARCHAR(100) NOT NULL,
+        \`display_name\` VARCHAR(200) DEFAULT NULL,
+        \`description\` TEXT,
+        \`input_schema\` JSON DEFAULT NULL,
+        \`language\` ENUM('javascript','python') DEFAULT 'javascript',
+        \`code_content\` LONGTEXT,
+        \`is_public\` TINYINT(1) DEFAULT 1,
+        \`is_system\` TINYINT(1) DEFAULT 0,
+        \`is_enabled\` TINYINT(1) DEFAULT 1,
+        \`creator_id\` INT DEFAULT NULL,
+        \`timeout_ms\` INT DEFAULT 10000,
+        \`max_memory_mb\` INT DEFAULT 128,
+        \`allowed_tables\` JSON DEFAULT NULL,
+        \`requires_docker\` TINYINT(1) DEFAULT 0,
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_tool_name\` (\`tool_name\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_sub_agent_memories',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_sub_agent_memories\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`agent_id\` INT NOT NULL,
+        \`library_id\` INT DEFAULT NULL,
+        \`module_id\` INT DEFAULT NULL,
+        \`level\` ENUM('global','library','module') NOT NULL,
+        \`content\` LONGTEXT,
+        \`char_count\` INT DEFAULT 0,
+        \`last_distilled_at\` TIMESTAMP NULL DEFAULT NULL,
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_memory_node\` (\`agent_id\`, \`library_id\`, \`module_id\`),
+        KEY \`idx_agent_level\` (\`agent_id\`, \`level\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_sub_agent_config_files',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_sub_agent_config_files\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`agent_id\` INT NOT NULL,
+        \`file_type\` ENUM('soul','user','tools','rule','checklist','examples','glossary','template','custom') NOT NULL,
+        \`file_name\` VARCHAR(100) NOT NULL,
+        \`content\` LONGTEXT,
+        \`description\` VARCHAR(500) DEFAULT NULL,
+        \`is_required\` TINYINT(1) DEFAULT 0,
+        \`sort_order\` INT DEFAULT 0,
+        \`version\` INT DEFAULT 1,
+        \`created_by\` INT DEFAULT NULL,
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_agent_file_type\` (\`agent_id\`, \`file_type\`),
+        CONSTRAINT \`fk_config_sub_agent\` FOREIGN KEY (\`agent_id\`) REFERENCES \`ai_sub_agents\`(\`id\`) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_review_tasks',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_review_tasks\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`review_task_id\` VARCHAR(50) NOT NULL,
+        \`source_task_id\` VARCHAR(50) DEFAULT NULL,
+        \`submitter_id\` INT DEFAULT NULL,
+        \`agent_id\` INT DEFAULT NULL,
+        \`status\` ENUM('pending','running','completed','failed','cancelled','needs_human') DEFAULT 'pending',
+        \`total_cases\` INT DEFAULT 0,
+        \`reviewed_cases\` INT DEFAULT 0,
+        \`approved_cases\` INT DEFAULT 0,
+        \`rejected_cases\` INT DEFAULT 0,
+        \`modified_cases\` INT DEFAULT 0,
+        \`needs_human_cases\` INT DEFAULT 0,
+        \`reflection_rounds\` INT DEFAULT 0,
+        \`error_message\` TEXT,
+        \`started_at\` TIMESTAMP NULL DEFAULT NULL,
+        \`completed_at\` TIMESTAMP NULL DEFAULT NULL,
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_review_task_id\` (\`review_task_id\`),
+        KEY \`idx_status\` (\`status\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_review_results',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_review_results\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`review_task_id\` VARCHAR(50) NOT NULL,
+        \`temp_case_id\` VARCHAR(50) NOT NULL,
+        \`action\` ENUM('approve','reject','modify','needs_human') NOT NULL,
+        \`ai_comment\` TEXT,
+        \`ai_score\` DECIMAL(3,1) DEFAULT NULL,
+        \`original_content\` JSON DEFAULT NULL,
+        \`suggested_content\` JSON DEFAULT NULL,
+        \`diff_summary\` TEXT,
+        \`diff_detail\` JSON DEFAULT NULL,
+        \`agent_id\` INT DEFAULT NULL,
+        \`reflection_history\` JSON DEFAULT NULL,
+        \`final_rule_passed\` INT DEFAULT NULL,
+        \`failed_rule\` INT DEFAULT NULL,
+        \`confidence_score\` DECIMAL(5,2) DEFAULT NULL,
+        \`user_decision\` ENUM('pending','accepted','rejected','modified_accepted') DEFAULT 'pending',
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_review_case\` (\`review_task_id\`, \`temp_case_id\`),
+        CONSTRAINT \`fk_ai_review_task\` FOREIGN KEY (\`review_task_id\`) REFERENCES \`ai_review_tasks\`(\`review_task_id\`) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_sub_agent_memory_chunks',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_sub_agent_memory_chunks\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`memory_id\` INT NOT NULL,
+        \`chunk_index\` INT NOT NULL,
+        \`chunk_content\` TEXT NOT NULL,
+        \`token_count\` INT DEFAULT 0,
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_memory_chunk\` (\`memory_id\`, \`chunk_index\`),
+        CONSTRAINT \`fk_chunk_memory\` FOREIGN KEY (\`memory_id\`) REFERENCES \`ai_sub_agent_memories\`(\`id\`) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_tool_versions',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_tool_versions\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`tool_id\` INT NOT NULL,
+        \`version\` INT NOT NULL,
+        \`execute_code\` LONGTEXT,
+        \`input_schema\` JSON DEFAULT NULL,
+        \`change_note\` VARCHAR(500) DEFAULT NULL,
+        \`created_by\` INT DEFAULT NULL,
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_tool_version\` (\`tool_id\`, \`version\`),
+        CONSTRAINT \`fk_version_tool\` FOREIGN KEY (\`tool_id\`) REFERENCES \`ai_custom_tools\`(\`id\`) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'module_knowledge_files',
+      sql: `CREATE TABLE IF NOT EXISTS \`module_knowledge_files\` (
+        \`id\` int NOT NULL AUTO_INCREMENT,
+        \`module_id\` int DEFAULT NULL,
+        \`library_id\` int DEFAULT NULL,
+        \`parent_id\` int DEFAULT NULL,
+        \`name\` varchar(255) NOT NULL,
+        \`type\` enum('folder','file') NOT NULL DEFAULT 'folder',
+        \`file_path\` varchar(500) DEFAULT NULL,
+        \`file_size\` bigint DEFAULT NULL,
+        \`file_ext\` varchar(20) DEFAULT NULL,
+        \`parse_status\` enum('pending','parsing','parsed','failed') DEFAULT 'pending',
+        \`chunk_count\` int DEFAULT 0,
+        \`total_tokens\` int DEFAULT 0,
+        \`is_enabled\` tinyint(1) DEFAULT 1,
+        \`sort_order\` int DEFAULT 0,
+        \`created_by\` varchar(50) DEFAULT NULL,
+        \`created_at\` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        \`deleted_at\` timestamp NULL DEFAULT NULL,
+        PRIMARY KEY (\`id\`),
+        KEY \`idx_module_id\` (\`module_id\`),
+        KEY \`idx_library_id\` (\`library_id\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_material_chunks',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_material_chunks\` (
+        \`id\` int NOT NULL AUTO_INCREMENT,
+        \`file_id\` int NOT NULL,
+        \`module_id\` int NOT NULL,
+        \`library_id\` int DEFAULT NULL,
+        \`chunk_index\` int NOT NULL,
+        \`chunk_content\` text NOT NULL,
+        \`token_count\` int DEFAULT 0,
+        \`char_count\` int DEFAULT 0,
+        \`status\` enum('pending','processing','completed','failed') DEFAULT 'pending',
+        \`created_at\` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_file_chunk\` (\`file_id\`, \`chunk_index\`),
+        KEY \`idx_module_id\` (\`module_id\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_case_generation_tasks',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_case_generation_tasks\` (
+        \`id\` int NOT NULL AUTO_INCREMENT,
+        \`task_id\` varchar(50) NOT NULL,
+        \`module_id\` int NOT NULL,
+        \`library_id\` int DEFAULT NULL,
+        \`user_id\` int NOT NULL,
+        \`status\` enum('pending','processing','completed','partial_completed','failed','cancelled') DEFAULT 'pending',
+        \`stage\` enum('init','chunking','mapping','reducing','finished') DEFAULT 'init',
+        \`progress\` int DEFAULT 0,
+        \`progress_message\` varchar(500) DEFAULT NULL,
+        \`total_chunks\` int DEFAULT 0,
+        \`processed_chunks\` int DEFAULT 0,
+        \`completed_chunks\` int DEFAULT 0,
+        \`failed_chunks\` int DEFAULT 0,
+        \`total_cases\` int DEFAULT 0,
+        \`config\` json DEFAULT NULL,
+        \`selected_files\` json DEFAULT NULL,
+        \`error_message\` text,
+        \`started_at\` timestamp NULL DEFAULT NULL,
+        \`completed_at\` timestamp NULL DEFAULT NULL,
+        \`expires_at\` timestamp NULL DEFAULT NULL,
+        \`created_at\` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_task_id\` (\`task_id\`),
+        KEY \`idx_module_id\` (\`module_id\`),
+        KEY \`idx_user_id\` (\`user_id\`),
+        KEY \`idx_status\` (\`status\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'temp_test_cases',
+      sql: `CREATE TABLE IF NOT EXISTS \`temp_test_cases\` (
+        \`id\` int NOT NULL AUTO_INCREMENT,
+        \`temp_case_id\` varchar(50) NOT NULL,
+        \`task_id\` varchar(50) NOT NULL,
+        \`module_id\` int NOT NULL,
+        \`name\` varchar(500) NOT NULL,
+        \`priority\` varchar(20) DEFAULT '中',
+        \`type\` varchar(50) DEFAULT '功能测试',
+        \`precondition\` text,
+        \`purpose\` text,
+        \`steps\` text NOT NULL,
+        \`expected\` text NOT NULL,
+        \`key_config\` text,
+        \`remark\` text,
+        \`method\` varchar(50) DEFAULT '手动',
+        \`owner\` varchar(50) DEFAULT NULL,
+        \`duplicate_score\` decimal(5,2) DEFAULT NULL,
+        \`is_duplicate\` tinyint(1) DEFAULT 0,
+        \`user_modified\` tinyint(1) DEFAULT 0,
+        \`status\` enum('pending','approved','rejected','merged') DEFAULT 'pending',
+        \`ai_review_action\` enum('none','approve','reject','modify') DEFAULT 'none',
+        \`ai_review_comment\` text,
+        \`ai_review_score\` decimal(3,1) DEFAULT NULL,
+        \`ai_suggested_content\` json DEFAULT NULL,
+        \`ai_diff_summary\` text,
+        \`ai_review_task_id\` varchar(50) DEFAULT NULL,
+        \`ai_user_decision\` enum('pending','accepted','rejected','modified_accepted') DEFAULT 'pending',
+        \`created_at\` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_temp_case_id\` (\`temp_case_id\`),
+        KEY \`idx_task_id\` (\`task_id\`),
+        KEY \`idx_module_id\` (\`module_id\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_agent_tool_usage_logs',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_agent_tool_usage_logs\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`agent_id\` INT DEFAULT NULL,
+        \`session_id\` VARCHAR(100) DEFAULT NULL,
+        \`tool_name\` VARCHAR(100) NOT NULL,
+        \`input_params\` JSON DEFAULT NULL,
+        \`output_result\` JSON DEFAULT NULL,
+        \`execution_time_ms\` INT DEFAULT NULL,
+        \`success\` TINYINT(1) DEFAULT 1,
+        \`error_message\` TEXT,
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        KEY \`idx_agent_id\` (\`agent_id\`),
+        KEY \`idx_session_id\` (\`session_id\`),
+        KEY \`idx_tool_name\` (\`tool_name\`),
+        KEY \`idx_created_at\` (\`created_at\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    },
+    {
+      name: 'ai_operation_logs',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_operation_logs\` (
+        \`id\` INT AUTO_INCREMENT PRIMARY KEY COMMENT '日志ID',
+        \`user_id\` INT NOT NULL COMMENT '用户ID',
+        \`username\` VARCHAR(100) COMMENT '用户名',
+        \`skill_name\` VARCHAR(100) NOT NULL COMMENT '技能名称',
+        \`skill_id\` INT COMMENT '技能ID',
+        \`operation_type\` VARCHAR(20) NOT NULL COMMENT '操作类型（SELECT）',
+        \`sql_query\` TEXT COMMENT '执行的SQL语句',
+        \`sql_params\` TEXT COMMENT 'SQL参数（JSON格式）',
+        \`tables_accessed\` VARCHAR(500) COMMENT '访问的表（逗号分隔）',
+        \`result_count\` INT DEFAULT 0 COMMENT '返回结果数量',
+        \`execution_time_ms\` INT COMMENT '执行耗时（毫秒）',
+        \`prompt_tokens\` INT DEFAULT 0 COMMENT '提示词token数',
+        \`completion_tokens\` INT DEFAULT 0 COMMENT '完成token数',
+        \`total_tokens\` INT DEFAULT 0 COMMENT '总token数',
+        \`model_name\` VARCHAR(100) COMMENT '使用的AI模型名称',
+        \`status\` VARCHAR(20) NOT NULL DEFAULT 'success' COMMENT '执行状态（success/failed）',
+        \`error_message\` TEXT COMMENT '错误信息',
+        \`ip_address\` VARCHAR(50) COMMENT 'IP地址',
+        \`user_agent\` VARCHAR(500) COMMENT '用户代理',
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+        INDEX \`idx_user_id\` (\`user_id\`),
+        INDEX \`idx_skill_name\` (\`skill_name\`),
+        INDEX \`idx_status\` (\`status\`),
+        INDEX \`idx_created_at\` (\`created_at\`),
+        INDEX \`idx_operation_type\` (\`operation_type\`),
+        INDEX \`idx_ai_logs_total_tokens\` (\`total_tokens\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI操作审计日志表'`
+    },
+    {
+      name: 'ai_request_logs',
+      sql: `CREATE TABLE IF NOT EXISTS \`ai_request_logs\` (
+        \`id\` BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '日志ID',
+        \`user_id\` INT NOT NULL COMMENT '触发用户ID',
+        \`username\` VARCHAR(100) COMMENT '触发用户名',
+        \`trigger_type\` VARCHAR(50) NOT NULL COMMENT '触发类型',
+        \`trigger_source\` VARCHAR(50) DEFAULT NULL COMMENT '触发来源标识',
+        \`trigger_source_name\` VARCHAR(200) DEFAULT NULL COMMENT '触发来源显示名称',
+        \`system_prompt\` MEDIUMTEXT COMMENT 'System提示词',
+        \`user_prompt\` MEDIUMTEXT COMMENT 'User提示词',
+        \`ai_response\` MEDIUMTEXT COMMENT 'AI输出结果',
+        \`prompt_tokens\` INT DEFAULT 0 COMMENT '提示词Token数',
+        \`completion_tokens\` INT DEFAULT 0 COMMENT '完成Token数',
+        \`total_tokens\` INT DEFAULT 0 COMMENT '总Token数',
+        \`model_name\` VARCHAR(100) COMMENT '使用的AI模型名称',
+        \`status\` VARCHAR(20) NOT NULL DEFAULT 'success' COMMENT '状态',
+        \`error_message\` TEXT COMMENT '错误信息',
+        \`execution_time_ms\` INT COMMENT '执行耗时（毫秒）',
+        \`project_id\` INT DEFAULT NULL COMMENT '关联项目ID',
+        \`library_id\` INT DEFAULT NULL COMMENT '关联用例库ID',
+        \`module_id\` INT DEFAULT NULL COMMENT '关联模块ID',
+        \`ip_address\` VARCHAR(50) COMMENT 'IP地址',
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+        INDEX \`idx_user_id\` (\`user_id\`),
+        INDEX \`idx_trigger_type\` (\`trigger_type\`),
+        INDEX \`idx_status\` (\`status\`),
+        INDEX \`idx_created_at\` (\`created_at\`),
+        INDEX \`idx_trigger_source\` (\`trigger_source\`),
+        INDEX \`idx_composite_query\` (\`user_id\`, \`trigger_type\`, \`created_at\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI请求日志表-记录所有AI触发的Prompt和响应'`
+    }
+  ];
+
+  for (const table of aiTables) {
+    const exists = await tableExists(table.name);
+    if (!exists) {
+      try {
+        await pool.query(table.sql);
+        logger.info(`   已创建缺失的表: ${table.name}`);
+        missingTables.push(table.name);
+        fixedCount++;
+      } catch (err) {
+        logger.warn(`   创建表 ${table.name} 失败: ${err.message}`);
+      }
+    }
+  }
+
+  // 2. 检查并添加缺失的字段 (ai_sub_agents V2 字段)
+  const aiSubAgentsFields = [
+    { name: 'agent_type', def: "ENUM('generator','reviewer','analyzer','assistant') DEFAULT 'assistant'" },
+    { name: 'avatar', def: "VARCHAR(500) DEFAULT NULL" },
+    { name: 'parent_agent_id', def: "INT DEFAULT NULL" },
+    { name: 'llm_model', def: "VARCHAR(100) DEFAULT NULL" },
+    { name: 'llm_temperature', def: "DECIMAL(3,2) DEFAULT 0.70" },
+    { name: 'llm_max_tokens', def: "INT DEFAULT 4096" },
+    { name: 'max_retries', def: "INT DEFAULT 3" },
+    { name: 'timeout_seconds', def: "INT DEFAULT 300" },
+    { name: 'sort_order', def: "INT DEFAULT 0" },
+    { name: 'version', def: "INT DEFAULT 1" },
+    { name: 'created_by', def: "INT DEFAULT NULL" },
+    { name: 'updated_by', def: "INT DEFAULT NULL" }
+  ];
+
+  const subAgentsTableExists = await tableExists('ai_sub_agents');
+  if (subAgentsTableExists) {
+    for (const field of aiSubAgentsFields) {
+      const exists = await columnExists('ai_sub_agents', field.name);
+      if (!exists) {
+        try {
+          await pool.query(`ALTER TABLE ai_sub_agents ADD COLUMN \`${field.name}\` ${field.def}`);
+          logger.info(`   已添加字段: ai_sub_agents.${field.name}`);
+          missingColumns.push(`ai_sub_agents.${field.name}`);
+          fixedCount++;
+        } catch (err) {
+          logger.warn(`   添加字段 ai_sub_agents.${field.name} 失败: ${err.message}`);
+        }
+      }
+    }
+  }
+
+  // 3. 检查并添加 ai_sub_agent_memories V2 字段
+  const memoriesV2Fields = [
+    { name: 'memory_type', def: "ENUM('experience','correction','preference','glossary') DEFAULT 'experience'" },
+    { name: 'title', def: "VARCHAR(200) DEFAULT NULL" },
+    { name: 'source', def: "ENUM('user_correction','auto_distill','manual','system') DEFAULT 'auto_distill'" },
+    { name: 'relevance_score', def: "DECIMAL(5,2) DEFAULT 1.00" },
+    { name: 'access_count', def: "INT DEFAULT 0" },
+    { name: 'last_accessed_at', def: "TIMESTAMP NULL DEFAULT NULL" },
+    { name: 'is_active', def: "TINYINT(1) DEFAULT 1" },
+    { name: 'token_count', def: "INT DEFAULT 0" },
+    { name: 'version', def: "INT DEFAULT 1" },
+    { name: 'created_by', def: "INT DEFAULT NULL" }
+  ];
+
+  const memoriesTableExists = await tableExists('ai_sub_agent_memories');
+  if (memoriesTableExists) {
+    for (const field of memoriesV2Fields) {
+      const exists = await columnExists('ai_sub_agent_memories', field.name);
+      if (!exists) {
+        try {
+          await pool.query(`ALTER TABLE ai_sub_agent_memories ADD COLUMN \`${field.name}\` ${field.def}`);
+          logger.info(`   已添加字段: ai_sub_agent_memories.${field.name}`);
+          missingColumns.push(`ai_sub_agent_memories.${field.name}`);
+          fixedCount++;
+        } catch (err) {
+          logger.warn(`   添加字段 ai_sub_agent_memories.${field.name} 失败: ${err.message}`);
+        }
+      }
+    }
+  }
+
+  // 4. 检查并添加 ai_review_tasks 额外字段
+  const reviewTasksExtraFields = [
+    { name: 'needs_human_cases', def: "INT DEFAULT 0" },
+    { name: 'reflection_rounds', def: "INT DEFAULT 0" }
+  ];
+
+  const reviewTasksTableExists = await tableExists('ai_review_tasks');
+  if (reviewTasksTableExists) {
+    for (const field of reviewTasksExtraFields) {
+      const exists = await columnExists('ai_review_tasks', field.name);
+      if (!exists) {
+        try {
+          await pool.query(`ALTER TABLE ai_review_tasks ADD COLUMN \`${field.name}\` ${field.def}`);
+          logger.info(`   已添加字段: ai_review_tasks.${field.name}`);
+          missingColumns.push(`ai_review_tasks.${field.name}`);
+          fixedCount++;
+        } catch (err) {
+          logger.warn(`   添加字段 ai_review_tasks.${field.name} 失败: ${err.message}`);
+        }
+      }
+    }
+  }
+
+  // 5. 检查并添加 ai_review_results 额外字段
+  const reviewResultsExtraFields = [
+    { name: 'agent_id', def: "INT DEFAULT NULL" },
+    { name: 'reflection_history', def: "JSON DEFAULT NULL" },
+    { name: 'final_rule_passed', def: "INT DEFAULT NULL" },
+    { name: 'failed_rule', def: "INT DEFAULT NULL" },
+    { name: 'confidence_score', def: "DECIMAL(5,2) DEFAULT NULL" }
+  ];
+
+  const reviewResultsTableExists = await tableExists('ai_review_results');
+  if (reviewResultsTableExists) {
+    for (const field of reviewResultsExtraFields) {
+      const exists = await columnExists('ai_review_results', field.name);
+      if (!exists) {
+        try {
+          await pool.query(`ALTER TABLE ai_review_results ADD COLUMN \`${field.name}\` ${field.def}`);
+          logger.info(`   已添加字段: ai_review_results.${field.name}`);
+          missingColumns.push(`ai_review_results.${field.name}`);
+          fixedCount++;
+        } catch (err) {
+          logger.warn(`   添加字段 ai_review_results.${field.name} 失败: ${err.message}`);
+        }
+      }
+    }
+  }
+
+  // 6. 检查 users 表的 ai_timeout_config 字段
+  const usersTimeoutExists = await columnExists('users', 'ai_timeout_config');
+  if (!usersTimeoutExists) {
+    try {
+      await pool.query("ALTER TABLE users ADD COLUMN `ai_timeout_config` JSON DEFAULT NULL");
+      logger.info(`   已添加字段: users.ai_timeout_config`);
+      missingColumns.push('users.ai_timeout_config');
+      fixedCount++;
+    } catch (err) {
+      logger.warn(`   添加字段 users.ai_timeout_config 失败: ${err.message}`);
+    }
+  }
+
+  // 7. 修复失败的迁移: add_ai_analysis_failed_simple (test_reports.ai_analysis_failed)
+  const testReportsTable = await tableExists('test_reports');
+  if (testReportsTable) {
+    const aiAnalysisFailed = await columnExists('test_reports', 'ai_analysis_failed');
+    if (!aiAnalysisFailed) {
+      try {
+        await pool.query("ALTER TABLE test_reports ADD COLUMN `ai_analysis_failed` TINYINT(1) DEFAULT 0 COMMENT 'AI分析是否失败: 0-成功, 1-失败'");
+        logger.info(`   已添加字段: test_reports.ai_analysis_failed`);
+        missingColumns.push('test_reports.ai_analysis_failed');
+        fixedCount++;
+      } catch (err) {
+        logger.warn(`   添加字段 test_reports.ai_analysis_failed 失败: ${err.message}`);
+      }
+    }
+  }
+
+  // 8. 修复失败的迁移: add_library_id_to_knowledge_files (module_knowledge_files.library_id)
+  const mkfTable = await tableExists('module_knowledge_files');
+  if (mkfTable) {
+    const mkfLibId = await columnExists('module_knowledge_files', 'library_id');
+    if (!mkfLibId) {
+      try {
+        await pool.query("ALTER TABLE module_knowledge_files ADD COLUMN `library_id` int DEFAULT NULL COMMENT '所属用例库ID' AFTER module_id");
+        logger.info(`   已添加字段: module_knowledge_files.library_id`);
+        missingColumns.push('module_knowledge_files.library_id');
+        fixedCount++;
+        try { await pool.query("CREATE INDEX idx_library_id ON module_knowledge_files(library_id)"); } catch(e) {}
+      } catch (err) {
+        logger.warn(`   添加字段 module_knowledge_files.library_id 失败: ${err.message}`);
+      }
+    }
+
+    const mkfModuleIdNullable = await columnExists('module_knowledge_files', 'module_id');
+    if (mkfModuleIdNullable) {
+      try {
+        const [colInfo] = await pool.query(`SHOW COLUMNS FROM module_knowledge_files WHERE Field = 'module_id' AND Null = 'NO'`);
+        if (colInfo.length > 0) {
+          await pool.query("ALTER TABLE module_knowledge_files MODIFY COLUMN `module_id` int DEFAULT NULL COMMENT '所属模块ID'");
+          logger.info(`   已修改字段: module_knowledge_files.module_id 允许 NULL`);
+          fixedCount++;
+        }
+      } catch (err) {
+        logger.warn(`   修改字段 module_knowledge_files.module_id 失败: ${err.message}`);
+      }
+    }
+  }
+
+  // 9. 修复失败的迁移: add_project_id_to_temp_cases (temp_test_cases.project_id)
+  const tempCasesTable = await tableExists('temp_test_cases');
+  if (tempCasesTable) {
+    const tempProjectId = await columnExists('temp_test_cases', 'project_id');
+    if (!tempProjectId) {
+      try {
+        await pool.query("ALTER TABLE temp_test_cases ADD COLUMN `project_id` INT DEFAULT NULL COMMENT '关联项目ID' AFTER owner");
+        logger.info(`   已添加字段: temp_test_cases.project_id`);
+        missingColumns.push('temp_test_cases.project_id');
+        fixedCount++;
+      } catch (err) {
+        logger.warn(`   添加字段 temp_test_cases.project_id 失败: ${err.message}`);
+      }
+    }
+    const tempProjectIds = await columnExists('temp_test_cases', 'project_ids');
+    if (!tempProjectIds) {
+      try {
+        await pool.query("ALTER TABLE temp_test_cases ADD COLUMN `project_ids` JSON DEFAULT NULL COMMENT '关联项目ID列表(JSON数组)' AFTER project_id");
+        logger.info(`   已添加字段: temp_test_cases.project_ids`);
+        missingColumns.push('temp_test_cases.project_ids');
+        fixedCount++;
+      } catch (err) {
+        logger.warn(`   添加字段 temp_test_cases.project_ids 失败: ${err.message}`);
+      }
+    }
+  }
+
+  // 10. 修复 level1_points 缺少 summary 字段
+  const l1Table = await tableExists('level1_points');
+  if (l1Table) {
+    const l1Summary = await columnExists('level1_points', 'summary');
+    if (!l1Summary) {
+      try {
+        await pool.query("ALTER TABLE level1_points ADD COLUMN `summary` TEXT DEFAULT NULL COMMENT '测试点概述(AI自动生成)' AFTER test_type");
+        logger.info(`   已添加字段: level1_points.summary`);
+        missingColumns.push('level1_points.summary');
+        fixedCount++;
+      } catch (err) {
+        logger.warn(`   添加字段 level1_points.summary 失败: ${err.message}`);
+      }
+    }
+  }
+
+  // 11. 检查并添加 ai_operation_logs 缺失的字段
+  const aiOpLogsTable = await tableExists('ai_operation_logs');
+  if (aiOpLogsTable) {
+    const aiOpLogsFields = [
+      { name: 'prompt_tokens', def: "INT DEFAULT 0 COMMENT '提示词token数'" },
+      { name: 'completion_tokens', def: "INT DEFAULT 0 COMMENT '完成token数'" },
+      { name: 'total_tokens', def: "INT DEFAULT 0 COMMENT '总token数'" },
+      { name: 'model_name', def: "VARCHAR(100) COMMENT '使用的AI模型名称'" }
+    ];
+
+    for (const field of aiOpLogsFields) {
+      const exists = await columnExists('ai_operation_logs', field.name);
+      if (!exists) {
+        try {
+          await pool.query(`ALTER TABLE ai_operation_logs ADD COLUMN \`${field.name}\` ${field.def}`);
+          logger.info(`   已添加字段: ai_operation_logs.${field.name}`);
+          missingColumns.push(`ai_operation_logs.${field.name}`);
+          fixedCount++;
+        } catch (err) {
+          logger.warn(`   添加字段 ai_operation_logs.${field.name} 失败: ${err.message}`);
+        }
+      }
+    }
+
+    // 添加索引(如果不存在)
+    try {
+      const [indexExists] = await pool.query(`
+        SELECT COUNT(*) as count 
+        FROM information_schema.statistics 
+        WHERE table_schema = DATABASE() 
+          AND table_name = 'ai_operation_logs' 
+          AND index_name = 'idx_ai_logs_total_tokens'
+      `);
+      if (indexExists[0].count === 0) {
+        await pool.query("CREATE INDEX idx_ai_logs_total_tokens ON ai_operation_logs(total_tokens)");
+        logger.info('   已添加索引: ai_operation_logs.idx_ai_logs_total_tokens');
+      }
+    } catch (err) {
+      logger.warn(`   添加索引失败: ${err.message}`);
+    }
+  }
+
+  // 输出汇总结果
+  if (fixedCount > 0) {
+    logger.info(`AI表自动修复完成: 创建了 ${missingTables.length} 个表，添加了 ${missingColumns.length} 个字段`);
+    logger.info(`AI表自动修复完成`, { createdTables: missingTables.length, addedColumns: missingColumns.length });
+  } else {
+    logger.info(' 所有AI相关表和字段均已就绪');
+  }
+}
+
+// 初始化 Python 虚拟环境（SSH CLI Bridge 依赖）
+async function initPythonVenv() {
+  const venvPythonPath = path.join(__dirname, 'venv', 'bin', 'python');
+  const setupScript = path.join(__dirname, 'scripts', 'setup_venv.sh');
+  const fs = require('fs');
+
+  // 如果 venv 已存在且 paramiko 可用，跳过
+  if (fs.existsSync(venvPythonPath)) {
+    try {
+      const { execFileSync } = require('child_process');
+      execFileSync(venvPythonPath, ['-c', 'import paramiko'], { stdio: 'pipe', timeout: 5000 });
+      logger.info('Python venv 已就绪，paramiko 可用');
+      return;
+    } catch (e) {
+      logger.warn('venv 存在但 paramiko 不可用，尝试重新初始化...');
+    }
+  }
+
+  // 检查是否已安装 venv 模块
+  if (!fs.existsSync(setupScript)) {
+    logger.warn('未找到 setup_venv.sh，跳过 Python venv 初始化');
+    return;
+  }
+
+  logger.info('开始初始化 Python 虚拟环境...');
+  try {
+    const { execFile } = require('child_process');
+    const { promisify } = require('util');
+    const execFileAsync = promisify(execFile);
+    // 如果存在离线包目录，使用 --offline 模式
+    const pkgDir = path.join(__dirname, 'scripts', 'cta_extensions', 'python_packages');
+    const hasOfflinePackages = fs.existsSync(pkgDir) && fs.readdirSync(pkgDir).length > 0;
+    const args = hasOfflinePackages ? [setupScript, '--offline'] : [setupScript];
+    logger.info(`Python venv 初始化模式: ${hasOfflinePackages ? '离线' : '在线'}`);
+    await execFileAsync('bash', args, { timeout: 120000, maxBuffer: 2 * 1024 * 1024 });
+    logger.info('Python 虚拟环境初始化完成');
+  } catch (error) {
+    logger.warn('Python 虚拟环境初始化失败（不影响服务器启动）:', { error: error.message });
+    logger.warn('SSH 功能将不可用，请手动执行: bash scripts/setup_venv.sh --offline');
+  }
+}
+
 // 启动服务器
 async function startServer() {
   try {
-    console.log('开始启动服务器...');
+    logger.info('开始启动服务器...');
+
+    // 初始化 Python 虚拟环境
+    await initPythonVenv();
+
     await initDatabase();
-    console.log('数据库初始化完成，开始监听端口...');
+    logger.info('数据库初始化完成，开始监听端口...');
+    
+    // 自动检查并修复数据库结构
+    try {
+      const databaseMigrator = require('./services/databaseMigrator');
+      await databaseMigrator.init();
+    } catch (migrationError) {
+      logger.warn('数据库自动迁移失败（不影响启动）:', { error: migrationError.message });
+    }
+
+    // 智能检测并自动创建缺失的 AI 相关表
+    try {
+      await ensureAITablesExist();
+    } catch (aiTableError) {
+      logger.warn('AI表自动检测失败（尝试继续启动）:', { error: aiTableError.message });
+    }
+
+    try {
+      const tokenBlacklist = require('./services/tokenBlacklist');
+      await tokenBlacklist.init();
+    } catch (tblError) {
+      logger.warn('Token黑名单初始化失败（不影响启动）:', { error: tblError.message });
+    }
     
     // 创建HTTP服务器
     const server = http.createServer(app);
-    
+
     // 配置Socket.io - 添加心跳检测
+    const wsAllowedOrigins = process.env.CORS_ORIGINS
+      ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
+      : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
     const io = socketIO(server, {
       cors: {
-        origin: '*',
-        methods: ['GET', 'POST']
+        origin: function (origin, callback) {
+          if (!origin || wsAllowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+          } else {
+            callback(new Error('Not allowed by CORS'));
+          }
+        },
+        methods: ['GET', 'POST'],
+        credentials: true
       },
-      pingInterval: 25000,  // 每25秒发送一次ping
-      pingTimeout: 60000    // 60秒未响应则断开连接
+      pingInterval: 25000,
+      pingTimeout: 60000
     });
+
+    // 设置global.io供service层发送WebSocket通知
+    global.io = io;
     
     // 存储在线用户
     const onlineUsersManager = require('./onlineUsersManager');
     
     // 处理Socket.io连接
     io.on('connection', (socket) => {
-      console.log('新用户连接:', socket.id);
+      logger.debug('新用户连接:', socket.id);
       
-      // 处理用户登录
-      socket.on('login', (user) => {
+      // 处理用户登录（兼容两种事件名）
+      const handleUserLogin = (user) => {
         onlineUsersManager.addOnlineUser(socket.id, user);
-        console.log(`${user.username} 登录了`);
+        if (user.userId) {
+          socket.join(`user_${user.userId}`);
+        }
+        logger.debug(`${user.username} 登录了`);
         io.emit('userConnected', user);
         io.emit('onlineUsers', onlineUsersManager.getAllOnlineUsers());
-      });
+      };
+      socket.on('login', handleUserLogin);
+      socket.on('user:login', handleUserLogin);
       
       // 处理用户登出
       socket.on('logout', () => {
         const user = onlineUsersManager.getOnlineUser(socket.id);
         if (user) {
-          console.log(`${user.username} 登出了`);
+          logger.debug(`${user.username} 登出了`);
           onlineUsersManager.removeOnlineUser(socket.id);
           io.emit('userDisconnected', user);
           io.emit('onlineUsers', onlineUsersManager.getAllOnlineUsers());
@@ -7894,13 +9794,13 @@ async function startServer() {
       
       // 处理测试点更新
       socket.on('updateTestPoint', (data) => {
-        console.log('测试点更新:', data);
+        logger.debug('测试点更新:', data);
         io.emit('testPointUpdated', data);
       });
       
       // 处理模块更新
       socket.on('updateModule', (data) => {
-        console.log('模块更新:', data);
+        logger.debug('模块更新:', data);
         io.emit('moduleUpdated', data);
       });
       
@@ -7908,13 +9808,76 @@ async function startServer() {
       socket.on('disconnect', () => {
         const user = onlineUsersManager.getOnlineUser(socket.id);
         if (user) {
-          console.log(`${user.username} 断开连接了`);
+          if (user.userId) {
+            socket.leave(`user_${user.userId}`);
+          }
+          logger.debug(`${user.username} 断开连接了`);
           onlineUsersManager.removeOnlineUser(socket.id);
           io.emit('userDisconnected', user);
           io.emit('onlineUsers', onlineUsersManager.getAllOnlineUsers());
         }
       });
     });
+    
+    const securityChecks = [
+      {
+        name: 'JWT_SECRET',
+        value: process.env.JWT_SECRET,
+        minLength: 16,
+        errorMessage: 'JWT_SECRET 必须至少16个字符，当前系统存在安全风险'
+      },
+      {
+        name: 'DB_PASSWORD',
+        value: process.env.DB_PASSWORD,
+        minLength: 6,
+        errorMessage: 'DB_PASSWORD 不能为空且建议至少6个字符'
+      }
+    ];
+    
+    for (const check of securityChecks) {
+      if (!check.value || check.value.length < check.minLength) {
+        logger.fatal(`[安全校验失败] ${check.name}: ${check.errorMessage}`);
+        logger.fatal('请检查 .env 文件配置后重启服务');
+        process.exit(1);
+      }
+    }
+    
+    logger.info('安全配置校验通过');
+    
+    logger.info('开始执行数据库自动迁移...');
+    const migrationResult = await autoMigration.runMigrations();
+    
+    if (!migrationResult.success) {
+      logger.error('数据库迁移失败，服务器启动终止', { 
+        error: migrationResult.error,
+        failedMigrations: migrationResult.failedMigrations 
+      });
+      process.exit(1);
+    }
+    
+    logger.info('数据库迁移完成，继续启动服务...');
+    
+    const taskScheduler = require('./services/taskScheduler');
+    taskScheduler.start();
+
+    try {
+      const aiReviewService = require('./services/aiReviewService');
+      await aiReviewService.cleanupOrphanTasks();
+      logger.info('AI评审孤儿任务自检完成');
+    } catch (orphanError) {
+      logger.warn('AI评审孤儿任务自检失败（不影响启动）:', orphanError.message);
+    }
+
+    try {
+      const memoryEngine = require('./services/memoryEngine');
+      const [agents] = await pool.query('SELECT id, memory_distill_threshold FROM ai_sub_agents WHERE memory_enabled = 1');
+      for (const agent of agents) {
+        await memoryEngine.checkAndAutoDistill(agent.id);
+      }
+      logger.info('AI记忆阈值自检完成');
+    } catch (memoryCheckError) {
+      logger.warn('AI记忆阈值自检失败（不影响启动）:', memoryCheckError.message);
+    }
     
     // 启动服务器
     server.listen(PORT, () => {

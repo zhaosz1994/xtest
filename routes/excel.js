@@ -5,14 +5,15 @@ const XLSX = require('xlsx');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const fsp = require('fs').promises;
+const logger = require('../services/logger');
+const { fixFilenameEncoding } = require('../middleware');
 
 // 配置multer用于Excel文件上传
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = path.join(__dirname, '../uploads/temp');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
+    fs.mkdirSync(uploadDir, { recursive: true });
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
@@ -30,9 +31,7 @@ const upload = multer({
 const imageStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = path.join(__dirname, '../uploads/images');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
+    fs.mkdirSync(uploadDir, { recursive: true });
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
@@ -55,7 +54,7 @@ const imageUpload = multer({
 });
 
 // 图片上传API
-router.post('/upload-image', imageUpload.single('image'), (req, res) => {
+router.post('/upload-image', imageUpload.single('image'), fixFilenameEncoding, (req, res) => {
   try {
     if (!req.file) {
       return res.json({ success: false, message: '请选择图片文件' });
@@ -73,7 +72,7 @@ router.post('/upload-image', imageUpload.single('image'), (req, res) => {
       }
     });
   } catch (error) {
-    console.error('图片上传错误:', error);
+    logger.error('图片上传错误:', { error: error.message });
     res.json({ success: false, message: '图片上传失败: ' + error.message });
   }
 });
@@ -159,7 +158,7 @@ async function exportModuleStructure(req, res, libraryId, moduleIds, moduleId) {
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.send(buffer);
   } catch (error) {
-    console.error('[导出模块结构] 错误:', error);
+    logger.error('[导出模块结构] 错误:', { error: error.message });
     res.json({ success: false, message: '导出失败: ' + error.message });
   }
 }
@@ -172,13 +171,11 @@ router.get('/export', async (req, res) => {
   try {
     const { libraryId, moduleIds, moduleId, status, includeLevel1, includeCases } = req.query;
     
-    console.log('[导出] 接收到的参数:', { libraryId, moduleIds, moduleId, status, includeLevel1, includeCases });
-    
     // 解析参数
     const shouldIncludeLevel1 = includeLevel1 !== 'false';
     const shouldIncludeCases = includeCases !== 'false';
     
-    console.log('[导出] 解析后的开关:', { shouldIncludeLevel1, shouldIncludeCases });
+
     
     // 如果不需要导出用例，只导出模块结构
     if (!shouldIncludeCases) {
@@ -193,16 +190,16 @@ router.get('/export', async (req, res) => {
       params.push(libraryId);
     }
     if (moduleIds) {
-      console.log('[导出] 解析moduleIds:', moduleIds);
+
       const ids = moduleIds.split(',').map(id => parseInt(id)).filter(id => !isNaN(id));
-      console.log('[导出] 解析后的ids:', ids);
+
       if (ids.length > 0) {
         const placeholders = ids.map(() => '?').join(',');
         whereClause += ` AND tc.module_id IN (${placeholders})`;
         params.push(...ids);
-        console.log('[导出] 添加模块过滤条件, ids:', ids);
+
       } else {
-        console.warn('[导出] moduleIds参数存在但解析失败:', moduleIds);
+        logger.warn('[导出] moduleIds参数存在但解析失败:', { moduleIds });
         return res.json({ success: false, message: '模块ID参数格式错误' });
       }
     }
@@ -215,8 +212,8 @@ router.get('/export', async (req, res) => {
       params.push(status);
     }
     
-    console.log('[导出] 最终whereClause:', whereClause);
-    console.log('[导出] 最终params:', params);
+
+
     
     // 查询测试用例及其关联数据
     const [cases] = await pool.execute(`
@@ -355,7 +352,8 @@ router.get('/export', async (req, res) => {
     ws['!cols'] = [
       { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 30 }, { wch: 10 }, { wch: 15 },
       { wch: 30 }, { wch: 30 }, { wch: 40 }, { wch: 30 }, { wch: 15 }, { wch: 12 },
-      { wch: 20 }, { wch: 30 }, { wch: 20 }
+      { wch: 15 }, { wch: 30 }, { wch: 20 }, { wch: 20 }, { wch: 20 },
+      { wch: 30 }, { wch: 20 }
     ];
     
     XLSX.utils.book_append_sheet(wb, ws, '测试用例');
@@ -372,7 +370,7 @@ router.get('/export', async (req, res) => {
     res.send(buffer);
     
   } catch (error) {
-    console.error('导出Excel错误:', error);
+    logger.error('导出Excel错误:', { error: error.message });
     res.json({ success: false, message: '导出失败: ' + error.message });
   }
 });
@@ -381,7 +379,7 @@ router.get('/export', async (req, res) => {
  * POST /api/excel/import/parse-headers
  * 解析Excel表头
  */
-router.post('/import/parse-headers', upload.single('file'), async (req, res) => {
+router.post('/import/parse-headers', upload.single('file'), fixFilenameEncoding, async (req, res) => {
   try {
     if (!req.file) {
       return res.json({ success: false, message: '请上传文件' });
@@ -446,7 +444,7 @@ router.post('/import/parse-headers', upload.single('file'), async (req, res) => 
     });
     
   } catch (error) {
-    console.error('解析Excel表头错误:', error);
+    logger.error('解析Excel表头错误:', { error: error.message });
     res.json({ success: false, message: '解析文件失败: ' + error.message });
   }
 });
@@ -463,7 +461,9 @@ router.post('/import/parse-sheet', async (req, res) => {
       return res.json({ success: false, message: '缺少必要参数' });
     }
     
-    if (!fs.existsSync(filePath)) {
+    try {
+      await fsp.access(filePath);
+    } catch {
       return res.json({ success: false, message: '文件不存在，请重新上传' });
     }
     
@@ -518,7 +518,7 @@ router.post('/import/parse-sheet', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('解析Sheet错误:', error);
+    logger.error('解析Sheet错误:', { error: error.message });
     res.json({ success: false, message: '解析Sheet失败: ' + error.message });
   }
 });
@@ -673,7 +673,7 @@ router.get('/import/system-options', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('获取系统选项失败:', error);
+    logger.error('获取系统选项失败:', { error: error.message });
     res.json({ success: false, message: '获取系统选项失败: ' + error.message });
   }
 });
@@ -692,7 +692,9 @@ router.post('/import/execute', async (req, res) => {
       return res.json({ success: false, message: '缺少必要参数' });
     }
     
-    if (!fs.existsSync(filePath)) {
+    try {
+      await fsp.access(filePath);
+    } catch {
       return res.json({ success: false, message: '文件不存在，请重新上传' });
     }
     
@@ -810,6 +812,7 @@ router.post('/import/execute', async (req, res) => {
     const skippedRows = [];
     const duplicateRows = [];
     const errors = [];
+    const importedCaseIds = [];
     
     const casesToInsert = [];
     const batchSize = 100;
@@ -1033,6 +1036,10 @@ router.post('/import/execute', async (req, res) => {
         batchCaseIds
       );
       
+      insertedRows.forEach(dbRow => {
+        importedCaseIds.push(dbRow.id);
+      });
+
       // 构造M2M的批量插入数据
       const envInserts = [];
       const phaseInserts = [];
@@ -1098,10 +1105,13 @@ router.post('/import/execute', async (req, res) => {
     
     await connection.commit();
     
+    const import_batch_id = 'IMP-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
+
     res.json({
       success: true,
       message: `导入完成: 成功${successCount}条, 跳过${skipCount}条`,
       data: {
+        import_batch_id,
         successCount,
         skipCount,
         duplicateCount,
@@ -1109,13 +1119,14 @@ router.post('/import/execute', async (req, res) => {
         emptyModuleCount,
         skippedRows,
         duplicateRows,
-        errors: errors.slice(0, 20)
+        errors: errors.slice(0, 20),
+        imported_case_ids: importedCaseIds
       }
     });
     
   } catch (error) {
     await connection.rollback();
-    console.error('导入Excel错误:', error);
+    logger.error('导入Excel错误:', { error: error.message });
     res.json({ success: false, message: '导入失败: ' + error.message });
   } finally {
     connection.release();
@@ -1126,17 +1137,17 @@ router.post('/import/execute', async (req, res) => {
  * POST /api/excel/import/cleanup
  * 清理临时文件
  */
-router.post('/import/cleanup', (req, res) => {
+router.post('/import/cleanup', async (req, res) => {
   try {
     const { filePath } = req.body;
     
-    if (filePath && fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
+    if (filePath) {
+      try { await fsp.unlink(filePath); } catch (e) {}
     }
     
     res.json({ success: true });
   } catch (error) {
-    console.error('清理临时文件失败:', error);
+    logger.error('清理临时文件失败:', { error: error.message });
     res.json({ success: false, message: '清理失败' });
   }
 });
@@ -1185,7 +1196,7 @@ router.get('/template', (req, res) => {
     res.send(buffer);
     
   } catch (error) {
-    console.error('生成模板错误:', error);
+    logger.error('生成模板错误:', { error: error.message });
     res.json({ success: false, message: '生成模板失败' });
   }
 });
@@ -1194,14 +1205,12 @@ router.get('/template', (req, res) => {
  * DELETE /api/excel/temp/:filename
  * 清理临时文件
  */
-router.delete('/temp/:filename', (req, res) => {
+router.delete('/temp/:filename', async (req, res) => {
   try {
     const { filename } = req.params;
     const filePath = path.join(__dirname, '../uploads/temp', filename);
     
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
+    try { await fsp.unlink(filePath); } catch (e) {}
     
     res.json({ success: true });
   } catch (error) {

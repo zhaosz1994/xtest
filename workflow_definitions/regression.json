@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "name": "regression_workflow",
+  "description": "回归测试工作流，复用已有测试用例",
+  "max_loops_per_node": 5,
+  "nodes": [
+    { "id": "env_prepare", "label": "环境准备", "agent": "env_preparer", "handler": "env_prepare", "config": { "timeout_ms": 180000 } },
+    { "id": "approval_gate", "label": "审批门控", "agent": "human", "handler": "approval_gate", "requires_approval": true },
+    { "id": "test_dispatch", "label": "测试派发", "agent": "test_dispatcher", "handler": "test_dispatch", "config": { "batch_size": 20, "parallel_sessions": 5 } },
+    { "id": "test_hunt", "label": "测试执行", "agent": "test_hunter", "handler": "test_hunt" },
+    { "id": "test_completeness_gate", "label": "完整性门控", "agent": "completeness_checker", "handler": "test_completeness_gate", "config": { "check_hard_constraints": false, "check_coverage_threshold": 0.95, "max_retest_loops": 1 } },
+    { "id": "knowledge_settle", "label": "知识沉淀", "agent": "knowledge_settler", "handler": "knowledge_settle" }
+  ],
+  "edges": [
+    { "from": "__START__", "to": "env_prepare" },
+    { "from": "env_prepare", "to": "approval_gate" },
+    { "from": "approval_gate", "to": "test_dispatch" },
+    { "from": "test_dispatch", "to": "test_hunt" },
+    { "from": "test_hunt", "to": "test_completeness_gate" },
+    { "from": "test_completeness_gate", "to": "test_dispatch", "condition": "nodeResults.test_completeness_gate.output.coverage_met == false" },
+    { "from": "test_completeness_gate", "to": "knowledge_settle", "is_default": true },
+    { "from": "knowledge_settle", "to": "__END__" }
+  ]
+}

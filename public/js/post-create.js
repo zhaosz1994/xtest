@@ -87,7 +87,7 @@ function renderTags(tags) {
     
     html += `
         <div class="custom-tag-input">
-            <input type="text" id="custom-tag-input" placeholder="自定义标签..." maxlength="10">
+            <input type="text" id="custom-tag-input" placeholder="自定义标签..." maxlength="20">
             <button type="button" class="custom-tag-add-btn" onclick="addCustomTag()">+</button>
         </div>
     `;
@@ -111,8 +111,8 @@ function addCustomTag() {
         return;
     }
     
-    if (tagName.length > 10) {
-        showToast('标签名称不能超过10个字符', 'error');
+    if (tagName.length > 20) {
+        showToast('标签名称不能超过20个字符', 'error');
         return;
     }
     
@@ -210,7 +210,7 @@ function initVditor() {
                     return null;
                 }
             },
-            success: (editor, msg) => console.log('图片上传成功:', msg),
+            success: (editor, msg) => {},
             error: (msg) => {
                 console.error('图片上传失败:', msg);
                 showToast('图片上传失败，请重试', 'error');
@@ -249,8 +249,8 @@ function initVditor() {
                             return {
                                 value: displayName,
                                 html: `<div style="display:flex;align-items:center;gap:6px;">
-                                    <div style="width:20px;height:20px;border-radius:50%;background:#e5e7eb;display:flex;align-items:center;justify-content:center;font-size:10px;">${displayName.charAt(0).toUpperCase()}</div>
-                                    <span>${escapeHtml(displayName)} <small style="color:#666">${escapeHtml(realName)}</small></span>
+                                    <div style="width:20px;height:20px;border-radius:50%;background:var(--color-bg-tertiary, #e5e7eb);display:flex;align-items:center;justify-content:center;font-size:10px;">${displayName.charAt(0).toUpperCase()}</div>
+                                    <span>${escapeHtml(displayName)} <small style="color:var(--color-text-secondary, #666)">${escapeHtml(realName)}</small></span>
                                 </div>`
                             };
                         });
@@ -431,18 +431,25 @@ async function submitPost() {
     }
 }
 
+let _saveDraftSaving = false;
 function saveDraft(showToast = false) {
-    const title = document.getElementById('post-title').value.trim();
-    const content = PostCreate.vditor ? PostCreate.vditor.getValue() : '';
-    
-    localStorage.setItem('forum-post-draft', JSON.stringify({
-        title, content, tags: PostCreate.selectedTags, attachments: PostCreate.attachments, savedAt: new Date().toISOString()
-    }));
-    
-    PostCreate.lastDraftSave = new Date();
-    
-    if (showToast) {
-        showToast('草稿已保存', 'success');
+    if (_saveDraftSaving) return;
+    _saveDraftSaving = true;
+    try {
+        const title = document.getElementById('post-title').value.trim();
+        const content = PostCreate.vditor ? PostCreate.vditor.getValue() : '';
+        
+        localStorage.setItem('forum-post-draft', JSON.stringify({
+            title, content, tags: PostCreate.selectedTags, attachments: PostCreate.attachments, savedAt: new Date().toISOString()
+        }));
+        
+        PostCreate.lastDraftSave = new Date();
+        
+        if (showToast) {
+            showToast('草稿已保存', 'success');
+        }
+    } finally {
+        _saveDraftSaving = false;
     }
 }
 
@@ -452,7 +459,7 @@ function loadDraft() {
     
     try {
         const draft = JSON.parse(draftStr);
-        const savedTime = new Date(draft.savedAt).toLocaleString('zh-CN');
+        const savedTime = formatDateTime(draft.savedAt);
         
         showConfirm(`发现保存的草稿（保存于 ${savedTime}），是否加载？`, (confirmed) => {
             if (confirmed) {
@@ -490,5 +497,5 @@ function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML.replace(/'/g, '&#039;').replace(/"/g, '&quot;');
 }

@@ -3,7 +3,9 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const fsp = require('fs').promises;
 const pool = require('../db');
+const logger = require('../services/logger');
 
 // 配置 Multer 存储
 const storage = multer.diskStorage({
@@ -11,9 +13,7 @@ const storage = multer.diskStorage({
     const uploadDir = path.join(process.cwd(), 'uploads', 'templates');
     
     // 确保目录存在
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
+    fs.mkdirSync(uploadDir, { recursive: true });
     
     cb(null, uploadDir);
   },
@@ -67,7 +67,7 @@ router.get('/list', async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('获取模板列表错误:', error);
+    logger.error('获取模板列表错误:', { error: error.message });
     res.status(500).json({ success: false, message: '获取模板列表失败' });
   }
 });
@@ -91,9 +91,9 @@ router.get('/detail/:id', async (req, res) => {
     // 读取模板内容
     let content = '';
     try {
-      content = fs.readFileSync(template.file_path, 'utf8');
+      content = await fsp.readFile(template.file_path, 'utf8');
     } catch (e) {
-      console.error('读取模板文件错误:', e);
+      logger.error('读取模板文件错误:', { error: e.message });
     }
     
     res.json({
@@ -113,7 +113,7 @@ router.get('/detail/:id', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('获取模板详情错误:', error);
+    logger.error('获取模板详情错误:', { error: error.message });
     res.status(500).json({ success: false, message: '获取模板详情失败' });
   }
 });
@@ -132,7 +132,7 @@ router.post('/upload', upload.single('template'), async (req, res) => {
     // 验证必填字段
     if (!name) {
       // 删除已上传的文件
-      fs.unlinkSync(filePath);
+      try { await fsp.unlink(filePath); } catch (e) {}
       return res.json({ success: false, message: '模板名称不能为空' });
     }
     
@@ -153,10 +153,10 @@ router.post('/upload', upload.single('template'), async (req, res) => {
       templateId: result.insertId
     });
   } catch (error) {
-    console.error('上传模板错误:', error);
+    logger.error('上传模板错误:', { error: error.message });
     // 如果上传失败，删除已上传的文件
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
+    if (req.file) {
+      try { await fsp.unlink(req.file.path); } catch (e) {}
     }
     res.status(500).json({ success: false, message: '上传模板失败: ' + error.message });
   }
@@ -175,7 +175,7 @@ router.put('/update/:id', async (req, res) => {
     
     res.json({ success: true, message: '模板更新成功' });
   } catch (error) {
-    console.error('更新模板错误:', error);
+    logger.error('更新模板错误:', { error: error.message });
     res.status(500).json({ success: false, message: '更新模板失败' });
   }
 });
@@ -203,7 +203,7 @@ router.put('/update-content/:id', async (req, res) => {
     const filePath = templates[0].file_path;
     
     // 写入新内容
-    fs.writeFileSync(filePath, content, 'utf8');
+    await fsp.writeFile(filePath, content, 'utf8');
     
     // 更新编辑者信息
     await pool.execute(
@@ -213,7 +213,7 @@ router.put('/update-content/:id', async (req, res) => {
     
     res.json({ success: true, message: '模板内容更新成功' });
   } catch (error) {
-    console.error('更新模板内容错误:', error);
+    logger.error('更新模板内容错误:', { error: error.message });
     res.status(500).json({ success: false, message: '更新模板内容失败' });
   }
 });
@@ -237,7 +237,7 @@ router.put('/set-default/:id', async (req, res) => {
     
     res.json({ success: true, message: '默认模板设置成功' });
   } catch (error) {
-    console.error('设置默认模板错误:', error);
+    logger.error('设置默认模板错误:', { error: error.message });
     res.status(500).json({ success: false, message: '设置默认模板失败' });
   }
 });
@@ -262,16 +262,14 @@ router.delete('/:id', async (req, res) => {
     }
     
     // 删除文件
-    if (fs.existsSync(template.file_path)) {
-      fs.unlinkSync(template.file_path);
-    }
+    try { await fsp.unlink(template.file_path); } catch (e) {}
     
     // 删除数据库记录
     await pool.execute('DELETE FROM report_templates WHERE id = ?', [id]);
     
     res.json({ success: true, message: '模板删除成功' });
   } catch (error) {
-    console.error('删除模板错误:', error);
+    logger.error('删除模板错误:', { error: error.message });
     res.status(500).json({ success: false, message: '删除模板失败' });
   }
 });
@@ -293,7 +291,10 @@ router.get('/default-content', async (req, res) => {
     
     const filePath = templates[0].file_path;
     
-    if (!fs.existsSync(filePath)) {
+    let content;
+    try {
+      content = await fsp.readFile(filePath, 'utf8');
+    } catch {
       return res.json({ 
         success: false, 
         message: '模板文件不存在',
@@ -301,14 +302,12 @@ router.get('/default-content', async (req, res) => {
       });
     }
     
-    const content = fs.readFileSync(filePath, 'utf8');
-    
     res.json({
       success: true,
       content: content
     });
   } catch (error) {
-    console.error('获取默认模板内容错误:', error);
+    logger.error('获取默认模板内容错误:', { error: error.message });
     res.json({ 
       success: false, 
       message: '获取模板失败',
@@ -337,7 +336,10 @@ router.get('/content/:id', async (req, res) => {
     
     const filePath = templates[0].file_path;
     
-    if (!fs.existsSync(filePath)) {
+    let content;
+    try {
+      content = await fsp.readFile(filePath, 'utf8');
+    } catch {
       return res.json({ 
         success: false, 
         message: '模板文件不存在',
@@ -345,14 +347,12 @@ router.get('/content/:id', async (req, res) => {
       });
     }
     
-    const content = fs.readFileSync(filePath, 'utf8');
-    
     res.json({
       success: true,
       content: content
     });
   } catch (error) {
-    console.error('获取模板内容错误:', error);
+    logger.error('获取模板内容错误:', { error: error.message });
     res.json({ 
       success: false, 
       message: '获取模板失败',

@@ -1,58 +1,259 @@
-name: CI
+name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ main, master, develop ]
+    branches: [ main, develop ]
+
+env:
+  NODE_VERSION: '18.x'
 
 jobs:
-  test:
+  # ==================== 代码质量检查 ====================
+  lint:
+    name: 代码质量检查
     runs-on: ubuntu-latest
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 设置Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: 安装依赖
+      run: npm ci
+      
+    - name: 运行ESLint
+      run: npm run lint
+      continue-on-error: true
 
+  # ==================== 单元测试 ====================
+  test:
+    name: 单元测试
+    runs-on: ubuntu-latest
+    
     strategy:
       matrix:
-        node-version: [14.x, 16.x, 18.x]
-
-    steps:
-    - uses: actions/checkout@v3
+        node-version: [16.x, 18.x, 20.x]
     
-    - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v3
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 设置Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
-    
-    - name: Install dependencies
+        
+    - name: 安装依赖
       run: npm ci
-    
-    - name: Run linter
-      run: npm run lint
-      continue-on-error: true
-    
-    - name: Start MySQL
-      uses: mirromutth/mysql-action@v1.1
+      
+    - name: 运行测试
+      run: npm run test:ci
+      
+    - name: 上传测试覆盖率报告
+      uses: codecov/codecov-action@v3
       with:
-        mysql version: '5.7'
-        mysql database: 'xtest_db'
-        mysql user: 'test_user'
-        mysql password: 'test_password'
+        files: ./coverage/lcov.info
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+      
+    - name: 上传测试结果
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results-node-${{ matrix.node-version }}
+        path: |
+          coverage/
+          test-results/
+
+  # ==================== 构建检查 ====================
+  build:
+    name: 构建检查
+    runs-on: ubuntu-latest
+    needs: [lint, test]
     
-    - name: Wait for MySQL
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 设置Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: 安装依赖
+      run: npm ci
+      
+    - name: 检查构建
       run: |
-        while ! mysqladmin ping -h "127.0.0.1" --silent; do
-          echo "Waiting for MySQL..."
-          sleep 1
-        done
+        echo "构建检查通过"
+        # 如果有构建步骤，在这里添加
+        # npm run build
+
+  # ==================== 安全扫描 ====================
+  security:
+    name: 安全扫描
+    runs-on: ubuntu-latest
     
-    - name: Setup environment
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 设置Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: 安装依赖
+      run: npm ci
+      
+    - name: 运行npm audit
+      run: npm audit --audit-level=high
+      continue-on-error: true
+      
+    - name: 运行Snyk安全扫描
+      uses: snyk/actions/node@master
+      continue-on-error: true
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  # ==================== 部署到测试环境 ====================
+  deploy-staging:
+    name: 部署到测试环境
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.ref == 'refs/heads/develop'
+    environment:
+      name: staging
+      url: http://staging.xtest.example.com
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 部署到测试服务器
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.STAGING_HOST }}
+        username: ${{ secrets.STAGING_USER }}
+        key: ${{ secrets.STAGING_SSH_KEY }}
+        script: |
+          cd /var/www/xtest-staging
+          git pull origin develop
+          npm install --production
+          pm2 restart xtest-staging
+          pm2 save
+
+  # ==================== 部署到生产环境 ====================
+  deploy-production:
+    name: 部署到生产环境
+    runs-on: ubuntu-latest
+    needs: [build, security]
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: http://xtest.example.com
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 创建部署包
       run: |
-        echo "DB_HOST=127.0.0.1" >> .env
-        echo "DB_USER=test_user" >> .env
-        echo "DB_PASSWORD=test_password" >> .env
-        echo "DB_NAME=xtest_db" >> .env
-        echo "JWT_SECRET=test_secret_key_for_ci" >> .env
-        echo "PORT=3000" >> .env
+        tar -czf deploy.tar.gz \
+          --exclude='node_modules' \
+          --exclude='.git' \
+          --exclude='coverage' \
+          --exclude='.env' \
+          .
+      
+    - name: 部署到生产服务器
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.PRODUCTION_HOST }}
+        username: ${{ secrets.PRODUCTION_USER }}
+        key: ${{ secrets.PRODUCTION_SSH_KEY }}
+        script: |
+          cd /var/www/xtest
+          
+          # 备份当前版本
+          BACKUP_DIR="/var/backups/xtest/$(date +%Y%m%d_%H%M%S)"
+          mkdir -p $BACKUP_DIR
+          cp -r . $BACKUP_DIR/
+          
+          # 拉取最新代码
+          git pull origin main
+          
+          # 安装依赖
+          npm install --production
+          
+          # 运行数据库迁移（如果有）
+          # npm run migrate
+          
+          # 重启服务
+          pm2 restart xtest
+          pm2 save
+          
+          # 健康检查
+          sleep 5
+          curl -f http://localhost:3000/health || exit 1
+          
+          echo "部署成功！"
+
+    - name: 发送部署通知
+      if: always()
+      run: |
+        if [ "${{ job.status }}" == "success" ]; then
+          echo "✅ 部署成功！"
+          # 可以添加钉钉、企业微信等通知
+        else
+          echo "❌ 部署失败！"
+          # 发送失败通知
+        fi
+
+  # ==================== 回滚任务 ====================
+  rollback:
+    name: 回滚到上一版本
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
     
-    - name: Run server test
-      run: timeout 10s npm start || true
+    steps:
+    - name: 执行回滚
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.PRODUCTION_HOST }}
+        username: ${{ secrets.PRODUCTION_USER }}
+        key: ${{ secrets.PRODUCTION_SSH_KEY }}
+        script: |
+          cd /var/www/xtest
+          
+          # 获取上一个备份
+          PREVIOUS_BACKUP=$(ls -dt /var/backups/xtest/*/ | head -2 | tail -1)
+          
+          if [ -d "$PREVIOUS_BACKUP" ]; then
+            echo "正在回滚到: $PREVIOUS_BACKUP"
+            
+            # 停止服务
+            pm2 stop xtest
+            
+            # 恢复文件
+            cp -r $PREVIOUS_BACKUP/* /var/www/xtest/
+            
+            # 重启服务
+            pm2 start xtest
+            
+            echo "回滚成功！"
+          else
+            echo "未找到可用的备份"
+            exit 1
+          fi

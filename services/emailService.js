@@ -1,34 +1,42 @@
 const nodemailer = require('nodemailer');
 const pool = require('../db');
 const crypto = require('crypto');
+const logger = require('./logger');
 
 // 加密密钥（生产环境应从环境变量获取）
 const ENCRYPTION_KEY = process.env.EMAIL_ENCRYPTION_KEY || 'xtest-email-encryption-key-32b';
+const ENCRYPTION_SALT = process.env.EMAIL_ENCRYPTION_SALT || 'xtest-email-salt-unique';
 const IV_LENGTH = 16;
 
-// 加密函数
+let _derivedKey = null;
+function getDerivedKey() {
+  if (!_derivedKey) {
+    _derivedKey = crypto.scryptSync(ENCRYPTION_KEY, ENCRYPTION_SALT, 32);
+  }
+  return _derivedKey;
+}
+
 function encrypt(text) {
   const iv = crypto.randomBytes(IV_LENGTH);
-  const key = crypto.scryptSync(ENCRYPTION_KEY, 'salt', 32);
+  const key = getDerivedKey();
   const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
   let encrypted = cipher.update(text, 'utf8', 'hex');
   encrypted += cipher.final('hex');
   return iv.toString('hex') + ':' + encrypted;
 }
 
-// 解密函数
 function decrypt(text) {
   try {
     const textParts = text.split(':');
     const iv = Buffer.from(textParts.shift(), 'hex');
     const encryptedText = textParts.join(':');
-    const key = crypto.scryptSync(ENCRYPTION_KEY, 'salt', 32);
+    const key = getDerivedKey();
     const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
     let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
     decrypted += decipher.final('utf8');
     return decrypted;
   } catch (error) {
-    console.error('解密失败:', error);
+    logger.error('解密失败', { error: error.message });
     return text;
   }
 }
@@ -44,7 +52,7 @@ function createSMTPTransporter(config) {
       pass: decrypt(config.smtp_password)
     },
     tls: {
-      rejectUnauthorized: false
+      rejectUnauthorized: process.env.NODE_ENV === 'production'
     }
   });
 }
@@ -89,37 +97,40 @@ async function getDefaultConfig() {
 // 更新每日发送计数
 async function updateDailyCount(configId) {
   const today = new Date().toISOString().split('T')[0];
-  
-  const [config] = await pool.execute(
-    'SELECT last_sent_date, sent_today FROM email_config WHERE id = ?',
-    [configId]
+  await pool.execute(
+    `UPDATE email_config SET sent_today = CASE WHEN last_sent_date = ? THEN sent_today + 1 ELSE 1 END, last_sent_date = ? WHERE id = ?`,
+    [today, today, configId]
   );
-  
-  if (config.length > 0) {
-    const lastSentDate = config[0].last_sent_date;
-    const sentToday = config[0].sent_today;
-    
-    if (lastSentDate === null || lastSentDate.toISOString().split('T')[0] !== today) {
-      await pool.execute(
-        'UPDATE email_config SET sent_today = 1, last_sent_date = ? WHERE id = ?',
-        [today, configId]
-      );
-    } else {
-      await pool.execute(
-        'UPDATE email_config SET sent_today = sent_today + 1 WHERE id = ?',
-        [configId]
-      );
-    }
-  }
 }
 
 // 记录邮件日志
+let _logCleanupTimer = null;
 async function logEmail(configId, recipientEmail, recipientName, subject, emailType, status, errorMessage = null) {
   await pool.execute(
     `INSERT INTO email_logs (config_id, recipient_email, recipient_name, subject, email_type, status, error_message, sent_at) 
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [configId, recipientEmail, recipientName, subject, emailType, status, errorMessage, status === 'sent' ? new Date() : null]
   );
+  
+  if (!_logCleanupTimer) {
+    _logCleanupTimer = setInterval(async () => {
+      try {
+        await pool.execute(`
+          DELETE FROM email_logs 
+          WHERE id NOT IN (
+            SELECT id FROM (
+              SELECT id FROM email_logs 
+              ORDER BY created_at DESC 
+              LIMIT 500
+            ) AS latest
+          )
+        `);
+      } catch (e) {
+        logger.error('邮件日志清理失败', { error: e.message });
+      }
+    }, 3600000);
+    _logCleanupTimer.unref();
+  }
 }
 
 // 发送邮件主函数
@@ -183,7 +194,7 @@ async function sendEmail({ to, subject, html, text, emailType = 'notification', 
     };
     
   } catch (error) {
-    console.error('邮件发送失败:', error);
+    logger.error('邮件发送失败', { error: error.message });
     
     // 记录失败日志
     const recipientEmail = Array.isArray(to) ? to[0] : to;
@@ -193,7 +204,7 @@ async function sendEmail({ to, subject, html, text, emailType = 'notification', 
         await logEmail(config.id, recipientEmail, '', subject, emailType, 'failed', error.message);
       }
     } catch (logError) {
-      console.error('记录邮件日志失败:', logError);
+      logger.error('记录邮件日志失败', { error: logError.message });
     }
     
     return {

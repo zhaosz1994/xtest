@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "legacy_workflow",
+  "description": "保持与旧版 pipelineOrchestrator 兼容的工作流",
+  "max_loops_per_node": 3,
+  "nodes": [
+    { "id": "learn_context", "label": "学习上下文", "agent": "planner_agent", "handler": "learn_context" },
+    { "id": "approval_gate", "label": "审批门控", "agent": "critic_agent", "handler": "approval_gate", "requires_approval": true },
+    { "id": "execute_config", "label": "SDK配置", "agent": "sdk_cli_agent_v1", "handler": "execute_config" },
+    { "id": "execute_traffic", "label": "流量执行", "agent": "traffic_agent_v1", "handler": "execute_traffic" },
+    { "id": "critic_gate", "label": "评审门控", "agent": "critic_agent_v1", "handler": "critic_gate" },
+    { "id": "completed", "label": "已完成", "agent": "system", "handler": "completed" }
+  ],
+  "edges": [
+    { "from": "__START__", "to": "learn_context" },
+    { "from": "learn_context", "to": "approval_gate" },
+    { "from": "approval_gate", "to": "execute_config" },
+    { "from": "execute_config", "to": "execute_traffic" },
+    { "from": "execute_traffic", "to": "critic_gate" },
+    { "from": "critic_gate", "to": "completed" },
+    { "from": "completed", "to": "__END__" }
+  ]
+}

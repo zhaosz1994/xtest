@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 const { authenticateToken } = require('../middleware');
+const logger = require('../services/logger');
 
 /**
  * GET /api/notifications/unread
@@ -21,7 +22,7 @@ router.get('/unread', authenticateToken, async (req, res) => {
       count: result[0].count
     });
   } catch (error) {
-    console.error('获取未读通知数量失败:', error);
+    logger.error('获取未读通知数量失败:', { error: error.message });
     res.json({ success: false, count: 0, message: '获取失败' });
   }
 });
@@ -33,7 +34,7 @@ router.get('/unread', authenticateToken, async (req, res) => {
 router.get('/list', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    console.log('[通知API] 获取通知列表, 用户ID:', userId);
+
     
     const { page = 1, pageSize = 20 } = req.query;
     const offset = (page - 1) * pageSize;
@@ -63,7 +64,7 @@ router.get('/list', authenticateToken, async (req, res) => {
       LIMIT ${limitValue} OFFSET ${offsetValue}
     `, [userId]);
     
-    console.log('[通知API] 查询到通知数量:', notifications.length);
+
     
     const [countResult] = await pool.execute(
       'SELECT COUNT(*) as total FROM notifications WHERE user_id = ?',
@@ -87,7 +88,7 @@ router.get('/list', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('[通知API] 获取通知列表失败:', error);
+    logger.error('[通知API] 获取通知列表失败:', { error: error.message });
     res.json({ success: false, notifications: [], message: '获取失败: ' + error.message });
   }
 });
@@ -108,7 +109,7 @@ router.post('/mark-read/:id', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '已标记为已读' });
   } catch (error) {
-    console.error('标记已读失败:', error);
+    logger.error('标记已读失败:', { error: error.message });
     res.json({ success: false, message: '操作失败' });
   }
 });
@@ -128,7 +129,7 @@ router.post('/mark-all-read', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '已全部标记为已读' });
   } catch (error) {
-    console.error('标记全部已读失败:', error);
+    logger.error('标记全部已读失败:', { error: error.message });
     res.json({ success: false, message: '操作失败' });
   }
 });
@@ -149,7 +150,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '删除成功' });
   } catch (error) {
-    console.error('删除通知失败:', error);
+    logger.error('删除通知失败:', { error: error.message });
     res.json({ success: false, message: '删除失败' });
   }
 });
@@ -170,9 +171,8 @@ router.post('/create', authenticateToken, async (req, res) => {
       });
     }
     
-    const { userId, title, content, type = 'system', data = null } = req.body;
+    const { userId, title, content, type = 'system', data = null, targetId = 0 } = req.body;
     
-    // 参数验证
     if (!userId || !title || !content) {
       return res.status(400).json({ 
         success: false, 
@@ -181,13 +181,13 @@ router.post('/create', authenticateToken, async (req, res) => {
     }
     
     const [result] = await pool.execute(`
-      INSERT INTO notifications (user_id, sender_id, title, content, type, data, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, NOW())
-    `, [userId, req.user.id, title, content, type, data ? JSON.stringify(data) : null]);
+      INSERT INTO notifications (user_id, sender_id, type, target_id, title, content, data, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+    `, [userId, req.user.id, type, targetId, title, content, data ? JSON.stringify(data) : null]);
     
     res.json({ success: true, id: result.insertId });
   } catch (error) {
-    console.error('创建通知失败:', error);
+    logger.error('创建通知失败:', { error: error.message });
     res.json({ success: false, message: '创建失败' });
   }
 });

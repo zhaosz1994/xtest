@@ -1,24 +1,15 @@
 const express = require('express');
 const router = express.Router();
-
-// 测试数据库连接
-console.log('正在加载模块路由...');
-try {
-    const pool = require('../db');
-    console.log('数据库连接池加载成功');
-} catch (error) {
-    console.error('数据库连接池加载失败:', error);
-    process.exit(1);
-}
-
 const pool = require('../db');
 const { authenticateToken } = require('../middleware');
 const { logActivity } = require('./history');
+const logger = require('../services/logger');
+
+logger.debug('模块路由已加载');
 
 // 获取模块列表（支持分页和按用例库过滤）
-router.post('/list', async (req, res) => {
+router.post('/list', authenticateToken, async (req, res) => {
   try {
-    console.log('接收到模块列表请求:', req.body);
     const { libraryId, page = 1, pageSize = 32 } = req.body;
     const offset = (page - 1) * pageSize;
     
@@ -42,12 +33,7 @@ router.post('/list', async (req, res) => {
     
     query += ` GROUP BY m.id ORDER BY m.order_index ASC, m.created_at DESC LIMIT ${limitValue} OFFSET ${offsetValue}`;
     
-    console.log('执行SQL查询:', query);
-    console.log('查询参数:', params);
-    
-    const [modules] = await pool.execute(query, params);
-    
-    console.log('查询结果:', modules);
+    const [modules] = await pool.query(query, params);
     
     res.json({ 
       success: true,
@@ -59,8 +45,8 @@ router.post('/list', async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('获取模块列表错误:', error);
-    console.error('错误堆栈:', error.stack);
+    logger.error('获取模块列表错误:', { error: error.message });
+
     res.json({ success: false, message: '服务器错误', error: error.message });
   }
 });
@@ -110,18 +96,22 @@ router.post('/create', authenticateToken, async (req, res) => {
     
     res.json({ success: true, message: '模块添加成功' });
   } catch (error) {
-    console.error('添加模块错误:', error);
+    logger.error('添加模块错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
 
 // 搜索模块
-router.post('/search', async (req, res) => {
+router.post('/search', authenticateToken, async (req, res) => {
   try {
     const { libraryId, searchTerm, page = 1, pageSize = 32 } = req.body;
     const offset = (page - 1) * pageSize;
     
-    let query = 'SELECT id, module_id, name, library_id, order_index FROM modules WHERE 1=1';
+    let query = `SELECT m.id, m.module_id, m.name, m.library_id, m.order_index,
+                 COUNT(tc.id) as case_count
+                 FROM modules m
+                 LEFT JOIN test_cases tc ON m.id = tc.module_id AND tc.is_deleted = 0
+                 WHERE 1=1`;
     let params = [];
     
     if (libraryId) {
@@ -138,7 +128,7 @@ router.post('/search', async (req, res) => {
     const limitValue = parseInt(pageSize);
     const offsetValue = parseInt(offset);
     
-    query += ` ORDER BY order_index ASC, created_at DESC LIMIT ${limitValue} OFFSET ${offsetValue}`;
+    query += ` GROUP BY m.id ORDER BY m.order_index ASC, m.created_at DESC LIMIT ${limitValue} OFFSET ${offsetValue}`;
     
     const [modules] = await pool.execute(query, params);
     
@@ -147,17 +137,18 @@ router.post('/search', async (req, res) => {
       modules: modules.map(module => ({
         id: module.id,
         name: module.name,
-        orderIndex: module.order_index
+        orderIndex: module.order_index,
+        caseCount: module.case_count || 0
       }))
     });
   } catch (error) {
-    console.error('搜索模块错误:', error);
+    logger.error('搜索模块错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
 
 // 调整模块顺序
-router.post('/reorder', async (req, res) => {
+router.post('/reorder', authenticateToken, async (req, res) => {
   try {
     const { modules, libraryId } = req.body;
     
@@ -173,7 +164,7 @@ router.post('/reorder', async (req, res) => {
       // 更新每个模块的order_index
       for (let i = 0; i < modules.length; i++) {
         await connection.execute(
-          'UPDATE modules SET order_index = ? WHERE name = ? AND library_id = ?',
+          'UPDATE modules SET order_index = ? WHERE id = ? AND library_id = ?',
           [i, modules[i], libraryId]
         );
       }
@@ -187,13 +178,13 @@ router.post('/reorder', async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error('调整模块顺序错误:', error);
+    logger.error('调整模块顺序错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
 
 // 批量创建模块（用于测试）
-router.post('/batchCreate', async (req, res) => {
+router.post('/batchCreate', authenticateToken, async (req, res) => {
   try {
     const { modules } = req.body;
     
@@ -211,7 +202,7 @@ router.post('/batchCreate', async (req, res) => {
     
     res.json({ success: true, message: '批量创建模块成功' });
   } catch (error) {
-    console.error('批量创建模块错误:', error);
+    logger.error('批量创建模块错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
@@ -264,7 +255,7 @@ router.post('/clone', authenticateToken, async (req, res) => {
     );
     const newModuleDbId = moduleResult.insertId;
     
-    console.log(`[克隆] 创建新模块: ${newModuleName}, ID: ${newModuleDbId}`);
+    logger.debug('[克隆] 创建新模块:', { name: newModuleName, id: newModuleDbId });
     
     // ID映射表：old_id -> new_id
     const level1IdMap = new Map();
@@ -289,13 +280,13 @@ router.post('/clone', authenticateToken, async (req, res) => {
         clonedLevel1Count++;
       }
       
-      console.log(`[克隆] 克隆了 ${clonedLevel1Count} 个一级测试点`);
+      logger.info('[克隆] 克隆一级测试点完成', { count: clonedLevel1Count });
     }
     
     // 4. 克隆测试用例
     if (includeTestCases) {
       const [testCases] = await connection.execute(
-        'SELECT * FROM test_cases WHERE module_id = ?',
+        'SELECT * FROM test_cases WHERE module_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)',
         [sourceModuleId]
       );
       
@@ -354,7 +345,7 @@ router.post('/clone', authenticateToken, async (req, res) => {
         clonedCaseCount++;
       }
       
-      console.log(`[克隆] 克隆了 ${clonedCaseCount} 个测试用例`);
+      logger.info('[克隆] 克隆测试用例完成', { count: clonedCaseCount });
       
       // 5. 克隆测试用例的多对多关联数据
       if (caseIdMap.size > 0) {
@@ -466,7 +457,7 @@ router.post('/clone', authenticateToken, async (req, res) => {
               );
             }
           }
-          console.log(`[克隆] 已克隆测试用例项目关联`);
+          logger.debug('[克隆] 已克隆测试用例项目关联');
         }
         
         // 克隆执行记录（如果不清空执行记录）
@@ -488,10 +479,10 @@ router.post('/clone', authenticateToken, async (req, res) => {
               );
             }
           }
-          console.log(`[克隆] 已克隆执行记录`);
+          logger.debug('[克隆] 已克隆执行记录');
         }
         
-        console.log(`[克隆] 已克隆测试用例关联数据`);
+        logger.debug('[克隆] 已克隆测试用例关联数据');
       }
     }
     
@@ -523,7 +514,7 @@ router.post('/clone', authenticateToken, async (req, res) => {
     
   } catch (error) {
     await connection.rollback();
-    console.error('克隆模块错误:', error);
+    logger.error('克隆模块错误:', { error: error.message });
     res.json({ success: false, message: '克隆失败: ' + error.message });
   } finally {
     connection.release();
@@ -531,7 +522,7 @@ router.post('/clone', authenticateToken, async (req, res) => {
 });
 
 // 获取指定用例库下的模块列表（用于克隆选择）
-router.get('/by-library/:libraryId', async (req, res) => {
+router.get('/by-library/:libraryId', authenticateToken, async (req, res) => {
   try {
     const { libraryId } = req.params;
     
@@ -549,13 +540,13 @@ router.get('/by-library/:libraryId', async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('获取模块列表错误:', error);
+    logger.error('获取模块列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });
 
 // 获取指定项目关联的模块列表（通过测试用例关联）
-router.get('/by-project/:projectId', async (req, res) => {
+router.get('/by-project/:projectId', authenticateToken, async (req, res) => {
   try {
     const { projectId } = req.params;
     
@@ -579,7 +570,7 @@ router.get('/by-project/:projectId', async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('获取项目模块列表错误:', error);
+    logger.error('获取项目模块列表错误:', { error: error.message });
     res.json({ success: false, message: '服务器错误' });
   }
 });

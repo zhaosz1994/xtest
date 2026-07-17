@@ -1,0 +1,2420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI操作日志 - xTest</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles-dashboard.css">
+    <script src="/js/chart.umd.min.js"></script>
+    <script src="/js/chartjs-plugin-datalabels.min.js"></script>
+    <style>
+        .ai-logs-container {
+            max-width: 1800px;
+            margin: 0 auto;
+            padding: 20px 40px;
+        }
+        
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        
+        .page-header h1 {
+            font-size: 28px;
+            color: #333;
+            margin: 0;
+        }
+        
+        .back-btn {
+            padding: 10px 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .back-btn:hover {
+            background: #45a049;
+        }
+        
+        .overview-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .overview-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .overview-card h3 {
+            font-size: 14px;
+            color: #666;
+            margin: 0 0 10px 0;
+            text-transform: uppercase;
+        }
+        
+        .overview-card .value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .overview-card.success .value {
+            color: #4CAF50;
+        }
+        
+        .overview-card.failed .value {
+            color: #f44336;
+        }
+        
+        .overview-card.info .value {
+            color: #2196F3;
+        }
+        
+        .tabs-container {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        
+        .tabs-header {
+            display: flex;
+            border-bottom: 2px solid #e0e0e0;
+            overflow-x: auto;
+        }
+        
+        .tab-btn {
+            padding: 15px 25px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 15px;
+            color: #666;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+            white-space: nowrap;
+        }
+        
+        .tab-btn:hover {
+            color: #4CAF50;
+            background: #f5f5f5;
+        }
+        
+        .tab-btn.active {
+            color: #4CAF50;
+            border-bottom-color: #4CAF50;
+            font-weight: bold;
+        }
+        
+        .tab-content {
+            display: none;
+            padding: 20px;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .chart-container {
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            height: 400px;
+        }
+        
+        .chart-container canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+        
+        .chart-title {
+            margin: 0 0 15px 0;
+            color: #333;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        
+        .charts-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        .logs-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .logs-table th,
+        .logs-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .logs-table th {
+            background: #f5f5f5;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .logs-table tr:hover {
+            background: #f9f9f9;
+        }
+        
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .status-badge.success {
+            background: #e8f5e9;
+            color: #4CAF50;
+        }
+        
+        .status-badge.failed {
+            background: #ffebee;
+            color: #f44336;
+        }
+        
+        .sql-preview {
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-family: monospace;
+            font-size: 12px;
+            color: #666;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        
+        .sql-preview:hover {
+            background: #f0f0f0;
+            color: #333;
+        }
+        
+        .sql-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s;
+        }
+        
+        .sql-modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .sql-modal {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            width: 900px;
+            max-width: 95vw;
+            min-width: 600px;
+            height: 80vh;
+            min-height: 600px;
+            display: flex;
+            flex-direction: column;
+            transform: scale(0.9);
+            transition: transform 0.3s;
+            resize: both;
+            overflow: hidden;
+        }
+        
+        .sql-modal-overlay.active .sql-modal {
+            transform: scale(1);
+        }
+        
+        .sql-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .sql-modal-header h3 {
+            margin: 0;
+            font-size: 16px;
+            color: #333;
+        }
+        
+        .sql-modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            color: #999;
+            cursor: pointer;
+            padding: 0;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        
+        .sql-modal-close:hover {
+            background: #f0f0f0;
+            color: #333;
+        }
+        
+        .sql-modal-body {
+            padding: 20px;
+            overflow-y: auto;
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .sql-content {
+            background: #f5f5f5;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 16px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: #333;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .sql-modal-footer {
+            padding: 16px 20px;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        
+        .copy-btn {
+            padding: 8px 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .copy-btn:hover {
+            background: #45a049;
+        }
+        
+        .copy-btn.copied {
+            background: #2196F3;
+        }
+        
+        .error-message {
+            max-width: 300px;
+            color: #f44336;
+            font-size: 12px;
+        }
+        
+        .filter-bar {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .filter-bar label {
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .filter-bar select,
+        .filter-bar input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        .no-data {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+        
+        .time-range-selector {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .time-range-btn {
+            padding: 8px 16px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .time-range-btn:hover {
+            background: #f5f5f5;
+        }
+        
+        .time-range-btn.active {
+            background: #4CAF50;
+            color: white;
+            border-color: #4CAF50;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-item {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 6px;
+        }
+        
+        .stat-item label {
+            display: block;
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .stat-item .value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            margin: 20px 0 10px 0;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .unregistered-notice {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 6px;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+            color: #856404;
+            font-size: 14px;
+        }
+
+        .unregistered-notice strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .relation-matrix {
+            margin-top: 20px;
+        }
+
+        .source-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+
+        .source-badge.review { background: #e3f2fd; color: #1565c0; }
+        .source-badge.qa { background: #f3e5f5; color: #7b1fa2; }
+        .source-badge.generation { background: #e8f5e9; color: #2e7d32; }
+        .source-badge.agent_loop { background: #fff3e0; color: #e65100; }
+        .source-badge.test_run { background: #fce4ec; color: #c62828; }
+
+        .trigger-type-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+        .trigger-type-badge.generation { background: #e8f5e9; color: #2e7d32; }
+        .trigger-type-badge.generation_overview { background: #c8e6c9; color: #1b5e20; }
+        .trigger-type-badge.generation_key_config { background: #b2dfdb; color: #00695c; }
+        .trigger-type-badge.review { background: #e3f2fd; color: #1565c0; }
+        .trigger-type-badge.qa { background: #f3e5f5; color: #7b1fa2; }
+        .trigger-type-badge.agent { background: #fff3e0; color: #e65100; }
+        .trigger-type-badge.memory_refine { background: #fce4ec; color: #c62828; }
+        .trigger-type-badge.reflection { background: #efebe9; color: #4e342e; }
+        .trigger-type-badge.import_optimize { background: #fce4ec; color: #ad1457; }
+
+        .rl-detail-info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px 20px;
+            margin-bottom: 16px;
+            flex-shrink: 0;
+        }
+        .rl-detail-token-section {
+            flex-shrink: 0;
+        }
+        .rl-detail-info-item {
+            display: flex;
+            gap: 8px;
+        }
+        .rl-detail-info-item label {
+            font-weight: bold;
+            color: #666;
+            min-width: 80px;
+            white-space: nowrap;
+        }
+        .rl-detail-info-item span {
+            color: #333;
+        }
+        .rl-detail-token-bar {
+            background: #f0f0f0;
+            border-radius: 4px;
+            height: 8px;
+            margin-top: 6px;
+            overflow: hidden;
+        }
+        .rl-detail-token-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #2196F3);
+            border-radius: 4px;
+        }
+        .rl-detail-tabs {
+            display: flex;
+            border-bottom: 2px solid #e0e0e0;
+            margin-bottom: 12px;
+            flex-shrink: 0;
+        }
+        .rl-detail-tab-btn {
+            padding: 8px 16px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 13px;
+            color: #666;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s;
+        }
+        .rl-detail-tab-btn:hover { color: #4CAF50; }
+        .rl-detail-tab-btn.active {
+            color: #4CAF50;
+            border-bottom-color: #4CAF50;
+            font-weight: bold;
+        }
+        .rl-detail-content {
+            display: none;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+        }
+        .rl-detail-content.active {
+            display: flex;
+            flex-direction: column;
+        }
+        .rl-detail-text {
+            background: #f5f5f5;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 16px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: #333;
+            height: 100%;
+            overflow-y: auto;
+            box-sizing: border-box;
+        }
+        .rl-clickable-row {
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .rl-clickable-row:hover {
+            background: #e8f5e9 !important;
+        }
+        
+        @media (max-width: 768px) {
+            .overview-cards {
+                grid-template-columns: 1fr;
+            }
+            
+            .tabs-header {
+                flex-wrap: wrap;
+            }
+            
+            .tab-btn {
+                padding: 10px 15px;
+                font-size: 13px;
+            }
+            
+            .filter-bar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="ai-logs-container">
+        <div class="page-header">
+            <h1>📊 AI操作日志监控</h1>
+            <a href="/#/settings?config=ai-config" class="back-btn">← 返回配置页面</a>
+        </div>
+        
+        <!-- 概览卡片 -->
+        <div class="overview-cards" id="overview-cards">
+            <div class="overview-card">
+                <h3>总操作数</h3>
+                <div class="value" id="total-operations">-</div>
+            </div>
+            <div class="overview-card success">
+                <h3>成功操作</h3>
+                <div class="value" id="success-count">-</div>
+            </div>
+            <div class="overview-card failed">
+                <h3>失败操作</h3>
+                <div class="value" id="failed-count">-</div>
+            </div>
+            <div class="overview-card info">
+                <h3>活跃用户</h3>
+                <div class="value" id="unique-users">-</div>
+            </div>
+            <div class="overview-card info">
+                <h3>使用技能数</h3>
+                <div class="value" id="unique-skills">-</div>
+            </div>
+            <div class="overview-card">
+                <h3>平均执行时间</h3>
+                <div class="value" id="avg-execution-time">-</div>
+            </div>
+            <div class="overview-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                <h3 style="color: rgba(255,255,255,0.9);">总Token使用量</h3>
+                <div class="value" id="total-tokens">-</div>
+            </div>
+            <div class="overview-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white;">
+                <h3 style="color: rgba(255,255,255,0.9);">平均Token/操作</h3>
+                <div class="value" id="avg-tokens">-</div>
+            </div>
+        </div>
+
+        <div class="overview-cards" id="agent-tool-overview-cards" style="margin-bottom: 30px;">
+            <div class="overview-card" style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white;">
+                <h3 style="color: rgba(255,255,255,0.9);">🤖 Sub-Agent 调用次数</h3>
+                <div class="value" id="agent-total-calls">-</div>
+            </div>
+            <div class="overview-card" style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white;">
+                <h3 style="color: rgba(255,255,255,0.9);">🤖 Sub-Agent 种类数</h3>
+                <div class="value" id="agent-unique-count">-</div>
+            </div>
+            <div class="overview-card" style="background: linear-gradient(135deg, #fc5c7d 0%, #6a82fb 100%); color: white;">
+                <h3 style="color: rgba(255,255,255,0.9);">🔧 自定义工具 调用次数</h3>
+                <div class="value" id="tool-total-calls">-</div>
+            </div>
+            <div class="overview-card" style="background: linear-gradient(135deg, #fc5c7d 0%, #6a82fb 100%); color: white;">
+                <h3 style="color: rgba(255,255,255,0.9);">🔧 自定义工具 种类数</h3>
+                <div class="value" id="tool-unique-count">-</div>
+            </div>
+        </div>
+        
+        <!-- 时间范围选择器 -->
+        <div class="time-range-selector">
+            <button class="time-range-btn" data-days="7">最近7天</button>
+            <button class="time-range-btn active" data-days="30">最近30天</button>
+            <button class="time-range-btn" data-days="90">最近90天</button>
+            <button class="time-range-btn" data-days="365">最近1年</button>
+        </div>
+        
+        <!-- 标签页 -->
+        <div class="tabs-container">
+            <div class="tabs-header">
+                <button class="tab-btn active" data-tab="overview">📈 概览</button>
+                <button class="tab-btn" data-tab="request-logs">📝 AI请求日志</button>
+                <button class="tab-btn" data-tab="recent">📋 最近操作</button>
+                <button class="tab-btn" data-tab="failed">❌ 失败操作</button>
+                <button class="tab-btn" data-tab="skill-stats">🤖 技能统计</button>
+                <button class="tab-btn" data-tab="user-stats">👥 用户统计</button>
+                <button class="tab-btn" data-tab="agent-stats">🧠 Sub-Agent统计</button>
+                <button class="tab-btn" data-tab="tool-stats">🔧 自定义工具统计</button>
+            </div>
+            
+            <!-- 概览标签页 -->
+            <div class="tab-content active" id="overview-tab">
+                <h3 class="chart-title">📈 每日操作趋势</h3>
+                <div class="chart-container">
+                    <canvas id="daily-chart"></canvas>
+                </div>
+                
+                <div class="charts-row">
+                    <div>
+                        <h3 class="chart-title">🔥 Top 10 热门技能</h3>
+                        <div class="chart-container">
+                            <canvas id="top-skills-chart"></canvas>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <h3 class="chart-title">👥 Top 10 活跃用户</h3>
+                        <div class="chart-container">
+                            <canvas id="top-users-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- AI请求日志标签页 -->
+            <div class="tab-content" id="request-logs-tab">
+                <div class="filter-bar">
+                    <label>触发类型:</label>
+                    <select id="rl-trigger-type">
+                        <option value="">全部</option>
+                        <option value="generation">AI生成用例</option>
+                        <option value="generation_overview">AI生成概述</option>
+                        <option value="generation_key_config">AI生成关键配置</option>
+                        <option value="review">AI评审</option>
+                        <option value="qa">AI问答</option>
+                        <option value="agent">Agent执行</option>
+                        <option value="memory_refine">记忆提炼</option>
+                        <option value="reflection">反思管道</option>
+                        <option value="import_optimize">导入优化</option>
+                    </select>
+                    <label>状态:</label>
+                    <select id="rl-status">
+                        <option value="">全部</option>
+                        <option value="success">成功</option>
+                        <option value="failed">失败</option>
+                    </select>
+                    <label>关键词:</label>
+                    <input type="text" id="rl-keyword" placeholder="搜索Prompt/Response" style="width:200px;">
+                    <button class="time-range-btn active" id="rl-search-btn" style="padding:6px 16px;">🔍 搜索</button>
+                </div>
+                <div class="stats-grid" id="rl-stats-grid" style="margin-bottom:20px;">
+                    <div class="stat-item"><label>总请求数</label><div class="value" id="rl-total-requests">-</div></div>
+                    <div class="stat-item"><label>成功</label><div class="value" id="rl-success-count" style="color:#4CAF50">-</div></div>
+                    <div class="stat-item"><label>失败</label><div class="value" id="rl-failed-count" style="color:#f44336">-</div></div>
+                    <div class="stat-item"><label>总Token消耗</label><div class="value" id="rl-total-tokens">-</div></div>
+                </div>
+                <div id="rl-logs-container">
+                    <div class="loading">点击标签页加载数据...</div>
+                </div>
+                <div id="rl-pagination" style="display:none; margin-top:20px; justify-content:center; align-items:center; gap:10px;">
+                    <span id="rl-pagination-info"></span>
+                    <button class="time-range-btn" id="rl-prev-page">← 上一页</button>
+                    <span id="rl-page-indicator"></span>
+                    <button class="time-range-btn" id="rl-next-page">下一页 →</button>
+                </div>
+            </div>
+            
+            <!-- 最近操作标签页 -->
+            <div class="tab-content" id="recent-tab">
+                <div class="filter-bar">
+                    <label>显示条数:</label>
+                    <select id="recent-limit">
+                        <option value="50">50条</option>
+                        <option value="100" selected>100条</option>
+                        <option value="200">200条</option>
+                        <option value="500">500条</option>
+                    </select>
+                </div>
+                <div id="recent-logs-container">
+                    <div class="loading">加载中...</div>
+                </div>
+            </div>
+            
+            <!-- 失败操作标签页 -->
+            <div class="tab-content" id="failed-tab">
+                <div class="filter-bar">
+                    <label>显示条数:</label>
+                    <select id="failed-limit">
+                        <option value="50">50条</option>
+                        <option value="100" selected>100条</option>
+                        <option value="200">200条</option>
+                    </select>
+                </div>
+                <div id="failed-logs-container">
+                    <div class="loading">加载中...</div>
+                </div>
+            </div>
+            
+            <!-- 技能统计标签页 -->
+            <div class="tab-content" id="skill-stats-tab">
+                <div id="skill-stats-container">
+                    <div class="loading">加载中...</div>
+                </div>
+            </div>
+            
+            <!-- 用户统计标签页 -->
+            <div class="tab-content" id="user-stats-tab">
+                <div id="user-stats-container">
+                    <div class="loading">加载中...</div>
+                </div>
+            </div>
+
+            <!-- Sub-Agent统计标签页 -->
+            <div class="tab-content" id="agent-stats-tab">
+                <div id="agent-stats-container">
+                    <div class="loading">点击标签页加载数据...</div>
+                </div>
+            </div>
+
+            <!-- 自定义工具统计标签页 -->
+            <div class="tab-content" id="tool-stats-tab">
+                <div id="tool-stats-container">
+                    <div class="loading">点击标签页加载数据...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="sql-modal-overlay" id="sql-modal-overlay">
+        <div class="sql-modal">
+            <div class="sql-modal-header">
+                <h3>SQL 查询详情</h3>
+                <button class="sql-modal-close" onclick="closeSqlModal()">&times;</button>
+            </div>
+            <div class="sql-modal-body">
+                <div class="sql-content" id="sql-content"></div>
+            </div>
+            <div class="sql-modal-footer">
+                <button class="copy-btn" id="copy-sql-btn" onclick="copySqlToClipboard()">复制 SQL</button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="sql-modal-overlay" id="rl-detail-overlay">
+        <div class="sql-modal" style="max-width:900px;">
+            <div class="sql-modal-header">
+                <h3>📝 AI请求日志详情</h3>
+                <button class="sql-modal-close" id="rl-detail-close">&times;</button>
+            </div>
+            <div class="sql-modal-body" id="rl-detail-body">
+            </div>
+            <div class="sql-modal-footer" id="rl-detail-footer">
+            </div>
+        </div>
+    </div>
+    
+    <script src="js/socket.io.min.js"></script>
+    <script>
+        let currentDays = 30;
+        let dailyChart, topSkillsChart, topUsersChart;
+        let agentDailyChart, agentTopChart, toolDailyChart, toolTopChart;
+        
+        function showErrorMessage(message) {
+            const toast = document.createElement('div');
+            toast.className = 'toast error';
+            toast.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: #ef4444;
+                color: white;
+                padding: 12px 24px;
+                border-radius: 8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                z-index: 10001;
+                animation: slideIn 0.3s ease;
+                max-width: 400px;
+            `;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => toast.remove(), 300);
+            }, 5000);
+        }
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            checkAuthentication();
+            initializeTabs();
+            initializeTimeRangeSelector();
+            restoreTabFromUrl();
+            loadOverview();
+        });
+        
+        function checkAuthentication() {
+            const token = localStorage.getItem('authToken');
+            if (!token) {
+                showErrorMessage('请先登录系统');
+                setTimeout(() => { window.location.href = '/index.html'; }, 1500);
+                return false;
+            }
+            return true;
+        }
+        
+        function initializeTabs() {
+            const tabBtns = document.querySelectorAll('.tab-btn');
+            tabBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const tabName = btn.dataset.tab;
+                    
+                    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                    
+                    btn.classList.add('active');
+                    document.getElementById(`${tabName}-tab`).classList.add('active');
+                    
+                    history.replaceState(null, '', `#tab=${tabName}`);
+                    
+                    loadTabContent(tabName);
+                });
+            });
+            
+            document.getElementById('recent-limit').addEventListener('change', () => loadRecentLogs());
+            document.getElementById('failed-limit').addEventListener('change', () => loadFailedLogs());
+        }
+        
+        function restoreTabFromUrl() {
+            const hash = window.location.hash;
+            const match = hash.match(/tab=([^&]+)/);
+            if (match) {
+                const tabName = match[1];
+                const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+                if (tabBtn) {
+                    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                    
+                    tabBtn.classList.add('active');
+                    const tabContent = document.getElementById(`${tabName}-tab`);
+                    if (tabContent) {
+                        tabContent.classList.add('active');
+                        loadTabContent(tabName);
+                    }
+                }
+            }
+        }
+        
+        function initializeTimeRangeSelector() {
+            const timeRangeBtns = document.querySelectorAll('.time-range-btn');
+            timeRangeBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    timeRangeBtns.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    currentDays = parseInt(btn.dataset.days);
+                    loadOverview();
+                });
+            });
+        }
+        
+        
+        async function apiRequest(url) {
+            const token = localStorage.getItem('authToken');
+            if (!token) {
+                showErrorMessage('请先登录系统');
+                setTimeout(() => { window.location.href = '/index.html'; }, 1500);
+                throw new Error('未登录');
+            }
+            
+            const response = await fetch(url, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            if (response.status === 401 || response.status === 403) {
+                showErrorMessage('登录已过期，请重新登录');
+                localStorage.removeItem('authToken');
+                setTimeout(() => { window.location.href = '/index.html'; }, 1500);
+                throw new Error('认证失败');
+            }
+            
+            return await response.json();
+        }
+        
+        async function loadOverview() {
+            try {
+                const data = await apiRequest(`/api/ai-operation-logs/overview?days=${currentDays}`);
+                
+                if (data.success) {
+                    updateOverviewCards(data.overview.total);
+                    updateDailyChart(data.overview.daily);
+                    updateTopSkillsChart(data.overview.topSkills);
+                    updateTopUsersChart(data.overview.topUsers);
+                }
+            } catch (error) {
+                console.error('加载概览失败:', error);
+                if (error.message !== '未登录' && error.message !== '认证失败') {
+                    showErrorMessage('加载数据失败，请检查网络连接');
+                }
+            }
+
+            try {
+                const atData = await apiRequest(`/api/ai-operation-logs/agent-tool-overview?days=${currentDays}`);
+                if (atData.success) {
+                    updateAgentToolOverviewCards(atData.overview);
+                }
+            } catch (error) {
+                console.error('加载Agent/Tool概览失败:', error);
+            }
+        }
+        
+        function updateOverviewCards(stats) {
+            document.getElementById('total-operations').textContent = stats.total_operations || 0;
+            document.getElementById('success-count').textContent = stats.success_count || 0;
+            document.getElementById('failed-count').textContent = stats.failed_count || 0;
+            document.getElementById('unique-users').textContent = stats.unique_users || 0;
+            document.getElementById('unique-skills').textContent = stats.unique_skills || 0;
+            document.getElementById('avg-execution-time').textContent = 
+                stats.avg_execution_time ? `${Math.round(stats.avg_execution_time)}ms` : '-';
+            
+            // 显示token统计
+            document.getElementById('total-tokens').textContent = 
+                stats.total_tokens ? formatNumber(stats.total_tokens) : '0';
+            document.getElementById('avg-tokens').textContent = 
+                stats.avg_tokens ? Math.round(stats.avg_tokens) : '0';
+        }
+        
+        function formatNumber(num) {
+            if (num >= 1000000) {
+                return (num / 1000000).toFixed(2) + 'M';
+            } else if (num >= 1000) {
+                return (num / 1000).toFixed(2) + 'K';
+            }
+            return num.toString();
+        }
+        
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            try {
+                const date = new Date(dateStr);
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                return `${year}/${month}/${day}`;
+            } catch (e) {
+                return dateStr;
+            }
+        }
+        
+        function formatDateTime(dateStr) {
+            if (!dateStr) return '-';
+            try {
+                const date = new Date(dateStr);
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+                return `${year}/${month}/${day} ${hours}:${minutes}`;
+            } catch (e) {
+                return '-';
+            }
+        }
+        
+        function updateDailyChart(dailyData) {
+            const ctx = document.getElementById('daily-chart').getContext('2d');
+            
+            if (dailyChart) {
+                dailyChart.destroy();
+            }
+            
+            const labels = dailyData.map(d => formatDate(d.date)).reverse();
+            const successData = dailyData.map(d => d.success_count).reverse();
+            const failedData = dailyData.map(d => d.failed_count).reverse();
+            
+            dailyChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: '成功操作',
+                            data: successData,
+                            borderColor: '#4CAF50',
+                            backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                            tension: 0.4,
+                            fill: true,
+                            pointRadius: 4,
+                            pointHoverRadius: 6,
+                            pointBackgroundColor: '#4CAF50',
+                            pointBorderColor: '#fff',
+                            pointBorderWidth: 2
+                        },
+                        {
+                            label: '失败操作',
+                            data: failedData,
+                            borderColor: '#f44336',
+                            backgroundColor: 'rgba(244, 67, 54, 0.1)',
+                            tension: 0.4,
+                            fill: true,
+                            pointRadius: 4,
+                            pointHoverRadius: 6,
+                            pointBackgroundColor: '#f44336',
+                            pointBorderColor: '#fff',
+                            pointBorderWidth: 2
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    devicePixelRatio: window.devicePixelRatio || 2,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                font: {
+                                    size: 14,
+                                    weight: '500'
+                                },
+                                padding: 15,
+                                usePointStyle: true,
+                                pointStyle: 'circle'
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.92)',
+                            titleFont: {
+                                size: 18,
+                                weight: 'bold',
+                                family: 'Arial, sans-serif'
+                            },
+                            bodyFont: {
+                                size: 16,
+                                weight: '600',
+                                family: 'Arial, sans-serif'
+                            },
+                            titleColor: '#ffffff',
+                            bodyColor: '#ffffff',
+                            padding: {
+                                top: 12,
+                                bottom: 12,
+                                left: 16,
+                                right: 16
+                            },
+                            cornerRadius: 10,
+                            displayColors: true,
+                            boxPadding: 6,
+                            borderColor: 'rgba(255, 255, 255, 0.1)',
+                            borderWidth: 1,
+                            mode: 'index',
+                            intersect: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                font: {
+                                    size: 13,
+                                    weight: '500'
+                                },
+                                color: '#333'
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.05)'
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                font: {
+                                    size: 13,
+                                    weight: '500'
+                                },
+                                color: '#333'
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.05)'
+                            }
+                        }
+                    },
+                    interaction: {
+                        mode: 'nearest',
+                        axis: 'x',
+                        intersect: false
+                    }
+                }
+            });
+        }
+        
+        function updateTopSkillsChart(skillsData) {
+            const ctx = document.getElementById('top-skills-chart').getContext('2d');
+            
+            if (topSkillsChart) {
+                topSkillsChart.destroy();
+            }
+            
+            topSkillsChart = new Chart(ctx, {
+                type: 'bar',
+                plugins: [ChartDataLabels],
+                data: {
+                    labels: skillsData.map(s => s.skill_name),
+                    datasets: [{
+                        label: '使用次数',
+                        data: skillsData.map(s => s.usage_count),
+                        backgroundColor: 'rgba(33, 150, 243, 0.7)',
+                        borderColor: '#2196F3',
+                        borderWidth: 2,
+                        borderRadius: 6,
+                        barThickness: 'flex',
+                        maxBarThickness: 60
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    devicePixelRatio: window.devicePixelRatio || 2,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        datalabels: {
+                            anchor: 'end',
+                            align: 'top',
+                            color: '#1a1a1a',
+                            font: {
+                                weight: 'bold',
+                                size: 14
+                            },
+                            offset: 4,
+                            formatter: function(value) {
+                                return value;
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.92)',
+                            titleFont: {
+                                size: 18,
+                                weight: 'bold',
+                                family: 'Arial, sans-serif'
+                            },
+                            bodyFont: {
+                                size: 16,
+                                weight: '600',
+                                family: 'Arial, sans-serif'
+                            },
+                            titleColor: '#ffffff',
+                            bodyColor: '#ffffff',
+                            padding: {
+                                top: 12,
+                                bottom: 12,
+                                left: 16,
+                                right: 16
+                            },
+                            cornerRadius: 10,
+                            displayColors: true,
+                            boxPadding: 6,
+                            borderColor: 'rgba(255, 255, 255, 0.1)',
+                            borderWidth: 1,
+                            shadowOffsetX: 0,
+                            shadowOffsetY: 4,
+                            shadowBlur: 12,
+                            shadowColor: 'rgba(0, 0, 0, 0.3)'
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                font: {
+                                    size: 13,
+                                    weight: '500'
+                                },
+                                color: '#333'
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.05)'
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                font: {
+                                    size: 13,
+                                    weight: '500'
+                                },
+                                color: '#333',
+                                maxRotation: 45,
+                                minRotation: 0,
+                                autoSkip: true,
+                                maxTicksLimit: 10
+                            },
+                            grid: {
+                                display: false
+                            }
+                        }
+                    },
+                    layout: {
+                        padding: {
+                            top: 40,
+                            left: 10,
+                            right: 10
+                        }
+                    }
+                }
+            });
+        }
+        
+        function updateTopUsersChart(usersData) {
+            const ctx = document.getElementById('top-users-chart').getContext('2d');
+            
+            if (topUsersChart) {
+                topUsersChart.destroy();
+            }
+            
+            topUsersChart = new Chart(ctx, {
+                type: 'bar',
+                plugins: [ChartDataLabels],
+                data: {
+                    labels: usersData.map(u => u.username || `用户${u.user_id}`),
+                    datasets: [{
+                        label: '使用次数',
+                        data: usersData.map(u => u.usage_count),
+                        backgroundColor: 'rgba(156, 39, 176, 0.7)',
+                        borderColor: '#9C27B0',
+                        borderWidth: 2,
+                        borderRadius: 6,
+                        barThickness: 'flex',
+                        maxBarThickness: 60
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    devicePixelRatio: window.devicePixelRatio || 2,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        datalabels: {
+                            anchor: 'end',
+                            align: 'top',
+                            color: '#1a1a1a',
+                            font: {
+                                weight: 'bold',
+                                size: 14
+                            },
+                            offset: 4,
+                            formatter: function(value) {
+                                return value;
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.92)',
+                            titleFont: {
+                                size: 18,
+                                weight: 'bold',
+                                family: 'Arial, sans-serif'
+                            },
+                            bodyFont: {
+                                size: 16,
+                                weight: '600',
+                                family: 'Arial, sans-serif'
+                            },
+                            titleColor: '#ffffff',
+                            bodyColor: '#ffffff',
+                            padding: {
+                                top: 12,
+                                bottom: 12,
+                                left: 16,
+                                right: 16
+                            },
+                            cornerRadius: 10,
+                            displayColors: true,
+                            boxPadding: 6,
+                            borderColor: 'rgba(255, 255, 255, 0.1)',
+                            borderWidth: 1,
+                            shadowOffsetX: 0,
+                            shadowOffsetY: 4,
+                            shadowBlur: 12,
+                            shadowColor: 'rgba(0, 0, 0, 0.3)'
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                font: {
+                                    size: 13,
+                                    weight: '500'
+                                },
+                                color: '#333'
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.05)'
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                font: {
+                                    size: 13,
+                                    weight: '500'
+                                },
+                                color: '#333',
+                                maxRotation: 45,
+                                minRotation: 0,
+                                autoSkip: true,
+                                maxTicksLimit: 10
+                            },
+                            grid: {
+                                display: false
+                            }
+                        }
+                    },
+                    layout: {
+                        padding: {
+                            top: 40,
+                            left: 10,
+                            right: 10
+                        }
+                    }
+                }
+            });
+        }
+        
+        function loadTabContent(tabName) {
+            switch (tabName) {
+                case 'request-logs':
+                    loadRequestLogs();
+                    break;
+                case 'recent':
+                    loadRecentLogs();
+                    break;
+                case 'failed':
+                    loadFailedLogs();
+                    break;
+                case 'skill-stats':
+                    loadSkillStats();
+                    break;
+                case 'user-stats':
+                    loadUserStats();
+                    break;
+                case 'agent-stats':
+                    loadAgentStats();
+                    break;
+                case 'tool-stats':
+                    loadToolStats();
+                    break;
+            }
+        }
+        
+        async function loadRecentLogs() {
+            const limit = document.getElementById('recent-limit').value;
+            const container = document.getElementById('recent-logs-container');
+            container.innerHTML = '<div class="loading">加载中...</div>';
+            
+            try {
+                const data = await apiRequest(`/api/ai-operation-logs/recent?limit=${limit}`);
+                
+                if (data.success && data.logs.length > 0) {
+                    container.innerHTML = renderLogsTable(data.logs);
+                } else {
+                    container.innerHTML = '<div class="no-data">暂无数据</div>';
+                }
+            } catch (error) {
+                container.innerHTML = '<div class="no-data">加载失败</div>';
+                console.error('加载最近日志失败:', error);
+            }
+        }
+        
+        async function loadFailedLogs() {
+            const limit = document.getElementById('failed-limit').value;
+            const container = document.getElementById('failed-logs-container');
+            container.innerHTML = '<div class="loading">加载中...</div>';
+            
+            try {
+                const data = await apiRequest(`/api/ai-operation-logs/failed?limit=${limit}`);
+                
+                if (data.success && data.logs.length > 0) {
+                    container.innerHTML = renderLogsTable(data.logs, true);
+                } else {
+                    container.innerHTML = '<div class="no-data">暂无失败操作</div>';
+                }
+            } catch (error) {
+                container.innerHTML = '<div class="no-data">加载失败</div>';
+                console.error('加载失败日志失败:', error);
+            }
+        }
+        
+        async function loadSkillStats() {
+            const container = document.getElementById('skill-stats-container');
+            container.innerHTML = '<div class="loading">加载中...</div>';
+            
+            try {
+                const data = await apiRequest(`/api/ai-operation-logs/skill-stats?days=${currentDays}`);
+                
+                if (data.success && data.stats.length > 0) {
+                    container.innerHTML = renderSkillStatsTable(data.stats);
+                } else {
+                    container.innerHTML = '<div class="no-data">暂无数据</div>';
+                }
+            } catch (error) {
+                container.innerHTML = '<div class="no-data">加载失败</div>';
+                console.error('加载技能统计失败:', error);
+            }
+        }
+        
+        async function loadUserStats() {
+            const container = document.getElementById('user-stats-container');
+            container.innerHTML = '<div class="loading">加载中...</div>';
+            
+            try {
+                const data = await apiRequest(`/api/ai-operation-logs/user-stats?days=${currentDays}`);
+                
+                if (data.success && data.stats.length > 0) {
+                    container.innerHTML = renderUserStatsTable(data.stats);
+                } else {
+                    container.innerHTML = '<div class="no-data">暂无数据</div>';
+                }
+            } catch (error) {
+                container.innerHTML = '<div class="no-data">加载失败</div>';
+                console.error('加载用户统计失败:', error);
+            }
+        }
+        
+        function renderLogsTable(logs, showError = false) {
+            if (logs.length === 0) {
+                return '<div class="no-data">暂无数据</div>';
+            }
+            
+            let html = `
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            <th>用户</th>
+                            <th>技能</th>
+                            <th>SQL预览</th>
+                            <th>结果数</th>
+                            <th>耗时</th>
+                            <th>Token</th>
+                            <th>状态</th>
+                            ${showError ? '<th>错误信息</th>' : ''}
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+            
+            logs.forEach(log => {
+                const time = formatDateTime(log.created_at);
+                const statusClass = log.status === 'success' ? 'success' : 'failed';
+                const statusText = log.status === 'success' ? '成功' : '失败';
+                const tokenDisplay = log.total_tokens ? formatNumber(log.total_tokens) : '-';
+                
+                html += `
+                    <tr>
+                        <td>${time}</td>
+                        <td>${log.username || `用户${log.user_id}`}</td>
+                        <td>${log.skill_name}</td>
+                        <td class="sql-preview" onclick="showSqlModal(\`${escapeHtml(log.sql_query || '')}\`)">${escapeHtml(log.sql_query || '-')}</td>
+                        <td>${log.result_count || 0}</td>
+                        <td>${log.execution_time_ms ? `${log.execution_time_ms}ms` : '-'}</td>
+                        <td title="提示词: ${log.prompt_tokens || 0} | 完成: ${log.completion_tokens || 0}">${tokenDisplay}</td>
+                        <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                        ${showError ? `<td class="error-message">${escapeHtml(log.error_message || '-')}</td>` : ''}
+                    </tr>
+                `;
+            });
+            
+            html += '</tbody></table>';
+            return html;
+        }
+        
+        function renderSkillStatsTable(stats) {
+            let html = `
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>技能名称</th>
+                            <th>使用次数</th>
+                            <th>成功次数</th>
+                            <th>失败次数</th>
+                            <th>平均耗时</th>
+                            <th>最大耗时</th>
+                            <th>最小耗时</th>
+                            <th>总Token</th>
+                            <th>平均Token</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+            
+            stats.forEach(stat => {
+                html += `
+                    <tr>
+                        <td>${stat.skill_name}</td>
+                        <td>${stat.usage_count}</td>
+                        <td>${stat.success_count}</td>
+                        <td>${stat.failed_count}</td>
+                        <td>${stat.avg_execution_time ? `${Math.round(stat.avg_execution_time)}ms` : '-'}</td>
+                        <td>${stat.max_execution_time ? `${stat.max_execution_time}ms` : '-'}</td>
+                        <td>${stat.min_execution_time ? `${stat.min_execution_time}ms` : '-'}</td>
+                        <td>${stat.total_tokens ? formatNumber(stat.total_tokens) : '-'}</td>
+                        <td>${stat.avg_tokens ? Math.round(stat.avg_tokens) : '-'}</td>
+                    </tr>
+                `;
+            });
+            
+            html += '</tbody></table>';
+            return html;
+        }
+        
+        function renderUserStatsTable(stats) {
+            let html = `
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>用户名</th>
+                            <th>使用次数</th>
+                            <th>使用技能数</th>
+                            <th>成功次数</th>
+                            <th>失败次数</th>
+                            <th>平均耗时</th>
+                            <th>总Token</th>
+                            <th>平均Token</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+            
+            stats.forEach(stat => {
+                html += `
+                    <tr>
+                        <td>${stat.username || `用户${stat.user_id}`}</td>
+                        <td>${stat.usage_count}</td>
+                        <td>${stat.unique_skills_used}</td>
+                        <td>${stat.success_count}</td>
+                        <td>${stat.failed_count}</td>
+                        <td>${stat.avg_execution_time ? `${Math.round(stat.avg_execution_time)}ms` : '-'}</td>
+                        <td>${stat.total_tokens ? formatNumber(stat.total_tokens) : '-'}</td>
+                        <td>${stat.avg_tokens ? Math.round(stat.avg_tokens) : '-'}</td>
+                    </tr>
+                `;
+            });
+            
+            html += '</tbody></table>';
+            return html;
+        }
+        
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML.replace(/'/g, '&#039;');
+        }
+        
+        function showSqlModal(sql) {
+            if (!sql || sql === '-') {
+                return;
+            }
+            
+            const overlay = document.getElementById('sql-modal-overlay');
+            const content = document.getElementById('sql-content');
+            content.textContent = sql;
+            overlay.classList.add('active');
+        }
+        
+        function closeSqlModal() {
+            const overlay = document.getElementById('sql-modal-overlay');
+            overlay.classList.remove('active');
+            
+            const copyBtn = document.getElementById('copy-sql-btn');
+            copyBtn.textContent = '复制 SQL';
+            copyBtn.classList.remove('copied');
+        }
+        
+        function copySqlToClipboard() {
+            const content = document.getElementById('sql-content');
+            const copyBtn = document.getElementById('copy-sql-btn');
+            
+            navigator.clipboard.writeText(content.textContent).then(() => {
+                copyBtn.textContent = '已复制!';
+                copyBtn.classList.add('copied');
+                
+                setTimeout(() => {
+                    copyBtn.textContent = '复制 SQL';
+                    copyBtn.classList.remove('copied');
+                }, 2000);
+            }).catch(err => {
+                console.error('复制失败:', err);
+                showErrorMessage('复制失败，请手动复制');
+            });
+        }
+        
+        function updateAgentToolOverviewCards(overview) {
+            const agent = overview.agent || {};
+            const tool = overview.tool || {};
+
+            document.getElementById('agent-total-calls').textContent = agent.total_agent_calls || 0;
+            document.getElementById('agent-unique-count').textContent = agent.unique_agents || 0;
+            document.getElementById('tool-total-calls').textContent = tool.total_tool_calls || 0;
+            document.getElementById('tool-unique-count').textContent = tool.unique_tools || 0;
+        }
+
+        function getSourceLabel(source) {
+            const map = {
+                'review': 'AI评审',
+                'qa': 'AI问答',
+                'generation': 'AI生成',
+                'agent_loop': 'Agent调用',
+                'test_run': '测试运行'
+            };
+            return map[source] || source || '-';
+        }
+
+        function getSourceBadgeClass(source) {
+            const map = {
+                'review': 'review',
+                'qa': 'qa',
+                'generation': 'generation',
+                'agent_loop': 'agent_loop',
+                'test_run': 'test_run'
+            };
+            return map[source] || '';
+        }
+
+        async function loadAgentStats() {
+            const container = document.getElementById('agent-stats-container');
+            container.innerHTML = '<div class="loading">加载中...</div>';
+
+            try {
+                const data = await apiRequest(`/api/ai-operation-logs/agent-stats?days=${currentDays}`);
+
+                if (data.success) {
+                    container.innerHTML = renderAgentStats(data.stats);
+                } else {
+                    container.innerHTML = '<div class="no-data">暂无数据</div>';
+                }
+            } catch (error) {
+                container.innerHTML = '<div class="no-data">加载失败</div>';
+                console.error('加载Sub-Agent统计失败:', error);
+            }
+        }
+
+        function renderAgentStats(stats) {
+            let html = '';
+
+            if (stats.unregistered && stats.unregistered.length > 0) {
+                html += '<div class="unregistered-notice">';
+                html += '<strong>⚠️ 检测到已删除的Sub-Agent仍有使用记录</strong>';
+                html += '<span>以下Agent在配置中心中已不存在，但仍有历史使用记录：';
+                stats.unregistered.forEach(a => {
+                    html += '<code>' + escapeHtml(a.agent_code) + '</code> ';
+                });
+                html += '</span></div>';
+            }
+
+            html += '<h3 class="section-title">📊 Sub-Agent 使用排行</h3>';
+            html += renderAgentStatsTable(stats.agents || []);
+
+            if (stats.bySource && stats.bySource.length > 0) {
+                html += '<h3 class="section-title">📂 按调用来源统计</h3>';
+                html += renderSourceStatsTable(stats.bySource);
+            }
+
+            if (stats.daily && stats.daily.length > 0) {
+                html += '<h3 class="section-title">📈 每日调用趋势</h3>';
+                html += '<div class="chart-container"><canvas id="agent-daily-chart"></canvas></div>';
+            }
+
+            setTimeout(() => {
+                if (stats.daily && stats.daily.length > 0) {
+                    renderAgentDailyChart(stats.daily);
+                }
+            }, 100);
+
+            return html;
+        }
+
+        function renderAgentStatsTable(agents) {
+            if (!agents || agents.length === 0) {
+                return '<div class="no-data">暂无Sub-Agent使用数据</div>';
+            }
+
+            let html = `
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>Agent Code</th>
+                            <th>显示名称</th>
+                            <th>调用次数</th>
+                            <th>成功次数</th>
+                            <th>失败次数</th>
+                            <th>平均耗时</th>
+                            <th>最大耗时</th>
+                            <th>总Token</th>
+                            <th>平均Token</th>
+                            <th>使用用户数</th>
+                            <th>来源数</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            agents.forEach(agent => {
+                html += `
+                    <tr>
+                        <td><code>${escapeHtml(agent.agent_code)}</code></td>
+                        <td>${escapeHtml(agent.display_name || '-')}</td>
+                        <td><strong>${agent.usage_count}</strong></td>
+                        <td style="color: #4CAF50">${agent.success_count}</td>
+                        <td style="color: #f44336">${agent.failed_count}</td>
+                        <td>${agent.avg_execution_time ? Math.round(agent.avg_execution_time) + 'ms' : '-'}</td>
+                        <td>${agent.max_execution_time ? agent.max_execution_time + 'ms' : '-'}</td>
+                        <td>${agent.total_tokens ? formatNumber(agent.total_tokens) : '-'}</td>
+                        <td>${agent.avg_tokens ? Math.round(agent.avg_tokens) : '-'}</td>
+                        <td>${agent.unique_users || 0}</td>
+                        <td>${agent.unique_sources || 0}</td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+            return html;
+        }
+
+        function renderSourceStatsTable(sources) {
+            let html = `
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>来源</th>
+                            <th>调用次数</th>
+                            <th>成功次数</th>
+                            <th>失败次数</th>
+                            <th>平均耗时</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            sources.forEach(s => {
+                html += `
+                    <tr>
+                        <td><span class="source-badge ${getSourceBadgeClass(s.source)}">${escapeHtml(getSourceLabel(s.source))}</span></td>
+                        <td><strong>${s.usage_count}</strong></td>
+                        <td style="color: #4CAF50">${s.success_count}</td>
+                        <td style="color: #f44336">${s.failed_count}</td>
+                        <td>${s.avg_execution_time ? Math.round(s.avg_execution_time) + 'ms' : '-'}</td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+            return html;
+        }
+
+        function renderAgentDailyChart(dailyData) {
+            const ctx = document.getElementById('agent-daily-chart');
+            if (!ctx) return;
+
+            if (agentDailyChart) {
+                agentDailyChart.destroy();
+            }
+
+            const labels = dailyData.map(d => formatDate(d.date)).reverse();
+            const successData = dailyData.map(d => d.success_count).reverse();
+            const failedData = dailyData.map(d => d.failed_count).reverse();
+
+            agentDailyChart = new Chart(ctx.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: '成功调用',
+                            data: successData,
+                            borderColor: '#4CAF50',
+                            backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                            tension: 0.4,
+                            fill: true,
+                            pointRadius: 4,
+                            pointHoverRadius: 6
+                        },
+                        {
+                            label: '失败调用',
+                            data: failedData,
+                            borderColor: '#f44336',
+                            backgroundColor: 'rgba(244, 67, 54, 0.1)',
+                            tension: 0.4,
+                            fill: true,
+                            pointRadius: 4,
+                            pointHoverRadius: 6
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: { mode: 'index', intersect: false }
+                    },
+                    scales: {
+                        y: { beginAtZero: true },
+                        x: { }
+                    }
+                }
+            });
+        }
+
+        async function loadToolStats() {
+            const container = document.getElementById('tool-stats-container');
+            container.innerHTML = '<div class="loading">加载中...</div>';
+
+            try {
+                const data = await apiRequest(`/api/ai-operation-logs/tool-stats?days=${currentDays}`);
+
+                if (data.success) {
+                    container.innerHTML = renderToolStats(data.stats);
+                } else {
+                    container.innerHTML = '<div class="no-data">暂无数据</div>';
+                }
+            } catch (error) {
+                container.innerHTML = '<div class="no-data">加载失败</div>';
+                console.error('加载自定义工具统计失败:', error);
+            }
+        }
+
+        function renderToolStats(stats) {
+            let html = '';
+
+            if (stats.unregistered && stats.unregistered.length > 0) {
+                html += '<div class="unregistered-notice">';
+                html += '<strong>⚠️ 检测到已删除的自定义工具仍有使用记录</strong>';
+                html += '<span>以下工具在配置中心中已不存在，但仍有历史使用记录：';
+                stats.unregistered.forEach(t => {
+                    html += '<code>' + escapeHtml(t.tool_name) + '</code> ';
+                });
+                html += '</span></div>';
+            }
+
+            html += '<h3 class="section-title">🔧 自定义工具 使用排行</h3>';
+            html += renderToolStatsTable(stats.tools || []);
+
+            if (stats.bySource && stats.bySource.length > 0) {
+                html += '<h3 class="section-title">📂 按调用来源统计</h3>';
+                html += renderSourceStatsTable(stats.bySource);
+            }
+
+            if (stats.agentToolRelation && stats.agentToolRelation.length > 0) {
+                html += '<h3 class="section-title">🔗 Agent-Tool 调用关系</h3>';
+                html += renderAgentToolRelationTable(stats.agentToolRelation);
+            }
+
+            if (stats.daily && stats.daily.length > 0) {
+                html += '<h3 class="section-title">📈 每日调用趋势</h3>';
+                html += '<div class="chart-container"><canvas id="tool-daily-chart"></canvas></div>';
+            }
+
+            setTimeout(() => {
+                if (stats.daily && stats.daily.length > 0) {
+                    renderToolDailyChart(stats.daily);
+                }
+            }, 100);
+
+            return html;
+        }
+
+        function renderToolStatsTable(tools) {
+            if (!tools || tools.length === 0) {
+                return '<div class="no-data">暂无自定义工具使用数据</div>';
+            }
+
+            let html = `
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>工具名称</th>
+                            <th>显示名称</th>
+                            <th>调用次数</th>
+                            <th>成功次数</th>
+                            <th>失败次数</th>
+                            <th>平均耗时</th>
+                            <th>最大耗时</th>
+                            <th>使用用户数</th>
+                            <th>来源数</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            tools.forEach(tool => {
+                html += `
+                    <tr>
+                        <td><code>${escapeHtml(tool.tool_name)}</code></td>
+                        <td>${escapeHtml(tool.display_name || '-')}</td>
+                        <td><strong>${tool.usage_count}</strong></td>
+                        <td style="color: #4CAF50">${tool.success_count}</td>
+                        <td style="color: #f44336">${tool.failed_count}</td>
+                        <td>${tool.avg_execution_time ? Math.round(tool.avg_execution_time) + 'ms' : '-'}</td>
+                        <td>${tool.max_execution_time ? tool.max_execution_time + 'ms' : '-'}</td>
+                        <td>${tool.unique_users || 0}</td>
+                        <td>${tool.unique_sources || 0}</td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+            return html;
+        }
+
+        function renderAgentToolRelationTable(relations) {
+            let html = `
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>Sub-Agent</th>
+                            <th>自定义工具</th>
+                            <th>调用次数</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            relations.forEach(r => {
+                html += `
+                    <tr>
+                        <td><code>${escapeHtml(r.agent_code || '-')}</code></td>
+                        <td><code>${escapeHtml(r.tool_name)}</code></td>
+                        <td><strong>${r.usage_count}</strong></td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+            return html;
+        }
+
+        function renderToolDailyChart(dailyData) {
+            const ctx = document.getElementById('tool-daily-chart');
+            if (!ctx) return;
+
+            if (toolDailyChart) {
+                toolDailyChart.destroy();
+            }
+
+            const labels = dailyData.map(d => formatDate(d.date)).reverse();
+            const successData = dailyData.map(d => d.success_count).reverse();
+            const failedData = dailyData.map(d => d.failed_count).reverse();
+
+            toolDailyChart = new Chart(ctx.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: '成功调用',
+                            data: successData,
+                            borderColor: '#4CAF50',
+                            backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                            tension: 0.4,
+                            fill: true,
+                            pointRadius: 4,
+                            pointHoverRadius: 6
+                        },
+                        {
+                            label: '失败调用',
+                            data: failedData,
+                            borderColor: '#f44336',
+                            backgroundColor: 'rgba(244, 67, 54, 0.1)',
+                            tension: 0.4,
+                            fill: true,
+                            pointRadius: 4,
+                            pointHoverRadius: 6
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: { mode: 'index', intersect: false }
+                    },
+                    scales: {
+                        y: { beginAtZero: true },
+                        x: { }
+                    }
+                }
+            });
+        }
+
+        let rlCurrentPage = 1;
+        let rlTotalPages = 1;
+        let rlIsAdmin = false;
+
+        const TRIGGER_TYPE_LABELS = {
+            'generation': 'AI生成用例',
+            'generation_overview': 'AI生成概述',
+            'generation_key_config': 'AI生成关键配置',
+            'review': 'AI评审',
+            'qa': 'AI问答',
+            'agent': 'Agent执行',
+            'memory_refine': '记忆提炼',
+            'reflection': '反思管道',
+            'import_optimize': '导入优化'
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const searchBtn = document.getElementById('rl-search-btn');
+            if (searchBtn) {
+                searchBtn.addEventListener('click', () => {
+                    rlCurrentPage = 1;
+                    loadRequestLogs();
+                });
+            }
+            const keywordInput = document.getElementById('rl-keyword');
+            if (keywordInput) {
+                keywordInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        rlCurrentPage = 1;
+                        loadRequestLogs();
+                    }
+                });
+            }
+            const prevBtn = document.getElementById('rl-prev-page');
+            if (prevBtn) {
+                prevBtn.addEventListener('click', () => {
+                    if (rlCurrentPage > 1) {
+                        rlCurrentPage--;
+                        loadRequestLogs();
+                    }
+                });
+            }
+            const nextBtn = document.getElementById('rl-next-page');
+            if (nextBtn) {
+                nextBtn.addEventListener('click', () => {
+                    if (rlCurrentPage < rlTotalPages) {
+                        rlCurrentPage++;
+                        loadRequestLogs();
+                    }
+                });
+            }
+            const detailCloseBtn = document.getElementById('rl-detail-close');
+            if (detailCloseBtn) {
+                detailCloseBtn.addEventListener('click', closeRlDetailModal);
+            }
+            const detailOverlay = document.getElementById('rl-detail-overlay');
+            if (detailOverlay) {
+                detailOverlay.addEventListener('click', (e) => {
+                    if (e.target === detailOverlay) closeRlDetailModal();
+                });
+            }
+        });
+
+        async function loadRequestLogs() {
+            const container = document.getElementById('rl-logs-container');
+            container.innerHTML = '<div class="loading">加载中...</div>';
+
+            const triggerType = document.getElementById('rl-trigger-type').value;
+            const status = document.getElementById('rl-status').value;
+            const keyword = document.getElementById('rl-keyword').value;
+
+            let url = `/api/ai-operation-logs/request-logs?page=${rlCurrentPage}&pageSize=20`;
+            if (triggerType) url += `&triggerType=${encodeURIComponent(triggerType)}`;
+            if (status) url += `&status=${encodeURIComponent(status)}`;
+            if (keyword) url += `&keyword=${encodeURIComponent(keyword)}`;
+
+            try {
+                const data = await apiRequest(url);
+                if (data.success) {
+                    rlIsAdmin = data.isAdmin;
+                    rlTotalPages = Math.ceil(data.pagination.total / data.pagination.pageSize) || 1;
+                    updateRlPagination(data.pagination);
+                    loadRequestLogsStats();
+                    if (data.logs.length > 0) {
+                        container.innerHTML = renderRequestLogsTable(data.logs);
+                    } else {
+                        container.innerHTML = '<div class="no-data">暂无AI请求日志数据</div>';
+                    }
+                } else {
+                    container.innerHTML = '<div class="no-data">加载失败</div>';
+                }
+            } catch (error) {
+                container.innerHTML = '<div class="no-data">加载失败</div>';
+                console.error('加载AI请求日志失败:', error);
+            }
+        }
+
+        async function loadRequestLogsStats() {
+            try {
+                const data = await apiRequest('/api/ai-operation-logs/request-logs/stats');
+                if (data.success) {
+                    const s = data.stats;
+                    document.getElementById('rl-total-requests').textContent = s.totalRequests || 0;
+                    document.getElementById('rl-success-count').textContent = s.successCount || 0;
+                    document.getElementById('rl-failed-count').textContent = s.failedCount || 0;
+                    document.getElementById('rl-total-tokens').textContent = formatNumber(s.totalTokens || 0);
+                }
+            } catch (error) {
+                console.error('加载AI请求日志统计失败:', error);
+            }
+        }
+
+        function updateRlPagination(pagination) {
+            const paginationEl = document.getElementById('rl-pagination');
+            const infoEl = document.getElementById('rl-pagination-info');
+            const indicatorEl = document.getElementById('rl-page-indicator');
+            const prevBtn = document.getElementById('rl-prev-page');
+            const nextBtn = document.getElementById('rl-next-page');
+
+            if (pagination.total === 0) {
+                paginationEl.style.display = 'none';
+                return;
+            }
+
+            paginationEl.style.display = 'flex';
+            infoEl.textContent = `共 ${pagination.total} 条`;
+            indicatorEl.textContent = `第 ${pagination.page}/${rlTotalPages} 页`;
+            prevBtn.disabled = pagination.page <= 1;
+            nextBtn.disabled = pagination.page >= rlTotalPages;
+            prevBtn.style.opacity = pagination.page <= 1 ? '0.5' : '1';
+            nextBtn.style.opacity = pagination.page >= rlTotalPages ? '0.5' : '1';
+        }
+
+        function renderRequestLogsTable(logs) {
+            let html = `
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            ${rlIsAdmin ? '<th>用户</th>' : ''}
+                            <th>触发类型</th>
+                            <th>来源</th>
+                            <th>Prompt预览</th>
+                            <th>Token</th>
+                            <th>耗时</th>
+                            <th>模型</th>
+                            <th>状态</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            logs.forEach(log => {
+                const time = formatDateTime(log.created_at);
+                const statusClass = log.status === 'success' ? 'success' : 'failed';
+                const statusText = log.status === 'success' ? '成功' : '失败';
+                const tokenDisplay = log.total_tokens ? formatNumber(log.total_tokens) : '-';
+                const typeLabel = TRIGGER_TYPE_LABELS[log.trigger_type] || log.trigger_type;
+                const sourceDisplay = log.trigger_source_name || log.trigger_source || '-';
+                const promptPreview = escapeHtml(log.user_prompt_preview || log.system_prompt_preview || '-');
+
+                html += `
+                    <tr class="rl-clickable-row" data-log-id="${log.id}">
+                        <td>${time}</td>
+                        ${rlIsAdmin ? `<td>${escapeHtml(log.username || '用户' + log.user_id)}</td>` : ''}
+                        <td><span class="trigger-type-badge ${escapeHtml(log.trigger_type)}">${escapeHtml(typeLabel)}</span></td>
+                        <td>${escapeHtml(sourceDisplay)}</td>
+                        <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--color-text-secondary, #666);">${promptPreview}</td>
+                        <td title="提示词: ${log.prompt_tokens || 0} | 完成: ${log.completion_tokens || 0}">${tokenDisplay}</td>
+                        <td>${log.execution_time_ms ? (log.execution_time_ms >= 1000 ? (log.execution_time_ms / 1000).toFixed(1) + 's' : log.execution_time_ms + 'ms') : '-'}</td>
+                        <td style="font-size:12px;">${escapeHtml(log.model_name || '-')}</td>
+                        <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+
+            setTimeout(() => {
+                document.querySelectorAll('.rl-clickable-row').forEach(row => {
+                    row.addEventListener('click', () => {
+                        const logId = row.dataset.logId;
+                        openRlDetailModal(logId);
+                    });
+                });
+            }, 50);
+
+            return html;
+        }
+
+        async function openRlDetailModal(logId) {
+            const overlay = document.getElementById('rl-detail-overlay');
+            const body = document.getElementById('rl-detail-body');
+            const footer = document.getElementById('rl-detail-footer');
+
+            body.innerHTML = '<div class="loading">加载中...</div>';
+            footer.innerHTML = '';
+            overlay.classList.add('active');
+
+            try {
+                const data = await apiRequest(`/api/ai-operation-logs/request-logs/${logId}`);
+                if (data.success) {
+                    renderRlDetail(data.log, body, footer);
+                } else {
+                    body.innerHTML = '<div class="no-data">加载失败</div>';
+                }
+            } catch (error) {
+                body.innerHTML = '<div class="no-data">加载失败</div>';
+                console.error('加载日志详情失败:', error);
+            }
+        }
+
+        function renderRlDetail(log, bodyEl, footerEl) {
+            const typeLabel = TRIGGER_TYPE_LABELS[log.trigger_type] || log.trigger_type;
+            const statusText = log.status === 'success' ? '✅ 成功' : '❌ 失败';
+            const promptRatio = log.total_tokens > 0 ? Math.round((log.prompt_tokens / log.total_tokens) * 100) : 0;
+            const compRatio = 100 - promptRatio;
+
+            let infoHtml = `
+                <div class="rl-detail-info-grid">
+                    <div class="rl-detail-info-item"><label>触发类型:</label><span><span class="trigger-type-badge ${escapeHtml(log.trigger_type)}">${escapeHtml(typeLabel)}</span></span></div>
+                    <div class="rl-detail-info-item"><label>来源:</label><span>${escapeHtml(log.trigger_source_name || log.trigger_source || '-')}</span></div>
+                    <div class="rl-detail-info-item"><label>触发用户:</label><span>${escapeHtml(log.username || '用户' + log.user_id)}</span></div>
+                    <div class="rl-detail-info-item"><label>触发时间:</label><span>${formatDateTime(log.created_at)}</span></div>
+                    <div class="rl-detail-info-item"><label>状态:</label><span>${statusText}</span></div>
+                    <div class="rl-detail-info-item"><label>耗时:</label><span>${log.execution_time_ms ? (log.execution_time_ms >= 1000 ? (log.execution_time_ms / 1000).toFixed(1) + 's' : log.execution_time_ms + 'ms') : '-'}</span></div>
+                    <div class="rl-detail-info-item"><label>模型:</label><span>${escapeHtml(log.model_name || '-')}</span></div>
+                    <div class="rl-detail-info-item"><label>IP:</label><span>${escapeHtml(log.ip_address || '-')}</span></div>
+                </div>
+            `;
+
+            let tokenHtml = `
+                <div class="rl-detail-token-section" style="margin-bottom:16px;">
+                    <div style="display:flex;gap:20px;margin-bottom:4px;">
+                        <span>提示词Token: <strong>${(log.prompt_tokens || 0).toLocaleString()}</strong></span>
+                        <span>完成Token: <strong>${(log.completion_tokens || 0).toLocaleString()}</strong></span>
+                        <span>总计: <strong>${(log.total_tokens || 0).toLocaleString()}</strong></span>
+                        <span style="color:var(--color-text-tertiary, #999);">(${promptRatio}% Prompt / ${compRatio}% Comp)</span>
+                    </div>
+                    <div class="rl-detail-token-bar">
+                        <div class="rl-detail-token-bar-fill" style="width:${promptRatio}%;"></div>
+                    </div>
+                </div>
+            `;
+
+            let tabsHtml = `
+                <div class="rl-detail-tabs">
+                    <button class="rl-detail-tab-btn active" data-rl-tab="system">System Prompt</button>
+                    <button class="rl-detail-tab-btn" data-rl-tab="user">User Prompt</button>
+                    <button class="rl-detail-tab-btn" data-rl-tab="response">AI Response</button>
+                    ${log.error_message ? '<button class="rl-detail-tab-btn" data-rl-tab="error">错误信息</button>' : ''}
+                </div>
+                <div class="rl-detail-content active" id="rl-tab-system">
+                    <div class="rl-detail-text" id="rl-text-system"></div>
+                </div>
+                <div class="rl-detail-content" id="rl-tab-user">
+                    <div class="rl-detail-text" id="rl-text-user"></div>
+                </div>
+                <div class="rl-detail-content" id="rl-tab-response">
+                    <div class="rl-detail-text" id="rl-text-response"></div>
+                </div>
+                ${log.error_message ? '<div class="rl-detail-content" id="rl-tab-error"><div class="rl-detail-text" style="color:#f44336;" id="rl-text-error"></div></div>' : ''}
+            `;
+
+            bodyEl.innerHTML = infoHtml + tokenHtml + tabsHtml;
+
+            footerEl.innerHTML = `
+                <button class="copy-btn" id="rl-copy-system">复制 System Prompt</button>
+                <button class="copy-btn" id="rl-copy-user">复制 User Prompt</button>
+                <button class="copy-btn" id="rl-copy-response">复制 AI Response</button>
+            `;
+
+            setTimeout(() => {
+                const MAX_DISPLAY_LEN = 100000;
+                function safeSetText(elementId, text, label) {
+                    const el = document.getElementById(elementId);
+                    if (!el) return;
+                    if (!text) {
+                        el.textContent = '(无)';
+                        return;
+                    }
+                    if (text.length > MAX_DISPLAY_LEN) {
+                        el.textContent = text.substring(0, MAX_DISPLAY_LEN) +
+                            '\n\n... (文本过长，已截断显示。原始长度: ' + text.length + ' 字符)';
+                    } else {
+                        el.textContent = text;
+                    }
+                }
+                safeSetText('rl-text-system', log.system_prompt, 'System Prompt');
+                safeSetText('rl-text-user', log.user_prompt, 'User Prompt');
+                safeSetText('rl-text-response', log.ai_response, 'AI Response');
+                safeSetText('rl-text-error', log.error_message, '错误信息');
+
+                bodyEl.querySelectorAll('.rl-detail-tab-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        bodyEl.querySelectorAll('.rl-detail-tab-btn').forEach(b => b.classList.remove('active'));
+                        bodyEl.querySelectorAll('.rl-detail-content').forEach(c => c.classList.remove('active'));
+                        btn.classList.add('active');
+                        const tabId = 'rl-tab-' + btn.dataset.rlTab;
+                        const tabContent = document.getElementById(tabId);
+                        if (tabContent) tabContent.classList.add('active');
+                    });
+                });
+
+                const copySystemBtn = document.getElementById('rl-copy-system');
+                const copyUserBtn = document.getElementById('rl-copy-user');
+                const copyResponseBtn = document.getElementById('rl-copy-response');
+
+                if (copySystemBtn) {
+                    copySystemBtn.addEventListener('click', () => {
+                        navigator.clipboard.writeText(log.system_prompt || '').then(() => {
+                            copySystemBtn.textContent = '已复制!';
+                            setTimeout(() => { copySystemBtn.textContent = '复制 System Prompt'; }, 2000);
+                        });
+                    });
+                }
+                if (copyUserBtn) {
+                    copyUserBtn.addEventListener('click', () => {
+                        navigator.clipboard.writeText(log.user_prompt || '').then(() => {
+                            copyUserBtn.textContent = '已复制!';
+                            setTimeout(() => { copyUserBtn.textContent = '复制 User Prompt'; }, 2000);
+                        });
+                    });
+                }
+                if (copyResponseBtn) {
+                    copyResponseBtn.addEventListener('click', () => {
+                        navigator.clipboard.writeText(log.ai_response || '').then(() => {
+                            copyResponseBtn.textContent = '已复制!';
+                            setTimeout(() => { copyResponseBtn.textContent = '复制 AI Response'; }, 2000);
+                        });
+                    });
+                }
+            }, 50);
+        }
+
+        function closeRlDetailModal() {
+            const overlay = document.getElementById('rl-detail-overlay');
+            overlay.classList.remove('active');
+        }
+    </script>
+</body>
+</html>

@@ -444,6 +444,12 @@
 }
 
 /* 附件样式 */
+.post-detail-attachments {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid #f0f0f0;
+}
+
 .post-attachments {
     margin-top: 24px;
     padding: 16px;
